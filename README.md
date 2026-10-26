@@ -18,15 +18,19 @@ engine in the snake repository) and is meant as a reference for a later rewrite.
 | CMake | 3.30 or later | builds Nyx and SDL |
 | C++ compiler | GCC 14 or Clang 19 | Nyx uses C++26 features |
 | libclang | any recent | bindgen, for the Nyx bindings |
-| Nyx | `nyx-scripting-language` on its `proto` branch, checked out **beside this repository** | the scripting layer |
+| Nyx | `nyx-scripting-language` on a branch with the C API, checked out **beside this repository** | the scripting layer |
 
 SDL 3 is built from source by `sdl3-sys` and linked statically, so no SDL install is needed.
 On Linux, SDL only builds the window and audio backends whose development headers it finds.
 
 ```text
 ~/code/lantern
-~/code/nyx-scripting-language   (git checkout proto)
+~/code/nyx-scripting-language   (git checkout claude/project-thread-qf7t4j)
 ```
+
+The C API (`include/nyx/nyx.h`) is not on Nyx's `proto` branch yet. It is on
+`claude/project-thread-qf7t4j`, nyx PR #7 (see D-002). Once that is merged, check out `proto`.
+Run `git submodule update --init --recursive` in the Nyx checkout after switching branches.
 
 Set `NYX_SOURCE_DIR` to use a checkout somewhere else, or `NYX_CAPI_PREFIX` to link a prefix
 made by `cmake --install build --component nyx-capi --prefix <dir>`.

@@ -27,8 +27,11 @@ fn nyx_source_dir() -> PathBuf {
         return sibling;
     }
     panic!(
-        "nyx-sys needs a nyx-scripting-language checkout on its proto branch. Set NYX_SOURCE_DIR to it, \
-         put it beside this repository, or set NYX_CAPI_PREFIX to a `cmake --install build --component nyx-capi` prefix."
+        "nyx-sys needs a nyx-scripting-language checkout that has the C API, but {} was not found. \
+         Check out a branch with include/nyx/nyx.h there (proto once the C API is merged into it), \
+         set NYX_SOURCE_DIR to another checkout, or set NYX_CAPI_PREFIX to a \
+         `cmake --install build --component nyx-capi` prefix.",
+        sibling.join("include/nyx/nyx.h").display()
     );
 }
 
