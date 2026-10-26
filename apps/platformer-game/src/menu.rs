@@ -20,11 +20,12 @@ pub enum PauseMenuChoice {
     Quit,
 }
 
-const CONTROLS: [&str; 5] = [
+const CONTROLS: [&str; 6] = [
     "Move: WASD / arrows / left stick",
     "Look: mouse / right stick      Jump: Space / A",
     "Reset: R / Y      Pause: Esc / Start",
     "Debug HUD: F1 / Back      Collision view: F2 / R3",
+    "Reload scripts: F5",
     "Click to capture the mouse",
 ];
 

@@ -149,6 +149,27 @@ impl PlatformerGame {
         Ok(game)
     }
 
+    /// Shows a rules problem found outside a hook (a script that failed to load).
+    pub fn report_rules_error(&mut self, message: String) {
+        self.rules_error_count += 1;
+        self.rules_error = Some(message);
+    }
+
+    fn reload_rules(&mut self) {
+        match self.rules.reload() {
+            Ok(true) => {
+                self.rules_error = None;
+                self.start_rules();
+                self.message = Some(("Scripts reloaded".to_string(), 1.5));
+            }
+            Ok(false) => self.message = Some(("These rules cannot be reloaded".to_string(), 1.5)),
+            Err(error) => {
+                log::error!(target: "rules", "reload failed; keeping the running rules\n{error}");
+                self.report_rules_error(format!("reload failed: {error}"));
+            }
+        }
+    }
+
     /// Starts with the debug HUD and/or collision view on (`LANTERN_DEBUG_HUD`,
     /// `LANTERN_COLLISION_VIEW`).
     pub fn set_debug_views(&mut self, debug_hud: bool, collision_view: bool) {
@@ -199,7 +220,6 @@ impl PlatformerGame {
             input,
             action_set: &self.action_set,
             time_seconds: self.simulation_seconds,
-            player: self.player.entity,
         };
         if let Err(error) = hook(self.rules.as_mut(), &view, &mut commands) {
             self.rules_error_count += 1;
@@ -373,8 +393,18 @@ impl PlatformerGame {
         if let Some(error) = &self.rules_error
             && !self.debug_hud.visible
         {
-            let line = format!("rules error (F1 for details): {error}");
-            overlay.text(&line, Vec2::new(8.0 * scale, screen.y - 14.0 * scale), scale, Color::from_hex(0xFF6650));
+            // The first two lines (message and location), clipped to the window; the HUD has
+            // the full text.
+            let columns = ((screen.x - 16.0 * scale) / (text::GLYPH_SIZE as f32 * scale)).max(8.0) as usize;
+            let mut lines: Vec<String> = vec!["rules error (F1 for details):".to_string()];
+            lines.extend(error.lines().take(2).map(|line| line.trim().chars().take(columns).collect()));
+            let line_height = text::GLYPH_SIZE as f32 * scale * 1.3;
+            let top = screen.y - line_height * lines.len() as f32 - 6.0 * scale;
+            overlay.rect(Vec2::new(0.0, top - 4.0 * scale), screen, Color::rgba(0.0, 0.0, 0.0, 0.6));
+            for (index, line) in lines.iter().enumerate() {
+                let position = Vec2::new(8.0 * scale, top + line_height * index as f32);
+                overlay.text(line, position, scale, Color::from_hex(0xFF6650));
+            }
         }
         self.debug_hud.draw(&self.debug_values, overlay, Vec2::splat(8.0 * scale), scale);
     }
@@ -479,6 +509,9 @@ impl Game for PlatformerGame {
         }
         if input.pressed(actions.toggle_collision_view) {
             self.show_collision_view = !self.show_collision_view;
+        }
+        if input.pressed(actions.reload_scripts) {
+            self.reload_rules();
         }
         match self.state {
             GameState::MainMenu => {

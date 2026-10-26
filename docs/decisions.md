@@ -186,3 +186,36 @@ first frame after restoring measures zero elapsed time, so the game does not lur
   `LANTERN_COLLISION_VIEW=1` start with them on.
 - **Autoplay** (`LANTERN_AUTOPLAY=1`) skips the menu and runs forward with periodic jumps. It
   exists for headless smoke runs together with `LANTERN_MAX_FRAMES` and `LANTERN_CAPTURE_PATH`.
+
+## D-017 Nyx scripting layer (M6)
+
+- **Snapshot in, commands out.** A script never holds a reference into the engine. Before each
+  hook, `ScriptedRules` builds a `ScriptSnapshot` (time, pressed and held actions, entity ids
+  by name, entity positions and visibility). The host types the script sees (`Game`, `Input`,
+  `Entity`, `Sound`, `Vector`) read from that snapshot and queue `ScriptCommand`s for writes.
+  The game applies the commands in order after the hook returns, the same way it applies
+  `NativeRules`' commands. This keeps the C ABI boundary free of borrowed engine state and makes
+  a script error unable to leave the world half-changed mid-step.
+- **The API table** is documented at the top of `crates/scripting/src/lib.rs`. Entity ids cross
+  the boundary as `i64` (the generational handle's bits). An unknown or stale id throws
+  `Error:::NotFound` in the script instead of being ignored, and stale ids in commands are
+  dropped on the Rust side.
+- **Hooks** are methods on the script's `Application` class (`OnStart`, `OnFixedUpdate`,
+  `OnTriggerEnter`, `OnPlayerFell`, `OnJump`, `OnLand`, `OnResetPressed`, `OnExit`). A hook is
+  optional: the host scans the source for `Name~:` or `Name::` to decide whether to call it.
+  This is a stopgap until the prototype exposes class reflection through its C ABI.
+- **Feature gate and fallback.** Scripting is the `nyx-scripting` feature of the game (on by
+  default). Without it, with `LANTERN_RULES=native`, or when the script fails to load, the game
+  uses `NativeRules`, so it stays playable. A load error is shown on screen (a two-line banner
+  plus the full text in the F1 HUD) and logged. The test `nyx_rules_match_the_native_rules`
+  runs both rule sets over the same events and requires identical commands.
+- **F5 reloads** the script from disk. If the new source fails analysis, the old rules stay in
+  place and the error is shown; otherwise `OnStart` runs again.
+- **Known gap: hook errors have no line numbers.** Load-time diagnostics carry file and line
+  (for example `NYX0341 --> platformer.nyx:78:9`), but a run-time failure from a hook call only
+  reports the error variant and message, because that is all the prototype's call API returns.
+  Listed in `future-work.md`.
+- **Verified** by the host API tests (`crates/scripting/tests/host_api.rs`), the equivalence
+  test above, a headless run with the HUD showing `Nyx: platformer.nyx` and zero errors, and a
+  deliberately broken copy of the script (an `i32 += 1.0f`) that shows the diagnostic on screen
+  and falls back to the native rules without crashing.

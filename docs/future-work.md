@@ -9,5 +9,9 @@ Ideas that are out of scope for the prototype, kept here so they don't creep in.
 - Audio on its own callback thread with a lock-free command queue.
 - Shadow mapping for the directional light.
 - A BVH instead of the uniform grid when levels get large.
-- Hot reload for Nyx scripts.
+- Automatic Nyx hot reload on file change (F5 reloads by hand today), keeping script state
+  across the reload with the prototype's `PatchClass`.
+- File and line numbers for run-time errors raised inside Nyx hooks (the prototype's call API
+  only returns the error variant and message today).
+- Hook discovery through Nyx class reflection instead of scanning the source text.
 - Input rebinding UI and saved settings.

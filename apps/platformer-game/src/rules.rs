@@ -9,7 +9,8 @@
 //! - the game tells them about `RuleEvent`s (pickups, falls, jumps) after physics.
 //!
 //! Two implementations exist: `NativeRules` below (plain Rust, used when scripting is
-//! disabled) and the Nyx-scripted rules in `scripted_rules.rs`. Both see exactly the same view
+//! disabled, fails to load, or `LANTERN_RULES=native`) and the Nyx-scripted rules in
+//! `scripted_rules.rs` (the default). Both see exactly the same view
 //! and produce the same commands, which is what makes the scripting layer swappable.
 
 use glam::Vec3;
@@ -42,7 +43,7 @@ pub enum RuleCommand {
         text: String,
         seconds: f32,
     },
-    #[expect(dead_code, reason = "only scripts log (until the Nyx rules in M6)")]
+    #[cfg_attr(not(feature = "nyx-scripting"), expect(dead_code, reason = "only scripts log"))]
     Log {
         text: String,
     },
@@ -66,17 +67,16 @@ pub enum RuleEvent {
 }
 
 /// Read-only state rules can query during a hook.
-#[expect(dead_code, reason = "the native rules need less than scripts (until the Nyx rules in M6)")]
+#[cfg_attr(not(feature = "nyx-scripting"), expect(dead_code, reason = "the native rules need less than scripts"))]
 pub struct RulesView<'a> {
     pub world: &'a World,
     pub input: &'a InputSnapshot,
     pub action_set: &'a ActionSet,
     /// Simulation time since the level started (fixed steps × step length).
     pub time_seconds: f32,
-    pub player: EntityId,
 }
 
-#[expect(dead_code, reason = "the native rules need less than scripts (until the Nyx rules in M6)")]
+#[cfg_attr(not(feature = "nyx-scripting"), expect(dead_code, reason = "the native rules need less than scripts"))]
 impl RulesView<'_> {
     pub fn find_entity(&self, name: &str) -> Option<EntityId> {
         self.world.find_by_name(name)
@@ -127,6 +127,11 @@ pub trait GameRules {
     ) -> Result<(), RulesError>;
     /// When the level is left.
     fn on_exit(&mut self, view: &RulesView, commands: &mut Vec<RuleCommand>) -> Result<(), RulesError>;
+    /// Re-reads the rules from disk (F5). `Ok(true)` if they changed; the game then calls
+    /// `on_start` again. On error the old rules stay in place.
+    fn reload(&mut self) -> Result<bool, String> {
+        Ok(false)
+    }
 }
 
 /// The moving platform's path: back and forth along -Z.

@@ -18,6 +18,7 @@ pub struct Actions {
     pub reset: ActionId,
     pub toggle_debug_hud: ActionId,
     pub toggle_collision_view: ActionId,
+    pub reload_scripts: ActionId,
     pub pause: ActionId,
     pub menu_up: ActionId,
     pub menu_down: ActionId,
@@ -36,6 +37,7 @@ pub fn build() -> (ActionSet, Bindings, Actions) {
         reset: set.register("reset", ActionKind::Button),
         toggle_debug_hud: set.register("toggle_debug_hud", ActionKind::Button),
         toggle_collision_view: set.register("toggle_collision_view", ActionKind::Button),
+        reload_scripts: set.register("reload_scripts", ActionKind::Button),
         pause: set.register("pause", ActionKind::Button),
         menu_up: set.register("menu_up", ActionKind::Button),
         menu_down: set.register("menu_down", ActionKind::Button),
@@ -66,6 +68,7 @@ pub fn build() -> (ActionSet, Bindings, Actions) {
         .bind(actions.toggle_debug_hud, Binding::Gamepad(GamepadButton::Back))
         .bind(actions.toggle_collision_view, Binding::Key(KeyCode::F2))
         .bind(actions.toggle_collision_view, Binding::Gamepad(GamepadButton::RightStick))
+        .bind(actions.reload_scripts, Binding::Key(KeyCode::F5))
         .bind(actions.pause, Binding::Key(KeyCode::Escape))
         .bind(actions.pause, Binding::Gamepad(GamepadButton::Start))
         .bind(actions.menu_up, Binding::Key(KeyCode::Up))

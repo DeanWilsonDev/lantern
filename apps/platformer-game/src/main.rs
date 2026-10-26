@@ -10,6 +10,7 @@
 //!   `LANTERN_GPU_DRIVER=vulkan|metal|direct3d12`; `LANTERN_VSYNC=0`;
 //! - `LANTERN_ASSETS=path` asset directory;
 //! - `LANTERN_RULES=native` use the Rust rules instead of the Nyx script;
+//!   `LANTERN_SCRIPTS=dir` where `platformer.nyx` is;
 //! - `LANTERN_MAX_FRAMES=n` quit after n frames; `LANTERN_CAPTURE_PATH=x.png` save the last
 //!   frame; `LANTERN_AUTOPLAY=1` skip the menu and let a scripted pilot play (smoke tests);
 //! - `LANTERN_DEBUG_HUD=1`, `LANTERN_COLLISION_VIEW=1` start with those views on.
@@ -25,6 +26,8 @@ mod menu;
 mod player;
 mod rules;
 mod scene;
+#[cfg(feature = "nyx-scripting")]
+mod scripted_rules;
 
 use std::process::ExitCode;
 
@@ -49,8 +52,29 @@ fn open_audio(sdl: &SdlContext) -> Option<Box<dyn AudioSink>> {
     }
 }
 
-fn choose_rules() -> Box<dyn GameRules> {
-    Box::new(NativeRules::default())
+/// The Nyx rules by default; the Rust rules with `LANTERN_RULES=native`, without the
+/// `nyx-scripting` feature, or when the script fails to load (the error is returned for the
+/// HUD so it is seen, and the game stays playable).
+fn choose_rules() -> (Box<dyn GameRules>, Option<String>) {
+    if std::env::var("LANTERN_RULES").is_ok_and(|value| value == "native") {
+        return (Box::new(NativeRules::default()), None);
+    }
+    #[cfg(feature = "nyx-scripting")]
+    {
+        let path = scripted_rules::find_script();
+        match scripted_rules::ScriptedRules::load(&path) {
+            Ok(rules) => {
+                log::info!(target: "rules", "game rules: {}", path.display());
+                return (Box::new(rules), None);
+            }
+            Err(error) => {
+                log::error!(target: "rules", "could not load {}; using the Rust rules\n{error}", path.display());
+                return (Box::new(NativeRules::default()), Some(format!("script load failed: {error}")));
+            }
+        }
+    }
+    #[allow(unreachable_code)]
+    (Box::new(NativeRules::default()), None)
 }
 
 fn environment_flag(name: &str) -> bool {
@@ -67,8 +91,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     assets::load_sounds(asset_directory.as_deref(), &mut audio);
 
     let (action_set, bindings, actions) = input_config::build();
+    let (rules, rules_load_error) = choose_rules();
     let mut game = PlatformerGame::new(GameParts {
-        rules: choose_rules(),
+        rules,
         actions,
         action_set: action_set.clone(),
         level: level::demo_level(),
@@ -78,6 +103,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     game.max_frames = std::env::var("LANTERN_MAX_FRAMES").ok().and_then(|text| text.parse().ok());
     game.autoplay = environment_flag("LANTERN_AUTOPLAY");
+    if let Some(error) = rules_load_error {
+        game.report_rules_error(error);
+    }
     game.set_debug_views(environment_flag("LANTERN_DEBUG_HUD"), environment_flag("LANTERN_COLLISION_VIEW"));
 
     let mut platform = SdlPlatform::new(window);
