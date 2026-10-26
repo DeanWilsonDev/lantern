@@ -105,3 +105,15 @@ pub trait PlatformBackend {
     /// Hides the cursor and reports relative motion (third-person camera) or releases it (menus).
     fn set_mouse_captured(&mut self, captured: bool);
 }
+
+/// A device that plays interleaved stereo `f32` samples (Umbra keeps audio behind the raylib
+/// facade the same way). The engine's audio system mixes on the main thread and keeps a short
+/// queue topped up through this trait (decision D-006), so no audio code runs on SDL's thread.
+pub trait AudioSink {
+    /// Frames per second the sink expects. The mixer runs at this rate.
+    fn sample_rate(&self) -> u32;
+    /// Stereo frames queued and not yet played.
+    fn queued_frames(&self) -> usize;
+    /// Queues interleaved stereo samples (left, right, left, right, ...).
+    fn push_frames(&mut self, interleaved_stereo: &[f32]);
+}

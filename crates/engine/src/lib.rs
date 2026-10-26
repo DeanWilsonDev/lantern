@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audio;
 pub mod extract;
 pub mod frame_loop;
 pub mod input;

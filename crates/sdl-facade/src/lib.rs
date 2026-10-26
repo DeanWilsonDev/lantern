@@ -7,10 +7,12 @@
 //! `SdlInitGuard`, so `SDL_Quit` runs only after the last SDL object is gone, whatever order the
 //! game drops things in.
 
+mod audio;
 mod context;
 mod events;
 mod window;
 
+pub use audio::SdlAudioOutput;
 pub use context::{SdlContext, SdlError};
 pub use window::{SdlPlatform, SdlWindow};
 

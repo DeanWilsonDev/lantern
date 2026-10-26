@@ -104,3 +104,33 @@ first frame after restoring measures zero elapsed time, so the game does not lur
   integration test uses it to check a cube, a line and overlay text land where expected. It ran
   on Mesa lavapipe (software Vulkan) under Xvfb with Vulkan validation enabled and reported no
   validation errors.
+
+## D-014 Scene, assets and audio wiring (M3)
+
+- **World and stores.** `lantern_engine::world::World` holds names, transforms, a parent and an
+  optional `MeshRenderer`. Game-specific data (player state, gems) lives in the game's own
+  structs or `ComponentStore<T>`s keyed by `EntityId`. No ECS: the demo has a handful of entity
+  kinds, and plain structs keep every piece of state visible in one place.
+- **Scenes are tagged entities.** Each entity records the `SceneId` that spawned it;
+  `World::despawn_scene` removes exactly those. The app's `LevelScene` also owns the GPU meshes
+  it created and releases them in `unload(self, ...)`, which takes the scene by value so it
+  cannot be used afterwards. Umbra's scene stack is not reproduced because the demo has one
+  level; game states (menu, playing, paused) live in the app.
+- **The level is code** (`apps/platformer-game/src/level.rs`): boxes and ramps only. The same
+  data builds render meshes and, from M4, collision, so the two cannot disagree. A scene file
+  format is out of scope per the brief.
+- **Asset lookup:** `LANTERN_ASSETS`, then `assets/` beside the executable, then the
+  repository's `assets/`, then `./assets`. Every file has a generated fallback; a failure is
+  logged once with the path and reason, and the game carries on.
+- **Generated assets** come from `tools/asset-gen` and are committed (D-008).
+  `cargo run -p asset-gen -- --check` compares the files with fresh output. The synthesiser
+  uses `f32` maths (`sin`, `powf`), so the check is exact on one machine but may differ by a
+  bit on another platform's libm; that is harmless (re-run the generator) and is why the check
+  is not part of the test suite.
+- **Audio device behind a trait.** `lantern_platform::AudioSink` (sample rate, queued frames,
+  push) is implemented by `lantern_sdl_facade::SdlAudioOutput` (an `SDL_AudioStream` on the
+  default playback device, `f32` stereo at 48 kHz, no callback). `lantern_engine::audio::
+  AudioSystem` mixes on the main thread each frame and tops the queue up to 60 ms. If no device
+  opens, the system runs without a sink and every call is a silent no-op.
+- **Headless capture.** `LANTERN_CAPTURE_PATH=out.png LANTERN_MAX_FRAMES=n` saves the last
+  frame. This is how the scene was checked in the sandbox (Xvfb + lavapipe).
