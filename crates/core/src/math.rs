@@ -49,6 +49,78 @@ pub fn wrap_angle(angle_radians: f32) -> f32 {
     wrapped
 }
 
+/// An axis-aligned bounding box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Aabb {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+impl Aabb {
+    /// An "inverted" box that any point will grow.
+    pub const EMPTY: Aabb = Aabb { min: Vec3::splat(f32::INFINITY), max: Vec3::splat(f32::NEG_INFINITY) };
+
+    pub fn new(min: Vec3, max: Vec3) -> Aabb {
+        Aabb { min: min.min(max), max: min.max(max) }
+    }
+
+    pub fn from_center_half_extents(center: Vec3, half_extents: Vec3) -> Aabb {
+        Aabb { min: center - half_extents.abs(), max: center + half_extents.abs() }
+    }
+
+    pub fn from_points(points: impl IntoIterator<Item = Vec3>) -> Aabb {
+        points.into_iter().fold(Aabb::EMPTY, |bounds, point| bounds.grown_to(point))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.min.x > self.max.x || self.min.y > self.max.y || self.min.z > self.max.z
+    }
+
+    pub fn grown_to(self, point: Vec3) -> Aabb {
+        Aabb { min: self.min.min(point), max: self.max.max(point) }
+    }
+
+    pub fn union(self, other: Aabb) -> Aabb {
+        Aabb { min: self.min.min(other.min), max: self.max.max(other.max) }
+    }
+
+    pub fn expanded(self, amount: f32) -> Aabb {
+        Aabb { min: self.min - Vec3::splat(amount), max: self.max + Vec3::splat(amount) }
+    }
+
+    pub fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
+
+    pub fn half_extents(&self) -> Vec3 {
+        (self.max - self.min) * 0.5
+    }
+
+    pub fn overlaps(&self, other: &Aabb) -> bool {
+        self.min.cmple(other.max).all() && self.max.cmpge(other.min).all()
+    }
+
+    pub fn contains_point(&self, point: Vec3) -> bool {
+        self.min.cmple(point).all() && self.max.cmpge(point).all()
+    }
+
+    /// The box that encloses this box after `transform` (exact for the eight corners).
+    pub fn transformed(&self, transform: &Mat4) -> Aabb {
+        if self.is_empty() {
+            return *self;
+        }
+        let corners = (0..8).map(|corner| {
+            let point = Vec3::new(
+                if corner & 1 == 0 { self.min.x } else { self.max.x },
+                if corner & 2 == 0 { self.min.y } else { self.max.y },
+                if corner & 4 == 0 { self.min.z } else { self.max.z },
+            );
+            transform.transform_point3(point)
+        });
+        Aabb::from_points(corners)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +169,18 @@ mod tests {
         assert!((far_point.z / far_point.w - 1.0).abs() < 1e-5);
         let above = projection * Vec4::new(0.0, 1.0, -1.0, 1.0);
         assert!(above.y / above.w > 0.0, "up in view space is up in clip space");
+    }
+
+    #[test]
+    fn aabb_transforms_and_overlaps() {
+        let unit = Aabb::from_center_half_extents(Vec3::ZERO, Vec3::splat(0.5));
+        let moved = unit.transformed(&Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0)));
+        assert!(near(moved.center(), Vec3::new(2.0, 0.0, 0.0)));
+        assert!(!unit.overlaps(&moved));
+        assert!(unit.overlaps(&unit.expanded(0.1)));
+        let rotated = unit.transformed(&Mat4::from_quat(yaw_rotation(std::f32::consts::FRAC_PI_4)));
+        assert!((rotated.half_extents().x - 0.5f32.hypot(0.5)).abs() < 1e-5);
+        assert!(Aabb::EMPTY.is_empty());
     }
 
     #[test]

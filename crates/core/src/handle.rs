@@ -24,6 +24,12 @@ impl<T> Handle<T> {
         self.generation
     }
 
+    /// The same slot address under another type. A backend uses this to hand out public handle
+    /// types (`MeshHandle`) for values it keeps in a private pool.
+    pub fn cast<U>(self) -> Handle<U> {
+        Handle { index: self.index, generation: self.generation, marker: PhantomData }
+    }
+
     /// Packs the handle into one integer, for passing through a script boundary.
     pub fn to_bits(self) -> u64 {
         (u64::from(self.generation) << 32) | u64::from(self.index)

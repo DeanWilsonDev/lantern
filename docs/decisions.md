@@ -83,3 +83,24 @@ and minimise behaviour without a window.
 
 While minimised the loop runs no fixed steps, skips rendering and sleeps 16 ms per frame. The
 first frame after restoring measures zero elapsed time, so the game does not lurch forward.
+
+## D-013 Rendering details chosen for M2
+
+- One render pass per frame: lit meshes, then debug lines (depth-tested, no depth write), then
+  the overlay (no depth test, alpha-blended). Every pipeline declares the depth target so they
+  can share the pass.
+- The swapchain asks for `SDR_LINEAR` (an sRGB format), so shaders write linear colour and the
+  hardware encodes it. Where that composition is unavailable the shaders encode instead (a
+  uniform flag), so colours look the same either way.
+- Textures upload as `R8G8B8A8_UNORM_SRGB`; linear-filtered textures get a full mip chain from
+  `SDL_GenerateMipmapsForGPUTexture`.
+- Per-frame geometry (lines, overlay) goes through one reusable buffer each, uploaded with
+  `cycle = true` so the CPU never waits on the GPU reading last frame's data.
+- Deferred destruction is SDL's: `SDL_Release*` waits until command buffers that use the
+  resource have finished. On shutdown the renderer waits for idle first.
+- Frustum culling uses each mesh's local bounds transformed by the draw's matrix. Opaque draws
+  are sorted by texture, then mesh.
+- `GpuRenderer::capture` renders off-screen and reads pixels back; the `render_capture`
+  integration test uses it to check a cube, a line and overlay text land where expected. It ran
+  on Mesa lavapipe (software Vulkan) under Xvfb with Vulkan validation enabled and reported no
+  validation errors.
