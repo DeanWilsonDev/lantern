@@ -35,6 +35,7 @@ pub fn main_menu(
     screen: Vec2,
     scale: f32,
 ) -> Option<MainMenuChoice> {
+    overlay.rect(Vec2::ZERO, screen, lantern_core::color::Color::rgba(0.0, 0.02, 0.06, 0.55));
     let mut column = ui.begin(overlay, input, screen, screen.y * 0.22, scale);
     column.title("LANTERN");
     column.label("a small 3D platformer");

@@ -102,8 +102,12 @@ pub fn demo_level() -> Level {
         block("stair_2", Vec3::new(-5.5, 0.25, 3.0), Vec3::new(1.5, 0.25, 0.5), Platform),
         block("stair_3", Vec3::new(-5.5, 0.375, 2.0), Vec3::new(1.5, 0.375, 0.5), Platform),
         block("stair_top", Vec3::new(-5.5, 0.5, 0.5), Vec3::new(1.5, 0.5, 1.0), Platform),
-        // A low ceiling over the start: jumping under it bumps your head.
+        // A low canopy near the start: jumping under it bumps your head.
         block("low_ceiling", Vec3::new(2.0, 2.15, 4.0), Vec3::new(1.5, 0.15, 1.5), Wall),
+        block("canopy_post_1", Vec3::new(0.6, 1.0, 2.6), Vec3::new(0.1, 1.0, 0.1), Wall),
+        block("canopy_post_2", Vec3::new(3.4, 1.0, 2.6), Vec3::new(0.1, 1.0, 0.1), Wall),
+        block("canopy_post_3", Vec3::new(0.6, 1.0, 5.4), Vec3::new(0.1, 1.0, 0.1), Wall),
+        block("canopy_post_4", Vec3::new(3.4, 1.0, 5.4), Vec3::new(0.1, 1.0, 0.1), Wall),
         // Ledge at the top of the gentle ramp.
         block("ramp_ledge", Vec3::new(5.0, 0.75, -6.5), Vec3::new(1.5, 0.75, 1.5), Platform),
         // The jump course over the pit.
@@ -136,7 +140,7 @@ pub fn demo_level() -> Level {
         ramps,
         moving_platforms,
         gem_positions,
-        spawn_position: Vec3::new(0.0, 0.0, 4.0),
+        spawn_position: Vec3::new(-1.0, 0.0, 4.0),
         kill_height: -8.0,
     }
 }

@@ -11,7 +11,8 @@
 //! - `LANTERN_ASSETS=path` asset directory;
 //! - `LANTERN_RULES=native` use the Rust rules instead of the Nyx script;
 //! - `LANTERN_MAX_FRAMES=n` quit after n frames; `LANTERN_CAPTURE_PATH=x.png` save the last
-//!   frame; `LANTERN_AUTOPLAY=1` skip the menu and let a scripted pilot play (smoke tests).
+//!   frame; `LANTERN_AUTOPLAY=1` skip the menu and let a scripted pilot play (smoke tests);
+//! - `LANTERN_DEBUG_HUD=1`, `LANTERN_COLLISION_VIEW=1` start with those views on.
 
 mod assets;
 mod camera;
@@ -77,6 +78,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     game.max_frames = std::env::var("LANTERN_MAX_FRAMES").ok().and_then(|text| text.parse().ok());
     game.autoplay = environment_flag("LANTERN_AUTOPLAY");
+    game.set_debug_views(environment_flag("LANTERN_DEBUG_HUD"), environment_flag("LANTERN_COLLISION_VIEW"));
 
     let mut platform = SdlPlatform::new(window);
     let mut frame_loop = FrameLoop::new(InputRouter::new(action_set, bindings));

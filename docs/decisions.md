@@ -165,3 +165,24 @@ first frame after restoring measures zero elapsed time, so the game does not lur
 - **Rules seam.** Game rules (gems, platform path, falling) live behind the `GameRules` trait:
   they read a `RulesView`, return `RuleCommand`s and receive `RuleEvent`s. `NativeRules` is the
   Rust version; M6 adds the Nyx version with identical behaviour.
+
+## D-016 Platformer slice details (M5)
+
+- **Game states** are an enum in the app (`MainMenu`, `Playing`, `Paused`) with the
+  transitions written out in `game.rs`, rather than Umbra's `IGameState` objects and state
+  machine. Three states with no shared behaviour do not need a framework. The simulation only
+  advances while `Playing`; the menu shows the level behind it with a slowly orbiting camera.
+- **Menu input** uses the per-frame snapshot (menus are presentation); gameplay uses the
+  per-fixed-step snapshot. A menu choice made while drawing is applied at the start of the next
+  frame, where the platform is available for mouse capture.
+- **Blob shadow.** The player gets a dark disc on the surface below (one ray per step), which
+  shrinks with height. Without real shadows it is the cheapest way to judge jumps, and it is a
+  well-known platformer technique. Real shadow mapping stays out of scope (brief).
+- **Sounds** are triggered by rules (jump, land above 4 m/s, pickup, reset) and by the menus
+  (move, select). The music loop starts at launch.
+- **Debug views:** F1 toggles the HUD (frame timing, player state, camera, renderer counters,
+  audio queue, rules status and errors), F2 the collision view (nearby triangles, player
+  capsule, ground normal, velocity, gem trigger spheres). `LANTERN_DEBUG_HUD=1` and
+  `LANTERN_COLLISION_VIEW=1` start with them on.
+- **Autoplay** (`LANTERN_AUTOPLAY=1`) skips the menu and runs forward with periodic jumps. It
+  exists for headless smoke runs together with `LANTERN_MAX_FRAMES` and `LANTERN_CAPTURE_PATH`.

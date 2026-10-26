@@ -33,6 +33,8 @@ pub struct LevelScene {
     level_meshes: Vec<MeshHandle>,
     pub collision: CollisionWorld,
     pub player: EntityId,
+    /// A dark disc under the player, so you can judge where you will land.
+    pub player_shadow: EntityId,
     pub gems: Vec<Gem>,
     pub moving_platforms: Vec<MovingPlatform>,
 }
@@ -154,6 +156,20 @@ impl LevelScene {
             MeshRenderer::new(assets.player_mesh, Some(assets.player_texture), Color::from_hex(0xE8A33D)),
         );
         world.set_parent(player_body, Some(player)).expect("a fresh entity cannot form a cycle");
+        // A visor on the body's front (-Z), so you can see which way the player faces.
+        let visor = world.spawn_mesh(
+            "player_visor",
+            LEVEL_SCENE,
+            Transform::from_translation(Vec3::new(0.0, 0.42, -0.3)).with_scale(Vec3::new(0.4, 0.14, 0.16)),
+            MeshRenderer::new(assets.unit_cube_mesh, None, Color::from_hex(0x203040)),
+        );
+        world.set_parent(visor, Some(player_body)).expect("a fresh entity cannot form a cycle");
+        let player_shadow = world.spawn_mesh(
+            "player_shadow",
+            LEVEL_SCENE,
+            Transform::from_translation(level.spawn_position),
+            MeshRenderer::new(assets.unit_sphere_mesh, None, Color::rgb(0.05, 0.07, 0.05)),
+        );
         world.update_world_transforms();
         world.store_previous_transforms();
         log::info!(
@@ -163,7 +179,7 @@ impl LevelScene {
             level_meshes.len(),
             collision.static_triangle_count()
         );
-        Ok(LevelScene { level_meshes, collision, player, gems, moving_platforms })
+        Ok(LevelScene { level_meshes, collision, player, player_shadow, gems, moving_platforms })
     }
 
     /// Despawns every entity the scene spawned and releases its meshes.

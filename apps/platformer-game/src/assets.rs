@@ -53,6 +53,9 @@ pub struct GameAssets {
     pub player_texture: TextureHandle,
     pub player_mesh: MeshHandle,
     pub gem_mesh: MeshHandle,
+    /// A 1 m cube and a 1 m diameter sphere, scaled per use (the player's visor, its shadow).
+    pub unit_cube_mesh: MeshHandle,
+    pub unit_sphere_mesh: MeshHandle,
 }
 
 /// Every sound the game plays, by the name gameplay code and scripts use.
@@ -109,6 +112,8 @@ impl GameAssets {
             player_texture: renderer.create_texture(&player)?,
             player_mesh: renderer.create_mesh(&primitives::capsule(PLAYER_RADIUS, cylinder_half_height, 24, 8))?,
             gem_mesh: renderer.create_mesh(&gem)?,
+            unit_cube_mesh: renderer.create_mesh(&primitives::cube(1.0))?,
+            unit_sphere_mesh: renderer.create_mesh(&primitives::sphere(0.5, 24, 12))?,
         })
     }
 }

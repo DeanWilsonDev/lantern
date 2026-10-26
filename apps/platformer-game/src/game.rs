@@ -149,6 +149,13 @@ impl PlatformerGame {
         Ok(game)
     }
 
+    /// Starts with the debug HUD and/or collision view on (`LANTERN_DEBUG_HUD`,
+    /// `LANTERN_COLLISION_VIEW`).
+    pub fn set_debug_views(&mut self, debug_hud: bool, collision_view: bool) {
+        self.debug_hud.visible = debug_hud;
+        self.show_collision_view = collision_view;
+    }
+
     /// Unloads the level (calling the rules' exit hook first). Called on quit and restart.
     pub fn shutdown_level(&mut self) {
         let empty_input = InputSnapshot::default();
@@ -260,6 +267,23 @@ impl PlatformerGame {
             } else if !inside {
                 self.triggers_inside.remove(&gem.entity);
             }
+        }
+    }
+
+    /// Drops the blob shadow onto the surface below the player; it shrinks with height.
+    fn place_player_shadow(&mut self) {
+        let Some(scene) = &self.scene else { return };
+        let center = self.player.controller.capsule_center();
+        let hit = scene.collision.raycast(center, Vec3::NEG_Y, 30.0);
+        let Some(shadow) = self.world.get_mut(scene.player_shadow) else { return };
+        if let Some(renderer) = shadow.mesh_renderer.as_mut() {
+            renderer.visible = hit.is_some();
+        }
+        if let Some(hit) = hit {
+            let height = (self.player.controller.feet_position.y - hit.point.y).max(0.0);
+            let diameter = PLAYER_RADIUS * 2.2 * (1.0 - height / 10.0).clamp(0.4, 1.0);
+            shadow.local.translation = hit.point + Vec3::Y * 0.01;
+            shadow.local.scale = Vec3::new(diameter, 0.01, diameter);
         }
     }
 
@@ -414,6 +438,7 @@ impl Game for PlatformerGame {
             dt,
         );
         self.player.sync_entity(&mut self.world);
+        self.place_player_shadow();
 
         // Events after physics, in the order they happened.
         if events.jumped {
