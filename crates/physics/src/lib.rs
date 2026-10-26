@@ -9,6 +9,8 @@
 //! engine out of scope, and a platformer only needs a character that moves through static and
 //! moving geometry.
 
+#![forbid(unsafe_code)]
+
 pub mod controller;
 pub mod geometry;
 pub mod world;

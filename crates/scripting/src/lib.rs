@@ -25,6 +25,8 @@
 //! after the call, in order. Writes also update the snapshot, so a script that sets a position
 //! and reads it back in the same hook sees its own write.
 
+#![forbid(unsafe_code)]
+
 mod api;
 mod host;
 

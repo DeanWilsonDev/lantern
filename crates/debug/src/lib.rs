@@ -7,6 +7,8 @@
 //!
 //! Neither knows about gameplay or physics types; callers pass plain geometry and values.
 
+#![forbid(unsafe_code)]
+
 pub mod debug_draw;
 mod hud;
 
