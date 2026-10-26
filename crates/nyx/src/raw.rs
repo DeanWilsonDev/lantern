@@ -20,7 +20,6 @@ pub(crate) unsafe fn owned_string(text: sys::nyx_str) -> String {
 }
 
 pub(crate) fn path_text(path: &Path) -> Result<&str> {
-    path.to_str().ok_or_else(|| {
-        Error::new(Status::InvalidArgument, format!("the path {} isn't valid UTF-8", path.display()))
-    })
+    path.to_str()
+        .ok_or_else(|| Error::new(Status::InvalidArgument, format!("the path {} isn't valid UTF-8", path.display())))
 }

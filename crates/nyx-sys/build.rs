@@ -27,8 +27,11 @@ fn nyx_source_dir() -> PathBuf {
         return sibling;
     }
     panic!(
-        "nyx-sys needs a nyx-scripting-language checkout on its proto branch. Set NYX_SOURCE_DIR to it, \
-         put it beside this repository, or set NYX_CAPI_PREFIX to a `cmake --install build --component nyx-capi` prefix."
+        "nyx-sys needs a nyx-scripting-language checkout that has the C API, but {} was not found. \
+         Check out a branch with include/nyx/nyx.h there (proto once the C API is merged into it), \
+         set NYX_SOURCE_DIR to another checkout, or set NYX_CAPI_PREFIX to a \
+         `cmake --install build --component nyx-capi` prefix.",
+        sibling.join("include/nyx/nyx.h").display()
     );
 }
 
@@ -36,7 +39,9 @@ fn check_cmake_version() {
     let output = Command::new(env::var("CMAKE").unwrap_or_else(|_| "cmake".to_string()))
         .arg("--version")
         .output()
-        .unwrap_or_else(|error| panic!("nyx-sys needs CMake {}.{} or later on PATH: {error}", MINIMUM_CMAKE.0, MINIMUM_CMAKE.1));
+        .unwrap_or_else(|error| {
+            panic!("nyx-sys needs CMake {}.{} or later on PATH: {error}", MINIMUM_CMAKE.0, MINIMUM_CMAKE.1)
+        });
     let text = String::from_utf8_lossy(&output.stdout);
     let version = text
         .split_whitespace()

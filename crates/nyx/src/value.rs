@@ -86,7 +86,10 @@ impl Value {
         self.kind() == Kind::Null
     }
 
-    fn read<T: Default>(&self, read: unsafe extern "C" fn(*const sys::nyx_value, *mut T) -> sys::nyx_status) -> Result<T> {
+    fn read<T: Default>(
+        &self,
+        read: unsafe extern "C" fn(*const sys::nyx_value, *mut T) -> sys::nyx_status,
+    ) -> Result<T> {
         let mut out = T::default();
         self.runtime.check(unsafe { read(self.raw(), &mut out) })?;
         Ok(out)
@@ -119,8 +122,7 @@ impl Value {
         let mut text = sys::nyx_str { data: ptr::null(), length: 0 };
         self.runtime.check(unsafe { read(self.raw(), &mut text) })?;
         let bytes = unsafe { borrowed_bytes(text) };
-        std::str::from_utf8(bytes)
-            .map_err(|_| Error::new(Status::TypeMismatch, "the Nyx string isn't valid UTF-8"))
+        std::str::from_utf8(bytes).map_err(|_| Error::new(Status::TypeMismatch, "the Nyx string isn't valid UTF-8"))
     }
 
     pub fn as_str(&self) -> Result<&str> {
@@ -154,7 +156,10 @@ impl Value {
 impl Clone for Value {
     fn clone(&self) -> Value {
         let raw = unsafe { sys::nyx_value_retain(self.raw()) };
-        Value { raw: NonNull::new(raw).expect("nyx_value_retain returned NULL for a live value"), runtime: self.runtime.clone() }
+        Value {
+            raw: NonNull::new(raw).expect("nyx_value_retain returned NULL for a live value"),
+            runtime: self.runtime.clone(),
+        }
     }
 }
 
