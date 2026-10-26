@@ -28,9 +28,7 @@ impl Program {
     pub fn application(&self) -> Result<Value> {
         let mut raw = ptr::null_mut();
         self.runtime.check(unsafe { sys::nyx_program_application(self.raw.as_ptr(), &mut raw) })?;
-        self.runtime
-            .adopt(raw)
-            .ok_or_else(|| Error::new(Status::Internal, "nyx-capi returned no application instance"))
+        self.runtime.adopt(raw).ok_or_else(|| Error::new(Status::Internal, "nyx-capi returned no application instance"))
     }
 
     pub fn call_function(&self, qualified_name: &str, args: &[Value]) -> Result<Option<Value>> {

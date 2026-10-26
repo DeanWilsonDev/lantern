@@ -66,3 +66,20 @@ primitives and silence, with a logged warning.
 
 See D-004. SDL is asked for SPIR-V or MSL shader formats, so it picks Vulkan on Windows and
 Linux, and Metal on macOS. `LANTERN_GPU_DRIVER=vulkan|metal` forces a driver for testing.
+
+## D-010 One rustfmt configuration for the whole workspace
+
+`rustfmt.toml` sets `max_width = 120` and `use_small_heuristics = "Max"`, close to the style
+the existing nyx crates were written in. `cargo fmt --all` was run once over everything,
+including `nyx`, `nyx-sys` and `frame-loop`; those files changed formatting only.
+
+## D-011 The frame loop is a struct driven one frame at a time
+
+`FrameLoop::run_frame` does one display frame. `run` just loops it. Tests drive `run_frame`
+with a scripted platform to check quit handling, frame-rate independence, latched jump presses
+and minimise behaviour without a window.
+
+## D-012 Minimised windows pause the simulation
+
+While minimised the loop runs no fixed steps, skips rendering and sleeps 16 ms per frame. The
+first frame after restoring measures zero elapsed time, so the game does not lurch forward.

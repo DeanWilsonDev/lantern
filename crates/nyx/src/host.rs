@@ -145,16 +145,15 @@ unsafe extern "C" fn function_trampoline(
     userdata: *mut c_void,
 ) -> sys::nyx_status {
     let slot = &*userdata.cast::<FunctionSlot>();
-    run_callback(&slot.runtime, call, args, count, out_result, |context, arguments| {
-        (slot.function)(context, arguments)
-    })
+    run_callback(&slot.runtime, call, args, count, out_result, |context, arguments| (slot.function)(context, arguments))
 }
 
 pub(crate) fn register_function<F>(runtime: &Runtime, name: &str, signature: &str, function: F) -> Result<()>
 where
     F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
 {
-    let slot = Box::into_raw(Box::new(FunctionSlot { runtime: Rc::downgrade(&runtime.inner), function: Box::new(function) }));
+    let slot =
+        Box::into_raw(Box::new(FunctionSlot { runtime: Rc::downgrade(&runtime.inner), function: Box::new(function) }));
     let status = unsafe {
         sys::nyx_runtime_register_function(
             runtime.raw(),
@@ -276,9 +275,7 @@ fn wrap_instance<T>(runtime: &Runtime, host_type: *mut sys::nyx_host_type, insta
         drop(unsafe { Box::from_raw(boxed) });
         runtime.check(status)?;
     }
-    runtime
-        .adopt(raw)
-        .ok_or_else(|| Error::new(Status::Internal, "nyx-capi made a host object but returned no handle"))
+    runtime.adopt(raw).ok_or_else(|| Error::new(Status::Internal, "nyx-capi made a host object but returned no handle"))
 }
 
 pub struct HostTypeBuilder<T> {

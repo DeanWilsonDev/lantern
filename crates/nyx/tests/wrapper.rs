@@ -119,7 +119,9 @@ fn host_function_is_called_from_nyx() {
 fn host_failure_reaches_the_host_as_a_nyx_failure() {
     let runtime = Runtime::new().unwrap();
     runtime
-        .register_function("Fuel", "() -> i32", |context, _arguments| Err(context.failure("Error::Unknown", "out of fuel")))
+        .register_function("Fuel", "() -> i32", |context, _arguments| {
+            Err(context.failure("Error::Unknown", "out of fuel"))
+        })
         .unwrap();
     let program = mount(&runtime, "Burn :: () -> i32 { left := Fuel(); return left + 1; }");
     let error = program.call_function("Burn", &[]).unwrap_err();
@@ -133,7 +135,9 @@ fn host_failure_reaches_the_host_as_a_nyx_failure() {
 fn a_failure_can_be_matched_inside_nyx() {
     let runtime = Runtime::new().unwrap();
     runtime
-        .register_function("Fuel", "() -> i32", |context, _arguments| Err(context.failure("Error::Unknown", "out of fuel")))
+        .register_function("Fuel", "() -> i32", |context, _arguments| {
+            Err(context.failure("Error::Unknown", "out of fuel"))
+        })
         .unwrap();
     let program = mount(
         &runtime,

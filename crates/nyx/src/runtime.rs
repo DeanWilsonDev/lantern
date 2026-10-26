@@ -76,7 +76,13 @@ impl Runtime {
     pub fn mount_source(&self, source: &str, name: &str, application_class: &str) -> Result<Program> {
         let mut raw = ptr::null_mut();
         self.check(unsafe {
-            sys::nyx_runtime_mount_source(self.raw(), nyx_str(source), nyx_str(name), nyx_str(application_class), &mut raw)
+            sys::nyx_runtime_mount_source(
+                self.raw(),
+                nyx_str(source),
+                nyx_str(name),
+                nyx_str(application_class),
+                &mut raw,
+            )
         })?;
         Ok(Program::from_raw(self.inner.clone(), raw))
     }
@@ -115,11 +121,13 @@ impl Runtime {
         Value::from_owned(self.inner.clone(), raw)
     }
 
-    fn make(&self, create: impl FnOnce(*mut sys::nyx_runtime, *mut *mut sys::nyx_value) -> sys::nyx_status) -> Result<Value> {
+    fn make(
+        &self,
+        create: impl FnOnce(*mut sys::nyx_runtime, *mut *mut sys::nyx_value) -> sys::nyx_status,
+    ) -> Result<Value> {
         let mut raw = ptr::null_mut();
         self.check(create(self.raw(), &mut raw))?;
-        self.adopt(raw)
-            .ok_or_else(|| Error::new(Status::Internal, "nyx-capi made a value but returned no handle"))
+        self.adopt(raw).ok_or_else(|| Error::new(Status::Internal, "nyx-capi made a value but returned no handle"))
     }
 
     pub fn make_null(&self) -> Result<Value> {

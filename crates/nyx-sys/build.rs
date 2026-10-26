@@ -36,7 +36,9 @@ fn check_cmake_version() {
     let output = Command::new(env::var("CMAKE").unwrap_or_else(|_| "cmake".to_string()))
         .arg("--version")
         .output()
-        .unwrap_or_else(|error| panic!("nyx-sys needs CMake {}.{} or later on PATH: {error}", MINIMUM_CMAKE.0, MINIMUM_CMAKE.1));
+        .unwrap_or_else(|error| {
+            panic!("nyx-sys needs CMake {}.{} or later on PATH: {error}", MINIMUM_CMAKE.0, MINIMUM_CMAKE.1)
+        });
     let text = String::from_utf8_lossy(&output.stdout);
     let version = text
         .split_whitespace()
