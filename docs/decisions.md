@@ -134,3 +134,34 @@ first frame after restoring measures zero elapsed time, so the game does not lur
   opens, the system runs without a sink and every call is a silent no-op.
 - **Headless capture.** `LANTERN_CAPTURE_PATH=out.png LANTERN_MAX_FRAMES=n` saves the last
   frame. This is how the scene was checked in the sandbox (Xvfb + lavapipe).
+
+## D-015 Collision and character controller (M4)
+
+- **Casting** is conservative advancement per triangle, using the fact that the distance
+  between a translating convex shape and a triangle is convex in time: Newton steps from the
+  start never pass the first contact, and a non-decreasing distance means no contact at all.
+  Fast moves cannot tunnel (tested at 1000 m per cast through a 2 cm wall).
+- **Skin.** The controller casts a capsule inflated by `skin_width` (1 cm), so stopping at a hit
+  leaves exactly that gap and sliding never re-hits the surface it slides on. Earlier versions
+  pushed out along the normal after each hit; that jittered in corners and was removed.
+- **Ledges and stairs.** A capsule's rounded bottom touching an edge reports a tilted normal
+  that looks like a steep slope. For "can I stand here?" the controller also ray-checks the
+  face just beside the contact (PhysX's controller uses the touched triangle's normal for the
+  same reason). Steps up to `step_height` (0.3 m) are climbed with an up / forward / down probe.
+- **Ties.** When a cast touches several surfaces at the same fraction (a capsule resting where
+  floor meets wall), the one most opposed to the motion wins, so a downward probe reports the
+  floor rather than the wall.
+- **Moving platforms** are kinematic bodies: triangles in local space plus a transform the
+  game sets once per fixed step after `CollisionWorld::begin_step`. A grounded player is
+  carried by the body's step motion before moving itself.
+- **Feel numbers** (in `ControllerSettings::default`): 6 m/s walk, 50 m/s² ground and 20 m/s²
+  air acceleration, 28 m/s² gravity, 1.5 m jump apex with 2.5× gravity after an early release,
+  0.1 s coyote time, 0.12 s jump buffer, 46° walkable limit, 0.3 m step, 0.3 m ground snap.
+  These were chosen to make the demo course comfortable and are measured by tests rather than
+  tuned by feel; Dean should adjust them after playing.
+- **The course test** (`apps/platformer-game/src/course_test.rs`) drives a pilot through the
+  real level at 30, 60, 144 and 240 Hz display rates and requires it to reach the goal at each.
+  This is the M4 gate.
+- **Rules seam.** Game rules (gems, platform path, falling) live behind the `GameRules` trait:
+  they read a `RulesView`, return `RuleCommand`s and receive `RuleEvent`s. `NativeRules` is the
+  Rust version; M6 adds the Nyx version with identical behaviour.

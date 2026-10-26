@@ -206,8 +206,13 @@ impl World {
             entity.local.translation = translation;
         }
         self.update_world_transforms();
-        if let Some(entity) = self.entities.get_mut(id) {
-            entity.previous_world = entity.world;
+        // The entity and everything attached to it jump without interpolating across the gap.
+        let mut pending = vec![id];
+        while let Some(current) = pending.pop() {
+            if let Some(entity) = self.entities.get_mut(current) {
+                entity.previous_world = entity.world;
+                pending.extend_from_slice(&entity.children);
+            }
         }
     }
 

@@ -72,7 +72,6 @@ pub struct Level {
     /// Where the player's feet start.
     pub spawn_position: Vec3,
     /// Falling below this height resets the player to the spawn.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the M5 reset rule reads it"))]
     pub kill_height: f32,
 }
 
