@@ -311,7 +311,7 @@ text path, drawing `DebugValues` grouped by their first path segment.
 3. Host functions act on `EngineState` directly, through an `Rc<RefCell<..>>` each closure
    shares (D-024). A call borrows it only for its own length and never calls into Nyx.
 
-`docs/game-api.md` lists every call and the hooks. A failing hook is logged once, counted and
+`docs/game-api.md` lists every call and the hooks. A failing hook is logged once with its Nyx file, line and callers, counted and
 shown on screen (and in full in the F1 HUD); the game keeps running, and F5 reloads it (D-028).
 A Nyx feature the game needs and can't have yet is a card on the Nyx kanban's Game Engine epic
 (D-030), with a host call as the stopgap.
@@ -362,7 +362,7 @@ Where Lantern meets code it did not write, and what crosses each boundary:
 | SDL3 (window, events, gamepad, audio) | `lantern-sdl-facade` | raw `SDL_*` calls; out: `PlatformEvent`, `WindowMetrics`, `AudioSink` | yes, each call has a `SAFETY` note |
 | SDL3 GPU | `lantern-sdl-gpu` | raw `SDL_*GPU*` calls; in: `RenderWorld`, `MeshData`, `TextureData`; out: handles, `FrameReport` | yes, each call has a `SAFETY` note |
 | Nyx C ABI | `nyx-sys`, `nyx` | bindgen bindings; `nyx` wraps them safely | yes, inside `nyx` only |
-| Nyx game | `lantern-game-host` | host calls (`docs/game-api.md`), `i64` handles, `Vec3`/`Vec2` host objects, five hooks | none (`forbid(unsafe_code)`) |
+| Nyx game | `lantern-game-host` | host calls (`docs/game-api.md`), `i64` handles, `Vec3`/`Vec2` value types with operators, five hooks | none (`forbid(unsafe_code)`) |
 | WGSL → SPIR-V/MSL | `lantern-sdl-gpu` build script | naga at build time; shader bytes embedded | none |
 | PNG, glTF | `lantern-renderer-3d` | file bytes in, `TextureData` / `MeshData` out | none |
 | glam | everywhere | `Vec3`, `Quat`, `Mat4` values | none |
@@ -384,5 +384,4 @@ What the prototype does not do, on purpose or for lack of time (ideas for later 
 - Controller feel numbers are measured by tests, not tuned by hand.
 - One level (`assets/worlds/course.world.json`); the game loads it by path.
 - No shadows besides the blob shadow, no skinned animation, no transparency sorting.
-- Nyx hook run-time errors report the error but no line number (D-029, GAME-F01-T05).
 - F5 restarts the game rather than keeping its state (D-028).

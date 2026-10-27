@@ -9,15 +9,18 @@ Rules that hold for every call:
 
 - **Handles are `i64`.** Entities, meshes and textures are generational handles packed into 64
   bits. A script can't hold a dangling pointer: a stale handle throws `Error:::NotFound`.
-- **Vectors are `Vec3` and `Vec2` host objects.** They are immutable; every operation returns a
-  new one. Store one in a `~` field with `v.Copy()` (until Nyx kanban GAME-F01-T01).
+- **Vectors are `Vec3` and `Vec2` values.** Build one with braces (`Vec3 { x: 1.0f, y: 2.0f }`,
+  missing fields are 0), read and write `x`, `y` and `z` as fields, and get a copy at every
+  binding, argument and return. Arithmetic is operators with the vector on the left:
+  `a + b`, `a - b`, `v * s`, `v / s` and `-v`.
 - **Colours are strings**: `"RRGGBB"` or `"RRGGBBAA"`, with or without `#`.
 - **Paths are relative to the assets directory** (`game.json`'s `assets`, or `LANTERN_ASSETS`).
 - **Everything a game makes is released on reload and on exit**: entities, meshes, textures,
   materials, music, input definitions and the game's debug values.
 - A call that can't do what it was asked throws `Error:::NotFound` (a missing file, entity or
-  property) or `Error:::Unknown` (anything else). The hook fails, the engine shows the error and
-  keeps running, and F5 reloads the game.
+  property) or `Error:::Unknown` (anything else). The hook fails, the engine shows the error with
+  the Nyx file and line it came from and the calls that led there, keeps running, and F5 reloads
+  the game.
 
 ## Hooks
 
@@ -168,12 +171,14 @@ The engine fills the `Frame`, `Script`, `Renderer`, `World`, `Audio` and `Errors
 
 | Call | |
 |---|---|
-| `Vec3:::New(x, y, z)`, `Zero()`, `Up()`, `Down()`, `FromYaw(radians)` | |
-| `v.X() / Y() / Z()`, `Add`, `Sub`, `Scale`, `Cross`, `Dot`, `Normalized`, `Negated`, `Copy` | |
+| `Vec3 { x, y, z }`, `Vec3:::Zero()`, `Up()`, `Down()`, `FromYaw(radians)` | fields `x`, `y`, `z` |
+| `a + b`, `a - b`, `v * s`, `v / s`, `-v` | operators, the vector on the left |
+| `v.Cross(other)`, `Dot(other)`, `Normalized()` | |
 | `v.Horizontal()`, `WithX / WithY / WithZ`, `ClampLength(max)`, `Lerp(other, t)`, `Clamp(min, max)` | |
 | `v.Length()`, `LengthSquared()`, `DistanceTo(other)`, `Yaw()` | |
-| `Vec2:::New(x, y)`, `Zero()`; `X`, `Y`, `Length`, `Add`, `Scale`, `ClampLength`, `Normalized` | |
+| `Vec2 { x, y }`, `Vec2:::Zero()`; the same operators; `Length`, `ClampLength`, `Normalized` | fields `x`, `y` |
 | `Angle:::Wrap(radians)` | to -π..π |
-| `Angle:::Atan2(y, x)`, `Angle:::ToDegrees(radians)` | until `Math:::atan2` exists (GAME-F01-T03) |
+| `Angle:::ToDegrees(radians)` | |
 
-Nyx's own `Math` (`sin`, `cos`, `sqrt`, `min`, `max`, `clamp`, `TAU`, ...) needs no host.
+Nyx's own `Math` (`sin`, `cos`, `tan`, `atan2`, `asin`, `acos`, `sqrt`, `min`, `max`, `clamp`,
+`TAU`, ...) needs no host.
