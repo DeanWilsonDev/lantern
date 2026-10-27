@@ -11,10 +11,6 @@ Ideas that are out of scope for the prototype, kept here so they don't creep in.
 - A BVH instead of the uniform grid when levels get large.
 - Automatic Nyx hot reload on file change (F5 restarts the game by hand today), keeping the
   game's state across the reload (Nyx kanban `CABI-F05-T05`).
-- File and line numbers for run-time errors raised inside Nyx hooks (`GAME-F01-T05`).
-- Hook discovery through the C ABI instead of scanning the source text (`GAME-F01-T04`).
-- Vectors as value aggregates with operators, once Nyx's C ABI has them (`GAME-F01-T01`,
-  `GAME-F01-T02`).
 - Input rebinding UI and saved settings.
 
 ## Recommended next experiments

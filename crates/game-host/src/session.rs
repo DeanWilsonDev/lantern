@@ -53,6 +53,8 @@ pub struct ScriptSession {
     entry_path: PathBuf,
     /// Time spent inside hooks since the last `take_script_time`, for the HUD.
     script_time: Duration,
+    /// Time spent inside each hook (in `GameHook::ALL` order) and how often it ran, since loading.
+    hook_totals: [(Duration, u64); 5],
 }
 
 impl Drop for ScriptSession {
@@ -73,8 +75,6 @@ impl ScriptSession {
         state: &SharedState,
     ) -> Result<ScriptSession, String> {
         let entry_path = scripts_directory.join(entry_file);
-        let source =
-            std::fs::read_to_string(&entry_path).map_err(|error| format!("{}: {error}", entry_path.display()))?;
         let runtime_error = |error: nyx::Error| format!("nyx: {error}");
         let runtime = Runtime::new().map_err(runtime_error)?;
         let types = SharedTypes::default();
@@ -92,14 +92,21 @@ impl ScriptSession {
                 });
             }
         };
-        let defined_hooks = GameHook::ALL
-            .into_iter()
-            .filter(|hook| {
-                let name = hook.method_name();
-                source.contains(&format!("{name}~:")) || source.contains(&format!("{name}::"))
-            })
-            .collect();
-        Ok(ScriptSession { program, runtime, types, defined_hooks, entry_path, script_time: Duration::ZERO })
+        let mut defined_hooks = Vec::new();
+        for hook in GameHook::ALL {
+            if program.defines_method(hook.method_name()).map_err(runtime_error)? {
+                defined_hooks.push(hook);
+            }
+        }
+        Ok(ScriptSession {
+            program,
+            runtime,
+            types,
+            defined_hooks,
+            entry_path,
+            script_time: Duration::ZERO,
+            hook_totals: [(Duration::ZERO, 0); 5],
+        })
     }
 
     pub fn entry_path(&self) -> &Path {
@@ -115,7 +122,7 @@ impl ScriptSession {
         if !self.defines(hook) {
             return Ok(());
         }
-        let failed = |error: nyx::Error| format!("{}: {error}", hook.method_name());
+        let failed = |error: nyx::Error| describe_hook_error(hook, &error);
         let values = arguments
             .iter()
             .map(|argument| match argument {
@@ -125,11 +132,30 @@ impl ScriptSession {
             .map_err(failed)?;
         let started = Instant::now();
         let result = self.program.call_application_method(hook.method_name(), &values);
-        self.script_time += started.elapsed();
+        let elapsed = started.elapsed();
+        self.script_time += elapsed;
+        let total = &mut self.hook_totals[hook as usize];
+        total.0 += elapsed;
+        total.1 += 1;
         result.map(|_| ()).map_err(failed)
+    }
+
+    /// Total time inside `hook` since loading, and how many calls that was.
+    pub fn hook_total(&self, hook: GameHook) -> (Duration, u64) {
+        self.hook_totals[hook as usize]
     }
 
     pub fn take_script_time(&mut self) -> Duration {
         std::mem::take(&mut self.script_time)
     }
+}
+
+/// `OnFixedUpdate: NYX_ERROR_FAILURE: Error::NotFound: ... at Player.Step (player.nyx:48:9)`, then
+/// one `called from` line per Nyx caller.
+fn describe_hook_error(hook: GameHook, error: &nyx::Error) -> String {
+    let mut text = format!("{}: {error}", hook.method_name());
+    for frame in error.stack.iter().skip(1) {
+        text.push_str(&format!("\n    called from {frame}"));
+    }
+    text
 }

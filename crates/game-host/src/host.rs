@@ -83,6 +83,10 @@ impl GameHost {
         self.script_error_count
     }
 
+    pub fn script_session(&self) -> Option<&ScriptSession> {
+        self.session.as_ref()
+    }
+
     pub fn is_running_script(&self) -> bool {
         self.session.is_some()
     }

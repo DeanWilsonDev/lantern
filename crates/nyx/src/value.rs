@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use nyx_sys as sys;
 
-use crate::error::{Error, Result, Status};
+use crate::error::{Error, Result, StackFrame, Status};
 use crate::raw::borrowed_bytes;
 use crate::runtime::{Runtime, RuntimeInner};
 
@@ -150,6 +150,17 @@ impl Value {
 
     pub fn error_message(&self) -> Result<&str> {
         self.read_text(sys::nyx_value_error_message)
+    }
+
+    pub fn error_stack(&self) -> Result<Vec<StackFrame>> {
+        let count = self.read(sys::nyx_value_error_frame_count)?;
+        let mut stack = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut raw = unsafe { std::mem::zeroed::<sys::nyx_stack_frame>() };
+            self.runtime.check(unsafe { sys::nyx_value_error_frame(self.raw(), index, &mut raw) })?;
+            stack.push(unsafe { StackFrame::from_raw(&raw) });
+        }
+        Ok(stack)
     }
 }
 

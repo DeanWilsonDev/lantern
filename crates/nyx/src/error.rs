@@ -64,16 +64,46 @@ impl Status {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackFrame {
+    pub function: String,
+    pub path: String,
+    pub line: i32,
+    pub column: i32,
+}
+
+impl StackFrame {
+    pub(crate) unsafe fn from_raw(raw: &sys::nyx_stack_frame) -> StackFrame {
+        StackFrame {
+            function: crate::raw::owned_string(raw.function),
+            path: crate::raw::owned_string(raw.path),
+            line: raw.line,
+            column: raw.column,
+        }
+    }
+}
+
+impl fmt::Display for StackFrame {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} ({}:{}:{})", self.function, self.path, self.line, self.column)
+    }
+}
+
 #[derive(Clone)]
 pub struct Error {
     pub status: Status,
     pub message: String,
     pub failure: Option<Value>,
+    pub stack: Vec<StackFrame>,
 }
 
 impl Error {
     pub(crate) fn new(status: Status, message: impl Into<String>) -> Error {
-        Error { status, message: message.into(), failure: None }
+        Error { status, message: message.into(), failure: None, stack: Vec::new() }
+    }
+
+    pub fn location(&self) -> Option<&StackFrame> {
+        self.stack.first()
     }
 
     pub fn is_failure(&self) -> bool {
@@ -88,13 +118,18 @@ impl fmt::Debug for Error {
             .field("status", &self.status)
             .field("message", &self.message)
             .field("has_failure", &self.failure.is_some())
+            .field("stack", &self.stack)
             .finish()
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.status.name(), self.message)
+        write!(formatter, "{}: {}", self.status.name(), self.message)?;
+        if let Some(frame) = self.location() {
+            write!(formatter, " at {frame}")?;
+        }
+        Ok(())
     }
 }
 

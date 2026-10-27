@@ -193,7 +193,7 @@ the engine's (D-027).
 ## D-017 Nyx scripting layer (M6)
 
 Superseded on 2026-10-27 by D-023 to D-030: the snapshot, the commands, the native rules and the
-`nyx-scripting` feature are gone. The note on hook error locations still holds (D-029).
+`nyx-scripting` feature are gone, and hook errors now carry their Nyx location (D-029).
 
 - **Snapshot in, commands out.** A script never holds a reference into the engine. Before each
   hook, `ScriptedRules` builds a `ScriptSnapshot` (time, pressed and held actions, entity ids
@@ -294,20 +294,22 @@ textures, materials, music, input definitions, its debug values) and loads the g
 across a reload: the C ABI has no hot reload yet (Nyx kanban `CABI-F05-T05`). The headless test
 `reloading_the_game_releases_what_it_made` reloads three times and checks that nothing leaks.
 
-## D-029 Vectors are host objects
+## D-029 Vectors are host value types
 
-`Vec3` and `Vec2` are registered host types with methods (`Add`, `Scale`, `Length`, ...),
-immutable, copied in and out. The C ABI can't register a value aggregate yet (`GAME-F01-T01`),
-so a vector can't be built with braces, and storing a `:` one in a `~` field needs `v.Copy()`.
-Nyx has no operators for host types (`GAME-F01-T02`, a question for Dean) and no `Math:::atan2`
-(`GAME-F01-T03`, stopgap `Angle:::Atan2`). Run-time hook errors still carry no location
-(`GAME-F01-T05`). Optional hooks are still found by searching the entry file's text
-(`GAME-F01-T04`).
+`Vec3` and `Vec2` are value types registered through the C ABI's value layouts
+(`register_value_type` in the `nyx` crate): scripts build them with braces, read and write
+`x`, `y` and `z` as fields, and get a copy at every boundary. Arithmetic is operators the host
+declares (`+`, `-`, `*`, `/` and unary `-`, with the vector on the left), the answer Dean chose
+for `GAME-F01-T02`: host value types may declare operators, Nyx types may not (yet). Angles use
+Nyx's own `Math:::atan2`. Run-time hook errors carry the Nyx file, line and calling functions,
+and optional hooks are found with `Program::defines_method`.
 
 ## D-030 Nyx gaps go on the Game Engine epic
 
 The gaps found while porting are cards under the Nyx kanban's `[proto] Game Engine` epic in
 fearless-hq (`game-engine`, feature `GAME-F01`), each naming the workaround Lantern uses today.
 Two existing C ABI cards that Lantern also needs (`CABI-F05-T03` callables, `CABI-F05-T05` hot
-reload) have a comment saying so. Measured script cost: about 0.8 to 1.3 ms of Nyx per frame
-for the platformer (`GAME-F01-T06`).
+reload) have a comment saying so. Measured script cost (`GAME-F01-T06`,
+`cargo run --release -p lantern-game-host --example script_cost`): 0.24 ms of Nyx per frame on
+average for the platformer, headless in the cloud container on 2026-10-27, with `OnFixedUpdate`
+about 150 µs, `OnUpdate` 40 µs and `OnRender` 50 µs per call.

@@ -193,3 +193,37 @@ fn walking_into_a_gem_collects_it() {
     let gems = debug_value(&host, "Game/Gems");
     assert_eq!(gems, "1 / 6", "the player at {position} collected gem_0");
 }
+
+#[test]
+fn a_hook_error_names_the_nyx_line_and_its_callers() {
+    let directory = std::env::temp_dir().join(format!("lantern-hook-error-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("main.nyx"),
+        "Broken :: class : Application {\npublic:\n    Run :: () -> void { }\n\
+         \x20   OnFixedUpdate~: (dt: f32) -> void {\n        World:::SetYaw(Target(), dt);\n    }\n\
+         \x20   Target :: () -> i64 {\n        return World:::Find(\"missing\");\n    }\n}\n",
+    )
+    .unwrap();
+    let state = EngineState::new(
+        Box::new(HeadlessRenderer::default()),
+        AudioSystem::new(None),
+        None,
+    )
+    .expect("engine state");
+    let source = lantern_game_host::ScriptSource {
+        scripts_directory: directory.clone(),
+        entry_file: "main.nyx".to_string(),
+        application_class: "Broken".to_string(),
+    };
+    let mut host = GameHost::new(state, source);
+    let mut frame_loop = FrameLoop::new(InputRouter::new(Default::default(), Default::default()));
+    let mut platform = ScriptedPlatform::default();
+    run_frames(&mut frame_loop, &mut platform, &mut host, 10);
+    let error = host.script_error().expect("the hook fails").to_string();
+    std::fs::remove_dir_all(&directory).ok();
+    assert!(error.starts_with("OnFixedUpdate: "), "{error}");
+    assert!(error.contains(" at Broken.Target ("), "{error}");
+    assert!(error.contains("main.nyx:8:9)"), "{error}");
+    assert!(error.contains("\n    called from Broken.OnFixedUpdate ("), "{error}");
+}

@@ -8,8 +8,8 @@ public:
 
     // A look delta in radians (+x turns right, +y looks up).
     Look~: (delta: Vec2) -> void {
-        yaw = Angle:::Wrap(yaw - delta.X());
-        pitch = Math:::clamp(pitch + delta.Y(), MIN_PITCH, MAX_PITCH);
+        yaw = Angle:::Wrap(yaw - delta.x);
+        pitch = Math:::clamp(pitch + delta.y, MIN_PITCH, MAX_PITCH);
     }
 
     Orbit~: (radians: f32) -> void {
@@ -24,29 +24,30 @@ public:
 
     // The horizontal directions movement input is mapped onto.
     Forward :: () -> Vec3 {
-        return Vec3:::New(-Math:::sin(yaw), 0.0f, -Math:::cos(yaw));
+        return Vec3 { x: -Math:::sin(yaw), z: -Math:::cos(yaw) };
     }
 
     Right :: () -> Vec3 {
-        return Vec3:::New(Math:::cos(yaw), 0.0f, -Math:::sin(yaw));
+        return Vec3 { x: Math:::cos(yaw), z: -Math:::sin(yaw) };
     }
 
     // Places the camera behind `playerFeet`, pulled in so nothing sits between the pivot and the
     // lens. Moving in is instant; easing back out takes RETURN_SPEED.
     Follow~: (playerFeet: Vec3, frameSeconds: f32) -> void {
-        pivot := playerFeet.Add(Vec3:::New(0.0f, PIVOT_HEIGHT, 0.0f));
-        backward := Vec3:::New(
-            Math:::cos(pitch) * Math:::sin(yaw),
-            -Math:::sin(pitch),
-            Math:::cos(pitch) * Math:::cos(yaw));
-        allowedDistance := when Physics:::SphereCast(COLLISION_RADIUS, pivot, backward.Scale(distance)) {
+        pivot := playerFeet + Vec3 { y: PIVOT_HEIGHT };
+        backward := Vec3 {
+            x: Math:::cos(pitch) * Math:::sin(yaw),
+            y: -Math:::sin(pitch),
+            z: Math:::cos(pitch) * Math:::cos(yaw)
+        };
+        allowedDistance := when Physics:::SphereCast(COLLISION_RADIUS, pivot, backward * distance) {
             fraction: f32 -> Math:::max(distance * fraction, MIN_DISTANCE),
             null -> distance
         };
         currentDistance = allowedDistance < currentDistance
             ? allowedDistance
             : Math:::min(currentDistance + RETURN_SPEED * frameSeconds, allowedDistance);
-        Camera:::LookAt(pivot.Add(backward.Scale(currentDistance)), pivot);
+        Camera:::LookAt(pivot + backward * currentDistance, pivot);
     }
 
 private:

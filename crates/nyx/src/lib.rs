@@ -9,8 +9,8 @@ mod runtime;
 mod value;
 
 pub use diagnostic::{Diagnostic, Severity};
-pub use error::{CallbackError, CallbackResult, Error, Result, Status};
-pub use host::{CallContext, HostType, HostTypeBuilder, Receiver, PANIC_VARIANT};
+pub use error::{CallbackError, CallbackResult, Error, Result, StackFrame, Status};
+pub use host::{CallContext, HostType, HostTypeBuilder, Receiver, ValueField, PANIC_VARIANT};
 pub use program::Program;
 pub use runtime::Runtime;
 pub use value::{Kind, Value};
