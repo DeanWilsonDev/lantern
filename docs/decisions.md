@@ -226,7 +226,81 @@ Superseded on 2026-10-27 by D-023 to D-030: the snapshot, the commands, the nati
   deliberately broken copy of the script (an `i32 += 1.0f`) that shows the diagnostic on screen
   and falls back to the native rules without crashing.
 
-D-018 to D-022 belong to the world editor's branch (`claude/project-thread-i36u3e`).
+## D-018 The world file is the seam between the game and the editor
+
+- **One JSON file per world** (`assets/worlds/*.world.json`), read and written only through
+  `lantern-world-format`. An entity has a stable `u64` id, a name, an optional parent, a `kind`
+  string, a transform (position, Euler degrees applied Y then X then Z, scale), an optional
+  shape (`Box` or `Ramp`), an optional material, tint and collider, and free-form `properties`
+  (bool, number, text or 3-vector).
+- **The format doesn't know the game.** `kind` and `properties` are plain strings and values.
+  The game decides what `gem` or `period_seconds` means. Nyx scripts read them through the game
+  host. The editor only displays and edits them.
+- **Saved files are diffable.** Keys keep their order, numeric arrays stay on one line, floats
+  print in their shortest form, and saving is atomic (write a temporary file, then rename).
+  `cargo run -p lantern-world-format --example format-world` rewrites a file in that form.
+- **The demo course was exported** from the old `level.rs` into `course.world.json` (29
+  entities), so the game and the editor start from the same data. Switching the game to load it
+  belongs to the "move all game code into Nyx" work, not the editor.
+- **Additive changes only** while the game host is being moved over: new optional fields get
+  defaults, and `format_version` changes for anything else.
+
+## D-019 The game describes itself to the editor with a palette
+
+- `assets/editor/palette.json` lists templates (for the Add buttons), marker styles (how to draw
+  a shapeless entity of a given kind: cube, sphere, gem, capsule or plane, with a colour) and
+  material names. The editor has no game kinds compiled in.
+- A missing or broken palette falls back to generic blocks, ramps and markers, so the editor
+  can open any world.
+- **Why:** this keeps the editor isolated, which Umbra's planned editor also needs. A different
+  game ships a different palette and uses the same editor binary.
+
+## D-020 The editor's split: Rust logic and viewport, Nyx/Chaos/Cosmos panels
+
+- **`lantern-editor-core`** holds every editing rule (undo history with coalescing and preview,
+  selection, picking, gizmos, snapping, inspector fields, outline, input state machine, camera)
+  with no window or GPU. It has 25 tests.
+- **`lantern-editor-backend`** adds the off-screen renderer and a C API, built as a static
+  library.
+- **`apps/world-editor`** is a Penumbra application built like Pharos: a short C++ `main`, Nyx
+  host functions that wrap the C API one to one, one native widget for the viewport, and the
+  toolbar, outliner, inspector and status bar in `.chaos`, `.cosmos` and `.nyx`.
+- **Why C++ in the middle:** Penumbra, Chaos's runtime and penumbra-ui-backend are C++, and
+  Dean asked for the editor front end in Nyx, Chaos and Cosmos with a Rust backend. A C API is
+  the narrowest seam between the two languages, and Lantern already uses one for Nyx (D-017).
+- **Polling, not callbacks.** The front end reads `lantern_editor_revision()` every frame and
+  refreshes its signals only when it changes. No callback crosses the C boundary, so there is
+  no re-entrancy between Rust and Nyx.
+- **Isolation:** the editor doesn't link the game, and the game doesn't link the editor. Both
+  depend on `lantern-world-format` and the shared assets only.
+
+## D-021 The viewport renders off-screen and is copied into a Penumbra texture
+
+- `GpuRenderer::new_offscreen` opens an SDL GPU device without a window. `render_offscreen`
+  draws the `RenderWorld` into a colour and depth target, copies the colour into a transfer
+  buffer, waits on a fence and returns RGBA8 sRGB pixels. Targets are reused until the size
+  changes.
+- `LanternViewportWidget` calls `lantern_editor_render` at the widget's physical size, uploads
+  the pixels into a streaming `SDL_Texture` and draws it. Input in logical pixels is scaled to
+  physical pixels before it goes to Rust.
+- **Why a read-back instead of sharing a GPU texture:** Penumbra draws with `SDL_Renderer`, and
+  the editor's 3D view uses SDL GPU. SDL 3 has no supported way to share a texture between the
+  two. The copy is about 6 MB a frame for a 1600×900 viewport and needs no changes to Penumbra. Sharing
+  the texture is listed as future work if profiling shows the copy matters.
+- The renderer is opened lazily on the first frame. If no GPU is available, the panels still
+  work and the status bar says why the viewport is blank.
+
+## D-022 The editor links the system SDL3, and the C API's rules
+
+- The backend's default feature is `system-sdl` (pkg-config), unlike the game's bundled SDL
+  (D-003). Penumbra links the system SDL3, and two SDL copies in one process would each have
+  their own global state.
+- The C API's rules are in `ffi.rs` and `docs/editor.md`: one thread, borrowed input strings,
+  returned strings valid until the next string call, `int64_t` ids with 0 for none, and no panic
+  crosses the boundary (it is caught and shown in the status line).
+- **Keyboard:** Penumbra's `InputState` names only a few keys, so the viewport widget reads
+  `SDL_GetKeyboardState` while the pointer is over it (or a drag is under way) and sends key
+  transitions to Rust. Letters go by physical position, so WASD flying works on any layout.
 
 ## D-023 All game code is Nyx; engine code is Rust (2026-10-27)
 

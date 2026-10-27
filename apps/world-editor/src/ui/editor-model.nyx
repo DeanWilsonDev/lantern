@@ -1,0 +1,127 @@
+OutlineRowItem :: data {
+    id: i64;
+    key: string;
+    name: string;
+    kind: string;
+    depth: i32;
+    selected: bool;
+}
+
+InspectorFieldItem :: data {
+    rowKey: string;
+    key: string;
+    label: string;
+    kind: string;
+    value: string;
+    choices: Array<string>;
+}
+
+ToolbarState :: data {
+    tool: string;
+    snap: bool;
+    canUndo: bool;
+    canRedo: bool;
+    hasSelection: bool;
+}
+
+TemplateItem :: data {
+    id: string;
+    label: string;
+}
+
+EditorModel :: namespace {
+    FIELD_KEY: i32 : 0;
+    FIELD_LABEL: i32 : 1;
+    FIELD_GROUP: i32 : 2;
+    FIELD_VALUE: i32 : 3;
+    FIELD_KIND: i32 : 4;
+    TEMPLATE_ID: i32 : 0;
+    TEMPLATE_LABEL: i32 : 1;
+
+    OutlineRows :: () -> Array<OutlineRowItem> {
+        rows~ Array<OutlineRowItem> = [];
+        count := editorOutlineCount();
+        for row~ i32 = 0; row < count; row++ {
+            id := editorOutlineId(row);
+            rows.add(OutlineRowItem {
+                id: id,
+                key: `${id}`,
+                name: editorEntityName(id),
+                kind: editorEntityKind(id),
+                depth: editorOutlineDepth(row),
+                selected: editorIsSelected(id)
+            });
+        }
+        return rows;
+    }
+
+    InspectorFields :: (version: i32) -> Array<InspectorFieldItem> {
+        fields~ Array<InspectorFieldItem> = [];
+        count := editorFieldCount();
+        currentGroup~ string = "";
+        for index~ i32 = 0; index < count; index++ {
+            group := editorField(index, FIELD_GROUP);
+            if group != currentGroup {
+                currentGroup = group;
+                fields.add(InspectorFieldItem {
+                    rowKey: `${version}-group-${group}`,
+                    key: "",
+                    label: group,
+                    kind: "group",
+                    value: "",
+                    choices: []
+                });
+            }
+            key := editorField(index, FIELD_KEY);
+            fields.add(InspectorFieldItem {
+                rowKey: `${version}-${key}`,
+                key: key,
+                label: editorField(index, FIELD_LABEL),
+                kind: editorField(index, FIELD_KIND),
+                value: editorField(index, FIELD_VALUE),
+                choices: Choices(index)
+            });
+        }
+        return fields;
+    }
+
+    Choices :: (index: i32) -> Array<string> {
+        choices~ Array<string> = [];
+        count := editorFieldChoiceCount(index);
+        for choice~ i32 = 0; choice < count; choice++ {
+            choices.add(editorFieldChoice(index, choice));
+        }
+        return choices;
+    }
+
+    CurrentToolbar :: () -> ToolbarState {
+        return ToolbarState {
+            tool: editorTool(),
+            snap: editorSnap(),
+            canUndo: editorCanUndo(),
+            canRedo: editorCanRedo(),
+            hasSelection: editorSelectionCount() > 0
+        };
+    }
+
+    Templates :: () -> Array<TemplateItem> {
+        templates~ Array<TemplateItem> = [];
+        count := editorTemplateCount();
+        for index~ i32 = 0; index < count; index++ {
+            templates.add(TemplateItem {
+                id: editorTemplate(index, TEMPLATE_ID),
+                label: editorTemplate(index, TEMPLATE_LABEL)
+            });
+        }
+        return templates;
+    }
+
+    InspectorTitle :: () -> string {
+        count := editorSelectionCount();
+        if count == 0 {
+            return "Nothing selected";
+        }
+        name := editorEntityName(editorPrimarySelection());
+        return count == 1 ? name : `${name} (+${count - 1} more)`;
+    }
+}

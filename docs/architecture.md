@@ -45,8 +45,14 @@ crates/
                                      colliders, properties; build_pieces (new)
   game-host/     lantern-game-host   the seam: EngineState, GameHost (hooks), the engine API for
                                      Nyx (api/), RenderBackend + HeadlessRenderer, run() (new)
+  editor-core/   lantern-editor-core the world editor's logic: document, undo, selection,
+                                     gizmos, inspector, camera, input (new)
+  editor-backend/ lantern-editor-backend EditorSession + off-screen viewport behind a C API
+                                     (include/lantern_editor.h), built as a static library (new)
 apps/
   lantern/                           the runner: `lantern [game-directory]` (composition root)
+  world-editor/                      the world editor: Penumbra shell (C++, CMake) with panels
+                                     in Nyx, Chaos and Cosmos; see docs/editor.md
 games/
   platformer/                        the demo game, all Nyx (Umbra src/snake-game)
     game.json                        title, entry file, Application class, assets directory
@@ -315,6 +321,14 @@ text path, drawing `DebugValues` grouped by their first path segment.
 shown on screen (and in full in the F1 HUD); the game keeps running, and F5 reloads it (D-028).
 A Nyx feature the game needs and can't have yet is a card on the Nyx kanban's Game Engine epic
 (D-030), with a host call as the stopgap.
+
+## World editor
+
+The editor is a separate program that edits `assets/worlds/*.world.json`. It shares only
+`lantern-world-format` and the assets with the game. Its logic is `lantern-editor-core`, its
+viewport is drawn off-screen by `lantern-editor-backend`, and its panels are Nyx, Chaos and
+Cosmos on Penumbra (`apps/world-editor`). The game's content reaches it as data through
+`assets/editor/palette.json`. See `docs/editor.md` and D-018 to D-022.
 
 ## Rewrite-in-another-language checklist
 
