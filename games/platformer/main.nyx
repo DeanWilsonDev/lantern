@@ -1,0 +1,207 @@
+Autopilot :: import Autopilot;
+CollisionView :: import CollisionView;
+GameAssets :: import GameAssets;
+GameEvent :: import GameEvent;
+GameEvents :: import GameEvents;
+GameRules :: import GameRules;
+GameState :: import GameState;
+GemSystem :: import GemSystem;
+Hud :: import Hud;
+InputSettings :: import InputSettings;
+LevelScene :: import LevelScene;
+MainMenu :: import MainMenu;
+MainMenuChoice :: import MainMenuChoice;
+MovingPlatform :: import MovingPlatform;
+PauseMenu :: import PauseMenu;
+PauseMenuChoice :: import PauseMenuChoice;
+Player :: import Player;
+PlayerTuning :: import PlayerTuning;
+ThirdPersonCamera :: import ThirdPersonCamera;
+
+// The Lantern platformer (Umbra SnakeApplication). The engine calls the hooks below; everything
+// the game does starts here. Per fixed step: platforms move, the player moves through the
+// collision world, then the step's events go to the rules in the order they happened.
+Platformer :: class : Application {
+public:
+    Run :: () -> void { }
+
+    OnStart~: () -> void {
+        InputSettings:::Configure();
+        assets.Load();
+        Renderer:::SetClearColor("87B5E0");
+        Renderer:::SetFog(30.0f, 90.0f);
+        isAutoplay = Engine:::Flag("LANTERN_AUTOPLAY");
+        showCollisionView = Engine:::Flag("LANTERN_COLLISION_VIEW");
+        StartLevel();
+        Audio:::PlayMusic("theme");
+    }
+
+    OnFixedUpdate~: (dt: f32) -> void {
+        when state <GameState> {
+            Playing -> { Simulate(dt); },
+            (MainMenu || Paused)
+        }
+    }
+
+    OnUpdate~: (frameSeconds: f32) -> void {
+        if Input:::IsPressed(InputSettings:::TOGGLE_COLLISION_VIEW) {
+            showCollisionView = !showCollisionView;
+        }
+        when state <GameState> {
+            MainMenu -> {
+                camera.Orbit(MAIN_MENU_ORBIT_SPEED * frameSeconds);
+                if isAutoplay {
+                    SetState(GameState:::Playing);
+                }
+            },
+            Playing -> { UpdatePlaying(frameSeconds); },
+            Paused -> {
+                if Input:::IsPressed(InputSettings:::PAUSE) {
+                    SetState(GameState:::Playing);
+                }
+            }
+        }
+        PublishDebugValues();
+    }
+
+    OnRender~: (alpha: f32, frameSeconds: f32) -> void {
+        camera.Follow(World:::InterpolatedPosition(player.root, alpha), frameSeconds);
+        if showCollisionView {
+            CollisionView:::Draw(player.controller, level.gems);
+        }
+        when state <GameState> {
+            MainMenu -> { RunMainMenu(); },
+            Playing -> {
+                Hud:::DrawStatus(rules.statusText);
+                if rules.IsShowingMessage() {
+                    Hud:::DrawMessage(rules.message);
+                }
+            },
+            Paused -> {
+                Hud:::DrawStatus(rules.statusText);
+                RunPauseMenu();
+            }
+        }
+    }
+
+    OnExit~: () -> void {
+        Audio:::StopMusic();
+        level.Unload();
+    }
+
+private:
+    static LEVEL_PATH :: "worlds/course.world.json";
+    static MAIN_MENU_ORBIT_SPEED :: 0.15f;    // radians per second behind the title screen
+
+    assets~ GameAssets = new GameAssets();
+    level~ LevelScene = new LevelScene();
+    player~ Player = new Player();
+    camera~ ThirdPersonCamera = new ThirdPersonCamera();
+    gemSystem~ GemSystem = new GemSystem();
+    rules~ GameRules = new GameRules();
+    events~ GameEvents = new GameEvents();
+    state~ GameState = GameState:::MainMenu;
+    simulationSeconds~ f32 = 0.0f;
+    isAutoplay~ bool = false;
+    showCollisionView~ bool = false;
+
+    StartLevel~: () -> void {
+        loaded := level.Load(LEVEL_PATH, assets.gemMesh);
+        guard loaded throw;
+        player.Spawn(assets, level.spawnPosition);
+        gemSystem.Clear();
+        events.Drain();
+        simulationSeconds = 0.0f;
+        camera.ResetBehind(0.0f);
+        rules.Start(level);
+    }
+
+    SetState~: (next: GameState) -> void {
+        state = next;
+        Ui:::ResetFocus();
+        isPlaying := when next <GameState> { Playing -> true, default -> false };
+        Screen:::SetMouseCaptured(isPlaying && !isAutoplay);
+    }
+
+    Simulate~: (dt: f32) -> void {
+        simulationSeconds += dt;
+        for platform: MovingPlatform in level.platforms {
+            platform.Move(simulationSeconds);
+        }
+
+        stick := isAutoplay ? Autopilot:::Stick() : Input:::Vector(InputSettings:::MOVE);
+        jumpPressed := isAutoplay ? Autopilot:::JumpPressed(simulationSeconds) : Input:::IsPressed(InputSettings:::JUMP);
+        jumpHeld := isAutoplay ? Autopilot:::JumpHeld(simulationSeconds) : Input:::IsHeld(InputSettings:::JUMP);
+        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, dt);
+
+        if step.Jumped() {
+            events.Push(GameEvent:::PlayerJumped);
+        }
+        if step.Landed() {
+            events.Push(GameEvent:::PlayerLanded(step.LandingSpeed()));
+        }
+        controller := player.controller;
+        gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        if player.FeetPosition().Y() < level.killHeight {
+            events.Push(GameEvent:::PlayerFell);
+        }
+        if !isAutoplay && Input:::IsPressed(InputSettings:::RESET) {
+            events.Push(GameEvent:::ResetPressed);
+        }
+        for event: GameEvent in events.Drain() {
+            rules.Handle(event, level, player, camera);
+        }
+        gemSystem.Animate(level.gems, simulationSeconds);
+    }
+
+    UpdatePlaying~: (frameSeconds: f32) -> void {
+        rules.Tick(frameSeconds);
+        if Input:::IsPressed(InputSettings:::PAUSE) {
+            SetState(GameState:::Paused);
+            return;
+        }
+        if Input:::IsPressed(InputSettings:::CAPTURE_MOUSE) {
+            Screen:::SetMouseCaptured(true);
+        }
+        stickLook := Input:::Vector(InputSettings:::LOOK_STICK).Scale(frameSeconds * PlayerTuning:::LOOK_STICK_SPEED);
+        camera.Look(Input:::Vector(InputSettings:::LOOK_MOUSE).Add(stickLook));
+    }
+
+    RunMainMenu~: () -> void {
+        when MainMenu:::Show() <MainMenuChoice> {
+            Play -> { SetState(GameState:::Playing); },
+            Quit -> { Engine:::Quit(); },
+            Nothing
+        }
+    }
+
+    RunPauseMenu~: () -> void {
+        when PauseMenu:::Show() <PauseMenuChoice> {
+            Resume -> { SetState(GameState:::Playing); },
+            Restart -> {
+                StartLevel();
+                SetState(GameState:::Playing);
+            },
+            ToggleDebugHud -> { Debug:::SetHudVisible(!Debug:::IsHudVisible()); },
+            MainMenu -> {
+                StartLevel();
+                SetState(GameState:::MainMenu);
+            },
+            Quit -> { Engine:::Quit(); },
+            Nothing
+        }
+    }
+
+    PublishDebugValues :: () -> void {
+        controller := player.controller;
+        feet := controller.FeetPosition();
+        velocity := controller.Velocity();
+        Debug:::SetValue("Player/Position", `${feet.X():.2f}, ${feet.Y():.2f}, ${feet.Z():.2f}`);
+        Debug:::SetValue("Player/Speed", `${velocity.Horizontal().Length():.2f}`);
+        Debug:::SetValue("Player/Grounded", controller.IsGrounded() ? "yes" : "no");
+        Debug:::SetValue("Camera/Yaw", `${Angle:::ToDegrees(camera.yaw):.1f}`);
+        Debug:::SetValue("Camera/Pitch", `${Angle:::ToDegrees(camera.pitch):.1f}`);
+        Debug:::SetValue("Game/Gems", `${rules.collected:d} / ${level.gems.length():d}`);
+        Debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
+    }
+}

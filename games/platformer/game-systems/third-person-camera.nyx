@@ -1,0 +1,63 @@
+// Third-person orbit camera with collision. Presentation only: it runs per drawn frame and never
+// affects the simulation, except that movement input is read relative to its yaw.
+ThirdPersonCamera :: class {
+public:
+    yaw~ f32 = 0.0f;                  // radians about +Y; 0 looks toward -Z (the level's forward)
+    pitch~ f32 = DEFAULT_PITCH;       // radians; negative puts the camera above the pivot
+    distance~ f32 = DEFAULT_DISTANCE;
+
+    // A look delta in radians (+x turns right, +y looks up).
+    Look~: (delta: Vec2) -> void {
+        yaw = Angle:::Wrap(yaw - delta.X());
+        pitch = Math:::clamp(pitch + delta.Y(), MIN_PITCH, MAX_PITCH);
+    }
+
+    Orbit~: (radians: f32) -> void {
+        yaw = Angle:::Wrap(yaw + radians);
+    }
+
+    ResetBehind~: (newYaw: f32) -> void {
+        yaw = newYaw;
+        pitch = DEFAULT_PITCH;
+        currentDistance = distance;
+    }
+
+    // The horizontal directions movement input is mapped onto.
+    Forward :: () -> Vec3 {
+        return Vec3:::New(-Math:::sin(yaw), 0.0f, -Math:::cos(yaw));
+    }
+
+    Right :: () -> Vec3 {
+        return Vec3:::New(Math:::cos(yaw), 0.0f, -Math:::sin(yaw));
+    }
+
+    // Places the camera behind `playerFeet`, pulled in so nothing sits between the pivot and the
+    // lens. Moving in is instant; easing back out takes RETURN_SPEED.
+    Follow~: (playerFeet: Vec3, frameSeconds: f32) -> void {
+        pivot := playerFeet.Add(Vec3:::New(0.0f, PIVOT_HEIGHT, 0.0f));
+        backward := Vec3:::New(
+            Math:::cos(pitch) * Math:::sin(yaw),
+            -Math:::sin(pitch),
+            Math:::cos(pitch) * Math:::cos(yaw));
+        allowedDistance := when Physics:::SphereCast(COLLISION_RADIUS, pivot, backward.Scale(distance)) {
+            fraction: f32 -> Math:::max(distance * fraction, MIN_DISTANCE),
+            null -> distance
+        };
+        currentDistance = allowedDistance < currentDistance
+            ? allowedDistance
+            : Math:::min(currentDistance + RETURN_SPEED * frameSeconds, allowedDistance);
+        Camera:::LookAt(pivot.Add(backward.Scale(currentDistance)), pivot);
+    }
+
+private:
+    currentDistance~ f32 = DEFAULT_DISTANCE;
+
+    static PIVOT_HEIGHT :: 1.4f;      // about head height above the feet
+    static DEFAULT_DISTANCE :: 6.0f;
+    static MIN_DISTANCE :: 0.6f;
+    static COLLISION_RADIUS :: 0.25f; // larger than the near plane's half-diagonal
+    static RETURN_SPEED :: 5.0f;      // metres per second
+    static MIN_PITCH :: -1.35f;
+    static MAX_PITCH :: 0.45f;
+    static DEFAULT_PITCH :: -0.35f;
+}

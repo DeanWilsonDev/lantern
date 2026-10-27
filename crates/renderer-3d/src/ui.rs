@@ -43,16 +43,24 @@ impl Default for UiTheme {
     }
 }
 
-/// One frame of UI: a centred column that grows downward from `cursor_y`.
-pub struct UiFrame<'a> {
-    ui: &'a mut Ui,
-    overlay: &'a mut Overlay,
+/// One frame's column of widgets, without borrows: a host that draws a menu through separate
+/// calls (a script) keeps this between them and passes the `Ui` and `Overlay` to each call.
+/// `Ui::begin_column` starts one and `Ui::end_column` finishes it.
+pub struct UiColumn {
     input: UiInput,
     center_x: f32,
     cursor_y: f32,
     scale: f32,
     button_index: usize,
     theme: UiTheme,
+}
+
+/// One frame of UI: a centred column that grows downward from `top`. Finishes the column when
+/// dropped.
+pub struct UiFrame<'a> {
+    ui: &'a mut Ui,
+    overlay: &'a mut Overlay,
+    column: Option<UiColumn>,
 }
 
 impl Ui {
@@ -64,15 +72,9 @@ impl Ui {
         self.focused = 0;
     }
 
-    /// Starts a column centred horizontally, beginning `top` pixels down.
-    pub fn begin<'a>(
-        &'a mut self,
-        overlay: &'a mut Overlay,
-        input: UiInput,
-        screen_size: Vec2,
-        top: f32,
-        scale: f32,
-    ) -> UiFrame<'a> {
+    /// Starts a column centred horizontally, beginning `top` pixels down, and moves the focus
+    /// with this frame's up/down edges.
+    pub fn begin_column(&mut self, input: UiInput, screen_size: Vec2, top: f32, scale: f32) -> UiColumn {
         if self.buttons_last_frame > 0 {
             if input.up {
                 self.focused = (self.focused + self.buttons_last_frame - 1) % self.buttons_last_frame;
@@ -81,9 +83,7 @@ impl Ui {
                 self.focused = (self.focused + 1) % self.buttons_last_frame;
             }
         }
-        UiFrame {
-            ui: self,
-            overlay,
+        UiColumn {
             input,
             center_x: screen_size.x * 0.5,
             cursor_y: top,
@@ -92,29 +92,52 @@ impl Ui {
             theme: UiTheme::default(),
         }
     }
+
+    /// Records how many buttons the column had, so next frame's navigation wraps correctly.
+    pub fn end_column(&mut self, column: UiColumn) {
+        self.buttons_last_frame = column.button_index;
+        if column.button_index > 0 && self.focused >= column.button_index {
+            self.focused = column.button_index - 1;
+        }
+    }
+
+    /// `begin_column` with the `Ui` and `Overlay` borrowed for the frame.
+    pub fn begin<'a>(
+        &'a mut self,
+        overlay: &'a mut Overlay,
+        input: UiInput,
+        screen_size: Vec2,
+        top: f32,
+        scale: f32,
+    ) -> UiFrame<'a> {
+        let column = self.begin_column(input, screen_size, top, scale);
+        UiFrame { ui: self, overlay, column: Some(column) }
+    }
 }
 
-impl UiFrame<'_> {
-    fn centred_text(&mut self, text: &str, scale: f32, color: Color) -> Vec2 {
+impl UiColumn {
+    fn centred_text(&mut self, overlay: &mut Overlay, text: &str, scale: f32, color: Color) -> Vec2 {
         let size = measure_text(text, scale);
         let top_left = Vec2::new(self.center_x - size.x * 0.5, self.cursor_y);
-        self.overlay.text(text, top_left, scale, color);
+        overlay.text(text, top_left, scale, color);
         size
     }
 
-    pub fn title(&mut self, text: &str) {
+    pub fn title(&mut self, overlay: &mut Overlay, text: &str) {
         let scale = self.scale * 2.0;
         // A drop shadow keeps the title readable over the 3D scene.
         let size = measure_text(text, scale);
         let shadow = Vec2::new(self.center_x - size.x * 0.5 + scale, self.cursor_y + scale);
-        self.overlay.text(text, shadow, scale, Color::rgba(0.0, 0.0, 0.0, 0.6));
-        self.centred_text(text, scale, self.theme.text);
+        overlay.text(text, shadow, scale, Color::rgba(0.0, 0.0, 0.0, 0.6));
+        let color = self.theme.text;
+        self.centred_text(overlay, text, scale, color);
         self.cursor_y += size.y + GLYPH_SIZE as f32 * self.scale * 2.0;
     }
 
-    pub fn label(&mut self, text: &str) {
+    pub fn label(&mut self, overlay: &mut Overlay, text: &str) {
         let color = self.theme.muted;
-        let size = self.centred_text(text, self.scale, color);
+        let scale = self.scale;
+        let size = self.centred_text(overlay, text, scale, color);
         self.cursor_y += size.y + GLYPH_SIZE as f32 * self.scale;
     }
 
@@ -123,32 +146,58 @@ impl UiFrame<'_> {
     }
 
     /// A focusable button. Returns `true` on the frame it is activated.
-    pub fn button(&mut self, text: &str) -> bool {
+    pub fn button(&mut self, ui: &Ui, overlay: &mut Overlay, text: &str) -> bool {
         let index = self.button_index;
         self.button_index += 1;
-        let focused = index == self.ui.focused;
+        let focused = index == ui.focused;
         let padding = GLYPH_SIZE as f32 * self.scale * 0.5;
         let size = measure_text(text, self.scale);
         let width = size.x.max(GLYPH_SIZE as f32 * self.scale * 12.0) + padding * 4.0;
         let min = Vec2::new(self.center_x - width * 0.5, self.cursor_y - padding);
         let max = Vec2::new(self.center_x + width * 0.5, self.cursor_y + size.y + padding);
         if focused {
-            self.overlay.rect(min, max, self.theme.focused_fill);
+            overlay.rect(min, max, self.theme.focused_fill);
         } else {
-            self.overlay.rect(min, max, Color::rgba(0.0, 0.0, 0.0, 0.45));
+            overlay.rect(min, max, Color::rgba(0.0, 0.0, 0.0, 0.45));
         }
         let color = if focused { self.theme.focused_text } else { self.theme.text };
-        self.centred_text(text, self.scale, color);
+        let scale = self.scale;
+        self.centred_text(overlay, text, scale, color);
         self.cursor_y += size.y + padding * 3.0;
         focused && self.input.confirm
     }
 }
 
+impl UiFrame<'_> {
+    fn column(&mut self) -> &mut UiColumn {
+        self.column.as_mut().expect("the column lives until the frame is dropped")
+    }
+
+    pub fn title(&mut self, text: &str) {
+        let overlay = &mut *self.overlay;
+        self.column.as_mut().expect("live column").title(overlay, text);
+    }
+
+    pub fn label(&mut self, text: &str) {
+        let overlay = &mut *self.overlay;
+        self.column.as_mut().expect("live column").label(overlay, text);
+    }
+
+    pub fn spacing(&mut self, glyph_rows: f32) {
+        self.column().spacing(glyph_rows);
+    }
+
+    /// A focusable button. Returns `true` on the frame it is activated.
+    pub fn button(&mut self, text: &str) -> bool {
+        let (ui, overlay) = (&*self.ui, &mut *self.overlay);
+        self.column.as_mut().expect("live column").button(ui, overlay, text)
+    }
+}
+
 impl Drop for UiFrame<'_> {
     fn drop(&mut self) {
-        self.ui.buttons_last_frame = self.button_index;
-        if self.button_index > 0 && self.ui.focused >= self.button_index {
-            self.ui.focused = self.button_index - 1;
+        if let Some(column) = self.column.take() {
+            self.ui.end_column(column);
         }
     }
 }
