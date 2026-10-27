@@ -38,9 +38,17 @@ crates/
                                      (Umbra src/engine)
   nyx-sys/       nyx-sys             raw Nyx C ABI bindings (bindgen; builds Nyx with CMake)
   nyx/           nyx                 safe Nyx wrapper
+  world-format/  lantern-world-format the world file (JSON) and world-to-mesh/collision pieces,
+                                     shared by the game host and the editor (new)
+  editor-core/   lantern-editor-core the world editor's logic: document, undo, selection,
+                                     gizmos, inspector, camera, input (new)
+  editor-backend/ lantern-editor-backend EditorSession + off-screen viewport behind a C API
+                                     (include/lantern_editor.h), built as a static library (new)
 apps/
   platformer-game/                   the demo game and composition root (Umbra src/snake-game)
     scripts/platformer.nyx           the game rules in Nyx
+  world-editor/                      the world editor: Penumbra shell (C++, CMake) with panels
+                                     in Nyx, Chaos and Cosmos; see docs/editor.md
 assets/                              textures, model, sounds, music (made by tools/asset-gen)
 shaders/                             lit.wgsl, lines.wgsl, overlay.wgsl (compiled at build time)
 docs/                                brief, decisions, this file, dependencies, future work
@@ -306,6 +314,14 @@ Hooks (all optional): `OnStart`, `OnFixedUpdate(dt)`, `OnTriggerEnter(id)`, `OnP
 `OnJump`, `OnLand(speed)`, `OnResetPressed`, `OnExit`. A failing hook is logged, counted and
 shown in the HUD; the game keeps running. A script that fails to load is reported on screen and
 the native rules take over. F5 reloads the script. See D-017.
+
+## World editor
+
+The editor is a separate program that edits `assets/worlds/*.world.json`. It shares only
+`lantern-world-format` and the assets with the game. Its logic is `lantern-editor-core`, its
+viewport is drawn off-screen by `lantern-editor-backend`, and its panels are Nyx, Chaos and
+Cosmos on Penumbra (`apps/world-editor`). The game's content reaches it as data through
+`assets/editor/palette.json`. See `docs/editor.md` and D-018 to D-022.
 
 ## Rewrite-in-another-language checklist
 

@@ -8,6 +8,7 @@ engine in the snake repository) and is meant as a reference for a later rewrite.
 - `docs/architecture.md` — the tour: crates, per-frame sequence, ownership and shutdown, the
   script API, a rewrite checklist and the known omissions.
 - `docs/decisions.md` — every decision made along the way, with reasons (D-001 onwards).
+- `docs/editor.md` — the world editor: architecture, build steps and controls.
 - `docs/dependencies.md` — each third-party crate and why; `docs/future-work.md` — later ideas.
 
 ## Prerequisites
@@ -101,6 +102,18 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo clippy -p platformer-game --no-default-features --features bundled-sdl --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p asset-gen -- --check    # assets/ matches the generator
+```
+
+### World editor
+
+The editor (`apps/world-editor`) is a CMake project, because its UI runs on Penumbra, Chaos and
+Nyx. It needs GCC 14 or Clang 19, CMake 3.30, Ninja, and SDL3, SDL3_ttf and SDL3_image
+installed on the system. See `docs/editor.md`.
+
+```sh
+cmake -S apps/world-editor -B apps/world-editor/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build apps/world-editor/build
+apps/world-editor/build/lantern-world-editor
 ```
 
 ## Controls
