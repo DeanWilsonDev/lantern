@@ -234,6 +234,32 @@ impl EditorDocument {
         self.redo_stack.last().map(|entry| entry.label.as_str())
     }
 
+    /// Every recorded step, oldest first: the undone ones follow the done ones.
+    pub fn history_labels(&self) -> Vec<String> {
+        self.undo_stack
+            .iter()
+            .map(|entry| entry.label.clone())
+            .chain(self.redo_stack.iter().rev().map(|entry| entry.label.clone()))
+            .collect()
+    }
+
+    /// How many of [`Self::history_labels`] are applied: the index of the first undone step.
+    pub fn history_position(&self) -> usize {
+        self.undo_stack.len()
+    }
+
+    /// Undoes or redoes until `position` steps are applied.
+    pub fn jump_history(&mut self, position: usize) -> bool {
+        let mut moved = false;
+        while self.history_position() > position && self.undo() {
+            moved = true;
+        }
+        while self.history_position() < position && self.redo() {
+            moved = true;
+        }
+        moved
+    }
+
     pub fn undo(&mut self) -> bool {
         if !self.preview_originals.is_empty() {
             self.cancel_preview();

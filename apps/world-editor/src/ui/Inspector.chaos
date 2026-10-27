@@ -1,20 +1,61 @@
 EditorUi :: import EditorUi;
 InspectorField :: import InspectorField;
 InspectorFieldItem :: import InspectorFieldItem;
+InspectorGroupItem :: import InspectorGroupItem;
+
+InspectorUi :: namespace {
+    HasSelection :: () -> bool {
+        return editorSelectionCount() > 0;
+    }
+}
 
 Inspector :: () -> Penumbra:::Component {
     return (
         <frame class="inspector">
-            <slot>
-                !{<text ref="inspector-title" class="inspector-title">{EditorUi:::App().InspectorTitle()}</text>}
-            </slot>
+            <frame class="panel-header">
+                <icon class="panel-header-icon" icon="pencil" size={13.0f} />
+                <slot>
+                    !{<text ref="inspector-title" class="inspector-title">{EditorUi:::App().InspectorTitle()}</text>}
+                </slot>
+            </frame>
             <scroll ref="inspector-scroll" class="inspector-scroll" wheelStep={60.0f}>
                 <frame ref="inspector-fields" class="inspector-fields">
                     <slot>
-                        !{EditorUi:::App().InspectorFields().map((item: InspectorFieldItem) ->
-                            item.kind == "group"
-                                ? <text key={item.rowKey} class="inspector-group">{item.label}</text>
-                                : <InspectorField key={item.rowKey} item={item} />)}
+                        !{EditorUi:::App().InspectorGroups().map((group: InspectorGroupItem) ->
+                            <frame key={group.name} class="inspector-group">
+                                <frame class="inspector-group-header"
+                                       onRelease={() -> EditorUi:::App().ToggleGroupCollapsed(group.name)}>
+                                    <icon class="inspector-group-chevron"
+                                          icon={group.collapsed ? "chevron-right" : "chevron-down"} size={10.0f} />
+                                    <text class="inspector-group-title">{group.name}</text>
+                                </frame>
+                                <slot>
+                                    !{group.collapsed
+                                        ? <frame class="nothing" />
+                                        : <frame class="inspector-group-fields">
+                                              <slot>
+                                                  !{group.fields.map((item: InspectorFieldItem) ->
+                                                      <InspectorField key={item.rowKey} item={item} />)}
+                                              </slot>
+                                          </frame>}
+                                </slot>
+                            </frame>)}
+                    </slot>
+                    <slot>
+                        !{InspectorUi:::HasSelection()
+                            ? <frame class="inspector-add-property">
+                                  <text class="inspector-group-title">Add property</text>
+                                  <frame class="field-row">
+                                      <input ref="new-property" class="field-input" text={EditorUi:::App().NewPropertyName()}
+                                             preferredWidth={140.0f}
+                                             onTextChange={(text: string) -> EditorUi:::App().SetNewPropertyName(text)} />
+                                      <frame class="small-button" onRelease={() -> EditorUi:::App().AddProperty()}>
+                                          <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                          <text class="small-button-label">Add</text>
+                                      </frame>
+                                  </frame>
+                              </frame>
+                            : <frame class="nothing" />}
                     </slot>
                 </frame>
             </scroll>

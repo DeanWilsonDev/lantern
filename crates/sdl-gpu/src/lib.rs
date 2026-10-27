@@ -696,6 +696,18 @@ impl GpuRenderer {
 
 impl Drop for GpuRenderer {
     fn drop(&mut self) {
+        // SAFETY: SDL_WasInit only reads SDL's subsystem state.
+        let video_still_initialised = unsafe { sdl::SDL_WasInit(sdl::SDL_INIT_VIDEO) } != 0;
+        if !video_still_initialised {
+            // Another SDL user in the process (the world editor's Penumbra host) called
+            // SDL_Quit, which unloaded the Vulkan library the device's destructor would call
+            // into. The process is exiting, so the device is left to the driver.
+            log::warn!(
+                target: "renderer",
+                "SDL video was shut down before the GPU device; the device is not destroyed"
+            );
+            return;
+        }
         // SAFETY: live device. Waiting first means nothing below is still in use by the GPU.
         unsafe { sdl::SDL_WaitForGPUIdle(self.device) };
         for mesh in self.meshes.drain() {

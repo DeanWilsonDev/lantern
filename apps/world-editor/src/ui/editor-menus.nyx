@@ -1,0 +1,227 @@
+MenuEntry :: import MenuEntry;
+ToolbarState :: import ToolbarState;
+
+EditorMenus :: namespace {
+    Names :: () -> Array<string> {
+        return ["File", "Edit", "Selection", "View", "Entity", "Window", "Help"];
+    }
+
+    Item :: (label: string, command: string, shortcut: string) -> MenuEntry {
+        return MenuEntry { label: label, command: command, shortcut: shortcut };
+    }
+
+    Toggle :: (label: string, command: string, shortcut: string, checked: bool) -> MenuEntry {
+        return MenuEntry { label: label, command: command, shortcut: shortcut, checked: checked };
+    }
+
+    Needs :: (label: string, command: string, shortcut: string, enabled: bool) -> MenuEntry {
+        return MenuEntry { label: label, command: command, shortcut: shortcut, enabled: enabled };
+    }
+
+    Separator :: () -> MenuEntry {
+        return MenuEntry { label: "", command: "", separator: true };
+    }
+
+    Entries :: (menu: string, state: ToolbarState, recentFiles: Array<string>) -> Array<MenuEntry> {
+        return when menu {
+            "File" -> FileEntries(state, recentFiles),
+            "Edit" -> EditEntries(state),
+            "Selection" -> SelectionEntries(state),
+            "View" -> ViewEntries(state),
+            "Entity" -> EntityEntries(state),
+            "Window" -> WindowEntries(),
+            "Help" -> HelpEntries(),
+            default -> []
+        };
+    }
+
+    FileEntries :: (state: ToolbarState, recentFiles: Array<string>) -> Array<MenuEntry> {
+        entries~ Array<MenuEntry> = [
+            Item("New World", "new", "Ctrl+N"),
+            Item("Open…", "open", "Ctrl+O"),
+            Item("Save", "save", "Ctrl+S"),
+            Item("Save As…", "saveAs", "Ctrl+Shift+S"),
+            Separator()
+        ];
+        if recentFiles.length() == 0 {
+            entries.add(Needs("No recent worlds", "", "", false));
+        }
+        for index~ i32 = 0; index < recentFiles.length() && index < 6; index++ {
+            entries.add(Item(FileName(recentFiles[index]), `openRecent:${index}`, ""));
+        }
+        entries.add(Separator());
+        entries.add(Needs(state.playing ? "Stop Playing" : "Play Level", state.playing ? "stop" : "play", "Ctrl+P", true));
+        entries.add(Separator());
+        entries.add(Item("Settings…", "settings", "Ctrl+,"));
+        entries.add(Item("Quit", "quit", "Ctrl+Q"));
+        return entries;
+    }
+
+    FileName :: (path: string) -> string {
+        slash := LastIndexOf(path, "/");
+        return slash < 0 ? path : path.substring(slash + 1, path.length() - slash - 1);
+    }
+
+    LastIndexOf :: (text: string, needle: string) -> i32 {
+        found~ i32 = -1;
+        from~ i32 = 0;
+        while from <= text.length() {
+            next := text.indexOf(needle, from);
+            guard next >= 0 break;
+            found = next;
+            from = next + 1;
+        }
+        return found;
+    }
+
+    EditEntries :: (state: ToolbarState) -> Array<MenuEntry> {
+        return [
+            Needs("Undo", "undo", "Ctrl+Z", state.canUndo),
+            Needs("Redo", "redo", "Ctrl+Shift+Z", state.canRedo),
+            Separator(),
+            Needs("Duplicate", "duplicate", "Ctrl+D", state.hasSelection),
+            Needs("Delete", "delete", "Delete", state.hasSelection),
+            Separator(),
+            Toggle("Snap to Grid", "toggleSnap", "", state.snap),
+            Toggle("Local Space", "toggleSpace", "X", state.space == "local"),
+            Toggle("Pivot at Center", "togglePivot", "Z", state.pivot == "center"),
+            Separator(),
+            Item("Command Palette…", "commandPalette", "Ctrl+Shift+P")
+        ];
+    }
+
+    SelectionEntries :: (state: ToolbarState) -> Array<MenuEntry> {
+        return [
+            Item("Select All", "selectAll", "Ctrl+A"),
+            Needs("Invert Selection", "invertSelection", "Ctrl+I", true),
+            Needs("Select Children", "selectChildren", "", state.hasSelection),
+            Item("Deselect", "deselect", "Escape"),
+            Separator(),
+            Needs("Hide Selection", "hide", "H", state.hasSelection),
+            Item("Unhide All", "unhideAll", "Shift+H"),
+            Needs("Lock Selection", "lock", "Ctrl+L", state.hasSelection),
+            Needs("Unlock Selection", "unlock", "Ctrl+Shift+L", state.hasSelection),
+            Separator(),
+            Needs("Frame Selection", "frameSelection", "F", state.hasSelection),
+            Item("Frame All", "frameAll", "Home")
+        ];
+    }
+
+    ViewEntries :: (state: ToolbarState) -> Array<MenuEntry> {
+        return [
+            Toggle("Grid", "toggleGrid", "G", state.showGrid),
+            Toggle("Wireframe", "toggleWireframe", "", state.wireframe),
+            Toggle("Colliders", "toggleColliders", "", state.showColliders),
+            Toggle("Markers", "toggleMarkers", "", state.showMarkers),
+            Toggle("Level Bounds", "toggleLevelBounds", "", state.showLevelBounds),
+            Toggle("Hidden Entities", "toggleShowHidden", "", state.showHidden),
+            Toggle("Statistics", "toggleStats", "", state.showStats),
+            Separator(),
+            Toggle("Orthographic", "toggleOrtho", "", state.orthographic),
+            Item("Perspective", "camera:perspective", ""),
+            Item("Top", "camera:top", ""),
+            Item("Bottom", "camera:bottom", ""),
+            Item("Front", "camera:front", ""),
+            Item("Back", "camera:back", ""),
+            Item("Left", "camera:left", ""),
+            Item("Right", "camera:right", ""),
+            Separator(),
+            Needs("Align Camera to Selection", "alignCameraToSelection", "", state.hasSelection),
+            Needs("Align Selection to Camera", "alignSelectionToCamera", "", state.hasSelection)
+        ];
+    }
+
+    EntityEntries :: (state: ToolbarState) -> Array<MenuEntry> {
+        has := state.hasSelection;
+        return [
+            Needs("Group", "group", "Ctrl+G", has),
+            Needs("Snap to Ground", "snapToGround", "End", has),
+            Separator(),
+            Needs("Duplicate Along X", "duplicateAlong:x", "", has),
+            Needs("Duplicate Along Y", "duplicateAlong:y", "", has),
+            Needs("Duplicate Along Z", "duplicateAlong:z", "", has),
+            Separator(),
+            Needs("Mirror X", "mirror:x", "", has),
+            Needs("Mirror Y", "mirror:y", "", has),
+            Needs("Mirror Z", "mirror:z", "", has),
+            Separator(),
+            Needs("Align X", "align:x", "", has),
+            Needs("Align Y", "align:y", "", has),
+            Needs("Align Z", "align:z", "", has),
+            Needs("Distribute X", "distribute:x", "", has),
+            Needs("Distribute Y", "distribute:y", "", has),
+            Needs("Distribute Z", "distribute:z", "", has),
+            Separator(),
+            Needs("Revert to Template", "revertToTemplate", "", has),
+            Needs("Apply to Template", "applyToTemplate", "", has)
+        ];
+    }
+
+    WindowEntries :: () -> Array<MenuEntry> {
+        return [
+            Item("Assets", "panel:assets", ""),
+            Item("Console", "panel:console", ""),
+            Item("History", "panel:history", ""),
+            Item("Hide Bottom Panel", "panel:none", ""),
+            Separator(),
+            Item("Settings…", "settings", "Ctrl+,")
+        ];
+    }
+
+    HelpEntries :: () -> Array<MenuEntry> {
+        return [
+            Item("Viewport Controls", "help:controls", ""),
+            Item("Keyboard Shortcuts", "help:shortcuts", ""),
+            Item("About Lantern Editor", "help:about", "")
+        ];
+    }
+
+    ContextEntries :: (hidden: bool, locked: bool) -> Array<MenuEntry> {
+        return [
+            Item("Frame", "frameSelection", "F"),
+            Item("Duplicate", "duplicate", "Ctrl+D"),
+            Item("Delete", "delete", "Delete"),
+            Separator(),
+            Item(hidden ? "Show" : "Hide", hidden ? "showEntity" : "hide", "H"),
+            Item(locked ? "Unlock" : "Lock", locked ? "unlock" : "lock", "Ctrl+L"),
+            Separator(),
+            Item("Select Children", "selectChildren", ""),
+            Item("Group", "group", "Ctrl+G"),
+            Item("Move to Root", "unparent", ""),
+            Separator(),
+            Item("Snap to Ground", "snapToGround", "End"),
+            Item("Revert to Template", "revertToTemplate", "")
+        ];
+    }
+
+    AllCommands :: (state: ToolbarState) -> Array<MenuEntry> {
+        commands~ Array<MenuEntry> = [];
+        for menu in Names() {
+            entries := Entries(menu, state, []);
+            for entry in entries {
+                guard !entry.separator && entry.command != "" continue;
+                commands.add(MenuEntry {
+                    label: `${menu}: ${entry.label}`,
+                    command: entry.command,
+                    shortcut: entry.shortcut,
+                    enabled: entry.enabled
+                });
+            }
+        }
+        commands.add(Item("Tool: Move", "tool:move", "W"));
+        commands.add(Item("Tool: Rotate", "tool:rotate", "E"));
+        commands.add(Item("Tool: Scale", "tool:scale", "R"));
+        return commands;
+    }
+
+    Matching :: (commands: Array<MenuEntry>, query: string) -> Array<MenuEntry> {
+        needle := query.trim().toLower();
+        guard needle != "" return commands;
+        matches~ Array<MenuEntry> = [];
+        for entry in commands {
+            guard entry.label.toLower().contains(needle) continue;
+            matches.add(entry);
+        }
+        return matches;
+    }
+}

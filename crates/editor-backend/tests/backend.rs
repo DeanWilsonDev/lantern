@@ -58,10 +58,70 @@ fn panels_through_the_c_api() {
         let rotate = CString::new("rotate").unwrap();
         lantern_editor_set_tool(editor, rotate.as_ptr());
         assert_eq!(text(lantern_editor_tool(editor)), "rotate");
-        assert!(lantern_editor_key(editor, 'w' as u32, true, 0));
+        let w = CString::new("w").unwrap();
+        assert!(lantern_editor_key(editor, w.as_ptr(), true, 0));
         assert_eq!(text(lantern_editor_tool(editor)), "move");
         assert!(lantern_editor_delete_selection(editor));
         assert_eq!(lantern_editor_outline_count(editor), 29);
+        lantern_editor_destroy(editor);
+    }
+}
+
+#[test]
+fn the_tools_through_the_c_api() {
+    unsafe {
+        let editor = lantern_editor_create(assets().as_ptr(), std::ptr::null());
+        let c = |s: &str| CString::new(s).unwrap();
+
+        assert_eq!(lantern_editor_entity_count(editor), 29);
+        let first = lantern_editor_outline_id(editor, 0);
+        assert_eq!(lantern_editor_outline_parent(editor, 0), 0);
+        lantern_editor_set_hidden(editor, first, true);
+        assert!(lantern_editor_is_hidden(editor, first));
+        lantern_editor_unhide_all(editor);
+        assert!(!lantern_editor_is_hidden(editor, first));
+
+        lantern_editor_set_space(editor, c("local").as_ptr());
+        assert_eq!(text(lantern_editor_space(editor)), "local");
+        lantern_editor_set_pivot_mode(editor, c("center").as_ptr());
+        assert_eq!(text(lantern_editor_pivot_mode(editor)), "center");
+        assert!(lantern_editor_set_snap_step(editor, c("translate").as_ptr(), 0.5));
+        assert_eq!(lantern_editor_snap_step(editor, c("translate").as_ptr()), 0.5);
+        assert!(lantern_editor_set_view_option(editor, c("wireframe").as_ptr(), c("true").as_ptr()));
+        assert_eq!(text(lantern_editor_view_option(editor, c("wireframe").as_ptr())), "true");
+        assert!(!lantern_editor_set_view_option(editor, c("nonsense").as_ptr(), c("true").as_ptr()));
+
+        assert!(lantern_editor_camera_preset(editor, c("top").as_ptr()));
+        assert!(lantern_editor_is_orthographic(editor));
+        assert!(text(lantern_editor_camera_description(editor)).starts_with("ortho"));
+        assert!(lantern_editor_set_bookmark(editor, 0));
+        assert!(lantern_editor_has_bookmark(editor, 0));
+        assert!(!lantern_editor_has_bookmark(editor, 1));
+
+        lantern_editor_select(editor, first, false);
+        let second = lantern_editor_outline_id(editor, 1);
+        lantern_editor_select(editor, second, true);
+        assert_eq!(lantern_editor_selection_count(editor), 2);
+        assert!(lantern_editor_set_selection_field(editor, c("property:speed").as_ptr(), c("2").as_ptr()));
+        assert_eq!(text(lantern_editor_field(editor, lantern_editor_field_count(editor) - 1, 5)), "false");
+        assert!(lantern_editor_group_selection(editor));
+        assert_eq!(lantern_editor_entity_count(editor), 30);
+        assert_eq!(lantern_editor_history_count(editor), 2);
+        assert_eq!(lantern_editor_history_position(editor), 2);
+        assert_eq!(text(lantern_editor_history_label(editor, 0)), "Edit speed on 2 entities");
+        assert!(lantern_editor_jump_history(editor, 0));
+        assert_eq!(lantern_editor_entity_count(editor), 29);
+        assert_eq!(lantern_editor_history_count(editor), 2, "undone steps stay in the list");
+        assert!(lantern_editor_log_count(editor) > 0);
+        assert_eq!(text(lantern_editor_log_level(editor, 0)), "info");
+        lantern_editor_clear_log(editor);
+        assert_eq!(lantern_editor_log_count(editor), 0);
+
+        assert!(lantern_editor_set_preference(editor, c("window.width").as_ptr(), c("1600").as_ptr()));
+        assert_eq!(text(lantern_editor_preference(editor, c("window.width").as_ptr())), "1600");
+        assert_eq!(text(lantern_editor_stat(editor, c("entities").as_ptr())), "29");
+        assert!(!lantern_editor_is_playing(editor));
+        assert!(text(lantern_editor_assets_directory(editor)).ends_with("assets"));
         lantern_editor_destroy(editor);
     }
 }

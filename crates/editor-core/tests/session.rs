@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use glam::{Vec2, Vec3};
-use lantern_editor_core::gizmo::GizmoFrame;
+use lantern_editor_core::gizmo::{GizmoFrame, GizmoSpace, Handle, PivotMode};
 use lantern_editor_core::{
     Axis, EditorKey, EditorSession, GizmoTool, Modifiers, Palette, PointerButton, ViewportProjection,
 };
@@ -72,7 +72,7 @@ fn dragging_the_x_arrow_moves_by_snapped_steps_and_undoes_in_one_step() {
     session.select_only(pillar);
     let start = position(&session, pillar);
     let projection: ViewportProjection = session.projection();
-    let frame = GizmoFrame::new(GizmoTool::Translate, start, glam::Quat::IDENTITY, &projection);
+    let frame = GizmoFrame::new(GizmoTool::Translate, GizmoSpace::World, start, glam::Quat::IDENTITY, &projection);
     let grab = projection.project(start + Vec3::X * frame.size * 0.8).unwrap();
     let release = projection.project(start + Vec3::X * (frame.size * 0.8 + 3.1)).unwrap();
     drag(&mut session, grab, release);
@@ -110,7 +110,7 @@ fn escape_cancels_a_drag() {
     session.select_only(pillar);
     let start = position(&session, pillar);
     let projection = session.projection();
-    let frame = GizmoFrame::new(GizmoTool::Translate, start, glam::Quat::IDENTITY, &projection);
+    let frame = GizmoFrame::new(GizmoTool::Translate, GizmoSpace::World, start, glam::Quat::IDENTITY, &projection);
     let grab = projection.project(start + Vec3::Y * frame.size * 0.8).unwrap();
     session.pointer_moved(grab);
     session.pointer_button(PointerButton::Left, true, Modifiers::default());
@@ -131,7 +131,7 @@ fn rotate_and_scale_tools() {
     assert_eq!(session.tool(), GizmoTool::Rotate);
     let pivot = position(&session, ramp);
     let projection = session.projection();
-    let frame = GizmoFrame::new(GizmoTool::Rotate, pivot, glam::Quat::IDENTITY, &projection);
+    let frame = GizmoFrame::new(GizmoTool::Rotate, GizmoSpace::World, pivot, glam::Quat::IDENTITY, &projection);
     // Grab the yaw ring at one point and drag a quarter turn around it.
     let tangent = Vec3::Y.any_orthonormal_vector();
     let bitangent = Vec3::Y.cross(tangent);
@@ -142,7 +142,7 @@ fn rotate_and_scale_tools() {
         pivot + (tangent * angle.cos() + bitangent * angle.sin()) * radius
     };
     let grab = projection.project(ring_point(45.0)).unwrap();
-    assert_eq!(frame.hit_test(GizmoTool::Rotate, &projection, grab), Some(Axis::Y));
+    assert_eq!(frame.hit_test(GizmoTool::Rotate, &projection, grab), Some(Handle::Axis(Axis::Y)));
     let release = projection.project(ring_point(135.0)).unwrap();
     drag(&mut session, grab, release);
     let rotation = session.world().entity(ramp).unwrap().transform.rotation_degrees;
@@ -153,7 +153,7 @@ fn rotate_and_scale_tools() {
     session.set_field(ramp, "rotation.y", "0");
     session.commit_field();
     let projection = session.projection();
-    let frame = GizmoFrame::new(GizmoTool::Scale, pivot, glam::Quat::IDENTITY, &projection);
+    let frame = GizmoFrame::new(GizmoTool::Scale, GizmoSpace::World, pivot, glam::Quat::IDENTITY, &projection);
     let grab = projection.project(pivot + Vec3::X * frame.size * 0.8).unwrap();
     let release = projection.project(pivot + Vec3::X * frame.size * 1.6).unwrap();
     drag(&mut session, grab, release);
@@ -268,4 +268,186 @@ fn camera_controls() {
     session.select_only(key_named(&session, "goal"));
     session.key(EditorKey::Letter('f'), true, Modifiers::default());
     assert!((session.camera.target - Vec3::new(0.0, -2.0, -31.0)).length() < 1e-3);
+}
+
+#[test]
+fn dragging_the_xz_plane_handle_moves_in_both_axes() {
+    let mut session = course_session();
+    let pillar = key_named(&session, "pillar_2");
+    session.select_only(pillar);
+    let start = position(&session, pillar);
+    let projection = session.projection();
+    let frame = GizmoFrame::new(GizmoTool::Translate, GizmoSpace::World, start, glam::Quat::IDENTITY, &projection);
+    let on_plane = start + (Vec3::X + Vec3::Z) * frame.size * 0.47;
+    let grab = projection.project(on_plane).unwrap();
+    assert_eq!(frame.hit_test(GizmoTool::Translate, &projection, grab), Some(Handle::Plane(Axis::Y)));
+    let release = projection.project(on_plane + Vec3::new(2.0, 0.0, -1.0)).unwrap();
+    drag(&mut session, grab, release);
+    let moved = position(&session, pillar);
+    assert!((moved - (start + Vec3::new(2.0, 0.0, -1.0))).length() < 0.3, "{moved} from {start}");
+    assert_eq!(moved.y, start.y);
+}
+
+#[test]
+fn a_rubber_band_over_empty_space_selects_what_it_covers() {
+    let mut session = course_session();
+    let gem = key_named(&session, "gem_0");
+    let gem_pixel = pixel_of(&session, position(&session, gem));
+    // Start in the sky, where a press hits nothing, and drag down over the gem.
+    let start = Vec2::new(gem_pixel.x - 40.0, 2.0);
+    session.pointer_moved(start);
+    session.pointer_button(PointerButton::Left, true, Modifiers::default());
+    session.pointer_moved(gem_pixel + Vec2::new(40.0, 20.0));
+    assert!(session.rubber_band().is_some());
+    session.pointer_button(PointerButton::Left, false, Modifiers::default());
+    assert!(session.rubber_band().is_none());
+    assert!(session.selection().contains(&gem), "{:?}", session.selection());
+}
+
+#[test]
+fn hidden_and_locked_entities_stay_out_of_the_viewport_s_way() {
+    let mut session = course_session();
+    let pillar = key_named(&session, "pillar_3");
+    let top = position(&session, pillar) + Vec3::Y * 4.0;
+    let pixel = pixel_of(&session, top);
+    session.set_locked(pillar, true);
+    click(&mut session, pixel, Modifiers::default());
+    assert!(!session.selection().contains(&pillar), "a locked entity can't be clicked");
+    session.set_locked(pillar, false);
+    session.set_hidden(pillar, true);
+    click(&mut session, pixel, Modifiers::default());
+    assert!(!session.selection().contains(&pillar), "a hidden entity can't be clicked");
+    assert!(session.outline().iter().any(|row| row.key == pillar && row.hidden));
+    session.unhide_all();
+    assert!(!session.is_hidden(pillar));
+    session.select_only(pillar);
+    session.lock_selection(true);
+    let before = position(&session, pillar);
+    session.key(EditorKey::End, true, Modifiers::default());
+    assert_eq!(position(&session, pillar), before, "a locked entity isn't moved");
+}
+
+#[test]
+fn grouping_aligning_distributing_and_mirroring() {
+    let mut session = course_session();
+    let keys = ["pillar_1", "pillar_2", "pillar_3"].map(|name| key_named(&session, name));
+    let before: Vec<Vec3> = keys.iter().map(|key| position(&session, *key)).collect();
+    session.select_only(keys[0]);
+    session.toggle_selected(keys[1]);
+    session.toggle_selected(keys[2]);
+    assert!(session.align_selection(Axis::Y));
+    for key in keys {
+        assert_eq!(position(&session, key).y, before[2].y);
+    }
+    assert!(session.distribute_selection(Axis::X));
+    let xs: Vec<f32> = {
+        let mut xs: Vec<f32> = keys.iter().map(|key| position(&session, *key).x).collect();
+        xs.sort_by(f32::total_cmp);
+        xs
+    };
+    assert!(((xs[1] - xs[0]) - (xs[2] - xs[1])).abs() < 1e-3, "{xs:?}");
+    assert!(session.mirror_selection(Axis::X));
+    let mirrored: Vec<f32> = keys.iter().map(|key| position(&session, *key).x).collect();
+    let center = (xs[0] + xs[2]) * 0.5;
+    for (key, x) in keys.iter().zip(mirrored) {
+        let original = position(&session, *key);
+        assert!((x - (2.0 * center - (2.0 * center - original.x))).abs() < 1e-3);
+    }
+    assert!(session.key(EditorKey::Letter('g'), true, Modifiers::from_bits(Modifiers::COMMAND)));
+    let group = session.primary_selection().unwrap();
+    assert_eq!(session.world().entity(group).unwrap().kind, "group");
+    for key in keys {
+        assert_eq!(session.world().entity(key).unwrap().parent, Some(group));
+    }
+    assert!(session.undo());
+    assert!(session.world().entity(group).is_none());
+    assert_eq!(session.world().entity(keys[0]).unwrap().parent, None);
+}
+
+#[test]
+fn snap_to_ground_rests_the_bottom_on_the_surface_below() {
+    let mut session = course_session();
+    let block = session.add_entity("block", false).unwrap();
+    session.set_field(block, "position.y", "12");
+    session.set_field(block, "position.x", "0");
+    session.set_field(block, "position.z", "2");
+    session.commit_field();
+    assert!(session.snap_selection_to_ground());
+    let landed = position(&session, block);
+    let half_height = match session.world().entity(block).unwrap().shape {
+        Some(lantern_world_format::Shape::Box { half_extents }) => half_extents[1],
+        _ => panic!("a block is a box"),
+    };
+    // The start floor's top is at y = 0 around the origin.
+    assert!((landed.y - half_height).abs() < 1e-3, "{landed}");
+}
+
+#[test]
+fn history_is_a_list_you_can_jump_along() {
+    let mut session = course_session();
+    let floor = key_named(&session, "start_floor");
+    session.set_field(floor, "position.y", "1");
+    session.commit_field();
+    session.set_field(floor, "position.y", "2");
+    session.commit_field();
+    session.set_field(floor, "position.y", "3");
+    session.commit_field();
+    assert_eq!(session.history_labels(), vec!["Edit position.y"; 3]);
+    assert_eq!(session.history_position(), 3);
+    assert!(session.jump_history(1));
+    assert_eq!(position(&session, floor).y, 1.0);
+    assert_eq!(session.history_labels().len(), 3, "undone steps stay listed");
+    assert!(session.jump_history(3));
+    assert_eq!(position(&session, floor).y, 3.0);
+    assert!(session.log().iter().any(|entry| entry.text.contains("history step")));
+}
+
+#[test]
+fn bookmarks_presets_and_spaces() {
+    let mut session = course_session();
+    let home = session.camera;
+    assert!(session.key(EditorKey::Digit(1), true, Modifiers::from_bits(Modifiers::COMMAND)));
+    assert!(session.has_bookmark(0));
+    assert!(!session.key(EditorKey::Digit(2), true, Modifiers::default()), "an empty bookmark does nothing");
+    session.camera_preset("top");
+    assert!(session.camera.orthographic);
+    assert!(session.key(EditorKey::Digit(1), true, Modifiers::default()));
+    assert_eq!(session.camera, home);
+    assert!(session.key(EditorKey::Letter('x'), true, Modifiers::default()));
+    assert_eq!(session.space(), GizmoSpace::Local);
+    assert!(session.key(EditorKey::Letter('z'), true, Modifiers::default()));
+    assert_eq!(session.pivot_mode(), PivotMode::Center);
+    assert!(session.set_view_option("grid_spacing", "0.5"));
+    assert!(!session.set_view_option("grid_spacing", "-1"));
+    assert_eq!(session.view.get("grid_spacing").as_deref(), Some("0.5"));
+}
+
+#[test]
+fn editing_a_field_on_a_multi_selection_changes_them_all() {
+    let mut session = course_session();
+    let keys = ["pillar_1", "pillar_2"].map(|name| key_named(&session, name));
+    session.select_only(keys[0]);
+    session.toggle_selected(keys[1]);
+    assert!(session.inspector().iter().any(|field| field.key == "position.x" && field.mixed));
+    assert!(session.set_field_on_selection("material", "wall"));
+    for key in keys {
+        assert_eq!(session.world().entity(key).unwrap().material.as_deref(), Some("wall"));
+    }
+    assert!(session.set_field_on_selection("property:speed", "3"));
+    assert!(session.rename_property("speed", "pace"));
+    assert_eq!(session.world().entity(keys[1]).unwrap().number_property("pace"), Some(3.0));
+    assert!(session.undo());
+    assert!(session.undo());
+    assert!(session.world().entity(keys[1]).unwrap().properties.is_empty());
+}
+
+#[test]
+fn reverting_to_the_template_restores_its_look() {
+    let mut session = course_session();
+    let block = session.add_entity("block", false).unwrap();
+    session.set_field(block, "tint", "#FF0000");
+    session.commit_field();
+    assert!(session.revert_selection_to_template());
+    let entity = session.world().entity(block).unwrap();
+    assert_eq!(entity.tint, session.template_for_kind("block").unwrap().tint);
 }

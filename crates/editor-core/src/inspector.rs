@@ -14,6 +14,12 @@ use crate::palette::Palette;
 pub enum FieldKind {
     Text,
     Number,
+    /// `true` or `false`, shown as a checkbox.
+    Bool,
+    /// `#RRGGBB`, shown with a swatch.
+    Color,
+    /// Three comma-separated numbers.
+    Vector,
     /// One of a fixed list. The list may include the current value even if unusual.
     Choice(Vec<String>),
     ReadOnly,
@@ -24,6 +30,9 @@ impl FieldKind {
         match self {
             FieldKind::Text => "text",
             FieldKind::Number => "number",
+            FieldKind::Bool => "bool",
+            FieldKind::Color => "color",
+            FieldKind::Vector => "vector",
             FieldKind::Choice(_) => "choice",
             FieldKind::ReadOnly => "readonly",
         }
@@ -45,6 +54,32 @@ pub struct InspectorField {
     pub group: &'static str,
     pub value: String,
     pub kind: FieldKind,
+    /// With several entities selected, they disagree on this field; `value` is the primary's.
+    pub mixed: bool,
+}
+
+/// The fields for a multi-selection: the primary's, each marked mixed where another selected
+/// entity has a different value (or no such field).
+pub fn fields_for_selection(
+    primary: &WorldEntity,
+    others: &[&WorldEntity],
+    world: &WorldFile,
+    palette: &Palette,
+) -> Vec<InspectorField> {
+    let mut fields = fields_for(primary, world, palette);
+    if others.is_empty() {
+        return fields;
+    }
+    let other_fields: Vec<Vec<InspectorField>> = others.iter().map(|other| fields_for(other, world, palette)).collect();
+    for field in &mut fields {
+        field.mixed = other_fields.iter().any(|other| {
+            other
+                .iter()
+                .find(|candidate| candidate.key == field.key)
+                .is_none_or(|candidate| candidate.value != field.value)
+        });
+    }
+    fields
 }
 
 /// Formats a number the way the inspector shows it: shortest form, no trailing zeros.
@@ -124,7 +159,7 @@ fn with_current(mut choices: Vec<String>, current: &str) -> Vec<String> {
 pub fn fields_for(entity: &WorldEntity, world: &WorldFile, palette: &Palette) -> Vec<InspectorField> {
     let mut fields = Vec::new();
     let mut push = |key: String, label: &str, group: &'static str, value: String, kind: FieldKind| {
-        fields.push(InspectorField { key, label: label.to_string(), group, value, kind });
+        fields.push(InspectorField { key, label: label.to_string(), group, value, kind, mixed: false });
     };
     push("name".into(), "Name", "Entity", entity.name.clone(), FieldKind::Text);
     push(
@@ -191,7 +226,7 @@ pub fn fields_for(entity: &WorldEntity, world: &WorldFile, palette: &Palette) ->
             if material.is_empty() { "none".into() } else { material.clone() },
             FieldKind::Choice(with_current(materials, &material)),
         );
-        push("tint".into(), "Tint", "Look", entity.tint.clone().unwrap_or_default(), FieldKind::Text);
+        push("tint".into(), "Tint", "Look", entity.tint.clone().unwrap_or_default(), FieldKind::Color);
         let colliders = ["none", "static", "kinematic"].map(String::from).to_vec();
         push(
             "collider".into(),
@@ -203,7 +238,13 @@ pub fn fields_for(entity: &WorldEntity, world: &WorldFile, palette: &Palette) ->
     }
 
     for (key, value) in &entity.properties {
-        push(format!("property:{key}"), key, "Properties", format_property(value), FieldKind::Text);
+        let kind = match value {
+            PropertyValue::Bool(_) => FieldKind::Bool,
+            PropertyValue::Number(_) => FieldKind::Number,
+            PropertyValue::Vector(_) => FieldKind::Vector,
+            PropertyValue::Text(_) => FieldKind::Text,
+        };
+        push(format!("property:{key}"), key, "Properties", format_property(value), kind);
     }
     fields
 }
@@ -372,6 +413,27 @@ mod tests {
         assert_eq!(apply_field(&entity, "tint", "ffe0a0").unwrap().tint.as_deref(), Some("#FFE0A0"));
         let marker = apply_field(&entity, "shape", "none").unwrap();
         assert!(marker.shape.is_none() && marker.collider.is_none() && marker.material.is_none());
+    }
+
+    #[test]
+    fn a_multi_selection_marks_disagreements_mixed() {
+        let first = block();
+        let mut second = block();
+        second.id = EntityKey(8);
+        second.name = "wall_2".into();
+        second.transform.position = [3.0, 0.0, 0.0];
+        second.properties.insert("speed".into(), PropertyValue::Number(2.0));
+        let world = WorldFile::new("w");
+        let fields = fields_for_selection(&first, &[&second], &world, &Palette::fallback());
+        let field = |key: &str| fields.iter().find(|field| field.key == key).unwrap();
+        assert!(field("name").mixed);
+        assert!(field("position.x").mixed);
+        assert!(!field("position.y").mixed);
+        assert!(!field("material").mixed);
+        assert!(fields.iter().all(|field| field.key != "property:speed"), "only the primary's fields show");
+        let typed = fields_for_selection(&second, &[], &world, &Palette::fallback());
+        assert_eq!(typed.iter().find(|field| field.key == "property:speed").unwrap().kind, FieldKind::Number);
+        assert_eq!(typed.iter().find(|field| field.key == "tint").unwrap().kind, FieldKind::Color);
     }
 
     #[test]

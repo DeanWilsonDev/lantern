@@ -387,3 +387,96 @@ reload) have a comment saying so. Measured script cost (`GAME-F01-T06`,
 `cargo run --release -p lantern-game-host --example script_cost`): 0.24 ms of Nyx per frame on
 average for the platformer, headless in the cloud container on 2026-10-27, with `OnFixedUpdate`
 about 150 µs, `OnUpdate` 40 µs and `OnRender` 50 µs per call.
+
+## D-031 The viewport is a Chaos primitive, not a native widget
+
+The 3D view, the template thumbnails and the turntable preview are all `<viewport renderer="…">`
+elements in `.chaos` files. The primitive is new in Penumbra and penumbra-ui-backend; a renderer
+is anything that implements `Umbra::IViewportRenderer` (umbra-interfaces): it fills an RGBA
+buffer each frame and gets pointer, wheel, key and hover events in its own coordinates. The
+editor registers three renderers by name (`level`, `preview`, `thumbnail:<template>`) from
+`EditorHost::RegisterViewportRenderers` before the UI runs, and the Chaos tree picks them by
+name. The old `LanternViewport` native widget is deleted. This is the shape Umbra's own editor
+can reuse: a renderer per view, named in the UI, no widget code per view.
+
+## D-032 Editor UI state lives in one Nyx `Application`
+
+`EditorApplication.nyx` holds every piece of UI state as `@signal` fields (open menu, context
+menu, tooltip, panels, filters, dialogs) and the mirrored editor state (outline rows, inspector
+groups, toolbar state, status). `OnUpdate` polls `editorRevision()` and refreshes the mirrors
+when it changes, so the Rust session stays the single source of truth and the UI never caches a
+stale entity. Every Chaos component reads the application through `EditorUi:::App()` and calls
+its methods; no component keeps editing state of its own. The one exception is per-component
+hover, which is a Penumbra event.
+
+## D-033 Menus, popups, tooltips and dialogs are portals built from frames
+
+Penumbra has no menu bar, context menu or dialog widget. Rather than add five widgets, the
+backend gained one `<portal>` primitive (an absolutely positioned overlay that can dismiss on an
+outside click) and the editor builds the menu bar, dropdown menus, the right-click menu,
+tooltips, the command palette, the settings dialog, the confirm dialog and the help pages from
+frames inside portals. Menus are data (`editor-menus.nyx` returns `MenuEntry` lists with a
+command name, a shortcut label, an enabled flag and a check mark), so one `MenuPopup` component
+renders them all and one `RunCommand` dispatches every command, whether it came from a menu,
+the toolbar, the palette or a shortcut.
+
+## D-034 Shortcuts are split between Nyx and the viewport
+
+Keys reach the editor twice: Penumbra sends them to the root `onKeyDown`, and the viewport
+renderer gets them while the pointer is over it. The viewport (Rust, `editor-core`) owns the
+editing keys (tools, framing, delete, undo, duplicate, bookmarks, hide, fly). The Nyx
+application owns application-level shortcuts (new, open, save, quit, play, palette, settings,
+lock, invert selection) and forwards everything else to the viewport through `editorKey`, so a
+shortcut works wherever the pointer is. Modifier state is tracked in Nyx from the `Shift`,
+`Control` and `Meta` key events; the platform's "shortcut" key is `Shortcut+` in the key names
+Penumbra delivers (Cmd on macOS, Ctrl elsewhere).
+
+## D-035 Preferences are a flat JSON file
+
+`~/.config/lantern/world-editor.json` (or `XDG_CONFIG_HOME`, `APPDATA`) holds string values
+keyed by name: window size, snapping steps, view options, the camera bookmarks, the bottom
+panel that was open and the recent files list. The Rust session reads and writes it
+(`EditorPreferences`), the UI reads and sets keys through `editorPreference` and
+`editorSetPreference`, and the file is saved on quit and from the settings dialog. A missing
+or unreadable file is ignored.
+
+## D-036 Play in editor runs the real game on a scratch level
+
+The Play button saves the level to `.editor-play.world.json` beside the game's worlds and
+launches the `lantern` runner on it with `LANTERN_LEVEL` set, so unsaved edits are what plays
+and the game's own loader is what loads them. The game reads `LANTERN_LEVEL` through
+`Engine:::Setting` and falls back to its configured level. Stop kills the child process. The
+editor never links the game.
+
+## D-037 The stack is pinned by branch, overridable per checkout
+
+`apps/world-editor/cmake/Dependencies.cmake` fetches Penumbra, Chaos and Cosmos from `proto`
+and penumbra-ui-backend and Cimmerian from `main`. `LANTERN_STACK_BRANCH` overrides all of
+them at once and `LANTERN_<DEP>_BRANCH` one at a time, and CMake's own
+`FETCHCONTENT_SOURCE_DIR_<DEP>` points one at a local checkout. That is how the editor is
+built against unmerged stack branches while their pull requests are open.
+
+## D-038 Editing operations are editor-core methods with one undo entry each
+
+Every operation the UI offers (duplicate along an axis, mirror, align, distribute, group, snap
+to ground, revert to or apply to a template, re-parent, rename a property, hide and lock) is a
+method on `EditorSession` that records one labelled history entry, and the C API exposes each
+as one function. The history panel lists those labels and jumps to any point. Nothing in C++
+or Nyx composes edits, so the undo history is the same no matter which panel issued the
+command, and a headless test can drive every operation.
+
+## D-039 Thumbnails and previews are rendered by the backend
+
+The asset browser's thumbnails and the turntable preview are real renders of each template
+through the same `GpuRenderer` as the viewport (`lantern_editor_thumbnail`,
+`lantern_editor_render_preview`), not icons. A thumbnail is rendered once per template at the
+size the card asks for; the preview is rendered every frame it is visible, turned by the
+elapsed time. Each is its own `IViewportRenderer`, so the UI treats them as viewports.
+
+## D-040 Penumbra's closed dropdown draws its label
+
+`Penumbra::Widgets::Dropdown` drew only an item's leading visual when closed, which left a
+text-only dropdown blank. It now draws the selected label and a chevron, and measures its
+width from the widest option. This changed Penumbra rather than the backend because every
+Penumbra app wants a readable dropdown. Checkbox glyph size comes from the class's
+`font-size` for the same reason.

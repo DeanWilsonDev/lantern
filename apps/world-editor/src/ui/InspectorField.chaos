@@ -1,40 +1,58 @@
-ChoiceList :: import ChoiceList;
+ColorField :: import ColorField;
 EditorUi :: import EditorUi;
 InspectorFieldItem :: import InspectorFieldItem;
+VectorField :: import VectorField;
 
 InspectorFieldProps :: data {
     item: InspectorFieldItem;
 }
 
-InspectorField :: (props: InspectorFieldProps) -> Penumbra:::Component {
-    @signal choicesOpen~ bool = false;
+InspectorFieldUi :: namespace {
+    Label :: (item: InspectorFieldItem) -> string {
+        return item.mixed ? item.label + " (mixed)" : item.label;
+    }
 
+    IsProperty :: (item: InspectorFieldItem) -> bool {
+        return item.key.startsWith("property:");
+    }
+}
+
+InspectorField :: (props: InspectorFieldProps) -> Penumbra:::Component {
     return (
         <frame ref={`field-${props.item.key}`} class="field">
             <frame class="field-row">
-                <text class="field-label">{props.item.label}</text>
+                <text class="field-label">{InspectorFieldUi:::Label(props.item)}</text>
                 <slot>
                     !{props.item.kind == "choice"
-                        ? <frame ref={`choice-${props.item.key}`} class={choicesOpen ? "choice-button-open" : "choice-button"}
-                                 onRelease={() -> { choicesOpen = !choicesOpen; }}>
-                              <text class="choice-value">{props.item.value}</text>
+                        ? <select ref={`choice-${props.item.key}`} class="field-select" options={props.item.choices}
+                                  selected={props.item.value}
+                                  onSelect={(choice: string) -> EditorUi:::App().PickChoice(props.item.key, choice)} />
+                        : props.item.kind == "bool"
+                            ? <checkbox ref={`check-${props.item.key}`} class="field-checkbox"
+                                        checked={props.item.value == "true"}
+                                        onToggle={(checked: bool) ->
+                                            EditorUi:::App().PickChoice(props.item.key, checked ? "true" : "false")} />
+                            : props.item.kind == "vector3"
+                                ? <VectorField item={props.item} />
+                                : props.item.kind == "color"
+                                    ? <ColorField item={props.item} />
+                                    : props.item.kind == "readonly"
+                                        ? <text class="field-readonly">{props.item.value}</text>
+                                        : <input ref={`input-${props.item.key}`} class="field-input"
+                                                 text={props.item.mixed ? "" : props.item.value} preferredWidth={150.0f}
+                                                 onTextChange={(text: string) ->
+                                                     EditorUi:::App().EditField(props.item.key, text)} />}
+                </slot>
+                <slot>
+                    !{InspectorFieldUi:::IsProperty(props.item)
+                        ? <frame class="field-remove" onRelease={() -> EditorUi:::App().RemoveProperty(props.item.key)}
+                                 onHover={() -> EditorUi:::App().ShowTooltip("Remove property")}
+                                 onHoverEnd={() -> EditorUi:::App().HideTooltip()}>
+                              <icon class="field-remove-icon" icon="close" size={10.0f} />
                           </frame>
-                        : props.item.kind == "readonly"
-                            ? <text class="field-readonly">{props.item.value}</text>
-                            : <input ref={`input-${props.item.key}`} class="field-input" text={props.item.value}
-                                     preferredWidth={130.0f}
-                                     onTextChange={(text: string) -> EditorUi:::App().EditField(props.item.key, text)} />}
+                        : <frame class="nothing" />}
                 </slot>
             </frame>
-            <slot>
-                !{choicesOpen
-                    ? <ChoiceList choices={props.item.choices} current={props.item.value}
-                                  onPick={(choice: string) -> {
-                                      choicesOpen = false;
-                                      EditorUi:::App().PickChoice(props.item.key, choice);
-                                  }} />
-                    : <frame class="choice-list-closed" />}
-            </slot>
         </frame>
     );
 }

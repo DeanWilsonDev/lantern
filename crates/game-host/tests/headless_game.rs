@@ -205,12 +205,8 @@ fn a_hook_error_names_the_nyx_line_and_its_callers() {
          \x20   Target :: () -> i64 {\n        return World:::Find(\"missing\");\n    }\n}\n",
     )
     .unwrap();
-    let state = EngineState::new(
-        Box::new(HeadlessRenderer::default()),
-        AudioSystem::new(None),
-        None,
-    )
-    .expect("engine state");
+    let state =
+        EngineState::new(Box::new(HeadlessRenderer::default()), AudioSystem::new(None), None).expect("engine state");
     let source = lantern_game_host::ScriptSource {
         scripts_directory: directory.clone(),
         entry_file: "main.nyx".to_string(),

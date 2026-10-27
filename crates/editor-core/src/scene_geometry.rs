@@ -1,6 +1,8 @@
 //! World-space geometry for every entity, rebuilt when the document changes. Picking, the
 //! selection outline, framing and placement all read it.
 
+use std::collections::HashSet;
+
 use glam::{Mat4, Vec3};
 use lantern_core::math::Aabb;
 use lantern_physics::Triangle;
@@ -87,6 +89,12 @@ impl SceneGeometry {
     /// The closest entity along `ray`. Markers win ties against shapes they sit inside, since
     /// they are small and would otherwise be unclickable.
     pub fn pick(&self, ray: Ray) -> Option<PickHit> {
+        self.pick_excluding(ray, &HashSet::new())
+    }
+
+    /// [`Self::pick`] ignoring the entities in `excluded` (hidden or locked ones, or the
+    /// selection itself when dropping it onto whatever is below).
+    pub fn pick_excluding(&self, ray: Ray, excluded: &HashSet<EntityKey>) -> Option<PickHit> {
         let end = ray.at(MAX_PICK_DISTANCE);
         let mut best: Option<PickHit> = None;
         let mut consider = |key: EntityKey, point: Vec3| {
@@ -96,6 +104,9 @@ impl SceneGeometry {
             }
         };
         for entity in &self.entities {
+            if excluded.contains(&entity.key) {
+                continue;
+            }
             if entity.is_marker() {
                 if let Some(distance) = ray_sphere(ray, entity.origin(), MARKER_PICK_RADIUS) {
                     // A small bias so a marker resting on a surface is picked over the surface.

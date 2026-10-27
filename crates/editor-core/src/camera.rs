@@ -28,6 +28,8 @@ pub struct OrbitCamera {
     pub vertical_fov_radians: f32,
     /// Metres per second when flying.
     pub fly_speed: f32,
+    /// Parallel projection, as an editor's top or side view uses.
+    pub orthographic: bool,
 }
 
 impl Default for OrbitCamera {
@@ -39,6 +41,7 @@ impl Default for OrbitCamera {
             distance: 30.0,
             vertical_fov_radians: 60f32.to_radians(),
             fly_speed: 10.0,
+            orthographic: false,
         }
     }
 }
@@ -69,7 +72,42 @@ impl OrbitCamera {
         camera.vertical_fov_radians = self.vertical_fov_radians;
         camera.near = (self.distance * 0.002).clamp(0.02, 0.2);
         camera.far = 600.0;
+        if self.orthographic {
+            camera.orthographic_half_height = Some(self.orthographic_half_height());
+        }
         camera
+    }
+
+    /// Half the world height an orthographic view shows: what the perspective view shows at
+    /// the target, so toggling the projection keeps the target the same size.
+    pub fn orthographic_half_height(&self) -> f32 {
+        self.distance * (self.vertical_fov_radians * 0.5).tan()
+    }
+
+    /// Looks at the current target from a preset direction. `None` for an unknown name.
+    pub fn apply_preset(&mut self, name: &str) -> Option<()> {
+        let (yaw, pitch, orthographic) = match name {
+            "perspective" => (0.35, 0.55, false),
+            "front" => (0.0, 0.0, true),
+            "back" => (std::f32::consts::PI, 0.0, true),
+            "left" => (std::f32::consts::FRAC_PI_2, 0.0, true),
+            "right" => (-std::f32::consts::FRAC_PI_2, 0.0, true),
+            "top" => (0.0, MAX_PITCH, true),
+            "bottom" => (0.0, -MAX_PITCH, true),
+            _ => return None,
+        };
+        self.yaw = yaw;
+        self.pitch = pitch;
+        self.orthographic = orthographic;
+        Some(())
+    }
+
+    /// Puts the camera at `position` looking along `forward`, keeping its distance.
+    pub fn look_from(&mut self, position: Vec3, forward: Vec3) {
+        let forward = forward.normalize_or(Vec3::NEG_Z);
+        self.yaw = (-forward.x).atan2(-forward.z);
+        self.pitch = (-forward.y).clamp(-1.0, 1.0).asin().clamp(-MAX_PITCH, MAX_PITCH);
+        self.target = position + self.forward() * self.distance;
     }
 
     pub fn orbit(&mut self, mouse_delta: Vec2) {
@@ -169,8 +207,18 @@ impl ViewportProjection {
 
     /// World units per pixel at `point`'s distance, for screen-constant gizmo sizes.
     pub fn world_per_pixel(&self, point: Vec3) -> f32 {
+        if let Some(half_height) = self.camera.orthographic_half_height {
+            return 2.0 * half_height / self.size.y;
+        }
         let depth = (point - self.camera.position).dot(self.camera.forward).max(self.camera.near);
         2.0 * depth * (self.camera.vertical_fov_radians * 0.5).tan() / self.size.y
+    }
+
+    /// Whether `pixel` lies inside the rectangle with corners `a` and `b`, in any order.
+    pub fn pixel_in_rect(pixel: Vec2, a: Vec2, b: Vec2) -> bool {
+        let min = a.min(b);
+        let max = a.max(b);
+        pixel.x >= min.x && pixel.x <= max.x && pixel.y >= min.y && pixel.y <= max.y
     }
 }
 
@@ -205,6 +253,27 @@ mod tests {
         assert!(((camera.position() - camera.target) - before).length() < 1e-4);
         camera.dolly(1000.0);
         assert_eq!(camera.distance, MIN_DISTANCE);
+    }
+
+    #[test]
+    fn presets_look_along_the_axes_and_look_from_round_trips() {
+        let mut camera = OrbitCamera::default();
+        camera.apply_preset("top").unwrap();
+        assert!(camera.orthographic);
+        assert!(camera.forward().y < -0.99, "{}", camera.forward());
+        camera.apply_preset("front").unwrap();
+        assert!(camera.forward().abs_diff_eq(Vec3::NEG_Z, 1e-5), "{}", camera.forward());
+        assert!(camera.apply_preset("sideways").is_none());
+        camera.apply_preset("perspective").unwrap();
+        assert!(!camera.orthographic);
+        let forward = Vec3::new(0.3, -0.4, -0.8).normalize();
+        camera.look_from(Vec3::new(1.0, 5.0, 2.0), forward);
+        assert!(camera.forward().abs_diff_eq(forward, 1e-4), "{}", camera.forward());
+        assert!(camera.position().abs_diff_eq(Vec3::new(1.0, 5.0, 2.0), 1e-3), "{}", camera.position());
+        let orthographic = OrbitCamera { orthographic: true, ..OrbitCamera::default() };
+        let projection = ViewportProjection::new(orthographic.render_camera(), Vec2::new(800.0, 600.0));
+        let expected = 2.0 * orthographic.orthographic_half_height() / 600.0;
+        assert!((projection.world_per_pixel(Vec3::ZERO) - expected).abs() < 1e-6);
     }
 
     #[test]

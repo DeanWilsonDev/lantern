@@ -15,9 +15,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use lantern_world_format::{ColliderKind, PropertyValue, Shape};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Palette {
     pub templates: Vec<EntityTemplate>,
     #[serde(default)]
@@ -27,7 +27,7 @@ pub struct Palette {
 }
 
 /// A starting point for a new entity. Fields left out stay empty.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EntityTemplate {
     /// The id the UI passes back to add one (`"block"`).
     pub id: String,
@@ -51,7 +51,7 @@ pub struct EntityTemplate {
 }
 
 /// The mesh drawn for a shapeless entity.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarkerMesh {
     #[default]
@@ -64,7 +64,7 @@ pub enum MarkerMesh {
     Plane,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MarkerStyle {
     #[serde(default)]
     pub mesh: MarkerMesh,
@@ -87,6 +87,12 @@ impl Palette {
     pub fn load(path: &Path) -> Result<Palette, String> {
         let text = std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
         serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+    }
+
+    /// Writes the palette back as pretty JSON, so an edited template survives a restart.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let text = serde_json::to_string_pretty(self).map_err(|error| error.to_string())?;
+        std::fs::write(path, text + "\n").map_err(|error| format!("{}: {error}", path.display()))
     }
 
     /// Generic content for when the game has no palette.

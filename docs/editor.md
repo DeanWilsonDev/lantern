@@ -1,11 +1,12 @@
 # Lantern world editor
 
 The world editor opens a world file, shows it in a 3D viewport and lets you select, move, rotate,
-scale, add, duplicate, delete and re-parent entities, edit their fields, undo and redo, and save.
-It is isolated from the game: it never links the game, and the game never links it. The two
-share only the world file format (`crates/world-format`) and the game's assets.
+scale, add, duplicate, mirror, align, group, hide, lock, re-parent and delete entities, edit their
+fields, undo and redo, play the level in the real game and save. It is isolated from the game: it
+never links the game, and the game never links it. The two share only the world file format
+(`crates/world-format`) and the game's assets.
 
-![The editor with a block selected](editor-screenshot.png)
+![The editor with the course open](editor-screenshot.png)
 
 ## Architecture
 
@@ -13,14 +14,15 @@ share only the world file format (`crates/world-format`) and the game's assets.
 apps/world-editor (C++26, CMake)                      crates/ (Rust)
 ┌──────────────────────────────────────────┐          ┌──────────────────────────────────┐
 │ src/ui/*.chaos *.cosmos *.nyx            │          │ lantern-editor-backend           │
-│   toolbar, outliner, inspector, status   │          │   EditorBackend                  │
-│   EditorApplication (Nyx Application)    │          │   ├── EditorSession ─────────────┼──► lantern-editor-core
-│        │ calls editor*() host functions  │          │   └── GpuRenderer (off-screen) ──┼──► lantern-sdl-gpu
-│        ▼                                 │  C API   │   ffi.rs                         │
+│   menus, toolbar, outliner, inspector,   │          │   EditorBackend                  │
+│   assets, console, history, settings,    │          │   ├── EditorSession ─────────────┼──► lantern-editor-core
+│   palette, dialogs, status bar           │          │   ├── GpuRenderer (off-screen) ──┼──► lantern-sdl-gpu
+│   EditorApplication (Nyx Application)    │          │   ├── preview, thumbnails, play  │
+│        │ calls editor*() host functions  │  C API   │   └── ffi.rs                     │
 │ src/EditorHost.cpp ──────────────────────┼─────────►│   include/lantern_editor.h       │
-│ src/native/LanternViewportWidget.cpp ────┼─────────►│                                  │
-│   streams RGBA pixels into an SDL        │          └──────────────────────────────────┘
-│   texture; forwards mouse, wheel, keys   │                       │
+│ src/native/EditorViewportRenderers.cpp ──┼─────────►│                                  │
+│   IViewportRenderer per view: level,     │          └──────────────────────────────────┘
+│   preview, thumbnail:<template>          │                       │
 │                                          │                       ▼
 │ Penumbra · Chaos · Cosmos · nyx-proto    │          lantern-world-format ◄── the game host
 └──────────────────────────────────────────┘          (WorldFile, build_pieces)   loads the same file
@@ -30,25 +32,31 @@ apps/world-editor (C++26, CMake)                      crates/ (Rust)
   `WorldEntity`, shapes, materials, tints, colliders and free-form properties) and turns a world
   into meshes and collision triangles (`build_pieces`). The game host and the editor both use it.
 - **`lantern-editor-core`** is all the editor's logic, in plain Rust with no window or GPU:
-  the document and its undo history, selection, the orbit camera, picking, gizmos with snapping,
-  the inspector's fields, the outline, and the input state machine. It is unit tested.
+  the document and its labelled undo history, selection, the orbit camera with presets,
+  bookmarks and orthographic views, picking and box selection, the move, rotate and scale gizmos
+  with snapping, world or local space and primary or centre pivots, the inspector's fields, the
+  outline, hiding and locking, the editing operations, preferences and the input state machine.
+  It is unit tested.
 - **`lantern-editor-backend`** owns one `EditorSession` and an off-screen `GpuRenderer`. It
-  draws the viewport into memory and exposes everything through a C API
+  draws the viewport, the template thumbnails and the turntable preview into memory, launches
+  the game for play-in-editor, and exposes everything through a C API
   (`crates/editor-backend/include/lantern_editor.h`). It is built as a static library linked
   against the system SDL3, the same SDL Penumbra uses.
 - **`apps/world-editor`** is the front end, built the same way as Pharos. `main.cpp` opens the
-  backend and hands control to `ChaosApplicationHost`. `EditorHost.cpp` registers one Nyx host
-  function per C API call (`editorRevision()`, `editorSelect(id, additive)` and so on) and the
-  `LanternViewport` native widget. The panels are Chaos components styled by Cosmos.
-  `EditorApplication.nyx` polls `editorRevision()` each frame and refreshes its signals when
-  the revision changes.
+  backend, loads the UI through `ChaosApplicationHost`, registers the viewport renderers and
+  runs. `EditorHost.cpp` registers one Nyx host function per C API call (`editorRevision()`,
+  `editorSelect(id, additive)` and so on). The panels are Chaos components styled by Cosmos,
+  one component per file. `EditorApplication.nyx` holds the UI state as signals, polls
+  `editorRevision()` each frame and refreshes what it mirrors when the revision changes
+  (`docs/decisions.md` D-031 to D-040).
 
 ### What the editor knows about the game
 
 Nothing by name. The game ships `assets/editor/palette.json`, which lists:
 
-- **templates** for the Add buttons (a label plus a partial entity: kind, shape, material, tint,
-  collider, properties, and how far to lift it above the surface it lands on);
+- **templates** for the asset browser and the Entity menu (a label plus a partial entity: kind,
+  shape, material, tint, collider, properties, and how far to lift it above the surface it
+  lands on);
 - **markers**: how to draw an entity that has no shape (a gem mesh, a capsule, a plane outline),
   by kind;
 - **materials**: the names the inspector offers, each a texture in `assets/textures/`.
@@ -75,40 +83,109 @@ apps/world-editor/build/lantern-world-editor path/to/other.world.json
 CMake runs `cargo build -p lantern-editor-backend` itself on every build. If SDL3 is somewhere
 pkg-config doesn't look, set `PKG_CONFIG_PATH` (for example `/usr/local/lib/pkgconfig`).
 
+The stack is fetched from `proto` (Penumbra, Chaos, Cosmos) and `main` (penumbra-ui-backend,
+Cimmerian). To build against other branches or local checkouts:
+
+```sh
+-DLANTERN_STACK_BRANCH=claude/my-branch          # every dependency from one branch
+-DLANTERN_PENUMBRA_BRANCH=claude/my-branch       # one dependency
+-DFETCHCONTENT_SOURCE_DIR_PENUMBRA=../penumbra   # a local checkout (CMake's own switch)
+```
+
 The Rust parts are tested without the app:
 
 ```sh
 cargo test -p lantern-world-format -p lantern-editor-core
-cargo test -p lantern-editor-backend      # needs a GPU or lavapipe for the render test
+cargo test -p lantern-editor-backend      # needs a GPU or lavapipe for the render tests
 ```
 
+## The panels
+
+- **Menu bar**: File (new, open, recent files, save, save as, play, settings, quit), Edit
+  (undo, redo, duplicate, duplicate along an axis, mirror, delete, snap, space, pivot),
+  Selection (all, invert, children, deselect, hide, unhide all, lock, unlock, unparent,
+  group, align and distribute along an axis), View (frame, camera presets, bookmarks,
+  grid, wireframe, colliders, markers, level bounds, hidden entities, stats, orthographic,
+  align camera and selection), Entity (one entry per template, snap to ground, revert to and
+  apply to template), Window (which bottom panel is shown, the command palette) and Help
+  (controls, keyboard shortcuts, about).
+- **Toolbar**: file buttons, undo and redo, the move, rotate and scale tools, snap, world or
+  local space, pivot, frame, duplicate, group, delete, play and stop, the camera preset
+  dropdown, the view toggles, the command palette and settings. Every button has a tooltip.
+- **Outliner**: the entity tree with a search box, kind icons, expand and collapse, eye and
+  lock toggles per row, click and Shift-click selection, and drag-and-drop re-parenting (drop
+  on a row to parent, on the empty tail to unparent). Right-click opens a context menu.
+- **Viewport**: the level, with the camera's description and the controls hint in its header.
+  Drop a template from the asset browser into it to add an entity under the cursor.
+- **Inspector**: the selection's fields in collapsible groups. Vectors edit X, Y and Z side by
+  side, choices are dropdowns, flags are checkboxes, tints show a swatch. With several entities
+  selected, a field shows "mixed" where they differ and an edit applies to all of them. The
+  properties group adds, renames and removes free-form properties.
+- **Assets**: a card per template with a rendered thumbnail; selecting one shows it spinning in
+  the preview, "Add to world" adds it at the camera's focus, and dragging it into the viewport
+  adds it where it lands.
+- **Console**: the status line's history with info, warning and error filters.
+- **History**: every undo step by label; click one to jump to it.
+- **Settings** (Ctrl/Cmd + ,): Viewport (view options, grid spacing), Snapping (steps),
+  Camera (presets, orthographic, bookmarks), Editor (recent files, preferences file).
+- **Command palette** (Ctrl/Cmd + Shift + P): every command by name. Click the field, type,
+  then Enter runs the first match.
+- **Status bar**: the last message, entity and selection counts, tool, space, snap, camera,
+  frames per second and draw count.
+
+Preferences (window size, snapping, view options, bookmarks, the open bottom panel and recent
+files) are saved to `~/.config/lantern/world-editor.json` on quit and from the settings dialog.
+
 ## Controls
+
+In the viewport:
 
 | Input | Action |
 |---|---|
 | Left click | Select (Shift adds or removes) |
-| Left drag on a gizmo handle | Move, rotate or scale along that axis |
+| Left drag on empty space | Box select |
+| Left drag on a gizmo handle | Move, rotate or scale along that axis or plane |
 | Left drag on a selected object | Move it across the surface under the cursor |
 | Right drag, or Alt + left drag | Orbit |
 | Shift + right drag, or middle drag | Pan |
 | Wheel | Zoom |
 | Hold right button + W A S D Q E | Fly |
 | W / E / R | Move / rotate / scale tool |
-| F | Frame the selection (or the whole world) |
+| X / Z | Toggle world or local space / primary or centre pivot |
+| F / Home | Frame the selection / frame everything |
+| End | Snap the selection to the ground |
+| G | Toggle the grid |
+| H / Shift + H | Hide the selection / unhide all |
+| 1 to 9, Ctrl/Cmd + 1 to 9 | Go to a camera bookmark / set it |
 | Delete or Backspace | Delete the selection |
 | Ctrl/Cmd + Z, Ctrl/Cmd + Shift + Z or Ctrl + Y | Undo, redo |
-| Ctrl/Cmd + D | Duplicate |
-| Ctrl/Cmd + S | Save |
-| Ctrl/Cmd + A | Select all |
+| Ctrl/Cmd + D / G / A | Duplicate / group / select all |
 | Esc | Cancel a drag, or clear the selection |
 
-Viewport keys work while the pointer is over the viewport. The toolbar has buttons for the
-same actions, plus New, Open and Save As (they use the path field), the Snap toggle and one
-Add button per palette template. Snapping steps are 0.25 m, 15° and 0.1 scale.
+Anywhere in the editor:
+
+| Input | Action |
+|---|---|
+| Ctrl/Cmd + N / O / S / Shift + S | New, open, save, save as |
+| Ctrl/Cmd + P / Shift + P | Play or stop / command palette |
+| Ctrl/Cmd + , | Settings |
+| Ctrl/Cmd + L / Shift + L / I | Lock / unlock / invert the selection |
+| Ctrl/Cmd + Q | Quit (asks about unsaved changes) |
+| Right click on an outliner row | Context menu |
+| Esc | Close the open menu, popup or dialog |
+
+Shortcuts not listed here go to the viewport whatever the pointer is over. Snapping steps
+default to 0.25 m, 15° and 0.1 scale and are set in Settings.
 
 In the inspector, typing applies as you go: each keystroke that parses is applied, and a run of
-typing into one field is one undo step. Invalid text is reported in the status bar and doesn't
-change the world. Choice fields (kind, shape, material, collider) open a list.
+typing into one field is one undo step. Invalid text is reported in the console and doesn't
+change the world.
+
+## Play in editor
+
+Play saves the level to `.editor-play.world.json` beside the game's worlds and runs the
+`lantern` runner on it with `LANTERN_LEVEL` set, so what plays is what you see, saved or not.
+Stop ends the game. The game's own window opens; the editor stays usable.
 
 ## C API rules
 
@@ -116,10 +193,12 @@ change the world. Choice fields (kind, shape, material, collider) open a list.
 - Strings passed in are NUL-terminated UTF-8, borrowed for the call. Strings returned stay valid
   until the next string-returning call on the same handle, so copy them straight away.
 - Entity ids are the world file's ids as `int64_t`; 0 means none.
-- No Rust panic crosses the boundary. A panic is caught, logged and shown in the status line,
+- No Rust panic crosses the boundary. A panic is caught, logged and shown in the console,
   and the function returns its default.
 - `lantern_editor_revision` changes whenever anything a panel shows changes (camera moves don't
   count), so the front end polls it once a frame instead of receiving callbacks.
+- Pixel buffers (`lantern_editor_pixels`, `lantern_editor_preview_pixels`,
+  `lantern_editor_thumbnail`) are RGBA, valid until the next render of the same view.
 
 ## Known gaps
 
@@ -127,18 +206,9 @@ These are filed under the "Game engine" epic on the Nyx kanban in fearless-hq.
 
 - **A click shorter than one frame is lost.** Penumbra samples mouse buttons once per frame
   rather than queueing press and release events.
-- **`<input text>` isn't updated after mount.** penumbra-ui-backend applies a changed `text`
-  prop to labels only. The editor works around this by emptying the inspector for one frame
-  whenever the selection or an outside edit changes it, so the fields mount fresh.
-- **Ctrl/Cmd+A doesn't select a text field's contents**, so you clear a field with Backspace.
+- **No focus API from Nyx.** The command palette and the outliner search can't take keyboard
+  focus by themselves, so click the field first.
+- **Ctrl/Cmd + A doesn't select a text field's contents**, so you clear a field with Backspace.
 - **Non-ASCII text in a `.chaos` element is a lex error** (NYX0001), so labels use ASCII.
-- **No viewport primitive.** The 3D view is a C++ native widget. A Chaos primitive for an
-  external renderer (or `<model3d>` for Umbra) would let it be written in `.chaos`.
-- **Keyboard input for native widgets.** Penumbra's `InputState` has only a few keys, so the
-  viewport reads SDL's keyboard state directly while the pointer is over it.
-- **No dropdown or checkbox primitive.** Choice fields are a button that opens a list.
-- **No modal file dialog.** Open and Save As take a path typed in the toolbar.
-- **Single-entity inspector.** With several entities selected, the inspector shows the first;
-  gizmos move all of them.
-- **No re-parenting in the UI yet.** The backend supports it (keeping world position and
-  refusing cycles), but there is no drag-and-drop in the outliner.
+- **Per-frame hover.** Penumbra fires `onHover` every frame the pointer is over an element, so
+  tooltips and hover state are debounced in Nyx.

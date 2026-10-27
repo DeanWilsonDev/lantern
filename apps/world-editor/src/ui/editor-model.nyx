@@ -5,28 +5,87 @@ OutlineRowItem :: data {
     kind: string;
     depth: i32;
     selected: bool;
+    hidden: bool;
+    locked: bool;
+    hasChildren: bool;
+    expanded: bool;
 }
 
 InspectorFieldItem :: data {
     rowKey: string;
     key: string;
     label: string;
+    group: string;
     kind: string;
     value: string;
+    mixed: bool;
     choices: Array<string>;
+    axisKeys: Array<string>;
+    axisValues: Array<string>;
+}
+
+InspectorGroupItem :: data {
+    name: string;
+    collapsed: bool;
+    fields: Array<InspectorFieldItem>;
 }
 
 ToolbarState :: data {
     tool: string;
     snap: bool;
+    space: string;
+    pivot: string;
     canUndo: bool;
     canRedo: bool;
     hasSelection: bool;
+    orthographic: bool;
+    playing: bool;
+    showGrid: bool;
+    wireframe: bool;
+    showColliders: bool;
+    showMarkers: bool;
+    showStats: bool;
+    showLevelBounds: bool;
+    showHidden: bool;
 }
 
 TemplateItem :: data {
     id: string;
     label: string;
+    kind: string;
+}
+
+HistoryItem :: data {
+    key: string;
+    position: i32;
+    label: string;
+    done: bool;
+    current: bool;
+}
+
+LogItem :: data {
+    key: string;
+    level: string;
+    text: string;
+}
+
+MenuEntry :: data {
+    label: string;
+    command: string;
+    shortcut: string = "";
+    enabled: bool = true;
+    checked: bool = false;
+    separator: bool = false;
+}
+
+StatusInfo :: data {
+    status: string;
+    entities: string;
+    selected: string;
+    camera: string;
+    frames: string;
+    handle: string;
+    playing: bool;
 }
 
 EditorModel :: namespace {
@@ -35,54 +94,115 @@ EditorModel :: namespace {
     FIELD_GROUP: i32 : 2;
     FIELD_VALUE: i32 : 3;
     FIELD_KIND: i32 : 4;
+    FIELD_MIXED: i32 : 5;
     TEMPLATE_ID: i32 : 0;
     TEMPLATE_LABEL: i32 : 1;
+    TEMPLATE_KIND: i32 : 2;
+    ROOT_ENTITY: i64 : 0;
 
-    OutlineRows :: () -> Array<OutlineRowItem> {
+    OutlineRows :: (filter: string, collapsed: Dictionary<i64, bool>) -> Array<OutlineRowItem> {
         rows~ Array<OutlineRowItem> = [];
         count := editorOutlineCount();
+        needle := filter.trim().toLower();
+        hiddenBelowDepth~ i32 = -1;
         for row~ i32 = 0; row < count; row++ {
+            depth := editorOutlineDepth(row);
+            if hiddenBelowDepth >= 0 && depth > hiddenBelowDepth {
+                continue;
+            }
+            hiddenBelowDepth = -1;
             id := editorOutlineId(row);
+            name := editorEntityName(id);
+            kind := editorEntityKind(id);
+            isCollapsed := collapsed.containsKey(id);
+            if isCollapsed && needle == "" {
+                hiddenBelowDepth = depth;
+            }
+            if needle != "" && !name.toLower().contains(needle) && !kind.toLower().contains(needle) {
+                continue;
+            }
             rows.add(OutlineRowItem {
                 id: id,
                 key: `${id}`,
-                name: editorEntityName(id),
-                kind: editorEntityKind(id),
-                depth: editorOutlineDepth(row),
-                selected: editorIsSelected(id)
+                name: name,
+                kind: kind,
+                depth: needle == "" ? depth : 0,
+                selected: editorIsSelected(id),
+                hidden: editorIsHidden(id),
+                locked: editorIsLocked(id),
+                hasChildren: editorOutlineHasChildren(row),
+                expanded: !isCollapsed
             });
         }
         return rows;
     }
 
-    InspectorFields :: (version: i32) -> Array<InspectorFieldItem> {
+    IsAxisKey :: (key: string) -> bool {
+        return key.endsWith(".x") || key.endsWith(".y") || key.endsWith(".z");
+    }
+
+    AxisBase :: (key: string) -> string {
+        return key.substring(0, key.length() - 2);
+    }
+
+    InspectorGroups :: (version: i32, collapsed: Dictionary<string, bool>) -> Array<InspectorGroupItem> {
+        groups~ Array<InspectorGroupItem> = [];
         fields~ Array<InspectorFieldItem> = [];
         count := editorFieldCount();
         currentGroup~ string = "";
         for index~ i32 = 0; index < count; index++ {
             group := editorField(index, FIELD_GROUP);
             if group != currentGroup {
+                if currentGroup != "" {
+                    groups.add(InspectorGroupItem {
+                        name: currentGroup, collapsed: collapsed.containsKey(currentGroup), fields: fields
+                    });
+                }
                 currentGroup = group;
-                fields.add(InspectorFieldItem {
-                    rowKey: `${version}-group-${group}`,
-                    key: "",
-                    label: group,
-                    kind: "group",
-                    value: "",
-                    choices: []
-                });
+                fields = [];
             }
             key := editorField(index, FIELD_KEY);
+            if IsAxisKey(key) && index + 2 < count && editorField(index + 2, FIELD_KEY) == AxisBase(key) + ".z" {
+                fields.add(InspectorFieldItem {
+                    rowKey: `${version}-${AxisBase(key)}`,
+                    key: AxisBase(key),
+                    label: AxisLabel(editorField(index, FIELD_LABEL)),
+                    group: group,
+                    kind: "vector3",
+                    value: "",
+                    mixed: editorField(index, FIELD_MIXED) == "true" || editorField(index + 1, FIELD_MIXED) == "true"
+                        || editorField(index + 2, FIELD_MIXED) == "true",
+                    choices: [],
+                    axisKeys: [key, editorField(index + 1, FIELD_KEY), editorField(index + 2, FIELD_KEY)],
+                    axisValues: [editorField(index, FIELD_VALUE), editorField(index + 1, FIELD_VALUE),
+                                 editorField(index + 2, FIELD_VALUE)]
+                });
+                index += 2;
+                continue;
+            }
             fields.add(InspectorFieldItem {
                 rowKey: `${version}-${key}`,
                 key: key,
                 label: editorField(index, FIELD_LABEL),
+                group: group,
                 kind: editorField(index, FIELD_KIND),
                 value: editorField(index, FIELD_VALUE),
-                choices: Choices(index)
+                mixed: editorField(index, FIELD_MIXED) == "true",
+                choices: Choices(index),
+                axisKeys: [],
+                axisValues: []
             });
         }
-        return fields;
+        if currentGroup != "" {
+            groups.add(InspectorGroupItem {
+                name: currentGroup, collapsed: collapsed.containsKey(currentGroup), fields: fields
+            });
+        }
+        return groups;
+    }
+
+    AxisLabel :: (label: string) -> string {
+        return label.endsWith(" X") ? label.substring(0, label.length() - 2) : label;
     }
 
     Choices :: (index: i32) -> Array<string> {
@@ -94,13 +214,28 @@ EditorModel :: namespace {
         return choices;
     }
 
+    ViewOption :: (name: string) -> bool {
+        return editorViewOption(name) == "true";
+    }
+
     CurrentToolbar :: () -> ToolbarState {
         return ToolbarState {
             tool: editorTool(),
             snap: editorSnap(),
+            space: editorSpace(),
+            pivot: editorPivotMode(),
             canUndo: editorCanUndo(),
             canRedo: editorCanRedo(),
-            hasSelection: editorSelectionCount() > 0
+            hasSelection: editorSelectionCount() > 0,
+            orthographic: editorIsOrthographic(),
+            playing: editorIsPlaying(),
+            showGrid: ViewOption("grid"),
+            wireframe: ViewOption("wireframe"),
+            showColliders: ViewOption("colliders"),
+            showMarkers: ViewOption("markers"),
+            showStats: ViewOption("stats"),
+            showLevelBounds: ViewOption("level_bounds"),
+            showHidden: ViewOption("hidden")
         };
     }
 
@@ -110,18 +245,111 @@ EditorModel :: namespace {
         for index~ i32 = 0; index < count; index++ {
             templates.add(TemplateItem {
                 id: editorTemplate(index, TEMPLATE_ID),
-                label: editorTemplate(index, TEMPLATE_LABEL)
+                label: editorTemplate(index, TEMPLATE_LABEL),
+                kind: editorTemplate(index, TEMPLATE_KIND)
             });
         }
         return templates;
     }
 
+    History :: () -> Array<HistoryItem> {
+        items~ Array<HistoryItem> = [];
+        count := editorHistoryCount();
+        position := editorHistoryPosition();
+        items.add(HistoryItem { key: "origin", position: 0, label: "Opened", done: true, current: position == 0 });
+        for index~ i32 = 0; index < count; index++ {
+            items.add(HistoryItem {
+                key: `${index}`,
+                position: index + 1,
+                label: editorHistoryLabel(index),
+                done: index < position,
+                current: index + 1 == position
+            });
+        }
+        return items;
+    }
+
+    Log :: (showInfo: bool, showWarnings: bool, showErrors: bool) -> Array<LogItem> {
+        items~ Array<LogItem> = [];
+        count := editorLogCount();
+        for index~ i32 = 0; index < count; index++ {
+            level := editorLogLevel(index);
+            shown := when level {
+                "info" -> showInfo,
+                "warning" -> showWarnings,
+                "error" -> showErrors,
+                (other) -> true
+            };
+            guard shown continue;
+            items.add(LogItem { key: `${index}`, level: level, text: editorLogText(index) });
+        }
+        return items;
+    }
+
     InspectorTitle :: () -> string {
         count := editorSelectionCount();
-        if count == 0 {
-            return "Nothing selected";
-        }
+        guard count > 0 return "Nothing selected";
         name := editorEntityName(editorPrimarySelection());
         return count == 1 ? name : `${name} (+${count - 1} more)`;
+    }
+
+    Status :: () -> StatusInfo {
+        selected := editorSelectionCount();
+        return StatusInfo {
+            status: editorStatus(),
+            entities: `${editorEntityCount()} entities`,
+            selected: selected == 0 ? "" : `${selected} selected`,
+            camera: editorCameraDescription(),
+            frames: `${editorStat("fps")} fps · ${editorStat("draws")} draws`,
+            handle: editorHoveredHandle(),
+            playing: editorIsPlaying()
+        };
+    }
+
+    KindIcon :: (kind: string) -> string {
+        return when kind {
+            "platform" -> "platform",
+            "block" -> "cube",
+            "ramp" -> "scale",
+            "spawn" -> "spawn",
+            "checkpoint" -> "checkpoint",
+            "coin" -> "coin",
+            "gem" -> "coin",
+            "kill_plane" -> "skull",
+            "moving_platform" -> "platform",
+            "trigger" -> "trigger",
+            "light" -> "light",
+            "player" -> "player",
+            "camera" -> "camera",
+            "group" -> "layers",
+            default -> "circle"
+        };
+    }
+
+    LogIcon :: (level: string) -> string {
+        return when level {
+            "warning" -> "warning",
+            "error" -> "skull",
+            default -> "info"
+        };
+    }
+
+    HexDigit :: (text: string, index: i32) -> i32 {
+        digit := text.substring(index, 1).toLower();
+        return when digit {
+            "0" -> 0, "1" -> 1, "2" -> 2, "3" -> 3, "4" -> 4, "5" -> 5, "6" -> 6, "7" -> 7,
+            "8" -> 8, "9" -> 9, "a" -> 10, "b" -> 11, "c" -> 12, "d" -> 13, "e" -> 14, "f" -> 15,
+            (other) -> 0
+        };
+    }
+
+    ColorChannel :: (hex: string, channel: i32) -> f32 {
+        guard hex.length() >= 7 && hex.startsWith("#") return 0.0f;
+        start := 1 + channel * 2;
+        return f32(HexDigit(hex, start) * 16 + HexDigit(hex, start + 1));
+    }
+
+    HasColor :: (hex: string) -> bool {
+        return hex.length() >= 7 && hex.startsWith("#");
     }
 }

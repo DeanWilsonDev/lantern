@@ -63,9 +63,12 @@ fn main() {
         std::env::args().nth(1).and_then(|text| text.parse().ok()).unwrap_or(DEFAULT_MEASURED_FRAMES);
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../games/platformer");
     let manifest = GameManifest::load(&directory).expect("game.json");
-    let mut state =
-        EngineState::new(Box::new(HeadlessRenderer::default()), AudioSystem::new(None), manifest.assets_directory(&directory))
-            .expect("engine state");
+    let mut state = EngineState::new(
+        Box::new(HeadlessRenderer::default()),
+        AudioSystem::new(None),
+        manifest.assets_directory(&directory),
+    )
+    .expect("engine state");
     state.flags.insert("LANTERN_AUTOPLAY".to_string(), true);
     let mut host = GameHost::new(state, manifest.script_source(&directory));
     let mut platform = SixtyHertzPlatform::default();
