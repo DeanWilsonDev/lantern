@@ -25,10 +25,10 @@ pub trait ViewportResources {
 
 pub const SELECTION_COLOR: Color = Color::rgb(1.0, 0.78, 0.2);
 pub const HOVER_OUTLINE_COLOR: Color = Color::rgb(0.85, 0.9, 1.0);
-const GRID_MINOR_COLOR: Color = Color::rgb(0.33, 0.36, 0.42);
-const GRID_MAJOR_COLOR: Color = Color::rgb(0.5, 0.54, 0.62);
+const GRID_MINOR_COLOR: Color = Color::rgb(0.25, 0.28, 0.34);
+const GRID_MAJOR_COLOR: Color = Color::rgb(0.38, 0.42, 0.5);
 const VECTOR_PROPERTY_COLOR: Color = Color::rgb(0.3, 0.9, 1.0);
-const GRID_HALF_EXTENT: i32 = 60;
+const GRID_HALF_EXTENT: i32 = 30;
 const GRID_MAJOR_EVERY: i32 = 5;
 const PLANE_MARKER_HALF_EXTENT: f32 = 40.0;
 const EDITOR_SKY: Color = Color::rgb(0.2, 0.23, 0.29);
@@ -76,31 +76,56 @@ pub fn oriented_box_lines(render_world: &mut RenderWorld, bounds: &Aabb, matrix:
     }
 }
 
-fn draw_grid(render_world: &mut RenderWorld) {
+/// A ground grid on y = 0 centred under the camera's target, so it follows you around a big
+/// world without drawing thousands of lines. The world axes are drawn through the origin.
+fn draw_grid(render_world: &mut RenderWorld, center: Vec3) {
     let extent = GRID_HALF_EXTENT as f32;
-    for line in -GRID_HALF_EXTENT..=GRID_HALF_EXTENT {
-        let offset = line as f32;
-        let (x_color, z_color) = if line == 0 {
-            (crate::gizmo::Axis::Z.color(), crate::gizmo::Axis::X.color())
-        } else if line % GRID_MAJOR_EVERY == 0 {
-            (GRID_MAJOR_COLOR, GRID_MAJOR_COLOR)
-        } else {
-            (GRID_MINOR_COLOR, GRID_MINOR_COLOR)
-        };
-        // Lines along Z at x = offset (the x = 0 one is the Z axis), and along X at z = offset.
-        render_world.line(Vec3::new(offset, 0.0, -extent), Vec3::new(offset, 0.0, extent), x_color);
-        render_world.line(Vec3::new(-extent, 0.0, offset), Vec3::new(extent, 0.0, offset), z_color);
+    let center_x = (center.x / GRID_MAJOR_EVERY as f32).round() as i32 * GRID_MAJOR_EVERY;
+    let center_z = (center.z / GRID_MAJOR_EVERY as f32).round() as i32 * GRID_MAJOR_EVERY;
+    let color_for = |line: i32| if line % GRID_MAJOR_EVERY == 0 { GRID_MAJOR_COLOR } else { GRID_MINOR_COLOR };
+    for offset in -GRID_HALF_EXTENT..=GRID_HALF_EXTENT {
+        let x = center_x + offset;
+        let z = center_z + offset;
+        if x != 0 {
+            let x = x as f32;
+            render_world.line(
+                Vec3::new(x, 0.0, center_z as f32 - extent),
+                Vec3::new(x, 0.0, center_z as f32 + extent),
+                color_for(center_x + offset),
+            );
+        }
+        if z != 0 {
+            let z = z as f32;
+            render_world.line(
+                Vec3::new(center_x as f32 - extent, 0.0, z),
+                Vec3::new(center_x as f32 + extent, 0.0, z),
+                color_for(center_z + offset),
+            );
+        }
     }
+    let axis_extent = 1000.0;
+    render_world.line(
+        Vec3::new(-axis_extent, 0.0, 0.0),
+        Vec3::new(axis_extent, 0.0, 0.0),
+        crate::gizmo::Axis::X.color(),
+    );
+    render_world.line(
+        Vec3::new(0.0, 0.0, -axis_extent),
+        Vec3::new(0.0, 0.0, axis_extent),
+        crate::gizmo::Axis::Z.color(),
+    );
 }
 
 fn draw_plane_marker(render_world: &mut RenderWorld, height: f32, color: Color) {
+    // An outlined square with its diagonals: visible from any angle without hiding the level.
     let extent = PLANE_MARKER_HALF_EXTENT;
-    let mut offset = -extent;
-    while offset <= extent + 0.01 {
-        render_world.line(Vec3::new(offset, height, -extent), Vec3::new(offset, height, extent), color);
-        render_world.line(Vec3::new(-extent, height, offset), Vec3::new(extent, height, offset), color);
-        offset += 10.0;
+    let corner = |x: f32, z: f32| Vec3::new(x * extent, height, z * extent);
+    let corners = [corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)];
+    for index in 0..4 {
+        render_world.line(corners[index], corners[(index + 1) % 4], color);
     }
+    render_world.line(corners[0], corners[2], color);
+    render_world.line(corners[1], corners[3], color);
 }
 
 fn arrow(render_world: &mut RenderWorld, start: Vec3, end: Vec3, color: Color) {
@@ -127,7 +152,7 @@ pub fn build_viewport(
     render_world.clear_color = EDITOR_SKY;
     render_world.fog_start = 150.0;
     render_world.fog_end = 500.0;
-    draw_grid(render_world);
+    draw_grid(render_world, session.camera.target);
 
     let selection = session.selection().to_vec();
     let hovered = session.hovered_entity();

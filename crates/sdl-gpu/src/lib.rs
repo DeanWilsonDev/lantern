@@ -105,9 +105,34 @@ struct DepthTarget {
     height: u32,
 }
 
+/// Render targets reused by `render_offscreen` until the size changes.
+struct OffscreenTarget {
+    color: *mut sdl::SDL_GPUTexture,
+    depth: *mut sdl::SDL_GPUTexture,
+    download: *mut sdl::SDL_GPUTransferBuffer,
+    width: u32,
+    height: u32,
+}
+
+impl OffscreenTarget {
+    fn release(self, device: *mut sdl::SDL_GPUDevice) {
+        // SAFETY: all three were created on `device` and are released once, here.
+        unsafe {
+            sdl::SDL_ReleaseGPUTexture(device, self.color);
+            sdl::SDL_ReleaseGPUTexture(device, self.depth);
+            sdl::SDL_ReleaseGPUTransferBuffer(device, self.download);
+        }
+    }
+}
+
 pub struct GpuRenderer {
     device: *mut sdl::SDL_GPUDevice,
-    window: SdlWindow,
+    /// The window presented to, or `None` for an off-screen renderer (the world editor's
+    /// viewport), which only draws with `render_offscreen` and `capture`.
+    window: Option<SdlWindow>,
+    offscreen: Option<OffscreenTarget>,
+    /// An off-screen renderer initialised SDL's video subsystem itself and quits it on drop.
+    owns_video_subsystem: bool,
     pipelines: Option<Pipelines>,
     samplers: Samplers,
     meshes: Pool<GpuMesh>,
@@ -182,7 +207,94 @@ impl GpuRenderer {
 
         Ok(GpuRenderer {
             device,
-            window: window.clone(),
+            window: Some(window.clone()),
+            offscreen: None,
+            owns_video_subsystem: false,
+            pipelines: Some(pipelines),
+            samplers,
+            meshes: Pool::new(),
+            textures: Pool::new(),
+            white_texture,
+            line_buffer: DynamicBuffer::new(sdl::SDL_GPU_BUFFERUSAGE_VERTEX),
+            overlay_buffer: DynamicBuffer::new(sdl::SDL_GPU_BUFFERUSAGE_VERTEX),
+            depth: None,
+            color_format,
+            depth_format,
+            encode_srgb_in_shader,
+            driver_name,
+            debug: options.debug,
+            visible_draws: Vec::new(),
+        })
+    }
+
+    /// A renderer with no window, for drawing into memory: the world editor renders its
+    /// viewport this way and hands the pixels to its UI toolkit. Works whether or not someone
+    /// else (the editor's UI) has initialised SDL; SDL counts subsystem references.
+    pub fn new_offscreen(options: &GpuOptions) -> Result<GpuRenderer, GpuError> {
+        // SAFETY: SDL_InitSubSystem is reference-counted and may be called at any time from the
+        // main thread; the Vulkan backend needs video initialised to load its library.
+        if !unsafe { sdl::SDL_InitSubSystem(sdl::SDL_INIT_VIDEO) } {
+            return Err(GpuError::sdl("SDL_InitSubSystem(VIDEO)"));
+        }
+        let result = GpuRenderer::create_offscreen(options);
+        if result.is_err() {
+            // SAFETY: balances the successful SDL_InitSubSystem above.
+            unsafe { sdl::SDL_QuitSubSystem(sdl::SDL_INIT_VIDEO) };
+        }
+        result
+    }
+
+    fn create_offscreen(options: &GpuOptions) -> Result<GpuRenderer, GpuError> {
+        let driver = options.driver.as_deref().map(|name| CString::new(name).expect("driver names have no NUL"));
+        let driver_pointer = driver.as_ref().map_or(std::ptr::null(), |name| name.as_ptr());
+        let formats = sdl::SDL_GPU_SHADERFORMAT_SPIRV | sdl::SDL_GPU_SHADERFORMAT_MSL;
+        // SAFETY: SDL video is initialised; `driver_pointer` is NULL or outlives the call.
+        let device = unsafe { sdl::SDL_CreateGPUDevice(formats, options.debug, driver_pointer) };
+        if device.is_null() {
+            return Err(GpuError::sdl("SDL_CreateGPUDevice"));
+        }
+        let guard = DeviceGuard(device);
+        // SAFETY: live device; returns a static string.
+        let driver_name = unsafe { CStr::from_ptr(sdl::SDL_GetGPUDeviceDriver(device)) }.to_string_lossy().into_owned();
+        // SAFETY: live device.
+        let supported = unsafe { sdl::SDL_GetGPUShaderFormats(device) };
+        let shader_format = if (supported & sdl::SDL_GPU_SHADERFORMAT_SPIRV) == sdl::SDL_GPU_SHADERFORMAT_SPIRV {
+            ShaderFormat::Spirv
+        } else {
+            ShaderFormat::Msl
+        };
+        // An sRGB target lets the hardware encode, so the pixels read back are ready to show.
+        // SAFETY: live device; a pure query.
+        let srgb_supported = unsafe {
+            sdl::SDL_GPUTextureSupportsFormat(
+                device,
+                sdl::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB,
+                sdl::SDL_GPU_TEXTURETYPE_2D,
+                sdl::SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+            )
+        };
+        let color_format = if srgb_supported {
+            sdl::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB
+        } else {
+            sdl::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM
+        };
+        let encode_srgb_in_shader = !srgb_supported;
+        let depth_format = choose_depth_format(device);
+        log::info!(
+            target: "renderer",
+            "off-screen GPU driver: {driver_name} ({shader_format:?} shaders), colour format {}, depth format {}",
+            color_format.0,
+            depth_format.0
+        );
+        let pipelines = pipelines::create_pipelines(device, shader_format, color_format, depth_format)?;
+        let samplers = Samplers::create(device)?;
+        let white_texture = resources::upload_texture(device, &samplers, &TextureData::solid(Color::WHITE))?;
+        std::mem::forget(guard);
+        Ok(GpuRenderer {
+            device,
+            window: None,
+            offscreen: None,
+            owns_video_subsystem: true,
             pipelines: Some(pipelines),
             samplers,
             meshes: Pool::new(),
@@ -242,6 +354,9 @@ impl GpuRenderer {
 
     /// Draws `world` to the window and presents it.
     pub fn render(&mut self, world: &RenderWorld) -> Result<FrameReport, GpuError> {
+        let Some(window) = self.window.clone() else {
+            return Err(GpuError::new("render needs a window; this renderer is off-screen"));
+        };
         // SAFETY: live device.
         let command_buffer = unsafe { sdl::SDL_AcquireGPUCommandBuffer(self.device) };
         if command_buffer.is_null() {
@@ -255,7 +370,7 @@ impl GpuRenderer {
         let acquired = unsafe {
             sdl::SDL_WaitAndAcquireGPUSwapchainTexture(
                 command_buffer,
-                self.window.raw(),
+                window.raw(),
                 &mut swapchain_texture,
                 &mut width,
                 &mut height,
@@ -281,6 +396,76 @@ impl GpuRenderer {
         // SAFETY: live command buffer, submitted once.
         if !unsafe { sdl::SDL_SubmitGPUCommandBuffer(command_buffer) } {
             return Err(GpuError::sdl("SDL_SubmitGPUCommandBuffer"));
+        }
+        report.presented = true;
+        Ok(report)
+    }
+
+    /// Renders `world` at `width` x `height` and copies the result into `pixels` as RGBA8,
+    /// top row first (sRGB-encoded, ready to display). The render targets are kept and reused
+    /// while the size stays the same. Waits for the GPU, so it costs a frame of latency
+    /// at most; fine for an editor viewport.
+    pub fn render_offscreen(
+        &mut self,
+        world: &RenderWorld,
+        width: u32,
+        height: u32,
+        pixels: &mut Vec<u8>,
+    ) -> Result<FrameReport, GpuError> {
+        let (width, height) = (width.max(1), height.max(1));
+        if self.offscreen.as_ref().is_none_or(|target| target.width != width || target.height != height) {
+            if let Some(old) = self.offscreen.take() {
+                // SAFETY: live device; nothing may still use the old targets once idle.
+                unsafe { sdl::SDL_WaitForGPUIdle(self.device) };
+                old.release(self.device);
+            }
+            let color = resources::create_render_texture(self.device, self.color_format, width, height, false)?;
+            let depth = resources::create_render_texture(self.device, self.depth_format, width, height, true)?;
+            let download = resources::create_transfer_buffer(self.device, width * height * 4, false)?;
+            self.offscreen = Some(OffscreenTarget { color, depth, download, width, height });
+        }
+        let target = self.offscreen.as_ref().expect("created above");
+        let (color, depth, download) = (target.color, target.depth, target.download);
+        let byte_count = (width * height * 4) as usize;
+
+        // SAFETY: live device.
+        let command_buffer = unsafe { sdl::SDL_AcquireGPUCommandBuffer(self.device) };
+        if command_buffer.is_null() {
+            return Err(GpuError::sdl("SDL_AcquireGPUCommandBuffer"));
+        }
+        self.upload_dynamic_geometry(command_buffer, world)?;
+        let mut report = FrameReport::default();
+        self.record_frame(command_buffer, color, depth, width, height, world, &mut report);
+        let source = sdl::SDL_GPUTextureRegion { texture: color, w: width, h: height, d: 1, ..Default::default() };
+        let destination = sdl::SDL_GPUTextureTransferInfo { transfer_buffer: download, ..Default::default() };
+        // SAFETY: live command buffer; the copy pass is begun and ended here; `color` and
+        // `download` are sized for `width * height` 4-byte texels.
+        let fence = unsafe {
+            let copy_pass = sdl::SDL_BeginGPUCopyPass(command_buffer);
+            sdl::SDL_DownloadFromGPUTexture(copy_pass, &source, &destination);
+            sdl::SDL_EndGPUCopyPass(copy_pass);
+            sdl::SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer)
+        };
+        if fence.is_null() {
+            return Err(GpuError::sdl("SDL_SubmitGPUCommandBufferAndAcquireFence"));
+        }
+        pixels.resize(byte_count, 0);
+        // SAFETY: the fence belongs to this device; after waiting, the download buffer holds the
+        // pixels and may be mapped; the mapped range is `byte_count` bytes.
+        unsafe {
+            sdl::SDL_WaitForGPUFences(self.device, true, &fence, 1);
+            sdl::SDL_ReleaseGPUFence(self.device, fence);
+            let mapped = sdl::SDL_MapGPUTransferBuffer(self.device, download, false).cast::<u8>();
+            if mapped.is_null() {
+                return Err(GpuError::sdl("SDL_MapGPUTransferBuffer"));
+            }
+            std::ptr::copy_nonoverlapping(mapped, pixels.as_mut_ptr(), byte_count);
+            sdl::SDL_UnmapGPUTransferBuffer(self.device, download);
+        }
+        if is_bgra(self.color_format) {
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
         }
         report.presented = true;
         Ok(report)
@@ -526,13 +711,21 @@ impl Drop for GpuRenderer {
             // SAFETY: created on this device, released once.
             unsafe { sdl::SDL_ReleaseGPUTexture(self.device, depth.texture) };
         }
+        if let Some(target) = self.offscreen.take() {
+            target.release(self.device);
+        }
         self.samplers.release(self.device);
         self.pipelines = None;
-        // SAFETY: the window was claimed in `new` and is still alive (we hold an `SdlWindow`);
+        // SAFETY: a window was claimed in `new` and is still alive (we hold an `SdlWindow`);
         // the device is destroyed last, once nothing created on it remains.
         unsafe {
-            sdl::SDL_ReleaseWindowFromGPUDevice(self.device, self.window.raw());
+            if let Some(window) = &self.window {
+                sdl::SDL_ReleaseWindowFromGPUDevice(self.device, window.raw());
+            }
             sdl::SDL_DestroyGPUDevice(self.device);
+            if self.owns_video_subsystem {
+                sdl::SDL_QuitSubSystem(sdl::SDL_INIT_VIDEO);
+            }
         }
         log::info!(target: "renderer", "GPU device destroyed");
     }

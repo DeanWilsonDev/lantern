@@ -26,7 +26,7 @@ pub use file::{
     CURRENT_FORMAT_VERSION, ColliderKind, EntityKey, PropertyValue, Shape, TransformData, WorldEntity, WorldFile,
     WorldFileError, parse_hex_color,
 };
-pub use pieces::{WorldPiece, build_pieces, world_matrices};
+pub use pieces::{WorldPiece, build_pieces, shape_mesh, world_matrices};
 
 /// The `kind` strings the demo course uses. Only game code gives them meaning; the editor treats
 /// them as labels. They live here so the game host and tools spell them the same way.

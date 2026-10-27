@@ -51,7 +51,7 @@ pub struct EntityTemplate {
 }
 
 /// The mesh drawn for a shapeless entity.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarkerMesh {
     #[default]
