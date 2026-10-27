@@ -1666,6 +1666,12 @@ impl EditorSession {
         self.camera.dolly(notches);
     }
 
+    /// Forgets every held key. The front end calls it when the pointer leaves the viewport,
+    /// since releases that happen elsewhere never reach the editor.
+    pub fn release_keys(&mut self) {
+        self.keys_held.clear();
+    }
+
     /// Returns true when the key did something (so the front end can stop it propagating).
     pub fn key(&mut self, key: EditorKey, down: bool, modifiers: Modifiers) -> bool {
         if let EditorKey::Letter(letter) = key {

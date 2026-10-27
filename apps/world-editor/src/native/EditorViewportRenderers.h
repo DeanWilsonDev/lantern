@@ -28,6 +28,7 @@ public:
     void PointerButton(Umbra::ViewportPointerButton Button, bool Down, const Umbra::ViewportModifiers& Modifiers) override;
     void Wheel(float Notches, float NotchesX) override;
     bool Key(std::string_view KeyName, bool Down, const Umbra::ViewportModifiers& Modifiers) override;
+    void HoverChanged(bool PointerIsOver) override;
     void Tick(float DeltaSeconds) override;
 
 private:

@@ -46,6 +46,12 @@ bool LevelViewportRenderer::Key(std::string_view KeyName, bool Down, const Umbra
     return lantern_editor_key(Editor_, Name.c_str(), Down, ToModifierBits(Modifiers));
 }
 
+void LevelViewportRenderer::HoverChanged(bool PointerIsOver) {
+    if (!PointerIsOver) {
+        lantern_editor_release_keys(Editor_);
+    }
+}
+
 void LevelViewportRenderer::Tick(float DeltaSeconds) { lantern_editor_update(Editor_, DeltaSeconds); }
 
 std::optional<Umbra::ViewportFrame> TemplatePreviewRenderer::Render(std::uint32_t WidthPixels,

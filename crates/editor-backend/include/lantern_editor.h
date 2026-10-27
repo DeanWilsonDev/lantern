@@ -67,6 +67,8 @@ void lantern_editor_pointer_button(LanternEditor* editor, uint32_t button, bool 
 void lantern_editor_wheel(LanternEditor* editor, float notches);
 /* Keys are named as the web's KeyboardEvent.key names them: "w", "Escape", "Delete", "F2", "1". */
 bool lantern_editor_key(LanternEditor* editor, const char* key_name, bool down, uint32_t modifiers);
+/* Forgets every held key; call it when the pointer leaves the viewport. */
+void lantern_editor_release_keys(LanternEditor* editor);
 void lantern_editor_update(LanternEditor* editor, float seconds);
 void lantern_editor_frame_selection(LanternEditor* editor);
 void lantern_editor_set_tool(LanternEditor* editor, const char* name);

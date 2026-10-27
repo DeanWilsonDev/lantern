@@ -418,6 +418,16 @@ pub unsafe extern "C" fn lantern_editor_key(
     }
 }
 
+/// Forgets every held key: call it when the pointer leaves the viewport.
+///
+/// # Safety
+/// See the module rules.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lantern_editor_release_keys(handle: *mut LanternEditor) {
+    // SAFETY: see the module rules.
+    unsafe { with_editor(handle, |editor| editor.backend.session.release_keys()) }
+}
+
 /// Advances time-based input (flying). Call once per frame.
 ///
 /// # Safety
