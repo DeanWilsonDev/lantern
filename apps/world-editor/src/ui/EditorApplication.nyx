@@ -1,0 +1,106 @@
+EditorModel :: import EditorModel;
+InspectorFieldItem :: import InspectorFieldItem;
+OutlineRowItem :: import OutlineRowItem;
+TemplateItem :: import TemplateItem;
+ToolbarState :: import ToolbarState;
+
+EditorApplication :: class : Application {
+    @signal outlineRows~ Array<OutlineRowItem> = [];
+    @signal inspectorFields~ Array<InspectorFieldItem> = [];
+    @signal inspectorTitle~ string = "";
+    @signal toolbar~ ToolbarState = EditorModel:::CurrentToolbar();
+    @signal status~ string = "";
+    seenRevision~ i64 = editorRevision();
+    revisionFromTyping~ i64 = editorRevision();
+    inspectorVersion~ i32 = 0;
+    inspectorRefillPending~ bool = false;
+    pathDraft~ string = "";
+
+    Configure~: () -> void override {
+        this.SetWindowTitle(editorTitle());
+        this.SetWindowSize(1600, 900);
+    }
+
+    OnStart~: () -> bool override {
+        this.SetTextInputActive(true);
+        this.ReloadFont(this.GetDpiScaleFactor());
+        this.pathDraft = editorDocumentPath();
+        this.Refresh(true);
+        return this.MountAppRoot("App.chaos", "App");
+    }
+
+    OnUpdate~: (deltaSeconds: f32) -> void override {
+        current := editorRevision();
+        if current != this.seenRevision {
+            this.seenRevision = current;
+            this.Refresh(current != this.revisionFromTyping);
+        } else if this.inspectorRefillPending {
+            this.inspectorRefillPending = false;
+            this.inspectorFields = EditorModel:::InspectorFields(this.inspectorVersion);
+        }
+        this.TickChaos();
+    }
+
+    OnDpiScaleChanged~: (newDpiScaleFactor: f32) -> void override {
+        this.ReloadFont(newDpiScaleFactor);
+        this.MountAppRoot("App.chaos", "App");
+    }
+
+    OnShutdown~: () -> void override {
+        this.TeardownRootWidget();
+    }
+
+    Refresh~: (rebuildInspector: bool) -> void {
+        this.outlineRows = EditorModel:::OutlineRows();
+        this.toolbar = EditorModel:::CurrentToolbar();
+        this.status = editorStatus();
+        this.inspectorTitle = EditorModel:::InspectorTitle();
+        if rebuildInspector {
+            this.inspectorVersion += 1;
+            this.inspectorFields = [];
+            this.inspectorRefillPending = true;
+        }
+        this.SetWindowTitle(editorTitle());
+    }
+
+    OutlineRows:: () -> Array<OutlineRowItem> { return this.outlineRows; }
+    InspectorFields:: () -> Array<InspectorFieldItem> { return this.inspectorFields; }
+    InspectorTitle:: () -> string { return this.inspectorTitle; }
+    CurrentToolbar:: () -> ToolbarState { return this.toolbar; }
+    Status:: () -> string { return this.status; }
+    Templates:: () -> Array<TemplateItem> { return EditorModel:::Templates(); }
+    PathDraft:: () -> string { return this.pathDraft; }
+
+    ControlsHint:: () -> string {
+        return "Right-drag orbit, Shift+right-drag or middle-drag pan, wheel zoom, hold right + WASDQE fly, W/E/R move/rotate/scale, F frame";
+    }
+
+    SelectEntity~: (id: i64) -> void {
+        editorSelect(id, false);
+    }
+
+    EditField~: (field: string, text: string) -> void {
+        editorSetField(editorPrimarySelection(), field, text);
+        this.revisionFromTyping = editorRevision();
+    }
+
+    PickChoice~: (field: string, choice: string) -> void {
+        editorCommitField();
+        editorSetField(editorPrimarySelection(), field, choice);
+    }
+
+    SetTool~: (tool: string) -> void { editorSetTool(tool); }
+    ToggleSnap~: () -> void { editorSetSnap(!editorSnap()); }
+    Undo~: () -> void { editorUndo(); }
+    Redo~: () -> void { editorRedo(); }
+    AddEntity~: (templateId: string) -> void { editorAddEntity(templateId); }
+    DuplicateSelection~: () -> void { editorDuplicateSelection(); }
+    DeleteSelection~: () -> void { editorDeleteSelection(); }
+    FrameSelection~: () -> void { editorFrameSelection(); }
+    NewWorld~: () -> void { editorNewWorld("untitled"); }
+    Save~: () -> void { editorSave(); }
+
+    SetPathDraft~: (path: string) -> void { this.pathDraft = path; }
+    OpenPathDraft~: () -> void { editorOpen(this.pathDraft); }
+    SaveAsPathDraft~: () -> void { editorSaveAs(this.pathDraft); }
+}
