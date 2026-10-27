@@ -5,7 +5,7 @@ use std::rc::Rc;
 use nyx_sys as sys;
 
 use crate::diagnostic::Diagnostic;
-use crate::error::{Error, Result, Status};
+use crate::error::{Error, Result, StackFrame, Status};
 use crate::host::{self, CallContext, HostTypeBuilder};
 use crate::program::Program;
 use crate::raw::{nyx_str, owned_string, path_text};
@@ -25,10 +25,26 @@ impl RuntimeInner {
         }
     }
 
+    pub(crate) fn last_error_stack(&self) -> Vec<StackFrame> {
+        let count = unsafe { sys::nyx_runtime_last_error_frame_count(self.raw) };
+        let mut stack = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut raw = unsafe { std::mem::zeroed::<sys::nyx_stack_frame>() };
+            if unsafe { sys::nyx_runtime_last_error_frame(self.raw, index, &mut raw) } == sys::NYX_OK {
+                stack.push(unsafe { StackFrame::from_raw(&raw) });
+            }
+        }
+        stack
+    }
+
     pub(crate) fn check(&self, status: sys::nyx_status) -> Result<()> {
         match Status::from_raw(status) {
             None => Ok(()),
-            Some(status) => Err(Error::new(status, self.last_error())),
+            Some(status) => {
+                let mut error = Error::new(status, self.last_error());
+                error.stack = self.last_error_stack();
+                Err(error)
+            }
         }
     }
 }
@@ -189,5 +205,9 @@ impl Runtime {
 
     pub fn register_type<T: 'static>(&self, name: &str) -> HostTypeBuilder<T> {
         HostTypeBuilder::new(self.clone(), name)
+    }
+
+    pub fn register_value_type<T: Copy + 'static>(&self, name: &str, defaults: T) -> HostTypeBuilder<T> {
+        HostTypeBuilder::new_value_type(self.clone(), name, defaults)
     }
 }

@@ -119,6 +119,7 @@ fn run() -> nyx::Result<()> {
             status: nyx::Status::Runtime,
             message: format!("unexpected run: frames {frames}, lost {lost}, log {lines:?}"),
             failure: None,
+            stack: Vec::new(),
         });
     }
     Ok(())

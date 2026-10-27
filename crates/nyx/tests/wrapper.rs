@@ -370,3 +370,99 @@ fn a_constructor_can_refuse() {
     assert_eq!(error.status, Status::Runtime);
     assert!(error.message.contains("counters are disabled"), "message was {}", error.message);
 }
+
+#[test]
+fn asks_whether_the_application_defines_a_hook() {
+    let runtime = Runtime::new().unwrap();
+    let program = runtime
+        .mount_source(
+            "BaseGame :: class : Application {\npublic:\n    Run :: () -> void { }\n    OnRender :: () -> void { }\n}\n\
+             Game :: class : BaseGame {\npublic:\n    OnFixedUpdate~: (dt: f32) -> void { }\n}\n",
+            "hooks.nyx",
+            "Game",
+        )
+        .unwrap();
+    assert!(program.defines_method("OnFixedUpdate").unwrap());
+    assert!(program.defines_method("OnRender").unwrap());
+    assert!(!program.defines_method("OnStart").unwrap());
+    let text = runtime.make_string("not a game").unwrap();
+    assert_eq!(program.defines_method_on(&text, "OnRender").unwrap_err().status, Status::InvalidArgument);
+}
+
+#[test]
+fn a_failure_and_a_refusal_carry_the_nyx_call_stack() {
+    let runtime = Runtime::new().unwrap();
+    runtime
+        .register_function("RefuseNow", "() -> void", |context, _| Err(context.refusal("the engine refused")))
+        .unwrap();
+    let program = runtime
+        .mount_source(
+            "Game :: class : Application {\npublic:\n    Run :: () -> void { }\n\
+             \x20   Step :: () -> i32 {\n        return Check() + 1;\n    }\n\
+             \x20   Check :: () -> i32 {\n        throw Error:::Unknown(\"broken\");\n    }\n\
+             \x20   Refuse :: () -> void {\n        RefuseNow();\n    }\n}\n",
+            "stack.nyx",
+            "Game",
+        )
+        .unwrap();
+    let failure = program.call_application_method("Step", &[]).unwrap_err();
+    assert_eq!(failure.status, Status::Failure);
+    let functions: Vec<&str> = failure.stack.iter().map(|frame| frame.function.as_str()).collect();
+    assert_eq!(functions, ["Game.Check", "Game.Step"]);
+    let location = failure.location().unwrap();
+    assert_eq!((location.path.as_str(), location.line, location.column), ("stack.nyx", 8, 9));
+    assert!(failure.to_string().ends_with("at Game.Check (stack.nyx:8:9)"), "{failure}");
+
+    let refusal = program.call_application_method("Refuse", &[]).unwrap_err();
+    assert_eq!(refusal.status, Status::Runtime);
+    assert_eq!(refusal.location().map(|frame| (frame.function.as_str(), frame.line)), Some(("Game.Refuse", 11)));
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Vector3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+#[test]
+fn a_value_type_has_fields_braces_and_copies() {
+    let runtime = Runtime::new().unwrap();
+    let vectors = runtime
+        .register_value_type::<Vector3>("Vec3", Vector3 { x: 0.0, y: 0.0, z: 12.0 })
+        .field("x", |v| &mut v.x)
+        .field("y", |v| &mut v.y)
+        .field("z", |v| &mut v.z)
+        .method("LengthSquared", "() -> f32", Receiver::Immutable, |context, v, _| {
+            Ok(Some(context.make_f32(v.x * v.x + v.y * v.y + v.z * v.z)?))
+        })
+        .static_method("Up", "() -> Vec3", |_context, own_type, _| {
+            Ok(Some(own_type.wrap(Vector3 { x: 0.0, y: 1.0, z: 0.0 })?))
+        })
+        .register()
+        .unwrap();
+    assert!(vectors.is_value_type());
+    let program = runtime
+        .mount_source(
+            "Game :: class : Application {\npublic:\n    spawn~ Vec3 = Vec3 { x: 1.0f };\n    Run :: () -> void { }\n\
+             \x20   Built :: () -> f32 { v := Vec3 { x: 3.0f, y: 4.0f }; return v.LengthSquared(); }\n\
+             \x20   Store~: (at: Vec3) -> void { spawn = at; }\n\
+             \x20   Spawn :: () -> Vec3 { return spawn; }\n\
+             \x20   Up :: () -> Vec3 { return Vec3:::Up(); }\n}\n",
+            "vectors.nyx",
+            "Game",
+        )
+        .unwrap();
+    let built = program.call_application_method("Built", &[]).unwrap().unwrap();
+    assert_eq!(built.as_f32().unwrap(), 169.0);
+    let mut at = Vector3 { x: 7.0, y: 8.0, z: 9.0 };
+    let argument = vectors.wrap(at).unwrap();
+    at.x = -1.0;
+    assert_eq!(vectors.get(&argument).unwrap().x, 7.0);
+    assert_eq!(at.x, -1.0);
+    program.call_application_method("Store", &[argument]).unwrap();
+    let spawn = program.call_application_method("Spawn", &[]).unwrap().unwrap();
+    assert_eq!(*vectors.get(&spawn).unwrap(), Vector3 { x: 7.0, y: 8.0, z: 9.0 });
+    let up = program.call_application_method("Up", &[]).unwrap().unwrap();
+    assert_eq!(*vectors.get(&up).unwrap(), Vector3 { x: 0.0, y: 1.0, z: 0.0 });
+}

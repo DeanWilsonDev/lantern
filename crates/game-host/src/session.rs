@@ -73,8 +73,6 @@ impl ScriptSession {
         state: &SharedState,
     ) -> Result<ScriptSession, String> {
         let entry_path = scripts_directory.join(entry_file);
-        let source =
-            std::fs::read_to_string(&entry_path).map_err(|error| format!("{}: {error}", entry_path.display()))?;
         let runtime_error = |error: nyx::Error| format!("nyx: {error}");
         let runtime = Runtime::new().map_err(runtime_error)?;
         let types = SharedTypes::default();
@@ -92,13 +90,12 @@ impl ScriptSession {
                 });
             }
         };
-        let defined_hooks = GameHook::ALL
-            .into_iter()
-            .filter(|hook| {
-                let name = hook.method_name();
-                source.contains(&format!("{name}~:")) || source.contains(&format!("{name}::"))
-            })
-            .collect();
+        let mut defined_hooks = Vec::new();
+        for hook in GameHook::ALL {
+            if program.defines_method(hook.method_name()).map_err(runtime_error)? {
+                defined_hooks.push(hook);
+            }
+        }
         Ok(ScriptSession { program, runtime, types, defined_hooks, entry_path, script_time: Duration::ZERO })
     }
 
@@ -115,7 +112,7 @@ impl ScriptSession {
         if !self.defines(hook) {
             return Ok(());
         }
-        let failed = |error: nyx::Error| format!("{}: {error}", hook.method_name());
+        let failed = |error: nyx::Error| describe_hook_error(hook, &error);
         let values = arguments
             .iter()
             .map(|argument| match argument {
@@ -132,4 +129,14 @@ impl ScriptSession {
     pub fn take_script_time(&mut self) -> Duration {
         std::mem::take(&mut self.script_time)
     }
+}
+
+/// `OnFixedUpdate: NYX_ERROR_FAILURE: Error::NotFound: ... at Player.Step (player.nyx:48:9)`, then
+/// one `called from` line per Nyx caller.
+fn describe_hook_error(hook: GameHook, error: &nyx::Error) -> String {
+    let mut text = format!("{}: {error}", hook.method_name());
+    for frame in error.stack.iter().skip(1) {
+        text.push_str(&format!("\n    called from {frame}"));
+    }
+    text
 }

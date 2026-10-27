@@ -187,13 +187,49 @@ struct StaticSlot<T> {
     runtime: Weak<RuntimeInner>,
     name: String,
     signature: String,
+    value_type: bool,
     function: Box<StaticBody<T>>,
 }
 
 struct ConstructorSlot<T> {
     runtime: Weak<RuntimeInner>,
     signature: String,
+    value_type: bool,
     function: Box<ConstructorBody<T>>,
+}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+pub trait ValueField: Copy + sealed::Sealed + 'static {
+    #[doc(hidden)]
+    const KIND: sys::nyx_kind;
+}
+
+macro_rules! value_field {
+    ($($rust:ty => $kind:ident),* $(,)?) => {
+        $(
+            impl sealed::Sealed for $rust {}
+            impl ValueField for $rust {
+                const KIND: sys::nyx_kind = sys::$kind;
+            }
+        )*
+    };
+}
+
+value_field!(bool => NYX_KIND_BOOL, i32 => NYX_KIND_I32, i64 => NYX_KIND_I64, f32 => NYX_KIND_F32, f64 => NYX_KIND_F64);
+
+struct ValueFieldLayout {
+    name: String,
+    kind: sys::nyx_kind,
+    offset: usize,
+}
+
+struct ValueLayout<T> {
+    defaults: Box<T>,
+    fields: Vec<ValueFieldLayout>,
+    error: Option<String>,
 }
 
 struct TypeSlots<T> {
@@ -242,6 +278,7 @@ unsafe extern "C" fn static_trampoline<T: 'static>(
         let own_type = HostType::<T> {
             raw: sys::nyx_call_host_type(call),
             runtime: context.runtime().clone(),
+            value_type: slot.value_type,
             marker: PhantomData,
         };
         (slot.function)(context, &own_type, arguments)
@@ -258,7 +295,7 @@ unsafe extern "C" fn constructor_trampoline<T: 'static>(
     let slot = &*userdata.cast::<ConstructorSlot<T>>();
     run_callback(&slot.runtime, call, args, count, out_result, |context, arguments| {
         let instance = (slot.function)(context, arguments)?;
-        let wrapped = wrap_instance(context.runtime(), sys::nyx_call_host_type(call), instance)?;
+        let wrapped = wrap_instance(context.runtime(), sys::nyx_call_host_type(call), instance, slot.value_type)?;
         Ok(Some(wrapped))
     })
 }
@@ -267,7 +304,16 @@ unsafe extern "C" fn release_instance<T>(instance: *mut c_void, _type_userdata: 
     let _ = catch_unwind(AssertUnwindSafe(|| drop(Box::from_raw(instance.cast::<T>()))));
 }
 
-fn wrap_instance<T>(runtime: &Runtime, host_type: *mut sys::nyx_host_type, instance: T) -> Result<Value> {
+fn wrap_instance<T>(runtime: &Runtime, host_type: *mut sys::nyx_host_type, instance: T, value_type: bool) -> Result<Value> {
+    if value_type {
+        let mut raw = ptr::null_mut();
+        let status =
+            unsafe { sys::nyx_value_new_host_object(host_type, ptr::from_ref(&instance).cast_mut().cast(), &mut raw) };
+        runtime.check(status)?;
+        return runtime
+            .adopt(raw)
+            .ok_or_else(|| Error::new(Status::Internal, "nyx-capi made a value but returned no handle"));
+    }
     let boxed = Box::into_raw(Box::new(instance));
     let mut raw = ptr::null_mut();
     let status = unsafe { sys::nyx_value_new_host_object(host_type, boxed.cast(), &mut raw) };
@@ -282,6 +328,7 @@ pub struct HostTypeBuilder<T> {
     runtime: Runtime,
     name: String,
     slots: TypeSlots<T>,
+    value_layout: Option<ValueLayout<T>>,
 }
 
 impl<T: 'static> HostTypeBuilder<T> {
@@ -290,7 +337,32 @@ impl<T: 'static> HostTypeBuilder<T> {
             runtime,
             name: name.to_string(),
             slots: TypeSlots { methods: Vec::new(), static_methods: Vec::new(), constructor: None },
+            value_layout: None,
         }
+    }
+
+    pub(crate) fn new_value_type(runtime: Runtime, name: &str, defaults: T) -> HostTypeBuilder<T>
+    where
+        T: Copy,
+    {
+        let mut builder = HostTypeBuilder::new(runtime, name);
+        builder.value_layout = Some(ValueLayout { defaults: Box::new(defaults), fields: Vec::new(), error: None });
+        builder
+    }
+
+    pub fn field<F: ValueField>(mut self, name: &str, project: fn(&mut T) -> &mut F) -> Self {
+        let type_name = self.name.clone();
+        let Some(layout) = self.value_layout.as_mut() else {
+            panic!("'{type_name}.{name}': only a type made with register_value_type has fields");
+        };
+        let base = ptr::from_mut::<T>(&mut layout.defaults) as usize;
+        let at = ptr::from_mut::<F>(project(&mut layout.defaults)) as usize;
+        if at < base || at + std::mem::size_of::<F>() > base + std::mem::size_of::<T>() {
+            layout.error = Some(format!("'{type_name}.{name}' doesn't project to a field inside the value"));
+            return self;
+        }
+        layout.fields.push(ValueFieldLayout { name: name.to_string(), kind: F::KIND, offset: at - base });
+        self
     }
 
     pub fn method<F>(mut self, name: &str, signature: &str, receiver: Receiver, function: F) -> Self
@@ -315,6 +387,7 @@ impl<T: 'static> HostTypeBuilder<T> {
             runtime: Rc::downgrade(&self.runtime.inner),
             name: name.to_string(),
             signature: signature.to_string(),
+            value_type: self.value_layout.is_some(),
             function: Box::new(function),
         });
         self
@@ -327,13 +400,34 @@ impl<T: 'static> HostTypeBuilder<T> {
         self.slots.constructor = Some(Box::new(ConstructorSlot {
             runtime: Rc::downgrade(&self.runtime.inner),
             signature: signature.to_string(),
+            value_type: self.value_layout.is_some(),
             function: Box::new(function),
         }));
         self
     }
 
     pub fn register(self) -> Result<HostType<T>> {
-        let HostTypeBuilder { runtime, name, slots } = self;
+        let HostTypeBuilder { runtime, name, slots, value_layout } = self;
+        if let Some(error) = value_layout.as_ref().and_then(|layout| layout.error.clone()) {
+            return Err(Error::new(Status::InvalidArgument, error));
+        }
+        let raw_fields: Vec<sys::nyx_host_field> = value_layout
+            .as_ref()
+            .map(|layout| {
+                layout
+                    .fields
+                    .iter()
+                    .map(|field| sys::nyx_host_field { name: nyx_str(&field.name), kind: field.kind, offset: field.offset })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let raw_layout = value_layout.as_ref().map(|layout| sys::nyx_host_value_layout {
+            size: std::mem::size_of::<T>(),
+            alignment: std::mem::align_of::<T>(),
+            fields: if raw_fields.is_empty() { ptr::null() } else { raw_fields.as_ptr() },
+            field_count: raw_fields.len(),
+            defaults: ptr::from_ref::<T>(&layout.defaults).cast(),
+        });
         let slots = Box::new(slots);
         let methods: Vec<sys::nyx_host_method> = slots
             .methods
@@ -368,7 +462,8 @@ impl<T: 'static> HostTypeBuilder<T> {
             static_methods: if static_methods.is_empty() { ptr::null() } else { static_methods.as_ptr() },
             static_method_count: static_methods.len(),
             constructor: constructor.as_ref().map_or(ptr::null(), ptr::from_ref),
-            release_instance: Some(release_instance::<T>),
+            release_instance: if raw_layout.is_some() { None } else { Some(release_instance::<T>) },
+            value_layout: raw_layout.as_ref().map_or(ptr::null(), ptr::from_ref),
         };
         let userdata = Box::into_raw(slots);
         let mut raw_type = ptr::null_mut();
@@ -386,25 +481,30 @@ impl<T: 'static> HostTypeBuilder<T> {
             drop(unsafe { Box::from_raw(userdata) });
             runtime.check(status)?;
         }
-        Ok(HostType { raw: raw_type, runtime, marker: PhantomData })
+        Ok(HostType { raw: raw_type, runtime, value_type: raw_layout.is_some(), marker: PhantomData })
     }
 }
 
 pub struct HostType<T> {
     raw: *mut sys::nyx_host_type,
     runtime: Runtime,
+    value_type: bool,
     marker: PhantomData<fn() -> T>,
 }
 
 impl<T> Clone for HostType<T> {
     fn clone(&self) -> HostType<T> {
-        HostType { raw: self.raw, runtime: self.runtime.clone(), marker: PhantomData }
+        HostType { raw: self.raw, runtime: self.runtime.clone(), value_type: self.value_type, marker: PhantomData }
     }
 }
 
 impl<T: 'static> HostType<T> {
     pub fn wrap(&self, instance: T) -> Result<Value> {
-        wrap_instance(&self.runtime, self.raw, instance)
+        wrap_instance(&self.runtime, self.raw, instance, self.value_type)
+    }
+
+    pub fn is_value_type(&self) -> bool {
+        self.value_type
     }
 
     pub fn get<'value>(&self, value: &'value Value) -> Result<&'value T> {
