@@ -1,12 +1,14 @@
 # Lantern
 
-A small, readable 3D engine prototype in Rust, and a third-person platformer built on it. The
-game's rules run in Nyx through its C ABI. Lantern follows the domain split of Umbra (the C++
+A small, readable 3D engine prototype in Rust, and a third-person platformer built on it. All
+game code is Nyx (`games/platformer/`), hosted through Nyx's C ABI; all engine code is Rust
+(`crates/`), and `crates/game-host` is the seam between them. Lantern follows the domain split of Umbra (the C++
 engine in the snake repository) and is meant as a reference for a later rewrite.
 
 - `docs/brief.md` — what the prototype is for and its milestones.
 - `docs/architecture.md` — the tour: crates, per-frame sequence, ownership and shutdown, the
-  script API, a rewrite checklist and the known omissions.
+  game seam, a rewrite checklist and the known omissions.
+- `docs/game-api.md` — every engine call a Nyx game can make, and the hooks the engine calls.
 - `docs/decisions.md` — every decision made along the way, with reasons (D-001 onwards).
 - `docs/editor.md` — the world editor: architecture, build steps and controls.
 - `docs/dependencies.md` — each third-party crate and why; `docs/future-work.md` — later ideas.
@@ -19,18 +21,17 @@ engine in the snake repository) and is meant as a reference for a later rewrite.
 | CMake | 3.30 or later | builds Nyx and SDL |
 | C++ compiler | GCC 14 or Clang 19 | Nyx uses C++26 features |
 | libclang | any recent | bindgen, for the Nyx bindings |
-| Nyx | `nyx-scripting-language` on a branch with the C API, checked out **beside this repository** | the scripting layer |
+| Nyx | `nyx-scripting-language` on `proto`, checked out **beside this repository** | the game runs in it |
 
 SDL 3 is built from source by `sdl3-sys` and linked statically, so no SDL install is needed.
 On Linux, SDL only builds the window and audio backends whose development headers it finds.
 
 ```text
 ~/code/lantern
-~/code/nyx-scripting-language   (git checkout claude/project-thread-qf7t4j)
+~/code/nyx-scripting-language   (git checkout proto)
 ```
 
-The C API (`include/nyx/nyx.h`) is not on Nyx's `proto` branch yet. It is on
-`claude/project-thread-qf7t4j`, nyx PR #7 (see D-002). Once that is merged, check out `proto`.
+The C API (`include/nyx/nyx.h`) is on Nyx's `proto` branch since nyx PR #7 merged (D-002).
 Run `git submodule update --init --recursive` in the Nyx checkout after switching branches.
 
 Set `NYX_SOURCE_DIR` to use a checkout somewhere else, or `NYX_CAPI_PREFIX` to link a prefix
@@ -82,24 +83,21 @@ has not been built yet; see "What has been tested".
 ## Build, test, run
 
 ```sh
-cargo build                          # debug build of the engine and the game
+cargo build                          # debug build of the engine and the runner
 cargo test --workspace               # unit and integration tests (no window needed)
-cargo run -p platformer-game         # play (debug build)
-cargo run -p platformer-game --release   # play at full speed; use this for the 60 fps check
+cargo run -p lantern                 # play games/platformer (debug build)
+cargo run -p lantern --release       # play at full speed; use this for the 60 fps check
+cargo run -p lantern -- path/to/game # run another game directory (it needs a game.json)
 ```
 
-Without the Nyx toolchain you can still build and play with the Rust rules:
-
-```sh
-cargo run -p platformer-game --no-default-features --features bundled-sdl
-```
+The game's `.nyx` files are read when the game starts, so editing them needs no rebuild: save
+and press F5 in the running game.
 
 The checks that must stay green:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo clippy -p platformer-game --no-default-features --features bundled-sdl --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p asset-gen -- --check    # assets/ matches the generator
 ```
@@ -127,7 +125,7 @@ apps/world-editor/build/lantern-world-editor
 | Pause menu | Esc | Start |
 | Debug HUD | F1 | Back |
 | Collision view | F2 | right stick click |
-| Reload the Nyx script | F5 | |
+| Reload the game's Nyx code | F5 | |
 
 Collect the six gems. Falling off the level puts you back at the start.
 
@@ -142,8 +140,6 @@ All optional.
 | `LANTERN_GPU_DRIVER=vulkan\|metal` | force a GPU driver |
 | `LANTERN_VSYNC=0` | turn vsync off (to measure frame time) |
 | `LANTERN_ASSETS=dir` | where `assets/` is |
-| `LANTERN_RULES=native` | use the Rust rules instead of the Nyx script |
-| `LANTERN_SCRIPTS=dir` | where `platformer.nyx` is (default `apps/platformer-game/scripts`) |
 | `LANTERN_DEBUG_HUD=1`, `LANTERN_COLLISION_VIEW=1` | start with the debug views on |
 | `LANTERN_MAX_FRAMES=n` | quit after n frames |
 | `LANTERN_CAPTURE_PATH=out.png` | save the last frame as a PNG |
@@ -153,7 +149,7 @@ A headless smoke run (how the game was checked without a display):
 
 ```sh
 LANTERN_AUTOPLAY=1 LANTERN_DEBUG_HUD=1 LANTERN_MAX_FRAMES=600 \
-LANTERN_CAPTURE_PATH=smoke.png SDL_AUDIO_DRIVER=dummy cargo run -p platformer-game
+LANTERN_CAPTURE_PATH=smoke.png SDL_AUDIO_DRIVER=dummy cargo run -p lantern
 ```
 
 ## What has been tested
@@ -161,7 +157,9 @@ LANTERN_CAPTURE_PATH=smoke.png SDL_AUDIO_DRIVER=dummy cargo run -p platformer-ga
 Everything was built and checked on Linux in a cloud container without a GPU or display:
 Vulkan through Mesa's software rasteriser (lavapipe) under Xvfb, with validation on, and audio
 through SDL's dummy driver. The game reached the goal in automated runs at 30, 60, 144 and
-240 Hz display rates. Not yet tested: macOS/Metal, Wayland, a real GPU, real audio output,
+240 Hz display rates. Since the move to Nyx (D-023), headless tests run the Nyx game through
+the real frame loop (`crates/game-host/tests/headless_game.rs`), and a 400-frame run under Xvfb
+showed about 1 ms of Nyx per frame. Not yet tested: macOS/Metal, Wayland, a real GPU, real audio output,
 Windows, and the release-build 60 fps check.
 
 ## Other contents

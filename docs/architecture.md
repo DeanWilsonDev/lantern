@@ -3,12 +3,16 @@
 Lantern is a small, readable 3D engine prototype written to answer one question: *what must a
 small 3D platformer engine actually do each frame?* It follows Umbra's domain split (see
 `umbra-audit.md`) but replaces Umbra's interfaces, injector and managers with concrete Rust types
-owned by one composition root. Decisions and their reasons are in `decisions.md` (D-001 to
-D-017); this document describes the result.
+owned by one composition root. Decisions and their reasons are in `decisions.md`; this document
+describes the result.
 
-Start here, then read `apps/platformer-game/src/main.rs` (construction and shutdown) and
-`apps/platformer-game/src/game.rs` (`impl Game for PlatformerGame`: everything that happens in a
-frame). Every other file is reached from those two.
+**All game code is Nyx and all engine code is Rust** (D-023). The game lives in
+`games/platformer/`; the engine in `crates/`. They meet in one place, `crates/game-host`, which
+registers the engine API for Nyx (`docs/game-api.md`) and calls the game's hooks.
+
+Start here, then read `crates/game-host/src/lib.rs` (`run`: construction and shutdown),
+`crates/game-host/src/host.rs` (`impl Game for GameHost`: the engine's work around each hook)
+and `games/platformer/main.nyx` (the game). Every other file is reached from those three.
 
 ## Workspace layout
 
@@ -31,25 +35,34 @@ crates/
   physics/       lantern-physics     triangles, capsule casts, CollisionWorld, kinematic bodies,
                                      CharacterController (Umbra src/physics)
   audio/         lantern-audio       WAV decoding, SoundBank, software Mixer (new)
-  scripting/     lantern-scripting   Nyx host: ScriptHost, the engine API types, ScriptCommand (new)
   debug/         lantern-debug       DebugHud panel and debug_draw helpers (Umbra src/debug)
   engine/        lantern-engine      FrameLoop and the Game trait, InputRouter, World (entities,
                                      transforms, hierarchy, scenes), extract_draws, AudioSystem
                                      (Umbra src/engine)
   nyx-sys/       nyx-sys             raw Nyx C ABI bindings (bindgen; builds Nyx with CMake)
   nyx/           nyx                 safe Nyx wrapper
-  world-format/  lantern-world-format the world file (JSON) and world-to-mesh/collision pieces,
-                                     shared by the game host and the editor (new)
+  world-format/  lantern-world-format the world file shared with the editor: entities, shapes,
+                                     colliders, properties; build_pieces (new)
+  game-host/     lantern-game-host   the seam: EngineState, GameHost (hooks), the engine API for
+                                     Nyx (api/), RenderBackend + HeadlessRenderer, run() (new)
   editor-core/   lantern-editor-core the world editor's logic: document, undo, selection,
                                      gizmos, inspector, camera, input (new)
   editor-backend/ lantern-editor-backend EditorSession + off-screen viewport behind a C API
                                      (include/lantern_editor.h), built as a static library (new)
 apps/
-  platformer-game/                   the demo game and composition root (Umbra src/snake-game)
-    scripts/platformer.nyx           the game rules in Nyx
+  lantern/                           the runner: `lantern [game-directory]` (composition root)
   world-editor/                      the world editor: Penumbra shell (C++, CMake) with panels
                                      in Nyx, Chaos and Cosmos; see docs/editor.md
-assets/                              textures, model, sounds, music (made by tools/asset-gen)
+games/
+  platformer/                        the demo game, all Nyx (Umbra src/snake-game)
+    game.json                        title, entry file, Application class, assets directory
+    main.nyx                         Platformer :: class : Application, the hooks
+    settings/                        input map, player tuning
+    game-assets/  game-entities/     assets; Player, Gem, MovingPlatform
+    game-scenes/  game-systems/      LevelScene; camera, gem touches, autopilot
+    game-rules/   game-events/       GameRules; GameEvent and its queue
+    game-state/   ui/                GameState; main menu, pause menu, HUD, collision view
+assets/                              textures, model, sounds, music (tools/asset-gen), worlds/
 shaders/                             lit.wgsl, lines.wgsl, overlay.wgsl (compiled at build time)
 docs/                                brief, decisions, this file, dependencies, future work
 examples/frame-loop/                 the original Nyx hosting example
@@ -69,37 +82,40 @@ lantern-core ◄── platform ◄── sdl-facade ◄── sdl-gpu
      │    ▲     │
      │    └── engine (core, platform, renderer-3d, audio)
      ├── physics
-     └── (nothing) ◄── scripting ──► nyx ──► nyx-sys
+     └── world-format (core, renderer-3d, physics)
 
-apps/platformer-game depends on all of them and is the only place they meet.
+game-host depends on all of them and on nyx ──► nyx-sys; it is the only place they meet.
+apps/lantern depends on game-host. games/*/ are Nyx and depend only on the API game-host
+registers.
 ```
 
 (Arrows point at the dependency.) Only `sdl-facade` and `sdl-gpu` see SDL types, and only
-`nyx`/`nyx-sys` see the Nyx C ABI. Engine, physics, audio, scripting and game code never touch
-raw pointers; the game calls the GPU backend with `renderer-3d` types only (`RenderWorld`,
-`MeshData`, `MeshHandle`).
+`nyx`/`nyx-sys` see the Nyx C ABI. Engine, physics, audio and the game host never touch raw
+pointers, and the game can't: it holds `i64` handles and host objects.
 
 ## Umbra → Lantern mapping
 
 | Umbra | Lantern | Notes |
 |---|---|---|
-| `Core::IApplication` + `Engine::Application` | `lantern_engine::frame_loop::{FrameLoop, Game}`, implemented by `PlatformerGame` | The loop calls four hooks: `handle_event`, `fixed_update`, `frame_update`, `render`. |
-| `DependencyInjector` registrations | plain construction in `apps/platformer-game/src/main.rs` (`run`) | Construction order is dependency order; see "Ownership and shutdown". |
+| `Core::IApplication` + `Engine::Application` | `lantern_engine::frame_loop::{FrameLoop, Game}`, implemented by `GameHost`, which calls the Nyx `Application` class's hooks | The loop calls `fixed_update`, `frame_update`, `render`; the host turns them into `OnFixedUpdate`, `OnUpdate`, `OnRender`. |
+| `SnakeApplication` | `games/platformer/main.nyx` (`Platformer :: class : Application`) | The game's own composition: input, assets, level, states. |
+| `DependencyInjector` registrations | plain construction in `lantern_game_host::run` | Construction order is dependency order; see "Ownership and shutdown". |
 | `IWindow`, `IInputBackend` + Raylib facades | `lantern_platform::PlatformBackend`, implemented by `lantern_sdl_facade::SdlPlatform` | Tests drive the loop with a scripted fake platform. |
-| `SystemManager` / `GameSystemManager` | the fixed call order in `PlatformerGame::fixed_update` | Order is code you can read, not registration order. |
-| `SceneManager` + `Scene` | `apps/platformer-game/src/scene.rs` (`LevelScene::load` / `unload`) + `World::despawn_scene` | Every entity carries the `SceneId` that spawned it, so unloading removes exactly those. There is one level, so no scene stack (D-016). |
+| `SystemManager` / `GameSystemManager` | the fixed call order in `Platformer.Simulate` (`main.nyx`) and `games/platformer/game-systems/` | Order is code you can read, not registration order. |
+| `SceneManager` + `Scene` | `games/platformer/game-scenes/level-scene.nyx` over `World:::Load` / `World:::Clear` | Everything the game spawns carries the game's `SceneId`, so a clear or reload removes exactly those. There is one level, so no scene stack (D-016). |
 | `EntityManager` + component pipelines | `lantern_engine::world::World` with generational `EntityId` and `ComponentStore<T>` | Iteration is in slot order, so it is deterministic. |
-| `IGameState` + `StateMachine` | `GameState` enum (`MainMenu`, `Playing`, `Paused`) in `game.rs` | Three states with no shared behaviour do not need a framework (D-016). |
+| `IGameState` + `StateMachine` | `GameState` enum (`MainMenu`, `Playing`, `Paused`) in `game-state/game-state.nyx`, matched with `when` | Three states with no shared behaviour do not need a framework (D-016). |
+| `snake-game/game-events` | `GameEvent` enum and `GameEvents` queue (`game-events/game-event.nyx`) | Events from a step, handled by `GameRules` in order. |
 | `ActionSet`, `KeyMap`, `InputDispatcher`, `ActionRouter` | `lantern_core::input::{ActionSet, Bindings, InputSnapshot}` + `lantern_engine::input::InputRouter` | Named actions with latched edges, read from a snapshot instead of event-bus callbacks. |
 | `IRenderComponentManager` | `lantern_engine::extract::extract_draws` | Fills a `RenderWorld`; the renderer never sees entities. |
 | `IRenderer` + Raylib renderer facade | `lantern_sdl_gpu::GpuRenderer` | One concrete backend; a trait would be added with a second one. |
 | `renderer-2d` | `lantern-renderer-3d` | Three pipelines: lit, lines, overlay. |
 | `physics/collision` | `lantern-physics` | Capsule casts against triangles and a kinematic controller; no rigid bodies. |
 | `debug` + `core/debug` | `lantern_core::debug::DebugValues` + `lantern-debug` | Same path-keyed tree (`"Player/Velocity"`). |
-| `core/user-interface` + `snake-game/ui` | `lantern_renderer_3d::ui::Ui` + `apps/platformer-game/src/menu.rs` | Immediate-mode labels and buttons with focus navigation. |
+| `core/user-interface` + `snake-game/ui` | `lantern_renderer_3d::ui::Ui` (engine, `Ui:::` in Nyx) + `games/platformer/ui/` | Immediate-mode labels and buttons with focus navigation. |
 | (none) | `lantern-audio` + `lantern_engine::audio::AudioSystem` | Pure-Rust mixer; the SDL audio stream lives in the facade. |
-| (none) | `lantern-scripting` + `apps/platformer-game/src/rules.rs` | Rules (Nyx or Rust) decide what happens; Rust moves things. |
-| `snake-game` | `apps/platformer-game` | Game rules, content, scripts and composition. |
+| (none) | `lantern-game-host` | The seam between Rust engine and Nyx game. |
+| `snake-game` | `games/platformer` | The whole game, in Nyx. |
 
 ## Conventions (stated once, tested in `lantern-core`)
 
@@ -147,42 +163,46 @@ and only sees `FIXED_STEP`. Nothing in the simulation reads the frame delta.
 
 ## Per-frame sequence
 
-This is `FrameLoop::run_frame` (`crates/engine/src/frame_loop.rs`) calling into
-`PlatformerGame` (`apps/platformer-game/src/game.rs`). Indentation is call depth.
+This is `FrameLoop::run_frame` (`crates/engine/src/frame_loop.rs`) calling into `GameHost`
+(`crates/game-host/src/host.rs`), which calls the Nyx hooks in `games/platformer/main.nyx`.
+Indentation is call depth; `[Nyx]` marks game code.
 
 ```text
 FrameLoop::run_frame
+├─ 0. host.take_input_configuration()        the game's actions, if Input::: changed them
 ├─ 1. events
 │   ├─ platform.pump_events()                SDL_PollEvent → PlatformEvent
-│   ├─ input_router.handle_event(event)      device state: keys, buttons, axes, mouse delta
-│   └─ game.handle_event(event)              (unused by the platformer)
+│   └─ input_router.handle_event(event)      device state: keys, buttons, axes, mouse delta
 ├─ 2. time
 │   └─ clock.advance(frame_seconds)          → step_count N, alpha, dropped backlog
-├─ 3. N × game.fixed_update(step)            only while GameState::Playing
+├─ 3. N × host.fixed_update(step)
 │   ├─ world.store_previous_transforms()     interpolation start point
 │   ├─ collision.begin_step()                kinematic bodies remember last transform
-│   ├─ rules.on_fixed_update(view, dt)       Nyx OnFixedUpdate or NativeRules
-│   ├─ apply RuleCommands                    platform position → set_body_transform, ...
-│   ├─ player.fixed_update(...)              CharacterController::step:
-│   │                                          ride platform, accelerate, gravity, jump,
-│   │                                          move-and-slide (capsule casts), step up,
-│   │                                          ground probe and snap
-│   ├─ player.sync_entity(), shadow ray      controller → entity transform
-│   ├─ collect RuleEvents                    jumped, landed, trigger entered, fell, reset
-│   ├─ rules.on_event(view, event) for each  → more RuleCommands, applied in order
-│   ├─ scene.animate_gems()                  presentation-only spin and bob
+│   ├─ [Nyx] OnFixedUpdate(dt)               only while Playing:
+│   │   ├─ MovingPlatform.Move(time)           World:::SetPosition moves entity and body
+│   │   ├─ Player.Move(stick, ...)             CharacterController.Step: ride platform,
+│   │   │                                        accelerate, gravity, jump, move-and-slide,
+│   │   │                                        step up, ground snap; then shadow raycast
+│   │   ├─ GemSystem.DetectTouches()           capsule axis vs gem centres
+│   │   ├─ events: jumped, landed, gem, fell, reset → GameRules.Handle, in order
+│   │   └─ GemSystem.Animate(time)             spin and bob
 │   └─ world.update_world_transforms()       hierarchy, parent before child
-├─ 4. game.frame_update(frame)
-│   ├─ apply pending state change            (mouse capture needs the platform)
-│   ├─ F1 / F2 / F5, pause, camera look      from the per-frame input snapshot
-│   ├─ update_debug_values()                 HUD data
+├─ 4. host.frame_update(frame)
+│   ├─ engine keys: F1 HUD, F5 reload
+│   ├─ [Nyx] OnUpdate(frameSeconds)          F2, pause, camera look, menu orbit, HUD values
+│   ├─ apply the game's requests             mouse capture, quit
+│   ├─ engine HUD values                     frame, script ms, renderer, audio, errors
 │   └─ audio.update()                        mix enough to keep ~60 ms queued in SDL
-└─ 5. game.render(frame)                     skipped while minimised
-    ├─ camera.update()                       follow the interpolated player, sphere-cast
-    │                                          against the level so it never clips
+└─ 5. host.render(frame)                     skipped while minimised
+    ├─ render_world.clear()
+    ├─ [Nyx] OnRender(alpha, frameSeconds)
+    │   ├─ ThirdPersonCamera.Follow()          interpolated player, sphere-cast so it never
+    │   │                                        clips; Camera:::LookAt
+    │   ├─ CollisionView.Draw() (F2)           Debug::: lines
+    │   └─ menus (Ui:::) or HUD text (Overlay:::)
+    ├─ end an unfinished Ui column
     ├─ extract_draws(world, alpha)           visible MeshRenderers → DrawItems
-    ├─ collision view lines (F2)
-    ├─ menus (Ui) and overlay text, HUD (F1)
+    ├─ script error banner, debug HUD (F1)
     └─ renderer.render(&render_world)
         ├─ acquire command buffer + swapchain texture
         ├─ copy pass: upload this frame's line and overlay vertices
@@ -195,43 +215,40 @@ FrameLoop::run_frame
 
 1. `SdlPlatform::pump_events` turns `SDL_EVENT_KEY_DOWN` (Space) into
    `PlatformEvent::KeyDown { key: KeyCode::Space, repeat: false }`.
-2. `InputRouter` marks the `jump` action pressed and latches the edge until a fixed step takes it.
-3. `PlatformerGame::fixed_update` reads `pressed(jump)` (through `pilot_input`) and passes it to
-   `Player::fixed_update`, which calls `CharacterController::step`. The controller buffers the
-   press for 0.12 s, so a press just before landing still jumps.
-4. The controller returns `ControllerEvents { jumped: true, .. }`; the game queues
-   `RuleEvent::PlayerJumped`.
-5. `ScriptedRules::on_event` calls the script's `OnJump`; `Sound:::Play("jump", 0.8f)` queues
-   `ScriptCommand::PlaySound`, translated to `RuleCommand::PlaySound`.
-6. `apply_rule_command` calls `AudioSystem::play`; the next `audio.update()` mixes it into the
-   SDL stream.
-7. The player entity's transform was set by `sync_entity`; `extract_draws` interpolates it
-   with `alpha` and the GPU backend draws it.
+2. `InputRouter` marks the `jump` action (defined by `settings/input-settings.nyx`) pressed and
+   latches the edge until a fixed step takes it.
+3. `GameHost::fixed_update` copies the step's snapshot into the engine state and calls
+   `OnFixedUpdate`. `Platformer.Simulate` reads `Input:::IsPressed("jump")` and passes it to
+   `Player.Move`, which calls `controller.Step(...)`: the host runs
+   `CharacterController::step` against the collision world. The controller buffers the press
+   for 0.12 s, so a press just before landing still jumps.
+4. `Step` returns a `ControllerStep` whose `Jumped()` is true; the game pushes
+   `GameEvent:::PlayerJumped`, and `GameRules.Handle` calls `Audio:::Play("jump", 0.8f)`, which
+   starts a voice in the engine's `AudioSystem`.
+5. `Player.Move` set the player entity's position (`World:::SetPosition`); `extract_draws`
+   interpolates it with `alpha` and the GPU backend draws it.
 
 ## Ownership and shutdown
 
-Construction in `main.rs::run`, in dependency order:
+Construction in `lantern_game_host::run`, in dependency order:
 
-1. `SdlContext::init()` — SDL video, events, gamepad.
-2. `SdlWindow::create` — the window.
+1. `GameManifest::load` — `game.json`.
+2. `SdlContext::init()` and `SdlWindow::create` — SDL video, events, gamepad; the window.
 3. `GpuRenderer::new(&window)` — device, claims the window, pipelines, depth texture.
-4. `GameAssets::load` — textures and meshes uploaded to the renderer; the game keeps handles.
-5. `AudioSystem::new(open_audio(&sdl))` and `load_sounds` — no device is not an error.
-6. `choose_rules()` — Nyx script, or `NativeRules` on failure.
-7. `PlatformerGame::new(GameParts { .. })` — takes ownership of all of the above and loads the
-   level (`LevelScene::load`).
-8. `SdlPlatform::new(window)` and `FrameLoop::new(InputRouter)`; `frame_loop.run(..)`.
+4. `AudioSystem::new(SdlAudioOutput::open(..))` — no device is not an error.
+5. `EngineState::new(renderer, audio, assets)` — world, collision, UI, HUD, the font atlas.
+6. `GameHost::new(state, script_source)` — creates the Nyx runtime, registers the engine API,
+   mounts the entry file and calls `OnStart`, which loads the game's assets and its world.
+7. `SdlPlatform::new(window)` and `FrameLoop::new(InputRouter)`; `frame_loop.run(..)`.
 
 Shutdown is the reverse and is mostly done by `Drop`:
 
-- `game.shutdown_level()` unloads the level explicitly first: `rules.on_exit`, then
-  `LevelScene::unload`, which despawns every entity with the level's `SceneId` and removes the
-  level's meshes from the renderer.
-- When `run` returns, locals drop in reverse order: the frame loop, the platform (closes the
-  gamepad), then the game. `PlatformerGame`'s fields drop in declaration order: rules (the Nyx
-  runtime), world, assets (plain handles), `GpuRenderer` (waits for the GPU, releases every
-  mesh and texture, releases the window claim, destroys the device), then `AudioSystem` (closes
-  the SDL audio stream).
+- `host.shutdown()` calls `OnExit`, drops the script session (the Nyx runtime) and releases
+  everything the game made: entities, world meshes, its meshes and textures, music.
+- `GameHost`'s fields drop the script session before the engine state, because the runtime's
+  host closures share that state. The engine state then drops the `GpuRenderer` (waits for the
+  GPU, releases every mesh and texture, releases the window claim, destroys the device) and the
+  `AudioSystem` (closes the SDL audio stream).
 - SDL objects share an `Rc` to the SDL init guard, and the GPU renderer holds a clone of the
   window handle. So the window outlives the renderer even though the platform drops first, and
   `SDL_Quit` runs only after the last SDL object is gone.
@@ -242,10 +259,11 @@ Resource rules:
   `MeshHandle` / `TextureHandle`. A stale handle is skipped, never dereferenced. SDL GPU defers
   the real destruction of a released buffer or texture until command buffers using it finish,
   so removing a mesh mid-game is safe.
-- The level scene owns the meshes it created and returns them in `unload(self)`; taking `self`
-  by value means an unloaded scene cannot be used.
-- The Nyx runtime lives inside `ScriptHost`; scripts hold only `i64` ids, so nothing in Nyx can
-  dangle when entities are despawned.
+- The engine state records every mesh, texture and entity the game asks for
+  (`script_meshes`, `script_textures`, `world_meshes`, the game's `SceneId`), so a reload
+  releases exactly those (`EngineState::reset_for_new_session`, D-028).
+- Scripts hold only `i64` handles and immutable host objects, so nothing in Nyx can dangle when
+  an entity is despawned or the world is cleared.
 
 ## Rendering
 
@@ -261,10 +279,11 @@ Resource rules:
 
 ## Physics and the controller
 
-- The level is triangles: every block and ramp mesh that is drawn is also added to the
-  `CollisionWorld`, so what you see is what you collide with (`scene.rs::level_pieces`).
+- The level is triangles: every world-file piece with a collider adds the same triangles it
+  draws to the `CollisionWorld`, so what you see is what you collide with
+  (`lantern_world_format::build_pieces`, loaded by `World:::Load`).
 - Static triangles live in a uniform 4 m grid. Moving platforms are kinematic bodies with local
-  triangles and a transform the rules set each step.
+  triangles; `World:::SetPosition` on the entity moves the body too.
 - `CharacterController::step` does move-and-slide with capsule casts (conservative advancement
   against triangles), climbs steps up to 0.3 m, refuses slopes over 46°, snaps to the ground
   within 0.3 m, and is carried by moving platforms. D-015 lists the feel numbers and reasons.
@@ -279,41 +298,29 @@ own; SDL's device thread drains the queue. Music is a looping voice on its own v
 ## UI and text
 
 `lantern_renderer_3d::text` lays out an embedded 8×8 bitmap font, scaled by whole pixels for the
-display density. `Ui` is immediate mode: each frame the menu functions in `menu.rs` call
-`title`, `label`, `button` and `spacing`; keyboard or gamepad up/down moves focus and confirm
+display density. `Ui` is immediate mode: each frame the game's menus (`games/platformer/ui/`)
+call `Ui:::Title`, `Label`, `Button` and `Spacing` between `Ui:::Begin` and `Ui:::End`; keyboard or gamepad up/down moves focus and confirm
 activates. Everything becomes overlay quads in the `RenderWorld`. The debug HUD is the same
 text path, drawing `DebugValues` grouped by their first path segment.
 
-## Scripting
+## The game seam
 
-The game's rules sit behind `GameRules` (`apps/platformer-game/src/rules.rs`), with two
-implementations: `ScriptedRules` (Nyx, default) and `NativeRules` (Rust).
+`crates/game-host` is the only crate that knows about both the engine and the game.
 
-1. Before a hook, `ScriptedRules` copies what scripts may read into a `ScriptSnapshot`: time,
-   pressed and held actions, entity ids by name, entity positions and visibility.
-2. `ScriptHost::call(hook, &snapshot, args)` calls the method on the script's `Application`
-   class through the `nyx` crate. The host types read the snapshot and record writes as
-   `ScriptCommand`s.
-3. `ScriptedRules` translates `ScriptCommand`s to `RuleCommand`s (dropping stale ids) and the
-   game applies them in order.
+1. `ScriptSession::load` creates a Nyx runtime, registers the engine API (`api/`: `World`,
+   `Physics`, `CharacterController`, `Input`, `Ui`, `Overlay`, `Audio`, `Camera`, `Debug`,
+   `Vec3`, ...), adds the game directory as the import search path and mounts the entry file.
+   Analysis errors come back rendered with file, line and column, and nothing runs.
+2. `GameHost` implements the frame loop's `Game` trait. Around each hook it does the engine's
+   part (remember transforms, begin the collision step, recompute world transforms, extract
+   draws, draw the HUD, render), so the game only says what happens.
+3. Host functions act on `EngineState` directly, through an `Rc<RefCell<..>>` each closure
+   shares (D-024). A call borrows it only for its own length and never calls into Nyx.
 
-The script API, as Nyx sees it:
-
-| Nyx | What it does |
-|---|---|
-| `Game:::Log(text)`, `Game:::Time()`, `Game:::ResetPlayer()` | logging, simulation time, respawn |
-| `Game:::SetStatus(text)`, `Game:::ShowMessage(text, seconds)` | on-screen text |
-| `Input:::IsPressed(action)`, `Input:::IsHeld(action)` | named actions |
-| `Entity:::Find(name)` | an `i64` id; throws `Error:::NotFound` |
-| `Entity:::Position(id)`, `Entity:::SetPosition(id, v)` | local position |
-| `Entity:::IsVisible(id)`, `Entity:::SetVisible(id, visible)` | mesh visibility |
-| `Sound:::Play(name, volume)` | a one-shot sound |
-| `Vector:::New(x, y, z)`, `.X()`, `.Y()`, `.Z()` | a 3D vector |
-
-Hooks (all optional): `OnStart`, `OnFixedUpdate(dt)`, `OnTriggerEnter(id)`, `OnPlayerFell`,
-`OnJump`, `OnLand(speed)`, `OnResetPressed`, `OnExit`. A failing hook is logged, counted and
-shown in the HUD; the game keeps running. A script that fails to load is reported on screen and
-the native rules take over. F5 reloads the script. See D-017.
+`docs/game-api.md` lists every call and the hooks. A failing hook is logged once with its Nyx file, line and callers, counted and
+shown on screen (and in full in the F1 HUD); the game keeps running, and F5 reloads it (D-028).
+A Nyx feature the game needs and can't have yet is a card on the Nyx kanban's Game Engine epic
+(D-030), with a host call as the stopgap.
 
 ## World editor
 
@@ -344,8 +351,8 @@ the order they were built and tested:
    resource lifetime rules above.
 8. **Physics**: closest-point routines (`geometry.rs`), conservative-advancement capsule cast,
    then the controller. Port the 15 controller tests with it; they encode the feel.
-9. **Rules seam**: snapshot in, commands out. It works the same whether the rules are Nyx,
-   native code, or the new language.
+9. **Game seam**: a game is a class with five hooks and a flat API of engine calls taking
+   handles and values. It works the same whether the game is Nyx or the new language.
 10. **Audio**: a mixer that fills a queue each frame is enough at this scale; no callback thread.
 
 Things that are Rust-specific and need an explicit replacement:
@@ -354,10 +361,10 @@ Things that are Rust-specific and need an explicit replacement:
   destructors, call `destroy` explicitly in the order in "Ownership and shutdown".
 - **`Rc` guards**: `SdlInitGuard` and the shared window handle encode "SDL_Quit after the last
   SDL object". Replace with explicit shutdown order.
-- **Enums with data**: `PlatformEvent`, `RuleCommand`, `RuleEvent`, `ScriptCommand` are tagged
-  unions; Nyx enums with payloads map directly.
-- **Traits**: `PlatformBackend`, `AudioSink`, `Game` and `GameRules` are the only traits. Each
-  can be an interface or a struct of function pointers.
+- **Enums with data**: `PlatformEvent` and `GameHook` are tagged unions; Nyx enums with
+  payloads map directly (the game's `GameEvent` already is one).
+- **Traits**: `PlatformBackend`, `AudioSink`, `Game` and `RenderBackend` are the only traits.
+  Each can be an interface or a struct of function pointers.
 - **`Result`**: errors are values everywhere; in Nyx, `throw` an error-enum variant.
 
 ## Dependency boundary inventory
@@ -369,13 +376,13 @@ Where Lantern meets code it did not write, and what crosses each boundary:
 | SDL3 (window, events, gamepad, audio) | `lantern-sdl-facade` | raw `SDL_*` calls; out: `PlatformEvent`, `WindowMetrics`, `AudioSink` | yes, each call has a `SAFETY` note |
 | SDL3 GPU | `lantern-sdl-gpu` | raw `SDL_*GPU*` calls; in: `RenderWorld`, `MeshData`, `TextureData`; out: handles, `FrameReport` | yes, each call has a `SAFETY` note |
 | Nyx C ABI | `nyx-sys`, `nyx` | bindgen bindings; `nyx` wraps them safely | yes, inside `nyx` only |
-| Nyx scripts | `lantern-scripting` | `ScriptSnapshot` in, `ScriptCommand` out, `i64` ids, `Vector` values | none (`forbid(unsafe_code)`) |
+| Nyx game | `lantern-game-host` | host calls (`docs/game-api.md`), `i64` handles, `Vec3`/`Vec2` value types with operators, five hooks | none (`forbid(unsafe_code)`) |
 | WGSL → SPIR-V/MSL | `lantern-sdl-gpu` build script | naga at build time; shader bytes embedded | none |
 | PNG, glTF | `lantern-renderer-3d` | file bytes in, `TextureData` / `MeshData` out | none |
 | glam | everywhere | `Vec3`, `Quat`, `Mat4` values | none |
 
 `lantern-core`, `-platform`, `-engine`, `-renderer-3d`, `-audio`, `-physics`, `-debug` and
-`-scripting` all `forbid(unsafe_code)`. See `dependencies.md` for versions and why each crate
+`-game-host` all `forbid(unsafe_code)`. See `dependencies.md` for versions and why each crate
 was chosen.
 
 ## Known omissions
@@ -389,7 +396,6 @@ What the prototype does not do, on purpose or for lack of time (ideas for later 
 - No D3D12 shaders: on Windows SDL GPU uses Vulkan. Windows is expected to build but was not
   built.
 - Controller feel numbers are measured by tests, not tuned by hand.
-- One level, defined in Rust (`level.rs`); there is no level file format (the brief rules out
-  general scene serialisation).
+- One level (`assets/worlds/course.world.json`); the game loads it by path.
 - No shadows besides the blob shadow, no skinned animation, no transparency sorting.
-- Nyx hook run-time errors report the error but no line number (D-017).
+- F5 restarts the game rather than keeping its state (D-028).

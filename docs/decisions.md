@@ -168,6 +168,9 @@ first frame after restoring measures zero elapsed time, so the game does not lur
 
 ## D-016 Platformer slice details (M5)
 
+The behaviour below still holds; since D-023 it is written in Nyx (`games/platformer/`), and F1 is
+the engine's (D-027).
+
 - **Game states** are an enum in the app (`MainMenu`, `Playing`, `Paused`) with the
   transitions written out in `game.rs`, rather than Umbra's `IGameState` objects and state
   machine. Three states with no shared behaviour do not need a framework. The simulation only
@@ -188,6 +191,9 @@ first frame after restoring measures zero elapsed time, so the game does not lur
   exists for headless smoke runs together with `LANTERN_MAX_FRAMES` and `LANTERN_CAPTURE_PATH`.
 
 ## D-017 Nyx scripting layer (M6)
+
+Superseded on 2026-10-27 by D-023 to D-030: the snapshot, the commands, the native rules and the
+`nyx-scripting` feature are gone, and hook errors now carry their Nyx location (D-029).
 
 - **Snapshot in, commands out.** A script never holds a reference into the engine. Before each
   hook, `ScriptedRules` builds a `ScriptSnapshot` (time, pressed and held actions, entity ids
@@ -295,3 +301,89 @@ first frame after restoring measures zero elapsed time, so the game does not lur
 - **Keyboard:** Penumbra's `InputState` names only a few keys, so the viewport widget reads
   `SDL_GetKeyboardState` while the pointer is over it (or a drag is under way) and sends key
   transitions to Rust. Letters go by physical position, so WASD flying works on any layout.
+
+## D-023 All game code is Nyx; engine code is Rust (2026-10-27)
+
+Dean asked for every line of game code to be Nyx, with a clear seam where engine code (Rust)
+begins. Before this, only the rules were Nyx and the game itself (`apps/platformer-game`: the
+player, camera, menus, states, level, assets, input map) was Rust.
+
+- **Engine** (Rust, `crates/`): the window, input devices, GPU, collision world, character
+  controller, audio mixer, entity store, immediate-mode UI and text, debug HUD, frame loop, and
+  `crates/game-host`, which exposes them to Nyx. Nothing in `crates/` names a game concept
+  (gem, player, level, menu).
+- **Game** (Nyx, `games/platformer/`): what the game is. Its player, camera, rules, menus, HUD,
+  states, tuning, input map and the choice of assets.
+- **The seam** is `crates/game-host`: host types registered through the `nyx` crate
+  (`docs/game-api.md` lists every call) and five hooks on the game's `Application` class
+  (`OnStart`, `OnFixedUpdate`, `OnUpdate`, `OnRender`, `OnExit`).
+- **The rule for new code**: if a second game would want it unchanged, it is engine; otherwise
+  it is game. The character controller is engine (any 3D platformer walks and jumps); its feel
+  numbers are game (`settings/player-tuning.nyx` calls `SetWalkSpeed`, `SetJumpHeight`,
+  `SetGravity`).
+- **Undo**: none expected. A game feature Nyx can't express goes on the Nyx kanban's Game Engine
+  epic (D-030), with a host call as the stopgap.
+
+## D-024 Direct calls replace the snapshot and command queue
+
+D-017's snapshot-in, commands-out design suited a script that only made decisions. A script that
+is the whole game reads and writes the world many times per step, so host calls now act on the
+engine state directly: `World:::SetPosition` moves the entity and its collision body at once.
+
+- The engine state lives in an `Rc<RefCell<EngineState>>` shared by the host closures. Each call
+  borrows it only for its own length and never calls back into Nyx, so borrows can't overlap.
+- Handles still cross as `i64`, and a stale one still throws `Error:::NotFound`, so a script
+  can't reach freed memory.
+- A hook that fails part-way leaves its earlier writes in place. That is how any game code
+  behaves, and the error is shown on screen.
+- `NativeRules`, the Rust copy of the rules, is deleted: there is one implementation of the game.
+
+## D-025 One generic runner: `lantern` and `game.json`
+
+`apps/lantern` runs any game directory (`cargo run -p lantern -- games/platformer`, the default).
+`game.json` names the window title, the entry file, the `Application` class and the assets
+directory. The runner is the composition root (`lantern_game_host::run`); there is no
+game-specific Rust binary. Tests use `GameHost` with a `HeadlessRenderer` and a scripted
+platform instead (`crates/game-host/tests/headless_game.rs`).
+
+## D-026 The level is the editor's world file
+
+The course is `assets/worlds/course.world.json` (format: `crates/world-format`, shared with the
+world editor). `World:::Load` builds its meshes, static collision and kinematic bodies; the game
+finds entities by kind (`spawn`, `kill_plane`, `gem`, `moving_platform`) and reads their
+properties (`period_seconds`, `travel`). So the engine knows shapes and colliders, and the game
+alone knows what a gem is. Agreed with the editor thread on 2026-10-26.
+
+## D-027 The engine keeps F5 and F1
+
+F5 (reload the game from disk) and F1 or gamepad Back (debug HUD) are engine actions, defined
+before the game's own and always working, even when the game failed to load. Everything else,
+including F2's collision view, is the game's input map (`settings/input-settings.nyx`).
+
+## D-028 Reload restarts the whole game
+
+F5 calls `OnExit`, drops the Nyx runtime, releases everything the game made (entities, meshes,
+textures, materials, music, input definitions, its debug values) and loads the game again from
+`OnStart`. A game that fails to load shows the error, and F5 tries again. State is not kept
+across a reload: the C ABI has no hot reload yet (Nyx kanban `CABI-F05-T05`). The headless test
+`reloading_the_game_releases_what_it_made` reloads three times and checks that nothing leaks.
+
+## D-029 Vectors are host value types
+
+`Vec3` and `Vec2` are value types registered through the C ABI's value layouts
+(`register_value_type` in the `nyx` crate): scripts build them with braces, read and write
+`x`, `y` and `z` as fields, and get a copy at every boundary. Arithmetic is operators the host
+declares (`+`, `-`, `*`, `/` and unary `-`, with the vector on the left), the answer Dean chose
+for `GAME-F01-T02`: host value types may declare operators, Nyx types may not (yet). Angles use
+Nyx's own `Math:::atan2`. Run-time hook errors carry the Nyx file, line and calling functions,
+and optional hooks are found with `Program::defines_method`.
+
+## D-030 Nyx gaps go on the Game Engine epic
+
+The gaps found while porting are cards under the Nyx kanban's `[proto] Game Engine` epic in
+fearless-hq (`game-engine`, feature `GAME-F01`), each naming the workaround Lantern uses today.
+Two existing C ABI cards that Lantern also needs (`CABI-F05-T03` callables, `CABI-F05-T05` hot
+reload) have a comment saying so. Measured script cost (`GAME-F01-T06`,
+`cargo run --release -p lantern-game-host --example script_cost`): 0.24 ms of Nyx per frame on
+average for the platformer, headless in the cloud container on 2026-10-27, with `OnFixedUpdate`
+about 150 µs, `OnUpdate` 40 µs and `OnRender` 50 µs per call.

@@ -55,6 +55,23 @@ impl Program {
         self.call_method_on(raw_receiver, method, args)
     }
 
+    pub fn defines_method(&self, method: &str) -> Result<bool> {
+        self.defines_method_on_raw(ptr::null_mut(), method)
+    }
+
+    pub fn defines_method_on(&self, receiver: &Value, method: &str) -> Result<bool> {
+        let raw_receiver = self.runtime.raw_arguments(std::slice::from_ref(receiver))?[0];
+        self.defines_method_on_raw(raw_receiver, method)
+    }
+
+    fn defines_method_on_raw(&self, receiver: *mut sys::nyx_value, method: &str) -> Result<bool> {
+        let mut defined = false;
+        self.runtime.check(unsafe {
+            sys::nyx_program_defines_method(self.raw.as_ptr(), receiver, nyx_str(method), &mut defined)
+        })?;
+        Ok(defined)
+    }
+
     fn call_method_on(&self, receiver: *mut sys::nyx_value, method: &str, args: &[Value]) -> Result<Option<Value>> {
         let raw_args = self.runtime.raw_arguments(args)?;
         let mut result = ptr::null_mut();
@@ -82,7 +99,8 @@ impl Program {
                 ),
                 None => "the call failed".to_string(),
             };
-            return Err(Error { status: Status::Failure, message, failure: result });
+            let stack = result.as_ref().and_then(|failure| failure.error_stack().ok()).unwrap_or_default();
+            return Err(Error { status: Status::Failure, message, failure: result, stack });
         }
         self.runtime.check(status)?;
         Ok(result)

@@ -1,0 +1,92 @@
+GameEvent :: import GameEvent;
+Gem :: import Gem;
+LevelScene :: import LevelScene;
+Player :: import Player;
+ThirdPersonCamera :: import ThirdPersonCamera;
+
+// What happens in the game: collecting gems, what falling or pressing reset does, which sounds
+// play. The rules react to the step's events and keep the text the HUD shows.
+GameRules :: class {
+public:
+    collected~ i32 = 0;
+    statusText~ string = "";
+    message~ string = "";
+    messageSecondsLeft~ f32 = 0.0f;
+
+    Start~: (level: LevelScene) -> void {
+        RestartGems(level);
+        ShowMessage("Collect every gem!", 3.0f);
+    }
+
+    Handle~: (event: GameEvent, level: LevelScene, player~ Player, camera~ ThirdPersonCamera) -> void {
+        when event <GameEvent> {
+            GemTouched(entity) -> { Collect(entity, level); },
+            PlayerFell -> {
+                Audio:::Play("reset", 1.0f);
+                ResetPlayer(player, camera);
+            },
+            PlayerJumped -> { Audio:::Play("jump", 0.8f); },
+            PlayerLanded(speed) -> { Land(speed); },
+            ResetPressed -> {
+                Audio:::Play("reset", 1.0f);
+                ResetPlayer(player, camera);
+                RestartGems(level);
+            }
+        }
+    }
+
+    // Per display frame: counts the message down.
+    Tick~: (frameSeconds: f32) -> void {
+        guard messageSecondsLeft > 0.0f;
+        messageSecondsLeft -= frameSeconds;
+    }
+
+    IsShowingMessage :: () -> bool {
+        return messageSecondsLeft > 0.0f;
+    }
+
+private:
+    static HARD_LANDING_SPEED :: 4.0f;      // m/s; softer landings are silent
+    static LOUDEST_LANDING_SPEED :: 15.0f;
+
+    Collect~: (entity: i64, level: LevelScene) -> void {
+        for gem: Gem in level.gems {
+            guard gem.entity == entity continue;
+            guard !gem.IsCollected() continue;
+            gem.Collect();
+            collected++;
+            Audio:::Play("pickup", 1.0f);
+            ShowGemCount(level);
+            if collected == level.gems.length() {
+                ShowMessage("All gems collected!", 4.0f);
+            }
+        }
+    }
+
+    Land :: (speed: f32) -> void {
+        guard speed > HARD_LANDING_SPEED;
+        Audio:::Play("land", Math:::min(speed / LOUDEST_LANDING_SPEED, 1.0f));
+    }
+
+    ResetPlayer :: (player~ Player, camera~ ThirdPersonCamera) -> void {
+        player.Reset();
+        camera.ResetBehind(0.0f);
+    }
+
+    RestartGems~: (level: LevelScene) -> void {
+        collected = 0;
+        for gem: Gem in level.gems {
+            gem.Restore();
+        }
+        ShowGemCount(level);
+    }
+
+    ShowGemCount~: (level: LevelScene) -> void {
+        statusText = `Gems ${collected:d} / ${level.gems.length():d}`;
+    }
+
+    ShowMessage~: (text: string, seconds: f32) -> void {
+        message = text;
+        messageSecondsLeft = seconds;
+    }
+}

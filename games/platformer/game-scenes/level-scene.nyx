@@ -1,0 +1,42 @@
+Gem :: import Gem;
+MovingPlatform :: import MovingPlatform;
+
+// The level: a world file made in the editor, plus what the game reads from it. Entities are
+// found by kind, so the file decides how many gems and platforms there are.
+LevelScene :: class {
+public:
+    spawnPosition~ Vec3 = Vec3:::Zero();
+    killHeight~ f32 = -10.0f;
+    gems~ Array<Gem> = [];
+    platforms~ Array<MovingPlatform> = [];
+
+    // Returns the number of entities the file made.
+    Load~: (path: string, gemMesh: i64) -> i32 {
+        Unload();
+        loaded := World:::Load(path);
+        guard loaded throw;
+        for spawn: i64 in World:::FindByKind("spawn") {
+            spawnPosition = World:::Position(spawn);
+        }
+        for killPlane: i64 in World:::FindByKind("kill_plane") {
+            killHeight = World:::Position(killPlane).y;
+        }
+        index~ i32 = 0;
+        for entity: i64 in World:::FindByKind("gem") {
+            World:::SetMesh(entity, gemMesh, "FFFFFF");
+            gems.add(new Gem(entity, index));
+            index++;
+        }
+        for entity: i64 in World:::FindByKind("moving_platform") {
+            platforms.add(new MovingPlatform(entity));
+        }
+        Engine:::Log(`level ${path}: ${gems.length():d} gems, ${platforms.length():d} moving platforms`);
+        return loaded;
+    }
+
+    Unload~: () -> void {
+        World:::Clear();
+        gems = [];
+        platforms = [];
+    }
+}

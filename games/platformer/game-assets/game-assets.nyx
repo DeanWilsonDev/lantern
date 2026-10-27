@@ -1,0 +1,51 @@
+PlayerTuning :: import PlayerTuning;
+
+// The game's textures, meshes and sounds. Every file has a generated stand-in, so a checkout
+// without assets/ still runs; a missing file is logged once with the reason.
+GameAssets :: class {
+public:
+    playerTexture~ i64 = 0;
+    playerMesh~ i64 = 0;
+    gemMesh~ i64 = 0;
+    unitCubeMesh~ i64 = 0;       // 1 m cube, scaled per use (the visor)
+    unitSphereMesh~ i64 = 0;     // 1 m diameter sphere, scaled per use (the blob shadow)
+
+    Load~: () -> void {
+        World:::SetMaterial("ground", TextureOrChecker("textures/ground.png", "4D6B42", "3E5735"));
+        World:::SetMaterial("wall", TextureOrChecker("textures/wall.png", "8C857A", "736C63"));
+        World:::SetMaterial("platform", TextureOrChecker("textures/platform.png", "CC8C40", "AD7333"));
+        playerTexture = when Textures:::Load("textures/player.png") {
+            (texture) -> texture,
+            override -> Missing("textures/player.png", Textures:::Solid("FFFFFF"))
+        };
+        gemMesh = when Meshes:::Load("models/gem.glb") {
+            (mesh) -> mesh,
+            override -> Missing("models/gem.glb", Meshes:::Gem(0.25f, 0.5f))
+        };
+        cylinderHalfHeight := PlayerTuning:::HEIGHT * 0.5f - PlayerTuning:::RADIUS;
+        playerMesh = Meshes:::Capsule(PlayerTuning:::RADIUS, cylinderHalfHeight, 24, 8);
+        unitCubeMesh = Meshes:::Cube(1.0f);
+        unitSphereMesh = Meshes:::Sphere(0.5f, 24, 12);
+
+        Audio:::Load("jump", "sounds/jump.wav");
+        Audio:::Load("land", "sounds/land.wav");
+        Audio:::Load("pickup", "sounds/pickup.wav");
+        Audio:::Load("menu_move", "sounds/menu_move.wav");
+        Audio:::Load("menu_select", "sounds/menu_select.wav");
+        Audio:::Load("reset", "sounds/reset.wav");
+        Audio:::Load("theme", "music/theme.wav");
+    }
+
+private:
+    TextureOrChecker :: (path: string, first: string, second: string) -> i64 {
+        return when Textures:::Load(path) {
+            (texture) -> texture,
+            override -> Missing(path, Textures:::Checker(64, 2, first, second))
+        };
+    }
+
+    Missing :: (path: string, standIn: i64) -> i64 {
+        Engine:::Warn(`${path} could not be loaded; using a generated stand-in`);
+        return standIn;
+    }
+}
