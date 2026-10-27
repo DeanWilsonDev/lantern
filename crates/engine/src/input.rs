@@ -88,6 +88,14 @@ impl InputRouter {
         &self.actions
     }
 
+    /// Replaces the actions and bindings (a game script defined new ones, or was reloaded).
+    /// Device state is kept, so a key held across the change stays held; edges start fresh.
+    pub fn reconfigure(&mut self, actions: ActionSet, bindings: Bindings) {
+        let devices = std::mem::take(&mut self.devices);
+        *self = InputRouter::new(actions, bindings);
+        self.devices = devices;
+    }
+
     pub fn handle_event(&mut self, event: &PlatformEvent) {
         let devices = &mut self.devices;
         match *event {

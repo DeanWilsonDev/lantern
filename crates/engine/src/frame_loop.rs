@@ -14,7 +14,7 @@
 //! The loop is a struct with a `run_frame` method rather than one big function so that tests
 //! can drive it a frame at a time with a fake platform.
 
-use lantern_core::input::InputSnapshot;
+use lantern_core::input::{ActionSet, Bindings, InputSnapshot};
 use lantern_core::time::{FixedStepClock, FixedStepPlan, FrameStats};
 use lantern_platform::{PlatformBackend, PlatformEvent, WindowMetrics};
 
@@ -52,6 +52,11 @@ pub trait Game {
     fn render(&mut self, frame: &FrameContext);
     /// The game can end the loop (for example "Quit" on the main menu).
     fn wants_to_quit(&self) -> bool;
+    /// New actions and bindings for the input router, if the game has defined some since the
+    /// last frame. Checked at the start of every frame, before events are read.
+    fn take_input_configuration(&mut self) -> Option<(ActionSet, Bindings)> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +100,10 @@ impl FrameLoop {
     }
 
     pub fn run_frame(&mut self, platform: &mut dyn PlatformBackend, game: &mut dyn Game) -> LoopStatus {
+        if let Some((actions, bindings)) = game.take_input_configuration() {
+            self.input.reconfigure(actions, bindings);
+        }
+
         // 1. Events.
         self.events.clear();
         platform.pump_events(&mut self.events);

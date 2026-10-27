@@ -1,0 +1,82 @@
+PlayerTuning :: import PlayerTuning;
+GameAssets :: import GameAssets;
+
+// The player: an engine character controller, the entities that show it (a capsule body with
+// a visor, parented to a root at the feet) and a blob shadow on the ground below.
+Player :: class {
+public:
+    root~ i64 = 0;
+    shadow~ i64 = 0;
+    spawn~ Vec3 = Vec3:::Zero();
+    facingYaw~ f32 = 0.0f;           // radians about +Y; 0 faces -Z
+    controller~ CharacterController = new CharacterController(PlayerTuning:::RADIUS, PlayerTuning:::HEIGHT, Vec3:::Zero());
+
+    Spawn~: (assets: GameAssets, spawnPosition: Vec3) -> void {
+        spawn = spawnPosition.Copy();
+        controller = new CharacterController(PlayerTuning:::RADIUS, PlayerTuning:::HEIGHT, spawnPosition);
+        controller.SetWalkSpeed(PlayerTuning:::WALK_SPEED);
+        controller.SetJumpHeight(PlayerTuning:::JUMP_HEIGHT);
+        controller.SetGravity(PlayerTuning:::GRAVITY);
+        facingYaw = 0.0f;
+
+        // The root sits at the feet; the capsule mesh is centred, so the body is a child lifted
+        // by half the height.
+        root = World:::Spawn("player", spawnPosition);
+        body := World:::Spawn("player_body", Vec3:::New(0.0f, PlayerTuning:::HEIGHT * 0.5f, 0.0f));
+        World:::SetTexturedMesh(body, assets.playerMesh, assets.playerTexture, "E8A33D");
+        World:::SetParent(body, root);
+        // A visor on the body's front (-Z), so you can see which way the player faces.
+        visor := World:::Spawn("player_visor", Vec3:::New(0.0f, 0.42f, -0.3f));
+        World:::SetMesh(visor, assets.unitCubeMesh, "203040");
+        World:::SetScale(visor, Vec3:::New(0.4f, 0.14f, 0.16f));
+        World:::SetParent(visor, body);
+        shadow = World:::Spawn("player_shadow", spawnPosition);
+        World:::SetMesh(shadow, assets.unitSphereMesh, "0D120D");
+    }
+
+    // Back to the spawn point, at rest, facing forward.
+    Reset~: () -> void {
+        controller.Teleport(spawn);
+        facingYaw = 0.0f;
+        World:::Teleport(root, spawn);
+        World:::SetYaw(root, facingYaw);
+    }
+
+    // One fixed step. `stick` is the movement input (x right, y forward), turned into a world
+    // direction with the camera's horizontal `forward` and `right`.
+    Move~: (stick: Vec2, forward: Vec3, right: Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> :ControllerStep {
+        moveDirection := forward.Scale(stick.Y()).Add(right.Scale(stick.X())).ClampLength(1.0f);
+        step := controller.Step(moveDirection, jumpPressed, jumpHeld, dt);
+        if moveDirection.LengthSquared() > 0.01f {
+            maximumTurn := PlayerTuning:::TURN_SPEED * dt;
+            difference := Angle:::Wrap(moveDirection.Yaw() - facingYaw);
+            facingYaw += Math:::clamp(difference, -maximumTurn, maximumTurn);
+        }
+        World:::SetPosition(root, controller.FeetPosition());
+        World:::SetYaw(root, facingYaw);
+        PlaceShadow();
+        return step;
+    }
+
+    FeetPosition :: () -> Vec3 {
+        return controller.FeetPosition();
+    }
+
+private:
+    // Drops the shadow onto the surface below the player; it shrinks with height.
+    PlaceShadow :: () -> void {
+        feet := controller.FeetPosition();
+        when Physics:::Raycast(controller.CapsuleCenter(), Vec3:::Down(), 30.0f) {
+            hit: RayHit -> PlaceShadowOn(hit, feet),
+            null -> World:::SetVisible(shadow, false)
+        }
+    }
+
+    PlaceShadowOn :: (hit: RayHit, feet: Vec3) -> void {
+        World:::SetVisible(shadow, true);
+        height := Math:::max(feet.Y() - hit.Point().Y(), 0.0f);
+        diameter := PlayerTuning:::RADIUS * 2.2f * Math:::clamp(1.0f - height / 10.0f, 0.4f, 1.0f);
+        World:::SetPosition(shadow, hit.Point().Add(Vec3:::New(0.0f, 0.01f, 0.0f)));
+        World:::SetScale(shadow, Vec3:::New(diameter, 0.01f, diameter));
+    }
+}
