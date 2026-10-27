@@ -22,8 +22,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(cmake/Dependencies.cmake)
 include(cmake/EditorBackend.cmake)
 
-# src/ui holds only Chaos, Cosmos and Nyx. The one native widget (the 3D viewport) lives in
-# src/native.
+# src/ui holds only Chaos, Cosmos and Nyx. The native code behind the viewports (the level view,
+# the template preview and the thumbnails) lives in src/native.
 file(GLOB_RECURSE WORLD_EDITOR_NATIVE_UI_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.h")
 if(WORLD_EDITOR_NATIVE_UI_SOURCES)
@@ -36,7 +36,7 @@ get_filename_component(LANTERN_REPOSITORY_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.
 add_executable(lantern-world-editor
     src/main.cpp
     src/EditorHost.cpp
-    src/native/LanternViewportWidget.cpp
+    src/native/EditorViewportRenderers.cpp
 )
 target_include_directories(lantern-world-editor PRIVATE src)
 target_link_libraries(lantern-world-editor PRIVATE penumbra_ui_backend_host lantern_editor_backend)

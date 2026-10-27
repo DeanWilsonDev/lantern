@@ -18,14 +18,16 @@ pub mod document;
 pub mod gizmo;
 pub mod inspector;
 pub mod palette;
+pub mod preferences;
 pub mod scene_geometry;
 pub mod session;
 pub mod viewport;
 
 pub use camera::{OrbitCamera, Ray, ViewportProjection};
 pub use document::{Edit, EditorDocument};
-pub use gizmo::{Axis, GizmoTool, SnapSettings};
+pub use gizmo::{Axis, GizmoSpace, GizmoTool, Handle, PivotMode, SnapSettings};
 pub use inspector::{FieldKind, InspectorField};
 pub use palette::{EntityTemplate, MarkerMesh, MarkerStyle, Palette};
-pub use session::{EditorKey, EditorSession, Modifiers, OutlineRow, PointerButton};
+pub use preferences::EditorPreferences;
+pub use session::{EditorKey, EditorSession, LogEntry, LogLevel, Modifiers, OutlineRow, PointerButton, ViewOptions};
 pub use viewport::{ViewportResources, build_viewport};

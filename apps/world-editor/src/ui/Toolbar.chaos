@@ -1,53 +1,95 @@
 EditorUi :: import EditorUi;
-TemplateItem :: import TemplateItem;
-ToolbarButton :: import ToolbarButton;
+IconButton :: import IconButton;
 ToolbarState :: import ToolbarState;
+
+ToolbarUi :: namespace {
+    CameraPresets :: () -> Array<string> {
+        return ["perspective", "top", "bottom", "front", "back", "left", "right"];
+    }
+
+    CurrentPreset :: (state: ToolbarState) -> string {
+        return state.orthographic ? "orthographic" : "perspective";
+    }
+}
 
 Toolbar :: () -> Penumbra:::Component {
     return (
         <frame ref="toolbar" class="toolbar">
-            <frame class="toolbar-row">
-                <ToolbarButton label="New" onPress={() -> EditorUi:::App().NewWorld()} />
-                <ToolbarButton label="Save" onPress={() -> EditorUi:::App().Save()} />
-                <input ref="path-input" class="path-field" text={EditorUi:::App().PathDraft()} preferredWidth={360.0f}
-                       onTextChange={(text: string) -> EditorUi:::App().SetPathDraft(text)} />
-                <ToolbarButton label="Open" onPress={() -> EditorUi:::App().OpenPathDraft()} />
-                <ToolbarButton label="Save As" onPress={() -> EditorUi:::App().SaveAsPathDraft()} />
-                <frame class="toolbar-separator" />
-                <slot>
-                    !{(() -> Penumbra:::Component {
-                        state := EditorUi:::App().CurrentToolbar();
-                        return (
-                            <frame class="toolbar-group">
-                                <ToolbarButton label="Undo" enabled={state.canUndo} onPress={() -> EditorUi:::App().Undo()} />
-                                <ToolbarButton label="Redo" enabled={state.canRedo} onPress={() -> EditorUi:::App().Redo()} />
-                                <frame class="toolbar-separator" />
-                                <ToolbarButton label="Move" active={state.tool == "move"}
-                                               onPress={() -> EditorUi:::App().SetTool("move")} />
-                                <ToolbarButton label="Rotate" active={state.tool == "rotate"}
-                                               onPress={() -> EditorUi:::App().SetTool("rotate")} />
-                                <ToolbarButton label="Scale" active={state.tool == "scale"}
-                                               onPress={() -> EditorUi:::App().SetTool("scale")} />
-                                <ToolbarButton label="Snap" active={state.snap} onPress={() -> EditorUi:::App().ToggleSnap()} />
-                                <frame class="toolbar-separator" />
-                                <ToolbarButton label="Frame" onPress={() -> EditorUi:::App().FrameSelection()} />
-                                <ToolbarButton label="Duplicate" enabled={state.hasSelection}
-                                               onPress={() -> EditorUi:::App().DuplicateSelection()} />
-                                <ToolbarButton label="Delete" enabled={state.hasSelection}
-                                               onPress={() -> EditorUi:::App().DeleteSelection()} />
-                            </frame>
-                        );
-                    })()}
-                </slot>
-            </frame>
-            <frame class="toolbar-row">
-                <text class="toolbar-label">Add</text>
-                <slot>
-                    !{EditorUi:::App().Templates().map((item: TemplateItem) ->
-                        <ToolbarButton key={item.id} label={item.label}
-                                       onPress={() -> EditorUi:::App().AddEntity(item.id)} />)}
-                </slot>
-            </frame>
+            <slot>
+                !{(() -> Penumbra:::Component {
+                    state := EditorUi:::App().Toolbar();
+                    return (
+                        <frame class="toolbar-row">
+                            <IconButton icon="document" tooltip="New world (Ctrl+N)"
+                                        onPress={() -> EditorUi:::App().RunCommand("new")} />
+                            <IconButton icon="folder-open" tooltip="Open… (Ctrl+O)"
+                                        onPress={() -> EditorUi:::App().RunCommand("open")} />
+                            <IconButton icon="save" tooltip="Save (Ctrl+S)"
+                                        onPress={() -> EditorUi:::App().RunCommand("save")} />
+                            <frame class="toolbar-separator" />
+                            <IconButton icon="undo" tooltip="Undo (Ctrl+Z)" enabled={state.canUndo}
+                                        onPress={() -> EditorUi:::App().RunCommand("undo")} />
+                            <IconButton icon="redo" tooltip="Redo (Ctrl+Shift+Z)" enabled={state.canRedo}
+                                        onPress={() -> EditorUi:::App().RunCommand("redo")} />
+                            <frame class="toolbar-separator" />
+                            <IconButton icon="move" tooltip="Move (W)" active={state.tool == "move"}
+                                        onPress={() -> EditorUi:::App().SetTool("move")} />
+                            <IconButton icon="rotate" tooltip="Rotate (E)" active={state.tool == "rotate"}
+                                        onPress={() -> EditorUi:::App().SetTool("rotate")} />
+                            <IconButton icon="scale" tooltip="Scale (R)" active={state.tool == "scale"}
+                                        onPress={() -> EditorUi:::App().SetTool("scale")} />
+                            <frame class="toolbar-separator" />
+                            <IconButton icon="magnet" tooltip="Snap to grid" active={state.snap}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleSnap")} />
+                            <IconButton icon={state.space == "local" ? "local-space" : "world-space"}
+                                        tooltip={state.space == "local" ? "Local space (X)" : "World space (X)"}
+                                        active={state.space == "local"}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleSpace")} />
+                            <IconButton icon="pivot" tooltip={state.pivot == "center" ? "Pivot at center (Z)" : "Pivot at primary (Z)"}
+                                        active={state.pivot == "center"}
+                                        onPress={() -> EditorUi:::App().RunCommand("togglePivot")} />
+                            <frame class="toolbar-separator" />
+                            <IconButton icon="crosshair" tooltip="Frame selection (F)" enabled={state.hasSelection}
+                                        onPress={() -> EditorUi:::App().RunCommand("frameSelection")} />
+                            <IconButton icon="copy" tooltip="Duplicate (Ctrl+D)" enabled={state.hasSelection}
+                                        onPress={() -> EditorUi:::App().RunCommand("duplicate")} />
+                            <IconButton icon="layers" tooltip="Group (Ctrl+G)" enabled={state.hasSelection}
+                                        onPress={() -> EditorUi:::App().RunCommand("group")} />
+                            <IconButton icon="trash" tooltip="Delete (Delete)" enabled={state.hasSelection}
+                                        onPress={() -> EditorUi:::App().RunCommand("delete")} />
+                            <frame class="toolbar-separator" />
+                            <IconButton icon={state.playing ? "stop" : "play"}
+                                        tooltip={state.playing ? "Stop playing (Ctrl+P)" : "Play level (Ctrl+P)"}
+                                        active={state.playing}
+                                        onPress={() -> EditorUi:::App().RunCommand(state.playing ? "stop" : "play")} />
+                            <frame class="toolbar-spacer" />
+                            <text class="toolbar-label">Camera</text>
+                            <select ref="camera-preset" class="toolbar-select" options={ToolbarUi:::CameraPresets()}
+                                    selected={ToolbarUi:::CurrentPreset(state)}
+                                    onSelect={(preset: string) -> EditorUi:::App().SetCameraPreset(preset)} />
+                            <frame class="toolbar-separator" />
+                            <IconButton icon="grid" tooltip="Grid (G)" active={state.showGrid}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleGrid")} />
+                            <IconButton icon="wireframe" tooltip="Wireframe" active={state.wireframe}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleWireframe")} />
+                            <IconButton icon="collider" tooltip="Colliders" active={state.showColliders}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleColliders")} />
+                            <IconButton icon="flag" tooltip="Markers" active={state.showMarkers}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleMarkers")} />
+                            <IconButton icon={state.showHidden ? "eye" : "eye-off"} tooltip="Show hidden entities"
+                                        active={state.showHidden}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleShowHidden")} />
+                            <IconButton icon="chart-bar" tooltip="Statistics" active={state.showStats}
+                                        onPress={() -> EditorUi:::App().RunCommand("toggleStats")} />
+                            <frame class="toolbar-separator" />
+                            <IconButton icon="command" tooltip="Command palette (Ctrl+Shift+P)"
+                                        onPress={() -> EditorUi:::App().RunCommand("commandPalette")} />
+                            <IconButton icon="gear" tooltip="Settings (Ctrl+,)"
+                                        onPress={() -> EditorUi:::App().RunCommand("settings")} />
+                        </frame>
+                    );
+                })()}
+            </slot>
         </frame>
     );
 }

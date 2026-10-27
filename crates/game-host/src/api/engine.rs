@@ -2,7 +2,7 @@
 
 use nyx::Runtime;
 
-use super::{SharedState, some_bool, string_argument};
+use super::{SharedState, some_bool, some_string, string_argument};
 
 struct EngineApi;
 
@@ -28,6 +28,13 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
         .static_method("Flag", "(name: string) -> bool", move |context, _, arguments| {
             let name = string_argument(arguments, 0)?;
             some_bool(context, flag_state.borrow().flag(&name))
+        })
+        // A run-time text setting from the environment, "" when unset (LANTERN_LEVEL: the
+        // level the world editor's Play button launched).
+        .static_method("Setting", "(name: string) -> string", move |context, _, arguments| {
+            let name = string_argument(arguments, 0)?;
+            let value = std::env::var(&name).unwrap_or_default();
+            some_string(context, &value)
         })
         .register()?;
     Ok(())

@@ -49,6 +49,7 @@ Back) toggles the debug HUD.
 | `Engine:::Warn(text: string) -> void` | warning log |
 | `Engine:::Quit() -> void` | quit after this frame |
 | `Engine:::Flag(name: string) -> bool` | an environment variable that is set, not empty and not `"0"` (tests override it) |
+| `Engine:::Setting(name: string) -> string` | an environment variable's text, `""` when unset (`LANTERN_LEVEL` is the level the world editor's Play button launched) |
 
 ## Input
 

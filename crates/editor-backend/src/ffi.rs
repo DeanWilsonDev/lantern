@@ -23,18 +23,37 @@ use crate::EditorBackend;
 
 /// The opaque handle C sees.
 pub struct LanternEditor {
-    backend: EditorBackend,
+    pub(crate) backend: EditorBackend,
     /// Backing storage for the most recently returned string.
     returned_string: CString,
     /// Status text set by the C layer itself (a caught panic), shown in preference to the session's.
-    api_status: Option<String>,
+    pub(crate) api_status: Option<String>,
+    /// The outline and inspector as of a UI revision, so per-row calls don't rebuild them.
+    outline_cache: Option<(u64, Vec<lantern_editor_core::OutlineRow>)>,
+    inspector_cache: Option<(u64, Vec<lantern_editor_core::InspectorField>)>,
 }
 
 impl LanternEditor {
-    fn give_string(&mut self, text: &str) -> *const c_char {
+    pub(crate) fn give_string(&mut self, text: &str) -> *const c_char {
         // Interior NULs cannot appear in a C string; replace them rather than fail.
         self.returned_string = CString::new(text.replace('\0', " ")).expect("NULs replaced");
         self.returned_string.as_ptr()
+    }
+
+    pub(crate) fn outline(&mut self) -> &[lantern_editor_core::OutlineRow] {
+        let revision = self.backend.session.ui_revision();
+        if self.outline_cache.as_ref().is_none_or(|(cached, _)| *cached != revision) {
+            self.outline_cache = Some((revision, self.backend.session.outline()));
+        }
+        &self.outline_cache.as_ref().expect("filled above").1
+    }
+
+    pub(crate) fn inspector(&mut self) -> &[lantern_editor_core::InspectorField] {
+        let revision = self.backend.session.ui_revision();
+        if self.inspector_cache.as_ref().is_none_or(|(cached, _)| *cached != revision) {
+            self.inspector_cache = Some((revision, self.backend.session.inspector()));
+        }
+        &self.inspector_cache.as_ref().expect("filled above").1
     }
 }
 
@@ -42,7 +61,7 @@ impl LanternEditor {
 ///
 /// # Safety
 /// `text` is null or points to a NUL-terminated string valid for the call.
-unsafe fn read_string<'call>(text: *const c_char) -> &'call str {
+pub(crate) unsafe fn read_string<'call>(text: *const c_char) -> &'call str {
     if text.is_null() {
         return "";
     }
@@ -54,7 +73,10 @@ unsafe fn read_string<'call>(text: *const c_char) -> &'call str {
 ///
 /// # Safety
 /// `handle` is null or a live pointer from `lantern_editor_create`, not used concurrently.
-unsafe fn with_editor<T: Default>(handle: *mut LanternEditor, body: impl FnOnce(&mut LanternEditor) -> T) -> T {
+pub(crate) unsafe fn with_editor<T: Default>(
+    handle: *mut LanternEditor,
+    body: impl FnOnce(&mut LanternEditor) -> T,
+) -> T {
     if handle.is_null() {
         return T::default();
     }
@@ -77,7 +99,7 @@ unsafe fn with_editor<T: Default>(handle: *mut LanternEditor, body: impl FnOnce(
 }
 
 /// Wrapper so string-returning functions can use `with_editor` (pointers have no `Default`).
-struct ReturnedString(*const c_char);
+pub(crate) struct ReturnedString(pub(crate) *const c_char);
 
 impl Default for ReturnedString {
     fn default() -> Self {
@@ -85,11 +107,11 @@ impl Default for ReturnedString {
     }
 }
 
-fn key(id: i64) -> EntityKey {
+pub(crate) fn key(id: i64) -> EntityKey {
     EntityKey(id.max(0) as u64)
 }
 
-fn id(key: EntityKey) -> i64 {
+pub(crate) fn id(key: EntityKey) -> i64 {
     key.0 as i64
 }
 
@@ -113,9 +135,13 @@ pub unsafe extern "C" fn lantern_editor_create(
         EditorBackend::new(Path::new(assets), world)
     });
     match result {
-        Ok(backend) => {
-            Box::into_raw(Box::new(LanternEditor { backend, returned_string: CString::default(), api_status: None }))
-        }
+        Ok(backend) => Box::into_raw(Box::new(LanternEditor {
+            backend,
+            returned_string: CString::default(),
+            api_status: None,
+            outline_cache: None,
+            inspector_cache: None,
+        })),
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -378,12 +404,28 @@ pub unsafe extern "C" fn lantern_editor_wheel(handle: *mut LanternEditor, notche
 /// # Safety
 /// See the module rules.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lantern_editor_key(handle: *mut LanternEditor, code: u32, down: bool, modifiers: u32) -> bool {
-    let Some(editor_key) = EditorKey::from_code(code) else { return false };
+pub unsafe extern "C" fn lantern_editor_key(
+    handle: *mut LanternEditor,
+    key_name: *const c_char,
+    down: bool,
+    modifiers: u32,
+) -> bool {
+    // SAFETY: see the module rules.
+    let Some(editor_key) = EditorKey::from_name(unsafe { read_string(key_name) }) else { return false };
     // SAFETY: see the module rules.
     unsafe {
         with_editor(handle, |editor| editor.backend.session.key(editor_key, down, Modifiers::from_bits(modifiers)))
     }
+}
+
+/// Forgets every held key: call it when the pointer leaves the viewport.
+///
+/// # Safety
+/// See the module rules.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lantern_editor_release_keys(handle: *mut LanternEditor) {
+    // SAFETY: see the module rules.
+    unsafe { with_editor(handle, |editor| editor.backend.session.release_keys()) }
 }
 
 /// Advances time-based input (flying). Call once per frame.
@@ -393,7 +435,12 @@ pub unsafe extern "C" fn lantern_editor_key(handle: *mut LanternEditor, code: u3
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lantern_editor_update(handle: *mut LanternEditor, seconds: f32) {
     // SAFETY: see the module rules.
-    unsafe { with_editor(handle, |editor| editor.backend.session.update(seconds.clamp(0.0, 0.25))) }
+    unsafe {
+        with_editor(handle, |editor| {
+            editor.backend.session.update(seconds.clamp(0.0, 0.25));
+            editor.backend.poll_play();
+        })
+    }
 }
 
 /// Frames the selection, or the whole world when nothing is selected.
@@ -462,8 +509,8 @@ pub unsafe extern "C" fn lantern_editor_outline_count(handle: *mut LanternEditor
 }
 
 /// Which column of an outline row to read.
-fn outline_row(editor: &LanternEditor, row: u32) -> Option<lantern_editor_core::OutlineRow> {
-    editor.backend.session.outline().into_iter().nth(row as usize)
+pub(crate) fn outline_row(editor: &mut LanternEditor, row: u32) -> Option<lantern_editor_core::OutlineRow> {
+    editor.outline().get(row as usize).cloned()
 }
 
 /// # Safety
@@ -576,8 +623,8 @@ pub unsafe extern "C" fn lantern_editor_selection_count(handle: *mut LanternEdit
 
 // ----- Inspector -------------------------------------------------------------------------------
 
-fn inspector_field(editor: &LanternEditor, index: u32) -> Option<lantern_editor_core::InspectorField> {
-    editor.backend.session.inspector().into_iter().nth(index as usize)
+pub(crate) fn inspector_field(editor: &mut LanternEditor, index: u32) -> Option<lantern_editor_core::InspectorField> {
+    editor.inspector().get(index as usize).cloned()
 }
 
 /// Fields of the primary selection, in display order. 0 when nothing is selected.
@@ -606,6 +653,7 @@ pub unsafe extern "C" fn lantern_editor_field(handle: *mut LanternEditor, index:
                 2 => field.group.to_string(),
                 3 => field.value,
                 4 => field.kind.name().to_string(),
+                5 => field.mixed.to_string(),
                 _ => String::new(),
             });
             ReturnedString(editor.give_string(&text))
@@ -709,7 +757,12 @@ pub unsafe extern "C" fn lantern_editor_template(handle: *mut LanternEditor, ind
                 .palette()
                 .templates
                 .get(index as usize)
-                .map(|template| if part == 0 { template.id.clone() } else { template.label.clone() })
+                .map(|template| match part {
+                    0 => template.id.clone(),
+                    1 => template.label.clone(),
+                    2 => template.kind.clone(),
+                    _ => String::new(),
+                })
                 .unwrap_or_default();
             ReturnedString(editor.give_string(&text))
         })

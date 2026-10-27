@@ -119,7 +119,8 @@ pub fn register(runtime: &Runtime, types: &SharedTypes) -> nyx::Result<()> {
     vec3 = vec3_with_vec3(vec3, "-", |left, right| left - right);
     vec3 = vec3_with_f32(vec3, "*", |vector, scalar| vector * scalar);
     vec3 = vec3_with_f32(vec3, "/", |vector, scalar| vector / scalar);
-    vec3 = vec3.operator("-", "() -> Vec3", |_context, own_type, vector, _| Ok(Some(own_type.wrap(ScriptVec3(-vector.0))?)));
+    vec3 = vec3
+        .operator("-", "() -> Vec3", |_context, own_type, vector, _| Ok(Some(own_type.wrap(ScriptVec3(-vector.0))?)));
     vec3 = vec3_to_vec3(vec3, types, "Cross", "(other: Vec3) -> Vec3", |v, t, a| Ok(v.cross(other_vec3(t, a)?)));
     vec3 = vec3_to_vec3(vec3, types, "Normalized", "() -> Vec3", |v, _, _| Ok(v.normalize_or_zero()));
     vec3 = vec3_to_vec3(vec3, types, "Horizontal", "() -> Vec3", |v, _, _| Ok(Vec3::new(v.x, 0.0, v.z)));

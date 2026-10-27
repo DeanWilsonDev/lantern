@@ -337,7 +337,12 @@ unsafe extern "C" fn release_instance<T>(instance: *mut c_void, _type_userdata: 
     let _ = catch_unwind(AssertUnwindSafe(|| drop(Box::from_raw(instance.cast::<T>()))));
 }
 
-fn wrap_instance<T>(runtime: &Runtime, host_type: *mut sys::nyx_host_type, instance: T, value_type: bool) -> Result<Value> {
+fn wrap_instance<T>(
+    runtime: &Runtime,
+    host_type: *mut sys::nyx_host_type,
+    instance: T,
+    value_type: bool,
+) -> Result<Value> {
     if value_type {
         let mut raw = ptr::null_mut();
         let status =
@@ -369,7 +374,12 @@ impl<T: 'static> HostTypeBuilder<T> {
         HostTypeBuilder {
             runtime,
             name: name.to_string(),
-            slots: TypeSlots { methods: Vec::new(), static_methods: Vec::new(), operators: Vec::new(), constructor: None },
+            slots: TypeSlots {
+                methods: Vec::new(),
+                static_methods: Vec::new(),
+                operators: Vec::new(),
+                constructor: None,
+            },
             value_layout: None,
         }
     }
@@ -463,7 +473,11 @@ impl<T: 'static> HostTypeBuilder<T> {
                 layout
                     .fields
                     .iter()
-                    .map(|field| sys::nyx_host_field { name: nyx_str(&field.name), kind: field.kind, offset: field.offset })
+                    .map(|field| sys::nyx_host_field {
+                        name: nyx_str(&field.name),
+                        kind: field.kind,
+                        offset: field.offset,
+                    })
                     .collect()
             })
             .unwrap_or_default();

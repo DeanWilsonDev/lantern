@@ -1,3 +1,5 @@
+EditorModel :: import EditorModel;
+EditorUi :: import EditorUi;
 OutlineRowItem :: import OutlineRowItem;
 
 OutlinerRowUi :: namespace {
@@ -6,21 +8,52 @@ OutlinerRowUi :: namespace {
     Indent :: (item: OutlineRowItem) -> f32 {
         return f32(item.depth) * INDENT_PER_DEPTH;
     }
+
+    RowClass :: (item: OutlineRowItem) -> string {
+        return item.selected ? "outliner-row-selected" : "outliner-row";
+    }
+
+    NameClass :: (item: OutlineRowItem) -> string {
+        return item.hidden ? "outliner-row-name-hidden" : "outliner-row-name";
+    }
+
+    ChevronIcon :: (item: OutlineRowItem) -> string {
+        return item.expanded ? "chevron-down" : "chevron-right";
+    }
 }
 
 OutlinerRowProps :: data {
     item: OutlineRowItem;
-    onSelect: (id: i64) -> void;
 }
 
 OutlinerRow :: (props: OutlinerRowProps) -> Penumbra:::Component {
     return (
-        <frame ref={`outline-${props.item.key}`} class={props.item.selected ? "outliner-row-selected" : "outliner-row"}
-               onRelease={() -> props.onSelect(props.item.id)}>
+        <frame ref={`outline-${props.item.key}`} class={OutlinerRowUi:::RowClass(props.item)}
+               dragPayload={`entity:${props.item.id}`}
+               onRelease={() -> EditorUi:::App().SelectEntity(props.item.id)}
+               onHover={() -> EditorUi:::App().HoverEntity(props.item.id)}
+               onHoverEnd={() -> EditorUi:::App().UnhoverEntity(props.item.id)}
+               onDrop={(payload: string) -> EditorUi:::App().DropOnEntity(payload, props.item.id)}>
             <frame class={props.item.selected ? "outliner-row-accent" : "outliner-row-accent-off"} />
             <frame class="outliner-row-indent" indent={OutlinerRowUi:::Indent(props.item)} />
-            <text class="outliner-row-name">{props.item.name}</text>
+            <slot>
+                !{props.item.hasChildren
+                    ? <frame class="outliner-chevron" onRelease={() -> EditorUi:::App().ToggleExpanded(props.item.id)}>
+                          <icon class="outliner-chevron-icon" icon={OutlinerRowUi:::ChevronIcon(props.item)} size={10.0f} />
+                      </frame>
+                    : <frame class="outliner-chevron-blank" />}
+            </slot>
+            <icon class="outliner-kind-icon" icon={EditorModel:::KindIcon(props.item.kind)} size={12.0f} />
+            <text class={OutlinerRowUi:::NameClass(props.item)}>{props.item.name}</text>
             <text class="outliner-row-kind">{props.item.kind}</text>
+            <frame class={props.item.hidden ? "outliner-toggle-on" : "outliner-toggle"}
+                   onRelease={() -> EditorUi:::App().SetEntityHidden(props.item.id, !props.item.hidden)}>
+                <icon class="outliner-toggle-icon" icon={props.item.hidden ? "eye-off" : "eye"} size={12.0f} />
+            </frame>
+            <frame class={props.item.locked ? "outliner-toggle-on" : "outliner-toggle"}
+                   onRelease={() -> EditorUi:::App().SetEntityLocked(props.item.id, !props.item.locked)}>
+                <icon class="outliner-toggle-icon" icon={props.item.locked ? "lock" : "unlock"} size={12.0f} />
+            </frame>
         </frame>
     );
 }

@@ -1,30 +1,87 @@
+EditorMenus :: import EditorMenus;
 EditorModel :: import EditorModel;
-InspectorFieldItem :: import InspectorFieldItem;
+HistoryItem :: import HistoryItem;
+InspectorGroupItem :: import InspectorGroupItem;
+LogItem :: import LogItem;
+MenuEntry :: import MenuEntry;
 OutlineRowItem :: import OutlineRowItem;
+StatusInfo :: import StatusInfo;
 TemplateItem :: import TemplateItem;
 ToolbarState :: import ToolbarState;
 
 EditorApplication :: class : Application {
+    static MENU_BAR_HEIGHT :: 28.0f;
+    static MENU_WIDTH :: 250.0f;
+    static MENU_ENTRY_HEIGHT :: 24.0f;
+    static MENU_SEPARATOR_HEIGHT :: 9.0f;
+    static MENU_PADDING :: 12.0f;
+    static TOOLTIP_DELAY_SECONDS :: 0.45f;
+    static TOOLTIP_WIDTH :: 260.0f;
+    static TOOLTIP_HEIGHT :: 24.0f;
+    static STATUS_REFRESH_SECONDS :: 0.5f;
+
     @signal outlineRows~ Array<OutlineRowItem> = [];
-    @signal inspectorFields~ Array<InspectorFieldItem> = [];
+    @signal inspectorGroups~ Array<InspectorGroupItem> = [];
     @signal inspectorTitle~ string = "";
     @signal toolbar~ ToolbarState = EditorModel:::CurrentToolbar();
-    @signal status~ string = "";
+    @signal statusInfo~ StatusInfo = EditorModel:::Status();
+    @signal history~ Array<HistoryItem> = [];
+    @signal log~ Array<LogItem> = [];
+    @signal recentFiles~ Array<string> = [];
+
+    @signal openMenu~ string = "";
+    @signal menuX~ f32 = 0.0f;
+    @signal contextOpen~ bool = false;
+    @signal contextX~ f32 = 0.0f;
+    @signal contextY~ f32 = 0.0f;
+    @signal contextEntity~ i64 = 0;
+    @signal tooltipText~ string = "";
+    @signal tooltipX~ f32 = 0.0f;
+    @signal tooltipY~ f32 = 0.0f;
+    @signal settingsOpen~ bool = false;
+    @signal settingsTab~ string = "Viewport";
+    @signal paletteOpen~ bool = false;
+    @signal paletteQuery~ string = "";
+    @signal confirmCommand~ string = "";
+    @signal helpPage~ string = "";
+    @signal bottomPanel~ string = "assets";
+    @signal outlineFilter~ string = "";
+    @signal previewTemplate~ string = "";
+    @signal consoleInfo~ bool = true;
+    @signal consoleWarnings~ bool = true;
+    @signal consoleErrors~ bool = true;
+    @signal newPropertyName~ string = "";
+
+    collapsedEntities~ Dictionary<i64, bool> = {};
+    collapsedGroups~ Dictionary<string, bool> = {};
+    hoveredEntity~ i64 = 0;
+    shiftHeld~ bool = false;
+    shortcutHeld~ bool = false;
+    pendingDialog~ string = "";
+    pendingTooltip~ string = "";
+    tooltipTimer~ f32 = 0.0f;
     seenRevision~ i64 = editorRevision();
     revisionFromTyping~ i64 = editorRevision();
     inspectorVersion~ i32 = 0;
     inspectorRefillPending~ bool = false;
-    pathDraft~ string = "";
+    statusTimer~ f32 = 0.0f;
 
     Configure~: () -> void override {
         this.SetWindowTitle(editorTitle());
-        this.SetWindowSize(1600, 900);
+        this.SetWindowSize(1680, 980);
     }
 
     OnStart~: () -> bool override {
         this.SetTextInputActive(true);
         this.ReloadFont(this.GetDpiScaleFactor());
-        this.pathDraft = editorDocumentPath();
+        remembered := editorPreference("ui.bottomPanel");
+        if remembered != "" {
+            this.bottomPanel = remembered;
+        }
+        templates := EditorModel:::Templates();
+        if templates.length() > 0 {
+            this.SetPreviewTemplate(templates[0].id);
+        }
         this.Refresh(true);
         return this.MountAppRoot("App.chaos", "App");
     }
@@ -36,7 +93,18 @@ EditorApplication :: class : Application {
             this.Refresh(current != this.revisionFromTyping);
         } else if this.inspectorRefillPending {
             this.inspectorRefillPending = false;
-            this.inspectorFields = EditorModel:::InspectorFields(this.inspectorVersion);
+            this.inspectorGroups = EditorModel:::InspectorGroups(this.inspectorVersion, this.collapsedGroups);
+        }
+        this.PollFileDialog();
+        this.PollContextMenu();
+        this.PollTooltip(deltaSeconds);
+        this.statusTimer += deltaSeconds;
+        if this.statusTimer >= STATUS_REFRESH_SECONDS || this.statusInfo.playing != editorIsPlaying() {
+            this.statusTimer = 0.0f;
+            this.statusInfo = EditorModel:::Status();
+            if this.toolbar.playing != editorIsPlaying() {
+                this.toolbar = EditorModel:::CurrentToolbar();
+            }
         }
         this.TickChaos();
     }
@@ -47,60 +115,564 @@ EditorApplication :: class : Application {
     }
 
     OnShutdown~: () -> void override {
+        editorSavePreferences();
         this.TeardownRootWidget();
     }
 
     Refresh~: (rebuildInspector: bool) -> void {
-        this.outlineRows = EditorModel:::OutlineRows();
+        this.outlineRows = EditorModel:::OutlineRows(this.outlineFilter, this.collapsedEntities);
         this.toolbar = EditorModel:::CurrentToolbar();
-        this.status = editorStatus();
+        this.statusInfo = EditorModel:::Status();
         this.inspectorTitle = EditorModel:::InspectorTitle();
+        this.history = EditorModel:::History();
+        this.log = EditorModel:::Log(this.consoleInfo, this.consoleWarnings, this.consoleErrors);
+        this.recentFiles = this.ReadRecentFiles();
         if rebuildInspector {
             this.inspectorVersion += 1;
-            this.inspectorFields = [];
+            this.inspectorGroups = [];
             this.inspectorRefillPending = true;
         }
         this.SetWindowTitle(editorTitle());
     }
 
+    ReadRecentFiles :: () -> Array<string> {
+        files~ Array<string> = [];
+        count := editorRecentFileCount();
+        for index~ i32 = 0; index < count; index++ {
+            files.add(editorRecentFile(index));
+        }
+        return files;
+    }
+
     OutlineRows:: () -> Array<OutlineRowItem> { return this.outlineRows; }
-    InspectorFields:: () -> Array<InspectorFieldItem> { return this.inspectorFields; }
+    InspectorGroups:: () -> Array<InspectorGroupItem> { return this.inspectorGroups; }
     InspectorTitle:: () -> string { return this.inspectorTitle; }
-    CurrentToolbar:: () -> ToolbarState { return this.toolbar; }
-    Status:: () -> string { return this.status; }
+    Toolbar:: () -> ToolbarState { return this.toolbar; }
+    Status:: () -> StatusInfo { return this.statusInfo; }
+    History:: () -> Array<HistoryItem> { return this.history; }
+    Log:: () -> Array<LogItem> { return this.log; }
+    RecentFiles:: () -> Array<string> { return this.recentFiles; }
     Templates:: () -> Array<TemplateItem> { return EditorModel:::Templates(); }
-    PathDraft:: () -> string { return this.pathDraft; }
+    OpenMenu:: () -> string { return this.openMenu; }
+    MenuX:: () -> f32 { return this.menuX; }
+    MenuEntries:: (menu: string) -> Array<MenuEntry> {
+        return EditorMenus:::Entries(menu, this.toolbar, this.recentFiles);
+    }
+    ContextOpen:: () -> bool { return this.contextOpen; }
+    ContextX:: () -> f32 { return this.contextX; }
+    ContextY:: () -> f32 { return this.contextY; }
+    ContextEntries:: () -> Array<MenuEntry> {
+        return EditorMenus:::ContextEntries(editorIsHidden(this.contextEntity), editorIsLocked(this.contextEntity));
+    }
+    TooltipText:: () -> string { return this.tooltipText; }
+    TooltipX:: () -> f32 { return this.tooltipX; }
+    TooltipY:: () -> f32 { return this.tooltipY; }
+    TooltipWidth:: () -> f32 { return TOOLTIP_WIDTH; }
+    TooltipHeight:: () -> f32 { return TOOLTIP_HEIGHT; }
+    SettingsOpen:: () -> bool { return this.settingsOpen; }
+    SettingsTab:: () -> string { return this.settingsTab; }
+    PaletteOpen:: () -> bool { return this.paletteOpen; }
+    PaletteQuery:: () -> string { return this.paletteQuery; }
+    PaletteCommands:: () -> Array<MenuEntry> {
+        return EditorMenus:::Matching(EditorMenus:::AllCommands(this.toolbar), this.paletteQuery);
+    }
+    ConfirmCommand:: () -> string { return this.confirmCommand; }
+    HelpPage:: () -> string { return this.helpPage; }
+    BottomPanel:: () -> string { return this.bottomPanel; }
+    OutlineFilter:: () -> string { return this.outlineFilter; }
+    PreviewTemplate:: () -> string { return this.previewTemplate; }
+    ConsoleInfo:: () -> bool { return this.consoleInfo; }
+    ConsoleWarnings:: () -> bool { return this.consoleWarnings; }
+    ConsoleErrors:: () -> bool { return this.consoleErrors; }
+    NewPropertyName:: () -> string { return this.newPropertyName; }
+    WindowWidth:: () -> f32 { return this.GetWindowLogicalSize()?.X() ?? 1600.0f; }
+    WindowHeight:: () -> f32 { return this.GetWindowLogicalSize()?.Y() ?? 900.0f; }
+
+    MenuHeight:: (entries: Array<MenuEntry>) -> f32 {
+        height~ f32 = MENU_PADDING;
+        for entry in entries {
+            height += entry.separator ? MENU_SEPARATOR_HEIGHT : MENU_ENTRY_HEIGHT;
+        }
+        return height;
+    }
+
+    MenuBarHeight:: () -> f32 { return MENU_BAR_HEIGHT; }
+    MenuWidth:: () -> f32 { return MENU_WIDTH; }
 
     ControlsHint:: () -> string {
-        return "Right-drag orbit, Shift+right-drag or middle-drag pan, wheel zoom, hold right + WASDQE fly, W/E/R move/rotate/scale, F frame";
+        return "Right-drag orbit · Shift+right-drag or middle-drag pan · wheel zoom · hold right + WASDQE fly · left-drag box select";
+    }
+
+    ShortcutsHelp:: () -> Array<string> {
+        return [
+            "W / E / R  Move, rotate, scale tool",
+            "F / Home  Frame selection / frame all",
+            "X / Z  Toggle local space / pivot at center",
+            "G / H / Shift+H  Toggle grid / hide selection / unhide all",
+            "End  Snap selection to ground",
+            "Delete, Escape  Delete selection, deselect or cancel a drag",
+            "Ctrl+Z / Ctrl+Shift+Z  Undo / redo",
+            "Ctrl+D / Ctrl+G / Ctrl+A / Ctrl+I  Duplicate / group / select all / invert",
+            "Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+N  Save / save as / open / new",
+            "Ctrl+P  Play or stop the level",
+            "Ctrl+1..9 / 1..9  Set / go to a camera bookmark",
+            "Ctrl+Shift+P  Command palette",
+            "Shift+click or Ctrl+click in the outliner adds to the selection"
+        ];
+    }
+
+    ToggleMenu~: (name: string) -> void {
+        this.CloseOverlays();
+        if this.openMenu == name {
+            this.openMenu = "";
+            return;
+        }
+        this.openMenu = name;
+        this.menuX = this.GetMouseX() - 16.0f;
+    }
+
+    HoverMenu~: (name: string) -> void {
+        if this.openMenu != "" && this.openMenu != name {
+            this.openMenu = name;
+            this.menuX = this.GetMouseX() - 16.0f;
+        }
+    }
+
+    CloseMenu~: () -> void { this.openMenu = ""; }
+
+    CloseOverlays~: () -> void {
+        this.openMenu = "";
+        this.contextOpen = false;
+        this.paletteOpen = false;
+        this.helpPage = "";
+        this.HideTooltip();
+    }
+
+    Escape~: () -> void {
+        if this.openMenu != "" || this.contextOpen || this.paletteOpen || this.helpPage != "" {
+            this.CloseOverlays();
+            return;
+        }
+        if this.confirmCommand != "" {
+            this.confirmCommand = "";
+            return;
+        }
+        if this.settingsOpen {
+            this.CloseSettings();
+            return;
+        }
+        editorKey("Escape", true, 0);
+    }
+
+    HandleKey~: (key: string) -> void {
+        when key {
+            "Shift" -> { this.shiftHeld = true; },
+            ("Control" || "Meta") -> { this.shortcutHeld = true; },
+            "Escape" -> this.Escape(),
+            "Shortcut+n" -> this.RunCommand("new"),
+            "Shortcut+o" -> this.RunCommand("open"),
+            "Shortcut+s" -> this.RunCommand("save"),
+            "Shortcut+Shift+s" -> this.RunCommand("saveAs"),
+            "Shortcut+q" -> this.RunCommand("quit"),
+            "Shortcut+p" -> this.RunCommand(this.toolbar.playing ? "stop" : "play"),
+            "Shortcut+Shift+p" -> this.RunCommand("commandPalette"),
+            "Shortcut+," -> this.RunCommand("settings"),
+            "Shortcut+l" -> this.RunCommand("lock"),
+            "Shortcut+Shift+l" -> this.RunCommand("unlock"),
+            "Shortcut+i" -> this.RunCommand("invertSelection"),
+            default -> { this.ForwardKey(key, true); }
+        }
+    }
+
+    HandleKeyUp~: (key: string) -> void {
+        when key {
+            "Shift" -> { this.shiftHeld = false; },
+            ("Control" || "Meta") -> { this.shortcutHeld = false; },
+            default -> { this.ForwardKey(key, false); }
+        }
+    }
+
+    ForwardKey~: (qualified: string, down: bool) -> void {
+        guard !this.paletteOpen && !this.settingsOpen && this.confirmCommand == "" return;
+        bits~ i32 = 0;
+        name~ string = qualified;
+        if name.startsWith("Shortcut+") {
+            bits += 2;
+            name = name.substring(9, name.length() - 9);
+        }
+        if name.startsWith("Alt+") {
+            bits += 4;
+            name = name.substring(4, name.length() - 4);
+        }
+        if name.startsWith("Shift+") {
+            bits += 1;
+            name = name.substring(6, name.length() - 6);
+        }
+        guard name != "" return;
+        editorKey(name, down, bits);
+    }
+
+    RunCommand~: (command: string) -> void {
+        this.CloseOverlays();
+        when command {
+            "new" -> this.WhenSaved(command, () -> { editorNewWorld("untitled"); }),
+            "open" -> this.WhenSaved(command, () -> { this.ShowDialog("open"); }),
+            "save" -> this.Save(),
+            "saveAs" -> this.ShowDialog("saveAs"),
+            "quit" -> this.WhenSaved(command, () -> { editorSavePreferences(); this.RequestQuit(); }),
+            "play" -> { editorPlay(); },
+            "stop" -> { editorStopPlay(); },
+            "settings" -> { this.settingsOpen = true; },
+            "commandPalette" -> { this.paletteOpen = true; this.paletteQuery = ""; },
+            "undo" -> { editorUndo(); },
+            "redo" -> { editorRedo(); },
+            "duplicate" -> { editorDuplicateSelection(); },
+            "delete" -> { editorDeleteSelection(); },
+            "toggleSnap" -> { editorSetSnap(!editorSnap()); },
+            "toggleSpace" -> { editorSetSpace(editorSpace() == "world" ? "local" : "world"); },
+            "togglePivot" -> { editorSetPivotMode(editorPivotMode() == "primary" ? "center" : "primary"); },
+            "selectAll" -> { editorSelectAll(); },
+            "invertSelection" -> { editorInvertSelection(); },
+            "selectChildren" -> { editorSelectChildren(); },
+            "deselect" -> { editorClearSelection(); },
+            "hide" -> { editorHideSelection(); },
+            "showEntity" -> { editorSetHidden(this.contextEntity, false); },
+            "unhideAll" -> { editorUnhideAll(); },
+            "lock" -> { editorLockSelection(true); },
+            "unlock" -> { editorLockSelection(false); },
+            "unparent" -> { editorSetParent(this.contextEntity, EditorModel:::ROOT_ENTITY); },
+            "frameSelection" -> { editorFrameSelection(); },
+            "frameAll" -> { editorFrameAll(); },
+            "toggleGrid" -> this.ToggleViewOption("grid"),
+            "toggleWireframe" -> this.ToggleViewOption("wireframe"),
+            "toggleColliders" -> this.ToggleViewOption("colliders"),
+            "toggleMarkers" -> this.ToggleViewOption("markers"),
+            "toggleLevelBounds" -> this.ToggleViewOption("level_bounds"),
+            "toggleShowHidden" -> this.ToggleViewOption("hidden"),
+            "toggleStats" -> this.ToggleViewOption("stats"),
+            "toggleOrtho" -> { editorSetOrthographic(!editorIsOrthographic()); },
+            "alignCameraToSelection" -> { editorAlignCameraToSelection(); },
+            "alignSelectionToCamera" -> { editorAlignSelectionToCamera(); },
+            "group" -> { editorGroupSelection(); },
+            "snapToGround" -> { editorSnapSelectionToGround(); },
+            "revertToTemplate" -> { editorRevertToTemplate(); },
+            "applyToTemplate" -> { editorApplyToTemplate(); },
+            default -> { this.RunPrefixedCommand(command); }
+        }
+        this.Refresh(false);
+    }
+
+    RunPrefixedCommand~: (command: string) -> void {
+        colon := command.indexOf(":", 0);
+        guard colon > 0 return;
+        prefix := command.substring(0, colon);
+        argument := command.substring(colon + 1, command.length() - colon - 1);
+        when prefix {
+            "camera" -> { editorCameraPreset(argument); },
+            "duplicateAlong" -> { editorDuplicateAlong(argument); },
+            "mirror" -> { editorMirrorSelection(argument); },
+            "align" -> { editorAlignSelection(argument); },
+            "distribute" -> { editorDistributeSelection(argument); },
+            "panel" -> this.SetBottomPanel(argument),
+            "help" -> { this.helpPage = argument; },
+            "tool" -> { editorSetTool(argument); },
+            "openRecent" -> this.OpenRecent(EditorModel:::HexDigit(argument, 0)),
+            "bookmarkSet" -> { editorSetBookmark(EditorModel:::HexDigit(argument, 0)); },
+            "bookmarkGo" -> { editorGoToBookmark(EditorModel:::HexDigit(argument, 0)); },
+            (other) -> {}
+        }
+    }
+
+    ToggleViewOption~: (name: string) -> void {
+        editorSetViewOption(name, editorViewOption(name) == "true" ? "false" : "true");
+    }
+
+    WhenSaved~: (command: string, action: () -> void) -> void {
+        if editorIsDirty() {
+            this.confirmCommand = command;
+            return;
+        }
+        action();
+    }
+
+    ConfirmSave~: () -> void {
+        command := this.confirmCommand;
+        this.confirmCommand = "";
+        if editorDocumentPath() == "" {
+            this.pendingDialog = "saveAsThen:" + command;
+            this.ShowSaveFileDialog("World files", "json", editorAssetsDirectory() + "/worlds");
+            return;
+        }
+        guard editorSave() return;
+        this.RunCommand(command);
+    }
+
+    ConfirmDiscard~: () -> void {
+        command := this.confirmCommand;
+        this.confirmCommand = "";
+        when command {
+            "new" -> { editorNewWorld("untitled"); },
+            "open" -> this.ShowDialog("open"),
+            "quit" -> { editorSavePreferences(); this.RequestQuit(); },
+            default -> { this.RunPrefixedCommand(command); }
+        }
+        this.Refresh(false);
+    }
+
+    ConfirmCancel~: () -> void { this.confirmCommand = ""; }
+
+    Save~: () -> void {
+        if editorDocumentPath() == "" {
+            this.ShowDialog("saveAs");
+            return;
+        }
+        editorSave();
+    }
+
+    ShowDialog~: (kind: string) -> void {
+        guard this.pendingDialog == "" return;
+        this.pendingDialog = kind;
+        start := editorDocumentPath() == "" ? editorAssetsDirectory() + "/worlds" : editorDocumentPath();
+        if kind == "open" {
+            this.ShowOpenFileDialog("World files", "json", start);
+        } else {
+            this.ShowSaveFileDialog("World files", "json", start);
+        }
+    }
+
+    PollFileDialog~: () -> void {
+        guard this.pendingDialog != "" return;
+        guard this.FileDialogFinished() return;
+        kind := this.pendingDialog;
+        this.pendingDialog = "";
+        path := this.TakeFileDialogResult();
+        guard path != "" return;
+        when kind {
+            "open" -> { editorOpen(path); },
+            "saveAs" -> { editorSaveAs(path); },
+            default -> {
+                if kind.startsWith("saveAsThen:") && editorSaveAs(path) {
+                    this.RunCommand(kind.substring(11, kind.length() - 11));
+                }
+            }
+        }
+    }
+
+    OpenRecent~: (index: i32) -> void {
+        guard index < this.recentFiles.length() return;
+        path := this.recentFiles[index];
+        this.WhenSaved(`openRecent:${index}`, () -> { editorOpen(path); });
+    }
+
+    PollContextMenu~: () -> void {
+        if this.WasSecondaryMouseButtonPressed() && this.hoveredEntity != 0 {
+            if !editorIsSelected(this.hoveredEntity) {
+                editorSelect(this.hoveredEntity, false);
+            }
+            this.contextEntity = this.hoveredEntity;
+            this.contextX = this.GetMouseX();
+            this.contextY = this.GetMouseY();
+            this.contextOpen = true;
+            this.openMenu = "";
+            this.HideTooltip();
+        }
+    }
+
+    CloseContextMenu~: () -> void { this.contextOpen = false; }
+
+    HoverEntity~: (id: i64) -> void { this.hoveredEntity = id; }
+    UnhoverEntity~: (id: i64) -> void {
+        if this.hoveredEntity == id {
+            this.hoveredEntity = 0;
+        }
+    }
+
+    ShowTooltip~: (text: string) -> void {
+        guard this.pendingTooltip != text return;
+        this.pendingTooltip = text;
+        this.tooltipTimer = 0.0f;
+        this.tooltipText = "";
+    }
+
+    HideTooltip~: () -> void {
+        this.pendingTooltip = "";
+        this.tooltipText = "";
+    }
+
+    PollTooltip~: (deltaSeconds: f32) -> void {
+        guard this.pendingTooltip != "" return;
+        this.tooltipTimer += deltaSeconds;
+        guard this.tooltipTimer >= TOOLTIP_DELAY_SECONDS && this.tooltipText == "" return;
+        this.tooltipText = this.pendingTooltip;
+        this.tooltipX = Math:::min(this.GetMouseX() + 12.0f, this.WindowWidth() - TOOLTIP_WIDTH - 8.0f);
+        this.tooltipY = Math:::min(this.GetMouseY() + 18.0f, this.WindowHeight() - TOOLTIP_HEIGHT - 8.0f);
+    }
+
+    SetSettingsTab~: (tab: string) -> void { this.settingsTab = tab; }
+    CloseSettings~: () -> void {
+        this.settingsOpen = false;
+        editorSavePreferences();
+    }
+
+    SetPaletteQuery~: (query: string) -> void { this.paletteQuery = query; }
+    RunFirstPaletteCommand~: () -> void {
+        commands := this.PaletteCommands();
+        guard commands.length() > 0 return;
+        this.RunCommand(commands[0].command);
+    }
+    PaletteKey~: (key: string) -> void {
+        when key {
+            "Enter" -> this.RunFirstPaletteCommand(),
+            "Escape" -> this.CloseOverlays(),
+            default -> {}
+        }
+    }
+
+    SetBottomPanel~: (panel: string) -> void {
+        this.bottomPanel = panel;
+        editorSetPreference("ui.bottomPanel", panel);
+    }
+
+    SetOutlineFilter~: (filter: string) -> void {
+        this.outlineFilter = filter;
+        this.outlineRows = EditorModel:::OutlineRows(filter, this.collapsedEntities);
+    }
+
+    ToggleExpanded~: (id: i64) -> void {
+        if this.collapsedEntities.containsKey(id) {
+            this.collapsedEntities.remove(id);
+        } else {
+            this.collapsedEntities[id] = true;
+        }
+        this.outlineRows = EditorModel:::OutlineRows(this.outlineFilter, this.collapsedEntities);
+    }
+
+    ToggleGroupCollapsed~: (group: string) -> void {
+        if this.collapsedGroups.containsKey(group) {
+            this.collapsedGroups.remove(group);
+        } else {
+            this.collapsedGroups[group] = true;
+        }
+        this.inspectorGroups = EditorModel:::InspectorGroups(this.inspectorVersion, this.collapsedGroups);
     }
 
     SelectEntity~: (id: i64) -> void {
-        editorSelect(id, false);
+        editorSelect(id, this.shiftHeld || this.shortcutHeld);
+    }
+
+    SetEntityHidden~: (id: i64, hidden: bool) -> void { editorSetHidden(id, hidden); }
+    SetEntityLocked~: (id: i64, locked: bool) -> void { editorSetLocked(id, locked); }
+
+    DropOnEntity~: (payload: string, parent: i64) -> void {
+        guard payload.startsWith("entity:") return;
+        child := this.ParseId(payload.substring(7, payload.length() - 7));
+        guard child != 0 && child != parent return;
+        editorSetParent(child, parent);
+    }
+
+    DropOnViewport~: (payload: string) -> void {
+        guard payload.startsWith("template:") return;
+        editorAddEntityAtCursor(payload.substring(9, payload.length() - 9));
+    }
+
+    ParseId :: (text: string) -> i64 {
+        value~ i64 = 0;
+        for index~ i32 = 0; index < text.length(); index++ {
+            digit := EditorModel:::HexDigit(text, index);
+            guard digit < 10 return 0;
+            value = value * 10 + i64(digit);
+        }
+        return value;
     }
 
     EditField~: (field: string, text: string) -> void {
-        editorSetField(editorPrimarySelection(), field, text);
+        if editorSelectionCount() > 1 {
+            editorSetSelectionField(field, text);
+        } else {
+            editorSetField(editorPrimarySelection(), field, text);
+        }
         this.revisionFromTyping = editorRevision();
     }
 
     PickChoice~: (field: string, choice: string) -> void {
         editorCommitField();
-        editorSetField(editorPrimarySelection(), field, choice);
+        if editorSelectionCount() > 1 {
+            editorSetSelectionField(field, choice);
+        } else {
+            editorSetField(editorPrimarySelection(), field, choice);
+        }
+    }
+
+    SetNewPropertyName~: (name: string) -> void { this.newPropertyName = name; }
+    AddProperty~: () -> void {
+        name := this.newPropertyName.trim();
+        guard name != "" return;
+        editorCommitField();
+        editorSetField(editorPrimarySelection(), "property:" + name, "0");
+        this.newPropertyName = "";
+    }
+    RemoveProperty~: (key: string) -> void {
+        editorCommitField();
+        editorSetField(editorPrimarySelection(), key, "");
     }
 
     SetTool~: (tool: string) -> void { editorSetTool(tool); }
-    ToggleSnap~: () -> void { editorSetSnap(!editorSnap()); }
-    Undo~: () -> void { editorUndo(); }
-    Redo~: () -> void { editorRedo(); }
     AddEntity~: (templateId: string) -> void { editorAddEntity(templateId); }
-    DuplicateSelection~: () -> void { editorDuplicateSelection(); }
-    DeleteSelection~: () -> void { editorDeleteSelection(); }
-    FrameSelection~: () -> void { editorFrameSelection(); }
-    NewWorld~: () -> void { editorNewWorld("untitled"); }
-    Save~: () -> void { editorSave(); }
+    SetPreviewTemplate~: (templateId: string) -> void {
+        this.previewTemplate = templateId;
+        editorSetPreviewTemplate(templateId);
+    }
 
-    SetPathDraft~: (path: string) -> void { this.pathDraft = path; }
-    OpenPathDraft~: () -> void { editorOpen(this.pathDraft); }
-    SaveAsPathDraft~: () -> void { editorSaveAs(this.pathDraft); }
+    SetConsoleLevel~: (level: string, shown: bool) -> void {
+        when level {
+            "info" -> { this.consoleInfo = shown; },
+            "warning" -> { this.consoleWarnings = shown; },
+            "error" -> { this.consoleErrors = shown; },
+            default -> {}
+        }
+        this.log = EditorModel:::Log(this.consoleInfo, this.consoleWarnings, this.consoleErrors);
+    }
+    ClearLog~: () -> void { editorClearLog(); }
+    JumpHistory~: (position: i32) -> void { editorJumpHistory(position); }
+
+    SetViewOption~: (name: string, value: bool) -> void {
+        editorSetViewOption(name, value ? "true" : "false");
+    }
+    SetSnap~: (enabled: bool) -> void { editorSetSnap(enabled); }
+    SetOrthographic~: (orthographic: bool) -> void { editorSetOrthographic(orthographic); }
+    SetCameraPreset~: (preset: string) -> void { editorCameraPreset(preset); }
+    SnapStepChoice:: (name: string) -> string {
+        step := editorSnapStep(name);
+        if step < 0.175f { return "0.1"; }
+        if step < 0.375f { return "0.25"; }
+        if step < 0.75f { return "0.5"; }
+        if step < 1.5f { return "1"; }
+        if step < 3.5f { return "2"; }
+        if step < 10.0f { return "5"; }
+        if step < 30.0f { return "15"; }
+        if step < 67.0f { return "45"; }
+        return "90";
+    }
+    SetSnapStepChoice~: (name: string, choice: string) -> void {
+        value := when choice {
+            "0.1" -> 0.1f,
+            "0.25" -> 0.25f,
+            "0.5" -> 0.5f,
+            "1" -> 1.0f,
+            "2" -> 2.0f,
+            "5" -> 5.0f,
+            "15" -> 15.0f,
+            "45" -> 45.0f,
+            "90" -> 90.0f,
+            default -> 1.0f
+        };
+        editorSetSnapStep(name, value);
+    }
+    GridSpacingChoice:: () -> string { return editorViewOption("grid_spacing"); }
+    SetGridSpacingChoice~: (choice: string) -> void { editorSetViewOption("grid_spacing", choice); }
+    HasBookmark:: (slot: i32) -> bool { return editorHasBookmark(slot); }
+    ClearRecentFiles~: () -> void {
+        editorSetPreference("recent_files", "");
+        this.recentFiles = [];
+    }
 }
