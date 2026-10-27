@@ -466,3 +466,45 @@ fn a_value_type_has_fields_braces_and_copies() {
     let up = program.call_application_method("Up", &[]).unwrap().unwrap();
     assert_eq!(*vectors.get(&up).unwrap(), Vector3 { x: 0.0, y: 1.0, z: 0.0 });
 }
+
+#[test]
+fn a_value_type_declares_operators() {
+    let runtime = Runtime::new().unwrap();
+    let vectors = runtime
+        .register_value_type::<Vector3>("Vec3", Vector3 { x: 0.0, y: 0.0, z: 0.0 })
+        .field("x", |v| &mut v.x)
+        .field("y", |v| &mut v.y)
+        .field("z", |v| &mut v.z)
+        .operator("+", "(other: Vec3) -> Vec3", |_context, own_type, left, operands| {
+            let right = *own_type.get(&operands[0])?;
+            Ok(Some(own_type.wrap(Vector3 { x: left.x + right.x, y: left.y + right.y, z: left.z + right.z })?))
+        })
+        .operator("*", "(scale: f32) -> Vec3", |_context, own_type, vector, operands| {
+            let scale = operands[0].as_f32()?;
+            Ok(Some(own_type.wrap(Vector3 { x: vector.x * scale, y: vector.y * scale, z: vector.z * scale })?))
+        })
+        .operator("-", "() -> Vec3", |_context, own_type, vector, _| {
+            Ok(Some(own_type.wrap(Vector3 { x: -vector.x, y: -vector.y, z: -vector.z })?))
+        })
+        .register()
+        .unwrap();
+    let program = runtime
+        .mount_source(
+            "Game :: class : Application {\npublic:\n    Run :: () -> void { }\n\
+             \x20   Step :: (at: Vec3) -> Vec3 { velocity := Vec3 { y: -2.0f }; return -(at + velocity * 0.5f); }\n}\n",
+            "operators.nyx",
+            "Game",
+        )
+        .unwrap();
+    let at = vectors.wrap(Vector3 { x: 1.0, y: 2.0, z: 3.0 }).unwrap();
+    let stepped = program.call_application_method("Step", &[at]).unwrap().unwrap();
+    assert_eq!(*vectors.get(&stepped).unwrap(), Vector3 { x: -1.0, y: -1.0, z: -3.0 });
+
+    let refused = runtime
+        .register_value_type::<Vector3>("Vec4", Vector3 { x: 0.0, y: 0.0, z: 0.0 })
+        .operator("%", "(other: Vec4) -> Vec4", |_context, _, _, _| Ok(None))
+        .register()
+        .err()
+        .unwrap();
+    assert_eq!(refused.message, "'Vec4' can't declare the operator '%': a host type declares '+', '-', '*' or '/'");
+}

@@ -191,6 +191,15 @@ struct StaticSlot<T> {
     function: Box<StaticBody<T>>,
 }
 
+type OperatorBody<T> = dyn Fn(&CallContext, &HostType<T>, &T, &[Value]) -> CallbackResult;
+
+struct OperatorSlot<T> {
+    runtime: Weak<RuntimeInner>,
+    symbol: String,
+    signature: String,
+    function: Box<OperatorBody<T>>,
+}
+
 struct ConstructorSlot<T> {
     runtime: Weak<RuntimeInner>,
     signature: String,
@@ -235,6 +244,7 @@ struct ValueLayout<T> {
 struct TypeSlots<T> {
     methods: Vec<MethodSlot<T>>,
     static_methods: Vec<StaticSlot<T>>,
+    operators: Vec<OperatorSlot<T>>,
     constructor: Option<Box<ConstructorSlot<T>>>,
 }
 
@@ -282,6 +292,29 @@ unsafe extern "C" fn static_trampoline<T: 'static>(
             marker: PhantomData,
         };
         (slot.function)(context, &own_type, arguments)
+    })
+}
+
+unsafe extern "C" fn operator_trampoline<T: 'static>(
+    call: *mut sys::nyx_call,
+    args: *const *mut sys::nyx_value,
+    count: usize,
+    out_result: *mut *mut sys::nyx_value,
+    userdata: *mut c_void,
+) -> sys::nyx_status {
+    let slot = &*userdata.cast::<OperatorSlot<T>>();
+    run_callback(&slot.runtime, call, args, count, out_result, |context, arguments| {
+        let Some((receiver, operands)) = arguments.split_first() else {
+            return Err(CallbackError::Refusal(format!("operator '{}' was called without an operand", slot.symbol)));
+        };
+        let instance = instance_of::<T>(call, receiver)?;
+        let own_type = HostType::<T> {
+            raw: sys::nyx_call_host_type(call),
+            runtime: context.runtime().clone(),
+            value_type: true,
+            marker: PhantomData,
+        };
+        (slot.function)(context, &own_type, instance, operands)
     })
 }
 
@@ -336,7 +369,7 @@ impl<T: 'static> HostTypeBuilder<T> {
         HostTypeBuilder {
             runtime,
             name: name.to_string(),
-            slots: TypeSlots { methods: Vec::new(), static_methods: Vec::new(), constructor: None },
+            slots: TypeSlots { methods: Vec::new(), static_methods: Vec::new(), operators: Vec::new(), constructor: None },
             value_layout: None,
         }
     }
@@ -388,6 +421,19 @@ impl<T: 'static> HostTypeBuilder<T> {
             name: name.to_string(),
             signature: signature.to_string(),
             value_type: self.value_layout.is_some(),
+            function: Box::new(function),
+        });
+        self
+    }
+
+    pub fn operator<F>(mut self, symbol: &str, signature: &str, function: F) -> Self
+    where
+        F: Fn(&CallContext, &HostType<T>, &T, &[Value]) -> CallbackResult + 'static,
+    {
+        self.slots.operators.push(OperatorSlot {
+            runtime: Rc::downgrade(&self.runtime.inner),
+            symbol: symbol.to_string(),
+            signature: signature.to_string(),
             function: Box::new(function),
         });
         self
@@ -451,6 +497,16 @@ impl<T: 'static> HostTypeBuilder<T> {
                 userdata: ptr::from_ref::<StaticSlot<T>>(slot).cast_mut().cast(),
             })
             .collect();
+        let operators: Vec<sys::nyx_host_operator> = slots
+            .operators
+            .iter()
+            .map(|slot| sys::nyx_host_operator {
+                symbol: nyx_str(&slot.symbol),
+                signature: nyx_str(&slot.signature),
+                function: Some(operator_trampoline::<T>),
+                userdata: ptr::from_ref::<OperatorSlot<T>>(slot).cast_mut().cast(),
+            })
+            .collect();
         let constructor = slots.constructor.as_ref().map(|slot| sys::nyx_host_constructor {
             signature: nyx_str(&slot.signature),
             function: Some(constructor_trampoline::<T>),
@@ -464,6 +520,8 @@ impl<T: 'static> HostTypeBuilder<T> {
             constructor: constructor.as_ref().map_or(ptr::null(), ptr::from_ref),
             release_instance: if raw_layout.is_some() { None } else { Some(release_instance::<T>) },
             value_layout: raw_layout.as_ref().map_or(ptr::null(), ptr::from_ref),
+            operators: if operators.is_empty() { ptr::null() } else { operators.as_ptr() },
+            operator_count: operators.len(),
         };
         let userdata = Box::into_raw(slots);
         let mut raw_type = ptr::null_mut();

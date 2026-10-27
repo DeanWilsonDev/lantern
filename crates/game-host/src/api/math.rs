@@ -2,8 +2,8 @@
 //!
 //! Vectors are value types: scripts read and write `x`, `y` and `z` as fields, build one with
 //! braces (`Vec3 { x: 1.0f, y: 2.0f }`, missing fields are 0) and get a copy at every binding,
-//! argument and return. Nyx has no operators for host types (GAME-F01-T02), so scripts write
-//! `a.Add(b)`.
+//! argument and return. Arithmetic is operators the host declares: `a + b`, `a - b`, `v * s`,
+//! `v / s` and `-v`, with the vector on the left.
 
 use glam::{Vec2, Vec3};
 use lantern_core::math::{wrap_angle, yaw_from_direction};
@@ -26,12 +26,6 @@ fn other_vec3(types: &SharedTypes, arguments: &[Value]) -> Result<Vec3, Callback
     super::vec3_argument(types, arguments, 0)
 }
 
-fn other_vec2(types: &SharedTypes, arguments: &[Value]) -> Result<Vec2, CallbackError> {
-    let types = types.borrow();
-    let vec2 = types.vec2.as_ref().ok_or_else(|| CallbackError::Refusal("Vec2 is not registered".to_string()))?;
-    Ok(vec2.get(super::argument(arguments, 0)?)?.0)
-}
-
 /// A `Vec3` method that returns a new `Vec3`.
 fn vec3_to_vec3(
     builder: HostTypeBuilder<ScriptVec3>,
@@ -44,6 +38,52 @@ fn vec3_to_vec3(
     builder.method(name, signature, Receiver::Immutable, move |_context, vector, arguments| {
         let result = operation(vector.0, &types, arguments)?;
         wrap_vec3(&types, result)
+    })
+}
+
+/// A `Vec3` operator with a `Vec3` right operand.
+fn vec3_with_vec3(
+    builder: HostTypeBuilder<ScriptVec3>,
+    symbol: &str,
+    operation: fn(Vec3, Vec3) -> Vec3,
+) -> HostTypeBuilder<ScriptVec3> {
+    builder.operator(symbol, "(other: Vec3) -> Vec3", move |_context, own_type, vector, operands| {
+        let other = own_type.get(super::argument(operands, 0)?)?.0;
+        Ok(Some(own_type.wrap(ScriptVec3(operation(vector.0, other)))?))
+    })
+}
+
+/// A `Vec3` operator with an `f32` right operand.
+fn vec3_with_f32(
+    builder: HostTypeBuilder<ScriptVec3>,
+    symbol: &str,
+    operation: fn(Vec3, f32) -> Vec3,
+) -> HostTypeBuilder<ScriptVec3> {
+    builder.operator(symbol, "(scalar: f32) -> Vec3", move |_context, own_type, vector, operands| {
+        Ok(Some(own_type.wrap(ScriptVec3(operation(vector.0, f32_argument(operands, 0)?)))?))
+    })
+}
+
+/// A `Vec2` operator with a `Vec2` right operand.
+fn vec2_with_vec2(
+    builder: HostTypeBuilder<ScriptVec2>,
+    symbol: &str,
+    operation: fn(Vec2, Vec2) -> Vec2,
+) -> HostTypeBuilder<ScriptVec2> {
+    builder.operator(symbol, "(other: Vec2) -> Vec2", move |_context, own_type, vector, operands| {
+        let other = own_type.get(super::argument(operands, 0)?)?.0;
+        Ok(Some(own_type.wrap(ScriptVec2(operation(vector.0, other)))?))
+    })
+}
+
+/// A `Vec2` operator with an `f32` right operand.
+fn vec2_with_f32(
+    builder: HostTypeBuilder<ScriptVec2>,
+    symbol: &str,
+    operation: fn(Vec2, f32) -> Vec2,
+) -> HostTypeBuilder<ScriptVec2> {
+    builder.operator(symbol, "(scalar: f32) -> Vec2", move |_context, own_type, vector, operands| {
+        Ok(Some(own_type.wrap(ScriptVec2(operation(vector.0, f32_argument(operands, 0)?)))?))
     })
 }
 
@@ -75,12 +115,13 @@ pub fn register(runtime: &Runtime, types: &SharedTypes) -> nyx::Result<()> {
             let direction = lantern_core::math::direction_from_yaw(f32_argument(arguments, 0)?);
             Ok(Some(own_type.wrap(ScriptVec3(direction))?))
         });
-    vec3 = vec3_to_vec3(vec3, types, "Add", "(other: Vec3) -> Vec3", |v, t, a| Ok(v + other_vec3(t, a)?));
-    vec3 = vec3_to_vec3(vec3, types, "Sub", "(other: Vec3) -> Vec3", |v, t, a| Ok(v - other_vec3(t, a)?));
-    vec3 = vec3_to_vec3(vec3, types, "Scale", "(factor: f32) -> Vec3", |v, _, a| Ok(v * f32_argument(a, 0)?));
+    vec3 = vec3_with_vec3(vec3, "+", |left, right| left + right);
+    vec3 = vec3_with_vec3(vec3, "-", |left, right| left - right);
+    vec3 = vec3_with_f32(vec3, "*", |vector, scalar| vector * scalar);
+    vec3 = vec3_with_f32(vec3, "/", |vector, scalar| vector / scalar);
+    vec3 = vec3.operator("-", "() -> Vec3", |_context, own_type, vector, _| Ok(Some(own_type.wrap(ScriptVec3(-vector.0))?)));
     vec3 = vec3_to_vec3(vec3, types, "Cross", "(other: Vec3) -> Vec3", |v, t, a| Ok(v.cross(other_vec3(t, a)?)));
     vec3 = vec3_to_vec3(vec3, types, "Normalized", "() -> Vec3", |v, _, _| Ok(v.normalize_or_zero()));
-    vec3 = vec3_to_vec3(vec3, types, "Negated", "() -> Vec3", |v, _, _| Ok(-v));
     vec3 = vec3_to_vec3(vec3, types, "Horizontal", "() -> Vec3", |v, _, _| Ok(Vec3::new(v.x, 0.0, v.z)));
     vec3 =
         vec3_to_vec3(vec3, types, "WithX", "(x: f32) -> Vec3", |v, _, a| Ok(Vec3::new(f32_argument(a, 0)?, v.y, v.z)));
@@ -104,22 +145,20 @@ pub fn register(runtime: &Runtime, types: &SharedTypes) -> nyx::Result<()> {
     vec3 = vec3_to_f32(vec3, types, "Yaw", "() -> f32", |v, _, _| Ok(yaw_from_direction(v)));
     let vec3 = vec3.register()?;
 
-    let add_types = types.clone();
-    let scale_types = types.clone();
     let clamp_types = types.clone();
     let normalized_types = types.clone();
-    let vec2 = runtime
+    let mut vec2 = runtime
         .register_value_type::<ScriptVec2>("Vec2", ScriptVec2::default())
         .field("x", |v| &mut v.0.x)
         .field("y", |v| &mut v.0.y)
         .static_method("Zero", "() -> Vec2", |_context, own_type, _| Ok(Some(own_type.wrap(ScriptVec2(Vec2::ZERO))?)))
+        .operator("-", "() -> Vec2", |_context, own_type, vector, _| Ok(Some(own_type.wrap(ScriptVec2(-vector.0))?)));
+    vec2 = vec2_with_vec2(vec2, "+", |left, right| left + right);
+    vec2 = vec2_with_vec2(vec2, "-", |left, right| left - right);
+    vec2 = vec2_with_f32(vec2, "*", |vector, scalar| vector * scalar);
+    vec2 = vec2_with_f32(vec2, "/", |vector, scalar| vector / scalar);
+    let vec2 = vec2
         .method("Length", "() -> f32", Receiver::Immutable, |context, vector, _| some_f32(context, vector.0.length()))
-        .method("Add", "(other: Vec2) -> Vec2", Receiver::Immutable, move |_context, vector, arguments| {
-            wrap_vec2(&add_types, vector.0 + other_vec2(&add_types, arguments)?)
-        })
-        .method("Scale", "(factor: f32) -> Vec2", Receiver::Immutable, move |_context, vector, arguments| {
-            wrap_vec2(&scale_types, vector.0 * f32_argument(arguments, 0)?)
-        })
         .method("ClampLength", "(maximum: f32) -> Vec2", Receiver::Immutable, move |_context, vector, arguments| {
             wrap_vec2(&clamp_types, vector.0.clamp_length_max(f32_argument(arguments, 0)?))
         })
