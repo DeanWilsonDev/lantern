@@ -24,7 +24,7 @@ mod pieces;
 
 pub use file::{
     CURRENT_FORMAT_VERSION, ColliderKind, EntityKey, PropertyValue, Shape, TransformData, WorldEntity, WorldFile,
-    WorldFileError,
+    WorldFileError, parse_hex_color,
 };
 pub use pieces::{WorldPiece, build_pieces, world_matrices};
 
