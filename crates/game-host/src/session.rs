@@ -53,6 +53,8 @@ pub struct ScriptSession {
     entry_path: PathBuf,
     /// Time spent inside hooks since the last `take_script_time`, for the HUD.
     script_time: Duration,
+    /// Time spent inside each hook (in `GameHook::ALL` order) and how often it ran, since loading.
+    hook_totals: [(Duration, u64); 5],
 }
 
 impl Drop for ScriptSession {
@@ -96,7 +98,15 @@ impl ScriptSession {
                 defined_hooks.push(hook);
             }
         }
-        Ok(ScriptSession { program, runtime, types, defined_hooks, entry_path, script_time: Duration::ZERO })
+        Ok(ScriptSession {
+            program,
+            runtime,
+            types,
+            defined_hooks,
+            entry_path,
+            script_time: Duration::ZERO,
+            hook_totals: [(Duration::ZERO, 0); 5],
+        })
     }
 
     pub fn entry_path(&self) -> &Path {
@@ -122,8 +132,17 @@ impl ScriptSession {
             .map_err(failed)?;
         let started = Instant::now();
         let result = self.program.call_application_method(hook.method_name(), &values);
-        self.script_time += started.elapsed();
+        let elapsed = started.elapsed();
+        self.script_time += elapsed;
+        let total = &mut self.hook_totals[hook as usize];
+        total.0 += elapsed;
+        total.1 += 1;
         result.map(|_| ()).map_err(failed)
+    }
+
+    /// Total time inside `hook` since loading, and how many calls that was.
+    pub fn hook_total(&self, hook: GameHook) -> (Duration, u64) {
+        self.hook_totals[hook as usize]
     }
 
     pub fn take_script_time(&mut self) -> Duration {
