@@ -1,18 +1,31 @@
 // A scripted pilot for headless smoke runs (`LANTERN_AUTOPLAY=1`): it runs forward, drifting
 // right, and jumps every 1.5 s, so the controller, platforms and gems all get exercised.
+//
+// Everything is a function of the simulation clock, so an autoplay run is the same every time
+// and a test can check where the player ends up.
 Autopilot :: namespace {
     JUMP_PERIOD :: 1.5f;
     JUMP_HOLD :: 0.4f;
     STEP :: 0.0167666f;               // one fixed step (1/60 s) plus a little slack
 
+    // Full forward and a little right, as if the stick were held there.
     Stick :: () -> Vec2 {
         return Vec2 { x: 0.15f, y: 1.0f };
     }
 
+    // `time % JUMP_PERIOD` is how far into the current 1.5 s cycle we are (it counts up to 1.5
+    // and starts again at 0). A press has to last exactly one step, so it's "true in the first
+    // step of each cycle": the time since the cycle started is less than one step's length.
+    // Time moves on by 1/60 s per step, so one step lands in that window. The window is a hair
+    // wider than a step (1/60 is 0.016666…) so rounding in the summed clock can't make it miss;
+    // a rare second step inside it is harmless, as the player is already in the air. The first
+    // second is skipped so the player has landed after spawning.
     JumpPressed :: (time: f32) -> bool {
         return time > 1.0f && time % JUMP_PERIOD < STEP;
     }
 
+    // Held for the first 0.4 s of each cycle, past the jump's top (about 0.33 s in), so every
+    // jump is a full-height one (see PlayerTuning on variable jump height).
     JumpHeld :: (time: f32) -> bool {
         return time % JUMP_PERIOD < JUMP_HOLD;
     }

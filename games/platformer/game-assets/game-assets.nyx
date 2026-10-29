@@ -2,6 +2,9 @@ PlayerTuning :: import PlayerTuning;
 
 // The game's textures, meshes and sounds. Every file has a generated stand-in, so a checkout
 // without assets/ still runs; a missing file is logged once with the reason.
+//
+// The engine owns the loaded data; the game only keeps handles (`i64`), which it passes back
+// to World:::SetMesh and friends. Paths are relative to the assets directory in game.json.
 GameAssets :: class {
 public:
     playerTexture~ i64 = 0;
@@ -11,6 +14,8 @@ public:
     unitSphereMesh~ i64 = 0;     // 1 m diameter sphere, scaled per use (the blob shadow)
 
     Load~: () -> void {
+        // Materials are set before the level loads: world-file pieces name a material, and the
+        // engine looks up its texture when it builds them.
         World:::SetMaterial("ground", TextureOrChecker("textures/ground.png", "4D6B42", "3E5735"));
         World:::SetMaterial("wall", TextureOrChecker("textures/wall.png", "8C857A", "736C63"));
         World:::SetMaterial("platform", TextureOrChecker("textures/platform.png", "CC8C40", "AD7333"));
@@ -22,9 +27,15 @@ public:
             (mesh) -> mesh,
             override -> Missing("models/gem.glb", Meshes:::Gem(0.25f, 0.5f))
         };
+        // A capsule is a cylinder with a half-sphere on each end, and each half-sphere adds one
+        // radius to the height. For the whole capsule to be HEIGHT tall, the cylinder part is
+        // HEIGHT - 2 x RADIUS, and the mesh takes half of that:
+        // HEIGHT / 2 - RADIUS = 0.85 - 0.35 = 0.5 m. This matches the controller's collision
+        // capsule exactly, so what you see is what collides.
         cylinderHalfHeight := PlayerTuning:::HEIGHT * 0.5f - PlayerTuning:::RADIUS;
         playerMesh = Meshes:::Capsule(PlayerTuning:::RADIUS, cylinderHalfHeight, 24, 8);
         unitCubeMesh = Meshes:::Cube(1.0f);
+        // Radius 0.5, so diameter 1: a scale of `d` makes it exactly `d` metres across.
         unitSphereMesh = Meshes:::Sphere(0.5f, 24, 12);
 
         Audio:::Load("jump", "sounds/jump.wav");
@@ -37,6 +48,8 @@ public:
     }
 
 private:
+    // A 64-pixel checkerboard of 2 x 2 cells in two close shades: without a texture a flat
+    // colour gives no sense of distance or motion, and a checker does.
     TextureOrChecker :: (path: string, first: string, second: string) -> i64 {
         return when Textures:::Load(path) {
             (texture) -> texture,

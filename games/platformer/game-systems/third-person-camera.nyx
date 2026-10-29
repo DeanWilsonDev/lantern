@@ -1,5 +1,16 @@
 // Third-person orbit camera with collision. Presentation only: it runs per drawn frame and never
 // affects the simulation, except that movement input is read relative to its yaw.
+//
+// The camera is described by three numbers instead of a position: `yaw` (which way round the
+// player it is), `pitch` (how far above or below) and `distance` (how far away). Those are
+// spherical coordinates around a pivot at the player's head. They are what the player actually
+// controls (mouse left/right is yaw, up/down is pitch), they are easy to clamp, and the position
+// can be rebuilt from them every frame (see Follow).
+//
+// Angle conventions, shared with the engine (crates/core/src/math.rs):
+// - Y is up, and the level's forward is -Z.
+// - Yaw is a turn about +Y. Yaw 0 faces -Z; positive yaw turns left (counter-clockwise seen
+//   from above), the usual right-handed rule.
 ThirdPersonCamera :: class {
 public:
     yaw~ f32 = 0.0f;                  // radians about +Y; 0 looks toward -Z (the level's forward)
@@ -8,7 +19,13 @@ public:
 
     // A look delta in radians (+x turns right, +y looks up).
     Look~: (delta: Vec2) -> void {
+        // Turning right is negative yaw (positive yaw turns left), hence the minus.
+        // Angle:::Wrap folds the result back into -π..π. Without it yaw would grow forever as
+        // the player spins, losing float precision, and comparing two yaws would need care.
         yaw = Angle:::Wrap(yaw - delta.x);
+        // Pitch is clamped rather than wrapped: past straight up or straight down the camera
+        // would flip over. The limits stop it just short of overhead and a little below the
+        // player's head.
         pitch = Math:::clamp(pitch + delta.y, MIN_PITCH, MAX_PITCH);
     }
 
@@ -23,10 +40,18 @@ public:
     }
 
     // The horizontal directions movement input is mapped onto.
+    //
+    // A heading of `yaw` turns the forward axis (0, 0, -1) about Y, which gives
+    // (-sin yaw, 0, -cos yaw). At yaw 0 that is (0, 0, -1); at yaw +π/2 (a quarter turn left)
+    // it is (-1, 0, 0). Pitch is left out on purpose: looking down at the player must not make
+    // "forward" push them into the ground, so only the horizontal part of the view counts.
+    // The result has length 1 because sin² + cos² = 1.
     Forward :: () -> Vec3 {
         return Vec3 { x: -Math:::sin(yaw), z: -Math:::cos(yaw) };
     }
 
+    // Forward turned a quarter turn clockwise (to the right) seen from above:
+    // (cos yaw, 0, -sin yaw). It is also Forward x Up. At yaw 0 it is (1, 0, 0), +X.
     Right :: () -> Vec3 {
         return Vec3 { x: Math:::cos(yaw), z: -Math:::sin(yaw) };
     }
@@ -34,23 +59,49 @@ public:
     // Places the camera behind `playerFeet`, pulled in so nothing sits between the pivot and the
     // lens. Moving in is instant; easing back out takes RETURN_SPEED.
     Follow~: (playerFeet: Vec3, frameSeconds: f32) -> void {
+        // Orbit around the head, not the feet, so the player sits low in the frame and you can
+        // see where you are going.
         pivot := playerFeet + Vec3 { y: PIVOT_HEIGHT };
+        // Spherical to Cartesian: the unit vector from the pivot out to the camera.
+        // - cos(pitch) is how much of the length lies flat; sin(pitch) is how much is vertical.
+        // - The flat part points along (sin yaw, cos yaw) in x and z, which is -Forward(): the
+        //   camera sits behind the direction it looks.
+        // - y is -sin(pitch) because pitch is negative above the pivot: pitch -0.35 rad (about
+        //   20 degrees) gives y = +0.34, so the camera is raised and looks down.
+        // Its length is 1, since cos²(pitch)(sin²(yaw) + cos²(yaw)) + sin²(pitch) = 1, so
+        // `backward * distance` is exactly `distance` metres away.
         backward := Vec3 {
             x: Math:::cos(pitch) * Math:::sin(yaw),
             y: -Math:::sin(pitch),
             z: Math:::cos(pitch) * Math:::cos(yaw)
         };
+        // Camera collision. Sweep a small sphere from the pivot out to where the camera wants
+        // to be. If it hits something, SphereCast returns the fraction (0..1) of the way it got
+        // before touching, so `distance * fraction` is the furthest the camera can go and still
+        // see the player. A sphere, not a ray, because the lens has size: the near plane must
+        // not poke through a wall even when the centre of the view is clear. MIN_DISTANCE stops
+        // the camera ending up inside the player's head when backed into a corner.
         allowedDistance := when Physics:::SphereCast(COLLISION_RADIUS, pivot, backward * distance) {
             fraction: f32 -> Math:::max(distance * fraction, MIN_DISTANCE),
             null -> distance
         };
+        // Asymmetric smoothing:
+        // - Pulling in is instant. If a wall comes between the camera and the player, even
+        //   one frame of looking through it is wrong.
+        // - Moving back out is gradual, RETURN_SPEED metres per second (x frameSeconds gives
+        //   this frame's metres, so it is the same speed at any frame rate). Min() stops it
+        //   overshooting the allowed distance. Snapping back out would make the view jump
+        //   every time an obstacle slides out of the way.
         currentDistance = allowedDistance < currentDistance
             ? allowedDistance
             : Math:::min(currentDistance + RETURN_SPEED * frameSeconds, allowedDistance);
+        // Eye at pivot + direction x distance, looking back at the pivot.
         Camera:::LookAt(pivot + backward * currentDistance, pivot);
     }
 
 private:
+    // How far the camera actually is this frame (after collision), as opposed to `distance`,
+    // how far it wants to be.
     currentDistance~ f32 = DEFAULT_DISTANCE;
 
     static PIVOT_HEIGHT :: 1.4f;      // about head height above the feet
@@ -58,7 +109,7 @@ private:
     static MIN_DISTANCE :: 0.6f;
     static COLLISION_RADIUS :: 0.25f; // larger than the near plane's half-diagonal
     static RETURN_SPEED :: 5.0f;      // metres per second
-    static MIN_PITCH :: -1.35f;
-    static MAX_PITCH :: 0.45f;
-    static DEFAULT_PITCH :: -0.35f;
+    static MIN_PITCH :: -1.35f;       // about 77 degrees: nearly overhead
+    static MAX_PITCH :: 0.45f;        // about 26 degrees below the pivot, looking up
+    static DEFAULT_PITCH :: -0.35f;   // about 20 degrees above, looking down at the player
 }

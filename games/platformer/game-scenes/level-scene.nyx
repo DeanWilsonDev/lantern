@@ -3,6 +3,10 @@ MovingPlatform :: import MovingPlatform;
 
 // The level: a world file made in the editor, plus what the game reads from it. Entities are
 // found by kind, so the file decides how many gems and platforms there are.
+//
+// The split of work: World:::Load (engine) builds everything in the file, meshes and collision
+// included. The game then asks for the kinds it gives meaning to ("spawn", "kill_plane", "gem",
+// "moving_platform") and wraps them in its own classes.
 LevelScene :: class {
 public:
     spawnPosition~ Vec3 = Vec3:::Zero();
@@ -15,12 +19,15 @@ public:
         Unload();
         loaded := World:::Load(path);
         guard loaded throw;
+        // One of each is expected; if the file has more, the last one wins.
         for spawn: i64 in World:::FindByKind("spawn") {
             spawnPosition = World:::Position(spawn);
         }
+        // Only the kill plane's height matters: falling below it anywhere counts.
         for killPlane: i64 in World:::FindByKind("kill_plane") {
             killHeight = World:::Position(killPlane).y;
         }
+        // Each gem gets a number in file order, which Gem uses to offset its bob.
         index~ i32 = 0;
         for entity: i64 in World:::FindByKind("gem") {
             World:::SetMesh(entity, gemMesh, "FFFFFF");

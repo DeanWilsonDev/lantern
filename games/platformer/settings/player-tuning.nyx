@@ -1,11 +1,28 @@
 // How the player feels. The engine's character controller does the moving; these numbers are
 // the game's choice (docs/decisions.md D-015 has the reasons for each).
+//
+// How the controller uses them (crates/physics/src/controller.rs). Numbers below that have no
+// constant here are the engine's ControllerSettings defaults, which the game doesn't change:
+// - Jumping. The game says how high, not how fast. Under constant gravity g, something launched
+//   upward at speed v stops rising after climbing h = v² / 2g (all its speed has been traded
+//   for height). Solving for v gives the take-off speed v = √(2 g h). With the numbers below,
+//   √(2 x 28 x 1.5) ≈ 9.2 m/s, reaching the top after v / g ≈ 0.33 s, about 0.65 s in the air.
+//   Tuning by height is easier to reason about: "can I jump onto a 1.2 m ledge?" is a yes.
+// - Variable jump height. If jump is let go while still rising, gravity is 2.5x stronger
+//   until the top, so a tap gives a short hop and a held press the full JUMP_HEIGHT.
+// - Gravity is about 3x Earth's (9.8 m/s²). Real gravity makes a jump this high feel slow and
+//   floaty; platformers use a heavier one for a quick, snappy arc.
+// - Walking. Velocity is not set to WALK_SPEED at once; it accelerates toward it at 50 m/s² on
+//   the ground (full speed in 6 / 50 = 0.12 s) and 20 m/s² in the air (0.3 s), so steering in a
+//   jump is possible but committed. Letting go slows down at the same rate: that's the friction.
+// - Forgiveness. Coyote time (0.1 s) still allows a jump just after running off a ledge, and a
+//   jump buffer (0.12 s) remembers a press made just before landing.
 PlayerTuning :: namespace {
     RADIUS :: 0.35f;             // capsule radius, metres
     HEIGHT :: 1.7f;              // capsule height, metres
     WALK_SPEED :: 6.0f;          // metres per second
     JUMP_HEIGHT :: 1.5f;         // apex of a held jump, metres
     GRAVITY :: 28.0f;            // metres per second squared
-    TURN_SPEED :: 12.0f;         // radians per second the body turns toward its travel
+    TURN_SPEED :: 12.0f;         // radians per second the body turns toward its travel (a half turn in 0.26 s)
     LOOK_STICK_SPEED :: 2.5f;    // radians per second at full right-stick deflection
 }

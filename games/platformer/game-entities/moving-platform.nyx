@@ -1,6 +1,9 @@
 // A world-file entity of kind "moving_platform": it eases from where the file put it to
 // `start + travel` and back every `period` seconds. Moving the entity moves its collision body,
 // so the player rides it.
+//
+// `travel` and `period_seconds` are properties set on the entity in the world editor, so each
+// platform in the level can move differently without any code change.
 MovingPlatform :: class {
 public:
     entity: i64;
@@ -12,11 +15,24 @@ public:
         travel(World:::VectorProperty(entity, "travel")), period(World:::NumberProperty(entity, "period_seconds")) { }
 
     // 0 at the start, 1 at the far end, 0 again after a period.
+    //
+    // The position is worked out from the time alone, never by adding a little each step. That
+    // means it can't drift, it is right after a pause or restart, and every run is identical.
     PositionAt :: (time: f32) -> Vec3 {
+        // How far through its back-and-forth the platform is, as an angle. time / period
+        // counts whole trips (2.5 means halfway through the third trip), and x TAU (2π, a full
+        // circle in radians) turns that into the angle the cosine below needs: one trip = one
+        // full turn.
         phase := time / period * Math:::TAU;
+        // cos(phase) runs 1 → -1 → 1 over one trip, so 0.5 - 0.5 x cos(phase) runs 0 → 1 → 0:
+        // the fraction of `travel` covered. A cosine rather than a straight line because its
+        // slope (the platform's speed) is zero at both ends. The platform slows to a stop,
+        // turns and speeds up again, so a rider isn't jolted by an instant reversal.
         return start + travel * (0.5f - 0.5f * Math:::cos(phase));
     }
 
+    // Called at the start of each fixed step, before the player moves (see Platformer.Simulate),
+    // so the controller can carry a rider by exactly this step's motion.
     Move :: (time: f32) -> void {
         World:::SetPosition(entity, PositionAt(time));
     }
