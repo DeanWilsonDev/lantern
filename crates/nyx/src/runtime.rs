@@ -133,6 +133,15 @@ impl Runtime {
         }
     }
 
+    pub fn write_host_surface(&self) -> Result<String> {
+        let mut raw = ptr::null_mut();
+        self.check(unsafe { sys::nyx_runtime_write_host_surface(self.raw(), &mut raw) })?;
+        match self.adopt(raw) {
+            Some(manifest) => Ok(manifest.as_str()?.to_string()),
+            None => Ok(String::new()),
+        }
+    }
+
     pub(crate) fn adopt(&self, raw: *mut sys::nyx_value) -> Option<Value> {
         Value::from_owned(self.inner.clone(), raw)
     }

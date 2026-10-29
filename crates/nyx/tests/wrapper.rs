@@ -116,6 +116,19 @@ fn host_function_is_called_from_nyx() {
 }
 
 #[test]
+fn the_host_surface_lists_registered_functions() {
+    let runtime = Runtime::new().unwrap();
+    runtime
+        .register_function("Scale", "(value: i32, factor: i32) -> i32", |context, arguments| {
+            Ok(Some(context.make_i32(arguments[0].as_i32()? * arguments[1].as_i32()?)?))
+        })
+        .unwrap();
+    let manifest = runtime.write_host_surface().unwrap();
+    assert!(manifest.contains("\"name\": \"Scale\""), "{manifest}");
+    assert!(manifest.contains("\"signature\": \"(value: i32, factor: i32) -> i32\""), "{manifest}");
+}
+
+#[test]
 fn host_failure_reaches_the_host_as_a_nyx_failure() {
     let runtime = Runtime::new().unwrap();
     runtime

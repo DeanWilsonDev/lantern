@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const MINIMUM_CMAKE: (u32, u32) = (3, 30);
-const STATIC_LIBRARIES: [&str; 5] = ["nyx-capi-static", "nyx-core", "lucis", "firefly", "amanuensis"];
+const STATIC_LIBRARIES: [&str; 7] =
+    ["nyx-capi-static", "nyx-host-surface", "nyx-core", "lucis-json", "lucis", "firefly", "amanuensis"];
 
 fn main() {
     println!("cargo:rerun-if-env-changed=NYX_SOURCE_DIR");

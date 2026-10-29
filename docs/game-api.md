@@ -156,15 +156,15 @@ Call these from `OnRender`. The overlay is cleared every frame.
 | `Audio:::Play(name, volume)` | a one-shot voice |
 | `Audio:::PlayMusic(name)`, `Audio:::StopMusic()` | one looping track |
 
-## Debug
+## EngineDebug
 
 | Call | |
 |---|---|
-| `Debug:::SetValue(path, value: string)` | a HUD line, such as `"Player/Speed"` |
-| `Debug:::IsHudVisible() -> bool`, `Debug:::SetHudVisible(visible)` | |
-| `Debug:::Capsule(center, radius, halfSegment, color)`, `Sphere(center, radius, color)` | wireframes |
-| `Debug:::Arrow(start, vector, color)`, `Line(start, end, color)` | |
-| `Debug:::CollisionNear(center, halfExtent, color)` | the collision triangles in a box |
+| `EngineDebug:::SetValue(path, value: string)` | a HUD line, such as `"Player/Speed"` |
+| `EngineDebug:::IsHudVisible() -> bool`, `EngineDebug:::SetHudVisible(visible)` | |
+| `EngineDebug:::Capsule(center, radius, halfSegment, color)`, `Sphere(center, radius, color)` | wireframes |
+| `EngineDebug:::Arrow(start, vector, color)`, `Line(start, end, color)` | |
+| `EngineDebug:::CollisionNear(center, halfExtent, color)` | the collision triangles in a box |
 
 The engine fills the `Frame`, `Script`, `Renderer`, `World`, `Audio` and `Errors` groups itself.
 
