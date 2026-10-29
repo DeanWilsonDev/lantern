@@ -93,6 +93,13 @@ cargo run -p lantern -- path/to/game # run another game directory (it needs a ga
 The game's `.nyx` files are read when the game starts, so editing them needs no rebuild: save
 and press F5 in the running game.
 
+`nyx check` and nyx-lsp (the editor language server) find the game's imports and the engine API
+through `games/platformer/.nyx.json`, which names `engine-host-surface.json`, a description of
+everything `crates/game-host` registers. After changing a registration, rewrite it with
+`LANTERN_UPDATE_HOST_SURFACE=1 cargo test -p lantern-game-host --test host_surface`; that test fails
+while it's out of date. The world editor's `src/ui/editor-host-surface.json` is rewritten by every
+editor build.
+
 The checks that must stay green:
 
 ```sh

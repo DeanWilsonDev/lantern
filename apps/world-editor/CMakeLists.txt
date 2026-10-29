@@ -39,7 +39,11 @@ add_executable(lantern-world-editor
     src/native/EditorViewportRenderers.cpp
 )
 target_include_directories(lantern-world-editor PRIVATE src)
-target_link_libraries(lantern-world-editor PRIVATE penumbra_ui_backend_host lantern_editor_backend)
+target_link_libraries(lantern-world-editor PRIVATE penumbra_ui_backend_host lantern_editor_backend nyx-host-surface)
+add_custom_command(TARGET lantern-world-editor POST_BUILD
+    COMMAND lantern-world-editor --host-surface ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/editor-host-surface.json
+    COMMENT "Writing the editor's host surface for nyx check and nyx-lsp"
+    VERBATIM)
 target_compile_options(lantern-world-editor PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic>)
 target_compile_definitions(lantern-world-editor PRIVATE

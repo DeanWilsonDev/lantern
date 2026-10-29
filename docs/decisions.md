@@ -480,3 +480,14 @@ text-only dropdown blank. It now draws the selected label and a chevron, and mea
 width from the widest option. This changed Penumbra rather than the backend because every
 Penumbra app wants a readable dropdown. Checkbox glyph size comes from the class's
 `font-size` for the same reason.
+
+## D-041 The hosts describe their names to nyx-lsp
+
+nyx-lsp and `nyx check` can't load a host, so in an editor every import across the game's folders
+and every engine name showed as an error. Each Nyx tree now has a `.nyx.json` (the game's at
+`games/platformer/`, the editor's at `apps/world-editor/src/ui/`) naming a host surface manifest
+written from the real registrations: the game host's through Nyx's C API
+(`nyx_runtime_write_host_surface`, checked by `crates/game-host/tests/host_surface.rs`), the
+editor's by `lantern-world-editor --host-surface` after every build. Both are committed, so a fresh
+clone's editor is right before anything is built. The engine's debug type is `EngineDebug`, since
+Nyx's own built-in `Debug` (`Debug:::describe`) took that name and the host can't register it.
