@@ -1,12 +1,17 @@
 //! One loaded game script: a Nyx runtime with the engine API registered, the mounted program,
 //! and the hooks its `Application` class defines.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use lantern_engine::audio::AudioSystem;
 use nyx::{Program, Runtime, Value};
 
 use crate::api::{HostTypes, SharedState, SharedTypes, register_engine_api};
+use crate::engine_state::EngineState;
+use crate::render_backend::HeadlessRenderer;
 
 /// The hooks a game's `Application` class may define. Missing hooks are skipped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +157,20 @@ impl ScriptSession {
 
 /// `OnFixedUpdate: NYX_ERROR_FAILURE: Error::NotFound: ... at Player.Step (player.nyx:48:9)`, then
 /// one `called from` line per Nyx caller.
+/// The engine API as a Nyx host surface manifest: every type and function a game script can
+/// name, for `nyx check` and nyx-lsp to read through a `.nyx.json`'s `hostSurfaces`.
+pub fn engine_host_surface() -> Result<String, String> {
+    let runtime_error = |error: nyx::Error| format!("nyx: {error}");
+    let state = EngineState::new(Box::new(HeadlessRenderer::default()), AudioSystem::new(None), None)?;
+    let shared_state: SharedState = Rc::new(RefCell::new(state));
+    let types = SharedTypes::default();
+    let runtime = Runtime::new().map_err(runtime_error)?;
+    register_engine_api(&runtime, &shared_state, &types).map_err(runtime_error)?;
+    let manifest = runtime.write_host_surface().map_err(runtime_error);
+    *types.borrow_mut() = HostTypes::default();
+    manifest
+}
+
 fn describe_hook_error(hook: GameHook, error: &nyx::Error) -> String {
     let mut text = format!("{}: {error}", hook.method_name());
     for frame in error.stack.iter().skip(1) {

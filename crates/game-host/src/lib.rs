@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 pub use engine_state::{EngineState, EntityTags, GAME_SCENE, parse_color};
 pub use host::{GameHost, ScriptSource};
 pub use render_backend::{HeadlessRenderer, HeadlessStats, RenderBackend};
-pub use session::{GameHook, ScriptSession};
+pub use session::{GameHook, ScriptSession, engine_host_surface};
 
 /// `game.json`: what the runner needs to start a game.
 #[derive(Clone, Debug, serde::Deserialize)]

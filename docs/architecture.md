@@ -198,7 +198,7 @@ FrameLoop::run_frame
     ├─ [Nyx] OnRender(alpha, frameSeconds)
     │   ├─ ThirdPersonCamera.Follow()          interpolated player, sphere-cast so it never
     │   │                                        clips; Camera:::LookAt
-    │   ├─ CollisionView.Draw() (F2)           Debug::: lines
+    │   ├─ CollisionView.Draw() (F2)           EngineDebug::: lines
     │   └─ menus (Ui:::) or HUD text (Overlay:::)
     ├─ end an unfinished Ui column
     ├─ extract_draws(world, alpha)           visible MeshRenderers → DrawItems
@@ -308,7 +308,7 @@ text path, drawing `DebugValues` grouped by their first path segment.
 `crates/game-host` is the only crate that knows about both the engine and the game.
 
 1. `ScriptSession::load` creates a Nyx runtime, registers the engine API (`api/`: `World`,
-   `Physics`, `CharacterController`, `Input`, `Ui`, `Overlay`, `Audio`, `Camera`, `Debug`,
+   `Physics`, `CharacterController`, `Input`, `Ui`, `Overlay`, `Audio`, `Camera`, `EngineDebug`,
    `Vec3`, ...), adds the game directory as the import search path and mounts the entry file.
    Analysis errors come back rendered with file, line and column, and nothing runs.
 2. `GameHost` implements the frame loop's `Game` trait. Around each hook it does the engine's

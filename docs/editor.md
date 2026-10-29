@@ -80,6 +80,11 @@ apps/world-editor/build/lantern-world-editor                      # opens assets
 apps/world-editor/build/lantern-world-editor path/to/other.world.json
 ```
 
+Every build also runs `lantern-world-editor --host-surface src/ui/editor-host-surface.json`, which
+writes the names the editor's host registers (its `editor*` functions, `appInstance`, Penumbra's
+`Application` members, `Component` and `@signal`) for `nyx check` and nyx-lsp, through
+`src/ui/.nyx.json`. Commit it when it changes.
+
 CMake runs `cargo build -p lantern-editor-backend` itself on every build. If SDL3 is somewhere
 pkg-config doesn't look, set `PKG_CONFIG_PATH` (for example `/usr/local/lib/pkgconfig`).
 

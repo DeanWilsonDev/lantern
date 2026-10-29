@@ -1,4 +1,4 @@
-//! `Debug`: the HUD's values and debug drawing. The engine fills the `Frame`, `Renderer`,
+//! `EngineDebug`: the HUD's values and debug drawing. The engine fills the `Frame`, `Renderer`,
 //! `Audio`, `World` and `Script` groups itself; the game adds its own (`Player/Velocity`).
 
 use glam::Vec3;
@@ -22,7 +22,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
     let line = (state.clone(), types.clone());
     let collision = (state.clone(), types.clone());
     runtime
-        .register_type::<DebugApi>("Debug")
+        .register_type::<DebugApi>("EngineDebug")
         // A HUD entry. The first path segment is its group: "Player/Speed".
         .static_method("SetValue", "(path: string, value: string) -> void", move |_context, _, arguments| {
             let path = string_argument(arguments, 0)?;
