@@ -63,6 +63,12 @@ impl Value {
         self.raw.as_ptr()
     }
 
+    /// The C handle, borrowed: valid while this `Value` is alive. For another binding that works
+    /// on the same runtime (Lantern's Chaos bridge passes values to components this way).
+    pub fn as_raw(&self) -> *mut sys::nyx_value {
+        self.raw.as_ptr()
+    }
+
     pub(crate) fn into_raw(self) -> *mut sys::nyx_value {
         let value = std::mem::ManuallyDrop::new(self);
         let runtime = unsafe { ptr::read(&value.runtime) };

@@ -506,3 +506,53 @@ pointer to `crates/physics/src/controller.rs`, rather than by adding comments to
 Comments are plain `//` lines, as before, and no code changed: the files are identical once
 comments are stripped. Card: `platformer-game/tutorial-comments-in-the-game-code` on the
 lantern board.
+
+## D-043 The game's UI is Chaos and Cosmos
+
+Dean asked whether Chaos and Cosmos, so far run only on Penumbra, work for the game's own UI.
+They do: the main menu, pause menu and HUD are now `.chaos` components and `.cosmos`
+stylesheets in `games/platformer/ui/`, and the old `Ui:::` menus are gone from the game.
+Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, gaps on the Nyx
+(GAME-F04), Chaos and Cosmos boards (epic `lantern-in-game-ui-gaps`).
+
+- **Backend shape.** Chaos and Cosmos are C++, so a small C++ bridge (`crates/chaos-ui/native`)
+  is the Chaos backend: each element is a plain node implementing `Umbra::IWidget`, the contract
+  Chaos was designed to reconcile against for Umbra, and `Cosmos::IStyleTarget`. The bridge
+  hands Rust a flat snapshot of nodes with resolved styles over a C API; layout, drawing and
+  focus are Rust (`lantern-chaos-ui`). That keeps the engine's drawing in one language and the
+  C++ surface small. Penumbra isn't used: it is a desktop widget toolkit with its own renderer.
+- **One Nyx.** Chaos must run on the game's own runtime so components can read and write game
+  objects. One CMake superproject builds Nyx, Chaos, Cosmos and the bridge together (nyx-sys's
+  `chaos-ui` feature), and the bridge reaches the C++ runtime behind the C API's handles with
+  Nyx's new `nyx-host-interop.hpp` (nyx PR). `NYX_CAPI_PREFIX` can't be used with it.
+- **Mounting.** `GameUi:::Mount(file, component)` passes the `Application` object as the
+  component's argument, because a host signature can't name a game class or a generic object.
+  State is `@signal` fields on a game object (`GameUiModel`); writing one re-renders the
+  `<slot>`s that read it.
+- **Element type.** Elements are `Lantern:::Component` (`RegisterElementType`), as Penumbra's are
+  `Penumbra:::Component`. Provisional; a question on the card.
+- **Layout defaults.** A frame with no `display` stacks its children in a column, like a menu;
+  `display: stack` with no `flex-direction` is a row, as in Cosmos. Children stretch across by
+  default. A Cosmos `px` is one window point (half of `Screen:::UiScale()` pixels), so a
+  1280×720 window and a 2560×1440 window lay out alike. `font-size` snaps to multiples of 8
+  because the font is an 8×8 bitmap scaled by whole pixels.
+- **Focus.** Elements with `onPress` or `onRelease` are buttons, focused in document order with
+  the game's own navigation actions (`GameUi:::SetNavigation`). The focused button and its
+  descendants draw with their `:hover` style, and `:active` while confirmed, so Cosmos needs no
+  focus state yet (a card asks for `:focus`). Mouse pointing isn't wired; a question on the
+  feature card asks whether it should be.
+- **Frame order.** Navigation and its handlers run just before `OnUpdate`, outside any host call,
+  so a handler can call the engine; the UI ticks and is read back after `OnStart` and after
+  `OnRender`, then drawn on top of the game's overlay. A choice made in a handler is acted on in
+  the same frame's `OnUpdate`.
+- **One shared component sheet.** Every `ui/*.cosmos` except `global.cosmos` is merged into
+  Cosmos's component layer, so the files act as one sheet rather than each belonging to its own
+  component. It is enough while class names are unique; a sheet per component (matched by file
+  name) is a card on the lantern board.
+- **One UI per process.** Chaos's reactive runtime is a process-wide singleton, so
+  `lantern-chaos-ui` allows one `ChaosUi` at a time (a lock, which keeps parallel tests apart).
+  A Chaos card asks for a runtime per instance.
+- **Gaps found and filed:** a stray `}` hung the Cosmos parser (fixed in cosmos), a rule nested
+  in a `:hover { }` block applies always (cosmos card; use `.label:hover`), no `:focus`, no
+  text shadow (cosmos cards), the singleton runtime (chaos card), and the C API interop (Nyx
+  GAME-F04-T01, done).

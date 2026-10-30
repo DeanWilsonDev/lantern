@@ -5,15 +5,12 @@ GameEvent :: import GameEvent;
 GameEvents :: import GameEvents;
 GameRules :: import GameRules;
 GameState :: import GameState;
+GameUiModel :: import GameUiModel;
 GemSystem :: import GemSystem;
-Hud :: import Hud;
 InputSettings :: import InputSettings;
 LevelScene :: import LevelScene;
-MainMenu :: import MainMenu;
-MainMenuChoice :: import MainMenuChoice;
+MenuChoice :: import MenuChoice;
 MovingPlatform :: import MovingPlatform;
-PauseMenu :: import PauseMenu;
-PauseMenuChoice :: import PauseMenuChoice;
 Player :: import Player;
 PlayerTuning :: import PlayerTuning;
 ThirdPersonCamera :: import ThirdPersonCamera;
@@ -42,6 +39,10 @@ ThirdPersonCamera :: import ThirdPersonCamera;
 // A display frame therefore looks like: OnFixedUpdate x N, OnUpdate, OnRender.
 Platformer :: class : Application {
 public:
+    // What the UI shows and what its buttons chose (ui/game-ui-model.nyx). Public because the UI
+    // reads it: the engine passes this Platformer to ui/game-screen.chaos, which reads `game.ui`.
+    ui~ GameUiModel = new GameUiModel();
+
     // Required by `Application`; the engine drives the game through the hooks instead.
     Run :: () -> void { }
 
@@ -58,6 +59,10 @@ public:
         isAutoplay = Engine:::Flag("LANTERN_AUTOPLAY");
         showCollisionView = Engine:::Flag("LANTERN_COLLISION_VIEW");
         StartLevel();
+        // The UI is Chaos components styled by Cosmos, in ui/. The engine draws it every frame
+        // after OnRender and moves focus between its buttons with these three actions.
+        GameUi:::SetNavigation(InputSettings:::MENU_UP, InputSettings:::MENU_DOWN, InputSettings:::MENU_CONFIRM);
+        GameUi:::Mount("ui/game-screen.chaos", "GameScreen");
         Audio:::PlayMusic("theme");
     }
 
@@ -76,6 +81,9 @@ public:
         if Input:::IsPressed(InputSettings:::TOGGLE_COLLISION_VIEW) {
             showCollisionView = !showCollisionView;
         }
+        // A button the player chose this frame: the engine runs the UI's handlers just before
+        // OnUpdate, and they only record the choice.
+        HandleMenuChoice(ui.TakeChoice());
         when state <GameState> {
             MainMenu -> {
                 // radians per second x seconds this frame = radians to turn this frame. The
@@ -92,6 +100,11 @@ public:
                 }
             }
         }
+        // What the HUD shows. The model only passes on real changes, so this doesn't re-render
+        // the HUD every frame.
+        ui.SetStatus(state == GameState:::MainMenu ? "" : rules.statusText);
+        ui.SetMessage(rules.IsShowingMessage() ? rules.message : "");
+        ui.SetDebugHudOn(EngineDebug:::IsHudVisible());
         PublishDebugValues();
     }
 
@@ -106,19 +119,8 @@ public:
         if showCollisionView {
             CollisionView:::Draw(player.controller, level.gems);
         }
-        when state <GameState> {
-            MainMenu -> { RunMainMenu(); },
-            Playing -> {
-                Hud:::DrawStatus(rules.statusText);
-                if rules.IsShowingMessage() {
-                    Hud:::DrawMessage(rules.message);
-                }
-            },
-            Paused -> {
-                Hud:::DrawStatus(rules.statusText);
-                RunPauseMenu();
-            }
-        }
+        // The menus and the HUD aren't drawn here: they are Chaos components the engine draws
+        // after this hook (see OnStart and ui/).
     }
 
     // Before the engine unloads the game, on quit or on F5. The engine releases everything the
@@ -171,7 +173,7 @@ private:
 
     SetState~: (next: GameState) -> void {
         state = next;
-        Ui:::ResetFocus();
+        ui.Show(next);
         // The mouse is captured (hidden, and its motion turned into camera look) only while
         // playing; menus need a free cursor. The autopilot never captures it.
         isPlaying := when next <GameState> { Playing -> true, default -> false };
@@ -244,18 +246,11 @@ private:
         camera.Look(Input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
     }
 
-    // The menus are immediate mode: each frame Show() draws the whole menu and says what was
-    // chosen this frame, if anything. Acting on the choice is the game's job, here.
-    RunMainMenu~: () -> void {
-        when MainMenu:::Show() <MainMenuChoice> {
+    // Acts on a menu button (ui/main-menu.chaos, ui/pause-menu.chaos). The menus only record
+    // what was chosen; the state machine stays here.
+    HandleMenuChoice~: (choice: MenuChoice) -> void {
+        when choice <MenuChoice> {
             Play -> { SetState(GameState:::Playing); },
-            Quit -> { Engine:::Quit(); },
-            Nothing
-        }
-    }
-
-    RunPauseMenu~: () -> void {
-        when PauseMenu:::Show() <PauseMenuChoice> {
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
                 StartLevel();

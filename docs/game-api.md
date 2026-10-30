@@ -133,9 +133,47 @@ the game decides what a kind means.
 | `Screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `Screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |
 
+## GameUi (Chaos and Cosmos)
+
+The game's menus and HUD are Chaos components (`.chaos`) styled by Cosmos stylesheets
+(`.cosmos`), all in the game's `ui/` folder (D-043). Every `.cosmos` file there is loaded at start:
+`global.cosmos` as the global sheet, and all the others together as one shared component sheet.
+So a rule in `hud.cosmos` can match an element in a menu, `:root` variables from every file share
+one namespace, and a class defined in two files isn't reported (the later file, by name, wins).
+Keep class names unique across the folder.
+
+| Call | |
+|---|---|
+| `GameUi:::Mount(file, component) -> i32` | mounts `component` from `file` (relative to the game directory), passing the game's `Application` object as its one argument: `GameScreen :: (game~ Platformer) -> Lantern:::Component`. Call it from `OnStart` or later |
+| `GameUi:::Unmount(mount)` | |
+| `GameUi:::SetNavigation(previous, next, confirm)` | the input actions (by name) that move focus and press the focused button |
+
+- **State**: a field marked `@signal` on a game object re-renders every `<slot>` that read it
+  when the game writes it. Write only when the value changes, or the slot re-renders every
+  frame.
+- **Buttons** are elements with `onPress` or `onRelease`. Focus starts on the first one and moves in the order
+  they appear; moving calls the new button's `onFocus`, confirming calls `onPress` then
+  `onRelease`. Handlers run just before `OnUpdate`, so a handler should record a choice for
+  `OnUpdate` to act on.
+- **Drawing**: the engine lays the UI out and draws it after `OnRender`, on top of `Overlay:::`
+  drawing. A Cosmos `px` is one window point (`Screen:::UiScale() / 2` pixels). `font-size`
+  snaps to multiples of 8, the bitmap font's size. The focused button and its contents use
+  their `:hover` style (write `.label:hover`, not a rule nested in `:hover { }`), and `:active`
+  while confirmed.
+- **Supported elements**: `<frame>` and `<text>`. Supported properties: `background-color`,
+  `background-gradient-start` and `background-gradient-end` (top to bottom), `border-color`,
+  `border-width`, `border-radius`, `box-shadow` (colour and blur), `padding`, `margin`,
+  `color`, `font-size`, `opacity`, `display: stack` with `flex-direction`, `gap`,
+  `align-items`, `justify-content`, `width`, `height`, `min-width`, `max-width`, `flex-grow`,
+  `position: absolute | fixed` with `top`, `right`, `bottom`, `left`, and `z-index`. Lengths are
+  px, %, vw or vh. A frame stacks its children in a column unless it says otherwise.
+- Errors in a component or a handler are reported as `UI: ...` like a failed hook. Stylesheet
+  problems are logged as warnings.
+
 ## UI and overlay
 
-Call these from `OnRender`. The overlay is cleared every frame.
+Call these from `OnRender`. The overlay is cleared every frame. The platformer uses `GameUi`
+instead of `Ui:::`; `Ui:::` is the small immediate-mode alternative.
 
 | Call | |
 |---|---|

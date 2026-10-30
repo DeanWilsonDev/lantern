@@ -6,9 +6,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use glam::Vec2;
+use lantern_chaos_ui::{ChaosUi, Navigation};
 use lantern_engine::audio::AudioSystem;
+use lantern_renderer_3d::render_world::Overlay;
 use nyx::{Program, Runtime, Value};
 
+use crate::api::game_ui::{GameUiState, NavigationActions, SharedGameUi};
 use crate::api::{HostTypes, SharedState, SharedTypes, register_engine_api};
 use crate::engine_state::EngineState;
 use crate::render_backend::HeadlessRenderer;
@@ -54,6 +58,8 @@ pub struct ScriptSession {
     program: Program,
     runtime: Runtime,
     types: SharedTypes,
+    /// The game's Chaos UI (`GameUi`), shared with the host functions.
+    game_ui: SharedGameUi,
     defined_hooks: Vec<GameHook>,
     entry_path: PathBuf,
     /// Time spent inside hooks since the last `take_script_time`, for the HUD.
@@ -64,9 +70,17 @@ pub struct ScriptSession {
 
 impl Drop for ScriptSession {
     fn drop(&mut self) {
-        // The registered types hold the runtime; let it go so the runtime can be destroyed.
+        // The UI first: its components hold the game's objects. Then the registered types,
+        // which hold the runtime; let them go so the runtime can be destroyed.
+        let game_ui = std::mem::take(&mut *self.game_ui.borrow_mut());
+        drop(game_ui);
         *self.types.borrow_mut() = HostTypes::default();
     }
+}
+
+/// Starts Chaos on `runtime` for the game in `scripts_directory`, its stylesheets in `ui/`.
+fn start_chaos(runtime: &Runtime, scripts_directory: &Path) -> Result<ChaosUi, String> {
+    ChaosUi::new(runtime, scripts_directory, &scripts_directory.join("ui"))
 }
 
 impl ScriptSession {
@@ -83,13 +97,32 @@ impl ScriptSession {
         let runtime_error = |error: nyx::Error| format!("nyx: {error}");
         let runtime = Runtime::new().map_err(runtime_error)?;
         let types = SharedTypes::default();
-        register_engine_api(&runtime, state, &types).map_err(runtime_error)?;
-        runtime.add_import_search_path(scripts_directory).map_err(runtime_error)?;
+        let game_ui = SharedGameUi::default();
+        register_engine_api(&runtime, state, &types, &game_ui).map_err(runtime_error)?;
+        // On any failure below, empty what the host functions share: the runtime holds those
+        // closures and they hold the Chaos UI and the types, so leaving them would keep the Chaos
+        // UI (one per process) alive and stop every reload.
+        let release_shared = || {
+            *game_ui.borrow_mut() = GameUiState::default();
+            *types.borrow_mut() = HostTypes::default();
+        };
+        if let Err(error) = runtime.add_import_search_path(scripts_directory) {
+            release_shared();
+            return Err(runtime_error(error));
+        }
+        // Before mounting, so the game's classes can declare `@signal` fields.
+        match start_chaos(&runtime, scripts_directory) {
+            Ok(chaos) => game_ui.borrow_mut().chaos = Some(Rc::new(chaos)),
+            Err(error) => {
+                release_shared();
+                return Err(error);
+            }
+        }
         let program = match runtime.mount_file(&entry_path, application_class) {
             Ok(program) => program,
             Err(error) => {
                 let diagnostics = runtime.render_diagnostics().unwrap_or_default();
-                *types.borrow_mut() = HostTypes::default();
+                release_shared();
                 return Err(if diagnostics.trim().is_empty() {
                     format!("{}: {error}", entry_path.display())
                 } else {
@@ -97,16 +130,30 @@ impl ScriptSession {
                 });
             }
         };
-        let mut defined_hooks = Vec::new();
-        for hook in GameHook::ALL {
-            if program.defines_method(hook.method_name()).map_err(runtime_error)? {
-                defined_hooks.push(hook);
+        let find_hooks = || -> nyx::Result<(Value, Vec<GameHook>)> {
+            let application = program.application()?;
+            let mut defined_hooks = Vec::new();
+            for hook in GameHook::ALL {
+                if program.defines_method(hook.method_name())? {
+                    defined_hooks.push(hook);
+                }
             }
-        }
+            Ok((application, defined_hooks))
+        };
+        let (application, defined_hooks) = match find_hooks() {
+            Ok(found) => found,
+            Err(error) => {
+                drop(program);
+                release_shared();
+                return Err(runtime_error(error));
+            }
+        };
+        game_ui.borrow_mut().application = Some(application);
         Ok(ScriptSession {
             program,
             runtime,
             types,
+            game_ui,
             defined_hooks,
             entry_path,
             script_time: Duration::ZERO,
@@ -145,6 +192,51 @@ impl ScriptSession {
         result.map(|_| ()).map_err(failed)
     }
 
+    /// The actions the game named with `GameUi:::SetNavigation`, if it has.
+    pub fn ui_navigation_actions(&self) -> Option<NavigationActions> {
+        self.game_ui.borrow().navigation.clone()
+    }
+
+    /// Moves menu focus and sends `onFocus`/`onRelease` to the game's UI for this frame's
+    /// navigation edges. Handlers are game code, so their time counts as script time. Run it
+    /// before `OnUpdate`, with no borrow of the engine state held: the handlers call the engine.
+    pub fn navigate_ui(&mut self, navigation: Navigation) {
+        let chaos = self.game_ui.borrow().chaos.clone();
+        let Some(chaos) = chaos else { return };
+        let started = Instant::now();
+        chaos.navigate(navigation);
+        self.script_time += started.elapsed();
+    }
+
+    /// Re-renders what the game's signals changed and reads the UI back for drawing. Run it
+    /// after `OnRender`, with no borrow of the engine state held.
+    pub fn update_ui(&mut self) {
+        let chaos = self.game_ui.borrow().chaos.clone();
+        if let Some(chaos) = chaos {
+            let started = Instant::now();
+            chaos.update();
+            self.script_time += started.elapsed();
+        }
+    }
+
+    /// Lays out and draws the UI from the last `update_ui` into `overlay`.
+    pub fn draw_ui(&self, overlay: &mut Overlay, screen: Vec2, scale: f32) {
+        if let Some(chaos) = self.game_ui.borrow().chaos.clone() {
+            chaos.draw(overlay, screen, scale);
+        }
+    }
+
+    /// The UI's nodes as of the last `update_ui` (tests look at the menus through this).
+    pub fn ui_nodes(&self) -> Vec<lantern_chaos_ui::UiNode> {
+        self.game_ui.borrow().chaos.as_ref().map(|chaos| chaos.nodes()).unwrap_or_default()
+    }
+
+    /// What Chaos and Cosmos reported since the last call: component and stylesheet errors,
+    /// failed event handlers.
+    pub fn take_ui_messages(&self) -> Vec<String> {
+        self.game_ui.borrow().chaos.as_ref().map(|chaos| chaos.take_messages()).unwrap_or_default()
+    }
+
     /// Total time inside `hook` since loading, and how many calls that was.
     pub fn hook_total(&self, hook: GameHook) -> (Duration, u64) {
         self.hook_totals[hook as usize]
@@ -164,9 +256,13 @@ pub fn engine_host_surface() -> Result<String, String> {
     let state = EngineState::new(Box::new(HeadlessRenderer::default()), AudioSystem::new(None), None)?;
     let shared_state: SharedState = Rc::new(RefCell::new(state));
     let types = SharedTypes::default();
+    let game_ui = SharedGameUi::default();
     let runtime = Runtime::new().map_err(runtime_error)?;
-    register_engine_api(&runtime, &shared_state, &types).map_err(runtime_error)?;
+    register_engine_api(&runtime, &shared_state, &types, &game_ui).map_err(runtime_error)?;
+    // Chaos adds `Component`, `Lantern::Component` and the `@signal` decorator.
+    let chaos = ChaosUi::new(&runtime, Path::new(""), Path::new(""))?;
     let manifest = runtime.write_host_surface().map_err(runtime_error);
+    drop(chaos);
     *types.borrow_mut() = HostTypes::default();
     manifest
 }

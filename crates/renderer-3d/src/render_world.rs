@@ -84,6 +84,19 @@ impl Overlay {
         self.quad(min, max, white, white, color);
     }
 
+    /// A solid triangle with a colour per corner (blended across it), for shapes that aren't
+    /// rectangles: rounded corners, gradients, shadows.
+    pub fn triangle(&mut self, corners: [Vec2; 3], colors: [Color; 3]) {
+        let white = text::white_texel_uv();
+        for (corner, color) in corners.into_iter().zip(colors) {
+            self.vertices.push(OverlayVertex {
+                position: corner.to_array(),
+                uv: white.to_array(),
+                color: color.to_array(),
+            });
+        }
+    }
+
     /// Draws `text` with its top-left corner at `top_left`, each glyph `8 * scale` pixels.
     pub fn text(&mut self, text: &str, top_left: Vec2, scale: f32, color: Color) {
         text::push_text(self, text, top_left, scale, color);

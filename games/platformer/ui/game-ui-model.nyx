@@ -1,0 +1,66 @@
+GameState :: import GameState;
+MenuChoice :: import MenuChoice;
+
+// Everything the UI shows, and the one thing it sends back: the bridge between the game and its
+// Chaos components (game-screen.chaos and the screens it shows).
+//
+// The UI is retained, not redrawn by the game each frame. The engine mounts the components once
+// (GameUi:::Mount in main.nyx) and draws them every frame. A field marked `@signal` is watched:
+// a component that read it during its last render re-renders when the field is written, and
+// nothing else does. So the game only writes here when something changed (the setters below
+// check), and the HUD isn't rebuilt sixty times a second.
+GameUiModel :: class {
+public:
+    // Which screen is up. GameScreen shows the main menu, the HUD, or the HUD under the pause
+    // menu from this.
+    @signal screen~ GameState = GameState:::MainMenu;
+    // The status line at the top ("Gems 2 / 6") and the big message in the middle ("Level
+    // complete!"); an empty message hides it.
+    @signal status~ string = "";
+    @signal message~ string = "";
+    // For the pause menu's "Debug HUD: on/off" button. F1 toggles the HUD too, so the game
+    // copies the engine's state here every frame.
+    @signal debugHudOn~ bool = false;
+
+    // What a menu button chose. Not a signal: nothing draws it. main.nyx reads it with
+    // TakeChoice once per frame.
+    choice~ MenuChoice = MenuChoice:::Nothing;
+
+    Show~: (next: GameState) -> void {
+        if screen != next {
+            screen = next;
+        }
+    }
+
+    SetStatus~: (text: string) -> void {
+        if status != text {
+            status = text;
+        }
+    }
+
+    SetMessage~: (text: string) -> void {
+        if message != text {
+            message = text;
+        }
+    }
+
+    SetDebugHudOn~: (on: bool) -> void {
+        if debugHudOn != on {
+            debugHudOn = on;
+        }
+    }
+
+    // Called by a menu button's onRelease. The click sound plays here, so every button sounds
+    // the same.
+    Choose~: (picked: MenuChoice) -> void {
+        choice = picked;
+        Audio:::Play("menu_select", 1.0f);
+    }
+
+    // The choice made since the last call, and forget it.
+    TakeChoice~: () -> MenuChoice {
+        picked := choice;
+        choice = MenuChoice:::Nothing;
+        return picked;
+    }
+}

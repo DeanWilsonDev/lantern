@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 use glam::Vec2;
+use lantern_chaos_ui::Navigation;
 use lantern_core::color::Color;
 use lantern_core::input::{ActionSet, Bindings};
 use lantern_engine::extract::extract_draws;
@@ -107,6 +108,39 @@ impl GameHost {
         }
     }
 
+    /// The game's Chaos UI before `OnUpdate`: focus moves and button handlers run. The engine
+    /// state isn't borrowed here, since the handlers are game code that calls the engine.
+    fn navigate_ui(&mut self) {
+        let Some(session) = self.session.as_mut() else { return };
+        let navigation = match session.ui_navigation_actions() {
+            Some(actions) => {
+                let state = self.state.borrow();
+                let pressed = |name: &str| state.input.pressed(name).unwrap_or(false);
+                Navigation {
+                    previous: pressed(&actions.previous),
+                    next: pressed(&actions.next),
+                    confirm: pressed(&actions.confirm),
+                }
+            }
+            None => Navigation::default(),
+        };
+        session.navigate_ui(navigation);
+        self.report_ui_messages();
+    }
+
+    /// Chaos reports a failed component or event handler as a diagnostic, not as a hook error,
+    /// so it is shown the same way here. Cosmos's notes about stylesheets go to the log only.
+    fn report_ui_messages(&mut self) {
+        let Some(session) = self.session.as_ref() else { return };
+        for message in session.take_ui_messages() {
+            if message.starts_with("cosmos:") {
+                log::warn!(target: "ui", "{message}");
+            } else {
+                self.report_error(format!("UI: {message}"));
+            }
+        }
+    }
+
     fn start_session(&mut self) {
         self.state.borrow_mut().reset_for_new_session();
         let source = &self.source;
@@ -117,6 +151,11 @@ impl GameHost {
                 self.session = Some(session);
                 self.script_error = None;
                 self.call(GameHook::OnStart, &[]);
+                // Read what OnStart mounted, so the first frame's navigation has buttons to use.
+                if let Some(session) = self.session.as_mut() {
+                    session.update_ui();
+                }
+                self.report_ui_messages();
             }
             Err(error) => {
                 self.report_error(format!("the game failed to load (F5 retries):\n{error}"));
@@ -227,6 +266,8 @@ impl Game for GameHost {
         if reload {
             self.reload();
         }
+        // Before OnUpdate, so the game sees a button chosen this frame in this frame's OnUpdate.
+        self.navigate_ui();
         self.call(GameHook::OnUpdate, &[HookArgument::F32(frame.frame_seconds)]);
         {
             let mut state = self.state.borrow_mut();
@@ -251,10 +292,20 @@ impl Game for GameHost {
             state.ui_column = None;
         }
         self.call(GameHook::OnRender, &[HookArgument::F32(frame.alpha), HookArgument::F32(frame.frame_seconds)]);
+        if let Some(session) = self.session.as_mut() {
+            session.update_ui();
+        }
+        self.report_ui_messages();
         {
             let state = &mut *self.state.borrow_mut();
             if let Some(unfinished) = state.ui_column.take() {
                 state.ui.end_column(unfinished);
+            }
+            if let Some(session) = &self.session {
+                // A Cosmos `px` is a window point, as in the editor: `ui_scale` is twice the
+                // pixel density (the 8x8 font's normal size), so half of it is one point.
+                let (screen, points) = (state.screen_size, state.ui_scale * 0.5);
+                session.draw_ui(&mut state.render_world.overlay, screen, points);
             }
             extract_draws(&state.world, frame.alpha, &mut state.render_world);
             if let Some(error) = &self.script_error
