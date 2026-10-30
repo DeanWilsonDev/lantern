@@ -231,6 +231,11 @@ impl ScriptSession {
         self.game_ui.borrow().chaos.as_ref().map(|chaos| chaos.nodes()).unwrap_or_default()
     }
 
+    /// The UI's buttons and their boxes in window pixels, as last drawn (tests click through this).
+    pub fn ui_button_rects(&self) -> Vec<(u64, lantern_chaos_ui::Rect)> {
+        self.game_ui.borrow().chaos.as_ref().map(|chaos| chaos.button_rects()).unwrap_or_default()
+    }
+
     /// What Chaos and Cosmos reported since the last call: component and stylesheet errors,
     /// failed event handlers.
     pub fn take_ui_messages(&self) -> Vec<String> {

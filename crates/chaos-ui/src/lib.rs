@@ -12,7 +12,8 @@
 //! a component reads a game object's `@signal` fields, and re-renders when the game writes them.
 //!
 //! Frame order, as `lantern-game-host` drives it: `navigate` just before the game's `OnUpdate`
-//! (handlers run then, outside any host call), then `update` and `draw` after `OnRender`.
+//! (handlers run then, outside any host call), then `update` and `draw` after `OnRender`. The
+//! mouse hits the boxes of the last `draw`.
 
 mod draw;
 mod ffi;
@@ -32,12 +33,26 @@ pub use layout::Rect;
 pub use node::{NodeKind, UiNode};
 pub use style::Style;
 
-/// Menu navigation edges for one frame, from the game's own actions.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Menu navigation for one frame: edges from the game's own actions, and the mouse.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Navigation {
     pub previous: bool,
     pub next: bool,
     pub confirm: bool,
+    /// The mouse, when it is free (not captured by the game).
+    pub pointer: Option<Pointer>,
+}
+
+/// The mouse for one frame, in the pixels `draw` lays out in.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Pointer {
+    pub position: Vec2,
+    /// The left button went down this frame.
+    pub pressed: bool,
+    /// The left button went up this frame (it may also have gone down: a quick click).
+    pub released: bool,
+    /// The left button is down at the end of the frame.
+    pub held: bool,
 }
 
 #[derive(Default)]
@@ -47,9 +62,16 @@ struct FrameState {
     /// change), focus falls to the first button without an `onFocus` call, so a menu opening
     /// doesn't sound like a move.
     focused: Option<u64>,
-    /// The focused button is held down by `confirm` this frame: drawn with `:active`.
+    /// The focused button is held down this frame (confirm, or the mouse on it): drawn with
+    /// `:active`.
     pressed: bool,
     reported_messages: usize,
+    /// Each node's box from the last `draw`, for the mouse to hit.
+    rects: Vec<Rect>,
+    /// Where the pointer was last frame: only a moving pointer takes focus from the keyboard.
+    last_pointer: Option<Vec2>,
+    /// The button the left mouse button went down on, until it comes up.
+    pointer_target: Option<u64>,
 }
 
 /// Chaos's reactive runtime is one per process (chaos board, `lantern-in-game-ui-gaps`), so only
@@ -87,6 +109,55 @@ fn c_string(text: &str, what: &str) -> Result<CString, String> {
 fn path_string(path: &Path) -> Result<CString, String> {
     let text = path.to_str().ok_or_else(|| format!("the path {} isn't valid UTF-8", path.display()))?;
     c_string(text, "path")
+}
+
+impl FrameState {
+    fn focus(&mut self, button: u64, events: &mut Vec<(u64, i32)>) {
+        if self.focused != Some(button) {
+            self.focused = Some(button);
+            events.push((button, ffi::EVENT_FOCUS));
+        }
+    }
+
+    /// The button under `point` in the last drawn frame: the last one in drawing order, so a
+    /// button drawn over another wins.
+    fn button_at(&self, point: Vec2) -> Option<u64> {
+        if self.rects.len() != self.nodes.len() {
+            return None;
+        }
+        self.nodes
+            .iter()
+            .zip(&self.rects)
+            .rev()
+            .find(|(node, rect)| node.focusable && rect.contains(point))
+            .map(|(node, _)| node.id)
+    }
+
+    fn follow_pointer(&mut self, pointer: Pointer, events: &mut Vec<(u64, i32)>) {
+        let under_pointer = self.button_at(pointer.position);
+        let moved = self.last_pointer != Some(pointer.position);
+        self.last_pointer = Some(pointer.position);
+        if let Some(button) = under_pointer
+            && (moved || pointer.pressed)
+        {
+            self.focus(button, events);
+        }
+        if pointer.pressed {
+            self.pointer_target = under_pointer;
+            if let Some(button) = under_pointer {
+                events.push((button, ffi::EVENT_PRESS));
+            }
+        }
+        let Some(target) = self.pointer_target else { return };
+        if pointer.released {
+            self.pointer_target = None;
+            if under_pointer == Some(target) {
+                events.push((target, ffi::EVENT_RELEASE));
+            }
+        } else if under_pointer == Some(target) {
+            self.pressed = true;
+        }
+    }
 }
 
 impl ChaosUi {
@@ -145,37 +216,50 @@ impl ChaosUi {
         unsafe { ffi::lantern_chaos_ui_unmount(self.raw, mount) == ffi::LANTERN_CHAOS_UI_OK }
     }
 
-    /// Moves focus and sends events for this frame's navigation edges. Event handlers (Nyx)
-    /// run inside this call.
+    /// Moves focus and sends events for this frame's navigation edges and mouse. Event
+    /// handlers (Nyx) run inside this call.
+    ///
+    /// The mouse: moving over a button focuses it; the left button going down on a button
+    /// sends `onPress` and holds it `:active` while the pointer stays on it; coming up on the same
+    /// button sends `onRelease`, and anywhere else cancels.
     pub fn navigate(&self, navigation: Navigation) {
         let events = {
             let mut frame = self.frame.borrow_mut();
-            let buttons: Vec<u64> = frame.nodes.iter().filter(|node| node.focusable).map(|node| node.id).collect();
             frame.pressed = false;
+            let buttons: Vec<u64> = frame.nodes.iter().filter(|node| node.focusable).map(|node| node.id).collect();
             if buttons.is_empty() {
                 frame.focused = None;
+                frame.pointer_target = None;
+                frame.last_pointer = navigation.pointer.map(|pointer| pointer.position);
                 return;
             }
-            let mut position = frame.focused.and_then(|id| buttons.iter().position(|&button| button == id));
-            if position.is_none() {
-                position = Some(0);
+            let mut events = Vec::new();
+            if frame.focused.is_none_or(|id| !buttons.contains(&id)) {
                 frame.focused = Some(buttons[0]);
             }
-            let mut position = position.unwrap_or(0);
-            let mut events = Vec::new();
             if navigation.previous != navigation.next {
-                position = if navigation.next {
+                let position =
+                    frame.focused.and_then(|id| buttons.iter().position(|&button| button == id)).unwrap_or(0);
+                let position = if navigation.next {
                     (position + 1) % buttons.len()
                 } else {
                     (position + buttons.len() - 1) % buttons.len()
                 };
-                frame.focused = Some(buttons[position]);
-                events.push((buttons[position], ffi::EVENT_FOCUS));
+                frame.focus(buttons[position], &mut events);
             }
-            if navigation.confirm {
+            match navigation.pointer {
+                Some(pointer) => frame.follow_pointer(pointer, &mut events),
+                None => {
+                    frame.pointer_target = None;
+                    frame.last_pointer = None;
+                }
+            }
+            if navigation.confirm
+                && let Some(button) = frame.focused
+            {
                 frame.pressed = true;
-                events.push((buttons[position], ffi::EVENT_PRESS));
-                events.push((buttons[position], ffi::EVENT_RELEASE));
+                events.push((button, ffi::EVENT_PRESS));
+                events.push((button, ffi::EVENT_RELEASE));
             }
             events
         };
@@ -205,6 +289,21 @@ impl ChaosUi {
         self.frame.borrow().nodes.clone()
     }
 
+    /// Each button's id and box as of the last `draw`, in drawing order.
+    pub fn button_rects(&self) -> Vec<(u64, Rect)> {
+        let frame = self.frame.borrow();
+        if frame.rects.len() != frame.nodes.len() {
+            return Vec::new();
+        }
+        frame
+            .nodes
+            .iter()
+            .zip(&frame.rects)
+            .filter(|(node, _)| node.focusable)
+            .map(|(node, rect)| (node.id, *rect))
+            .collect()
+    }
+
     pub fn focused(&self) -> Option<u64> {
         self.frame.borrow().focused
     }
@@ -214,6 +313,12 @@ impl ChaosUi {
     /// The focused button and what is inside it are drawn with their `:hover` styles, or
     /// `:active` while confirmed.
     pub fn draw(&self, overlay: &mut Overlay, screen: Vec2, scale: f32) -> Vec<Rect> {
+        let rects = self.draw_frame(overlay, screen, scale);
+        self.frame.borrow_mut().rects = rects.clone();
+        rects
+    }
+
+    fn draw_frame(&self, overlay: &mut Overlay, screen: Vec2, scale: f32) -> Vec<Rect> {
         let frame = self.frame.borrow();
         // The focused button and everything inside it count as hovered (and pressed, while
         // confirm is down), so a label can change with its button: `.label:hover { }`. Parents

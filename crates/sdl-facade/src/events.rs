@@ -34,7 +34,7 @@ pub(crate) fn translate(event: &sdl::SDL_Event) -> Translated {
         }
         sdl::SDL_EVENT_MOUSE_MOTION => {
             let motion = unsafe { event.motion };
-            PlatformEvent::MouseMoved { delta_x: motion.xrel, delta_y: motion.yrel }
+            PlatformEvent::MouseMoved { delta_x: motion.xrel, delta_y: motion.yrel, x: motion.x, y: motion.y }
         }
         sdl::SDL_EVENT_MOUSE_BUTTON_DOWN | sdl::SDL_EVENT_MOUSE_BUTTON_UP => {
             let button_event = unsafe { event.button };
@@ -45,9 +45,9 @@ pub(crate) fn translate(event: &sdl::SDL_Event) -> Translated {
                 _ => return Translated::Ignored,
             };
             if button_event.down {
-                PlatformEvent::MouseButtonDown { button }
+                PlatformEvent::MouseButtonDown { button, x: button_event.x, y: button_event.y }
             } else {
-                PlatformEvent::MouseButtonUp { button }
+                PlatformEvent::MouseButtonUp { button, x: button_event.x, y: button_event.y }
             }
         }
         sdl::SDL_EVENT_MOUSE_WHEEL => PlatformEvent::MouseWheel { delta_y: unsafe { event.wheel }.y },

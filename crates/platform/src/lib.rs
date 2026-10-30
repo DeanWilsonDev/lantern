@@ -65,16 +65,24 @@ pub enum PlatformEvent {
     KeyUp {
         key: KeyCode,
     },
-    /// Relative motion in logical points (+X right, +Y down, as on screen).
+    /// Relative motion in logical points (+X right, +Y down, as on screen), and where the
+    /// pointer now is in the window, in logical points from the top-left corner.
     MouseMoved {
         delta_x: f32,
         delta_y: f32,
+        x: f32,
+        y: f32,
     },
+    /// `x` and `y`: the pointer's window position, as for `MouseMoved`.
     MouseButtonDown {
         button: MouseButton,
+        x: f32,
+        y: f32,
     },
     MouseButtonUp {
         button: MouseButton,
+        x: f32,
+        y: f32,
     },
     MouseWheel {
         delta_y: f32,

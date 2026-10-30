@@ -106,14 +106,14 @@ impl InputRouter {
             PlatformEvent::KeyUp { key } => {
                 devices.keys_down.remove(&key);
             }
-            PlatformEvent::MouseButtonDown { button } => {
+            PlatformEvent::MouseButtonDown { button, .. } => {
                 devices.mouse_down.insert(button);
                 devices.mouse_tapped.insert(button);
             }
-            PlatformEvent::MouseButtonUp { button } => {
+            PlatformEvent::MouseButtonUp { button, .. } => {
                 devices.mouse_down.remove(&button);
             }
-            PlatformEvent::MouseMoved { delta_x, delta_y } => {
+            PlatformEvent::MouseMoved { delta_x, delta_y, .. } => {
                 devices.mouse_delta += Vec2::new(delta_x, delta_y);
             }
             PlatformEvent::GamepadButtonDown { button } => {
@@ -379,8 +379,8 @@ mod tests {
         frame(
             &mut router,
             &[
-                PlatformEvent::MouseMoved { delta_x: 4.0, delta_y: 2.0 },
-                PlatformEvent::MouseMoved { delta_x: 6.0, delta_y: 0.0 },
+                PlatformEvent::MouseMoved { delta_x: 4.0, delta_y: 2.0, x: 104.0, y: 102.0 },
+                PlatformEvent::MouseMoved { delta_x: 6.0, delta_y: 0.0, x: 110.0, y: 102.0 },
             ],
         );
         assert_eq!(router.frame_snapshot().vector(look), Vec2::new(5.0, -1.0));
