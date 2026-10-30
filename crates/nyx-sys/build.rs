@@ -6,13 +6,29 @@ const MINIMUM_CMAKE: (u32, u32) = (3, 30);
 const STATIC_LIBRARIES: [&str; 7] =
     ["nyx-capi-static", "nyx-host-surface", "nyx-core", "lucis-json", "lucis", "firefly", "amanuensis"];
 
+/// With the `chaos-ui` feature, the archives Chaos, Cosmos and Lantern's bridge add, linked
+/// before Nyx's because they call into it.
+const CHAOS_UI_LIBRARIES: [&str; 3] = ["lantern_chaos_ui", "chaos", "cosmos"];
+
 fn main() {
     println!("cargo:rerun-if-env-changed=NYX_SOURCE_DIR");
     println!("cargo:rerun-if-env-changed=NYX_CAPI_PREFIX");
+    println!("cargo:rerun-if-env-changed=CHAOS_SOURCE_DIR");
+    println!("cargo:rerun-if-env-changed=COSMOS_SOURCE_DIR");
 
-    let header = match env::var_os("NYX_CAPI_PREFIX") {
-        Some(prefix) => link_installed_prefix(Path::new(&prefix)),
-        None => build_from_source(&nyx_source_dir()),
+    let header = if env::var_os("CARGO_FEATURE_CHAOS_UI").is_some() {
+        if env::var_os("NYX_CAPI_PREFIX").is_some() {
+            panic!(
+                "nyx-sys's `chaos-ui` feature builds Nyx, Chaos and Cosmos together so they share one copy \
+                 of Nyx, so it can't use a prebuilt NYX_CAPI_PREFIX; unset it."
+            );
+        }
+        build_with_chaos_ui(&nyx_source_dir())
+    } else {
+        match env::var_os("NYX_CAPI_PREFIX") {
+            Some(prefix) => link_installed_prefix(Path::new(&prefix)),
+            None => build_from_source(&nyx_source_dir()),
+        }
     };
     link_cpp_standard_library();
     generate_bindings(&header);
@@ -80,6 +96,69 @@ fn build_from_source(source: &Path) -> PathBuf {
         println!("cargo:rustc-link-lib=static={library}");
     }
     source.join("include/nyx/nyx.h")
+}
+
+/// A sibling checkout of `name` next to the lantern checkout (like Nyx's), or the directory in
+/// `variable`; None lets the native build fetch it from GitHub.
+fn optional_source_dir(variable: &str, name: &str, marker: &str) -> Option<PathBuf> {
+    let dir = match env::var_os(variable) {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
+            let sibling = manifest_dir.join("../../..").join(name);
+            if !sibling.join("CMakeLists.txt").is_file() {
+                return None;
+            }
+            sibling
+        }
+    };
+    if !dir.join(marker).is_file() {
+        panic!(
+            "{} has no {marker}; run `git submodule update --init --recursive` there, or set {variable} \
+             to another checkout",
+            dir.display()
+        );
+    }
+    Some(dir)
+}
+
+/// Nyx, Chaos, Cosmos and Lantern's Chaos bridge in one CMake build
+/// (crates/chaos-ui/native/CMakeLists.txt), so Chaos runs on the same Nyx the C API does.
+fn build_with_chaos_ui(nyx_source: &Path) -> PathBuf {
+    check_cmake_version();
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR"));
+    let native = manifest_dir.join("../chaos-ui/native");
+    let chaos = optional_source_dir("CHAOS_SOURCE_DIR", "chaos", "libs/umbra-interfaces/CMakeLists.txt");
+    let cosmos = optional_source_dir("COSMOS_SOURCE_DIR", "cosmos", "libs/amanuensis/CMakeLists.txt");
+    for watched in [native.join("CMakeLists.txt"), native.join("src"), native.join("include")] {
+        println!("cargo:rerun-if-changed={}", watched.display());
+    }
+    for watched in ["include/nyx", "src", "CMakeLists.txt"] {
+        println!("cargo:rerun-if-changed={}", nyx_source.join(watched).display());
+    }
+    for source in chaos.iter().chain(cosmos.iter()) {
+        for watched in ["include", "src", "CMakeLists.txt"] {
+            println!("cargo:rerun-if-changed={}", source.join(watched).display());
+        }
+    }
+    let path_text = |path: &Path| path.to_string_lossy().into_owned();
+    let mut config = cmake::Config::new(&native);
+    config.profile("Release").define("LANTERN_NYX_SOURCE_DIR", path_text(nyx_source));
+    if let Some(chaos) = &chaos {
+        config.define("LANTERN_CHAOS_SOURCE_DIR", path_text(chaos));
+    }
+    if let Some(cosmos) = &cosmos {
+        config.define("LANTERN_COSMOS_SOURCE_DIR", path_text(cosmos));
+    }
+    let destination = config.build_target("lantern_native_stack").build();
+    let build_dir = destination.join("build");
+    for library in CHAOS_UI_LIBRARIES.iter().chain(STATIC_LIBRARIES.iter()) {
+        let archive = find_archive(&build_dir, library)
+            .unwrap_or_else(|| panic!("the chaos-ui build made no lib{library}.a under {}", build_dir.display()));
+        println!("cargo:rustc-link-search=native={}", archive.parent().expect("an archive has a directory").display());
+        println!("cargo:rustc-link-lib=static={library}");
+    }
+    nyx_source.join("include/nyx/nyx.h")
 }
 
 fn link_installed_prefix(prefix: &Path) -> PathBuf {

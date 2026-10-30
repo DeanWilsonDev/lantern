@@ -41,6 +41,9 @@ crates/
                                      (Umbra src/engine)
   nyx-sys/       nyx-sys             raw Nyx C ABI bindings (bindgen; builds Nyx with CMake)
   nyx/           nyx                 safe Nyx wrapper
+  chaos-ui/      lantern-chaos-ui    the game's UI: Chaos components and Cosmos styles run by a
+                                     C++ bridge (native/), laid out and drawn into the overlay
+                                     in Rust, with menu focus (new, D-043)
   world-format/  lantern-world-format the world file shared with the editor: entities, shapes,
                                      colliders, properties; build_pieces (new)
   game-host/     lantern-game-host   the seam: EngineState, GameHost (hooks), the engine API for
@@ -61,7 +64,8 @@ games/
     game-assets/  game-entities/     assets; Player, Gem, MovingPlatform
     game-scenes/  game-systems/      LevelScene; camera, gem touches, autopilot
     game-rules/   game-events/       GameRules; GameEvent and its queue
-    game-state/   ui/                GameState; main menu, pause menu, HUD, collision view
+    game-state/   ui/                GameState; the UI as .chaos components and .cosmos
+                                     stylesheets (main menu, pause menu, HUD), collision view
 assets/                              textures, model, sounds, music (tools/asset-gen), worlds/
 shaders/                             lit.wgsl, lines.wgsl, overlay.wgsl (compiled at build time)
 docs/                                brief, decisions, this file, dependencies, future work
@@ -189,6 +193,7 @@ FrameLoop::run_frame
 │   └─ world.update_world_transforms()       hierarchy, parent before child
 ├─ 4. host.frame_update(frame)
 │   ├─ engine keys: F1 HUD, F5 reload
+│   ├─ chaos_ui.navigate()                   menu focus; [Nyx] onFocus / onRelease handlers
 │   ├─ [Nyx] OnUpdate(frameSeconds)          F2, pause, camera look, menu orbit, HUD values
 │   ├─ apply the game's requests             mouse capture, quit
 │   ├─ engine HUD values                     frame, script ms, renderer, audio, errors
@@ -301,14 +306,39 @@ own; SDL's device thread drains the queue. Music is a looping voice on its own v
 display density. `Ui` is immediate mode: each frame the game's menus (`games/platformer/ui/`)
 call `Ui:::Title`, `Label`, `Button` and `Spacing` between `Ui:::Begin` and `Ui:::End`; keyboard or gamepad up/down moves focus and confirm
 activates. Everything becomes overlay quads in the `RenderWorld`. The debug HUD is the same
-text path, drawing `DebugValues` grouped by their first path segment.
+text path, drawing `DebugValues` grouped by their first path segment. The platformer no longer
+uses `Ui:::`; its menus and HUD are Chaos and Cosmos (below), and `Ui:::` stays for small games
+and tests.
+
+### Chaos and Cosmos (D-043)
+
+The game's UI is `.chaos` components (Nyx with element trees) styled by `.cosmos` stylesheets in
+`games/platformer/ui/`. `lantern-chaos-ui` runs them:
+
+1. **The C++ bridge** (`crates/chaos-ui/native`, C API in `include/lantern_chaos_ui.h`) starts
+   Chaos on the game's own Nyx runtime, reached through Nyx's `nyx-host-interop.hpp`, so
+   components and game code share objects. Each mounted element is a plain node that
+   implements `Umbra::IWidget`, the backend-neutral contract Chaos reconciles against, and
+   `Cosmos::IStyleTarget`, so Cosmos resolves its style. A snapshot hands Rust every node with
+   its text, events and resolved style (plus its `:hover` and `:active` overlays).
+2. **Layout and drawing** are Rust (`layout.rs`, `draw.rs`): a flexbox subset (column or row,
+   gap, padding, margin, align, justify, grow, width and height in px, %, vw and vh, absolute
+   and fixed positioning, z-index) and rounded boxes, borders, top-to-bottom gradients, soft shadows,
+   opacity and the bitmap font, all as overlay quads.
+3. **Focus**: elements with `onPress` or `onRelease` are buttons. The game names its navigation actions with
+   `GameUi:::SetNavigation`; up and down move focus (calling `onFocus`), confirm calls
+   `onPress` then `onRelease`. The focused button and everything inside it draw with their
+   `:hover` style, and with `:active` while confirmed.
+
+A component reads the `Application` object it was mounted with. Fields marked `@signal` on game
+objects re-render the `<slot>`s that read them when the game writes them.
 
 ## The game seam
 
 `crates/game-host` is the only crate that knows about both the engine and the game.
 
 1. `ScriptSession::load` creates a Nyx runtime, registers the engine API (`api/`: `World`,
-   `Physics`, `CharacterController`, `Input`, `Ui`, `Overlay`, `Audio`, `Camera`, `EngineDebug`,
+   `Physics`, `CharacterController`, `Input`, `Ui`, `GameUi`, `Overlay`, `Audio`, `Camera`, `EngineDebug`,
    `Vec3`, ...), adds the game directory as the import search path and mounts the entry file.
    Analysis errors come back rendered with file, line and column, and nothing runs.
 2. `GameHost` implements the frame loop's `Game` trait. Around each hook it does the engine's

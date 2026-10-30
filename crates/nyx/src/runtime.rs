@@ -80,6 +80,13 @@ impl Runtime {
         self.inner.raw
     }
 
+    /// The C handle, for another binding that works on this same runtime (Lantern's Chaos
+    /// bridge, through Nyx's C++ interop header). It stays valid while this `Runtime`, or any
+    /// clone or value of it, is alive.
+    pub fn as_raw(&self) -> *mut sys::nyx_runtime {
+        self.inner.raw
+    }
+
     pub(crate) fn check(&self, status: sys::nyx_status) -> Result<()> {
         self.inner.check(status)
     }

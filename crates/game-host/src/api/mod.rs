@@ -12,6 +12,7 @@ pub mod assets;
 pub mod audio;
 pub mod debug;
 pub mod engine;
+pub mod game_ui;
 pub mod input;
 pub mod math;
 pub mod physics;
@@ -46,7 +47,12 @@ pub struct HostTypes {
 pub type SharedTypes = Rc<RefCell<HostTypes>>;
 
 /// Registers every engine type with `runtime`.
-pub fn register_engine_api(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> nyx::Result<()> {
+pub fn register_engine_api(
+    runtime: &Runtime,
+    state: &SharedState,
+    types: &SharedTypes,
+    game_ui: &game_ui::SharedGameUi,
+) -> nyx::Result<()> {
     math::register(runtime, types)?;
     engine::register(runtime, state)?;
     input::register(runtime, state, types)?;
@@ -56,6 +62,7 @@ pub fn register_engine_api(runtime: &Runtime, state: &SharedState, types: &Share
     rendering::register(runtime, state, types)?;
     audio::register(runtime, state)?;
     ui::register(runtime, state, types)?;
+    game_ui::register(runtime, game_ui)?;
     debug::register(runtime, state, types)?;
     Ok(())
 }

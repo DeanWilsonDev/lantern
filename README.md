@@ -22,6 +22,7 @@ engine in the snake repository) and is meant as a reference for a later rewrite.
 | C++ compiler | GCC 14 or Clang 19 | Nyx uses C++26 features |
 | libclang | any recent | bindgen, for the Nyx bindings |
 | Nyx | `nyx-scripting-language` on `proto`, checked out **beside this repository** | the game runs in it |
+| Chaos, Cosmos | `chaos` and `cosmos` on `proto`, beside this repository (optional) | the game's menus and HUD; fetched from GitHub when missing |
 
 SDL 3 is built from source by `sdl3-sys` and linked statically, so no SDL install is needed.
 On Linux, SDL only builds the window and audio backends whose development headers it finds.
@@ -29,13 +30,21 @@ On Linux, SDL only builds the window and audio backends whose development header
 ```text
 ~/code/lantern
 ~/code/nyx-scripting-language   (git checkout proto)
+~/code/chaos                    (git checkout proto; optional)
+~/code/cosmos                   (git checkout proto; optional)
 ```
 
 The C API (`include/nyx/nyx.h`) is on Nyx's `proto` branch since nyx PR #7 merged (D-002).
 Run `git submodule update --init --recursive` in the Nyx checkout after switching branches.
 
-Set `NYX_SOURCE_DIR` to use a checkout somewhere else, or `NYX_CAPI_PREFIX` to link a prefix
-made by `cmake --install build --component nyx-capi --prefix <dir>`.
+Set `NYX_SOURCE_DIR` to use a checkout somewhere else.
+
+The game's UI is Chaos components styled by Cosmos (D-043), so one CMake build compiles Nyx,
+Chaos, Cosmos and Lantern's bridge together (`crates/chaos-ui/native`). It uses `../chaos` and
+`../cosmos` when they exist (run `git submodule update --init --recursive` in each), or
+`CHAOS_SOURCE_DIR` and `COSMOS_SOURCE_DIR`, and otherwise fetches both repositories' `proto`
+branches, which needs access to them on GitHub. Because Chaos must run on the same Nyx as the
+game, `NYX_CAPI_PREFIX` (linking a prebuilt Nyx) no longer works for the game.
 
 ### Arch Linux
 
