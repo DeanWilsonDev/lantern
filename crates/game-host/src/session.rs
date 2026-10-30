@@ -264,7 +264,7 @@ pub fn engine_host_surface() -> Result<String, String> {
     let game_ui = SharedGameUi::default();
     let runtime = Runtime::new().map_err(runtime_error)?;
     register_engine_api(&runtime, &shared_state, &types, &game_ui).map_err(runtime_error)?;
-    // Chaos adds `Component`, `Ui::Element` and the `@signal` decorator.
+    // Chaos adds `Component`, `lantern::ui::Element` and the `@signal` decorator.
     let chaos = ChaosUi::new(&runtime, Path::new(""), Path::new(""))?;
     let manifest = runtime.write_host_surface().map_err(runtime_error);
     drop(chaos);

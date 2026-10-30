@@ -62,11 +62,11 @@ public:
 const MENU: &str = r#"
 MenuModel :: import MenuModel;
 
-Menu :: (model~ MenuModel) -> Ui:::Element {
+Menu :: (model~ MenuModel) -> lantern:::ui:::Element {
     return (
         <frame class="menu">
             <slot>
-                !{(() -> Ui:::Element {
+                !{(() -> lantern:::ui:::Element {
                     return (<text class="title">{model.title}</text>);
                 })()}
             </slot>
@@ -208,7 +208,7 @@ fn navigation_focuses_buttons_and_confirm_calls_on_release() {
 fn a_broken_component_reports_why() {
     let game = TempGame::new("broken");
     let (_runtime, ui, program) = setup(&game);
-    game.write("ui/Broken.chaos", "Broken :: () -> Ui:::Element {\n    return (<frame>);\n}\n");
+    game.write("ui/Broken.chaos", "Broken :: () -> lantern:::ui:::Element {\n    return (<frame>);\n}\n");
     let error = ui.mount("ui/Broken.chaos", "Broken", &[]).unwrap_err();
     assert!(error.contains("Broken"), "{error}");
     let _ = program;

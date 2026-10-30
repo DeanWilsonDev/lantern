@@ -144,7 +144,7 @@ Keep class names unique across the folder.
 
 | Call | |
 |---|---|
-| `GameUi:::Mount(file, component) -> i32` | mounts `component` from `file` (relative to the game directory), passing the game's `Application` object as its one argument: `GameScreen :: (game~ Platformer) -> Ui:::Element`. Call it from `OnStart` or later |
+| `GameUi:::Mount(file, component) -> i32` | mounts `component` from `file` (relative to the game directory), passing the game's `Application` object as its one argument: `GameScreen :: (game~ Platformer) -> lantern:::ui:::Element`. Call it from `OnStart` or later |
 | `GameUi:::Unmount(mount)` | |
 | `GameUi:::SetNavigation(previous, next, confirm)` | the input actions (by name) that move focus and press the focused button |
 

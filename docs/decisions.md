@@ -529,8 +529,8 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
   component's argument, because a host signature can't name a game class or a generic object.
   State is `@signal` fields on a game object (`GameUiModel`); writing one re-renders the
   `<slot>`s that read it.
-- **Element type.** Elements are `Ui:::Element` (`RegisterElementType`), as Penumbra's are
-  `Penumbra:::Component`. Dean chose the name (D-044).
+- **Element type.** Elements are `lantern:::ui:::Element` (`RegisterElementType`), as
+  Penumbra's are `Penumbra:::Component`. Dean chose the name (D-044).
 - **Layout defaults.** A frame with no `display` stacks its children in a column, like a menu;
   `display: stack` with no `flex-direction` is a row, as in Cosmos. Children stretch across by
   default. A Cosmos `px` is one window point (half of `Screen:::UiScale()` pixels), so a
@@ -556,7 +556,7 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
   text shadow (cosmos cards), the singleton runtime (chaos card), and the C API interop (Nyx
   GAME-F04-T01, done).
 
-## D-044 Mouse in the in-game UI; Ui::: removed; elements are Ui:::Element
+## D-044 Mouse in the in-game UI; Ui::: removed; elements are lantern:::ui:::Element
 
 Dean answered the three questions D-043 left open.
 
@@ -573,8 +573,10 @@ Dean answered the three questions D-043 left open.
 - **`Ui:::` removed.** The immediate-mode menus (`lantern_renderer_3d::ui` and the `Ui` host
   type) had no users left, so there is one way to build UI. `Overlay:::` stays for quick text
   and rectangles; its registration moved to `api/overlay.rs`.
-- **Element type `Ui:::Element`.** Components return `Ui:::Element`, a name that doesn't tie the
-  game's `.chaos` files to Lantern. It became possible once `Ui` was free.
+- **Element type `lantern:::ui:::Element`.** Components return `lantern:::ui:::Element`. The
+  name says where an element comes from: a game element is the engine's, and an application
+  element is `Penumbra:::Component`, so the two never read alike in one codebase. Engine names
+  start with `lantern:::`, and namespaces are lowercase; `Element` is PascalCase as a type. Nyx takes a three-part name as an element type as it is.
 
 Cards: `mouse-hover-and-click-in-the-in-game-ui`, `remove-the-immediate-mode-ui-api` and
-`rename-the-element-type-to-ui-element` under `platformer-game/in-game-ui-with-chaos-and-cosmos`.
+`rename-the-element-type-to-lantern-ui-element` under `platformer-game/in-game-ui-with-chaos-and-cosmos`.
