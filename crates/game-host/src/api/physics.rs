@@ -1,7 +1,7 @@
 //! `Physics` queries and the `CharacterController` type.
 //!
 //! The collision world is the engine's: world files add their static triangles and kinematic
-//! bodies (`World:::Load`), moving an entity moves its body (`World:::SetPosition`), and the
+//! bodies (`lantern:::world:::Load`), moving an entity moves its body (`lantern:::world:::SetPosition`), and the
 //! engine calls `begin_step` before each fixed step. Scripts query it and drive controllers.
 
 use std::cell::RefCell;
@@ -11,10 +11,9 @@ use lantern_physics::{Capsule, CharacterController, ControllerEvents, Controller
 use nyx::{Receiver, Runtime};
 
 use super::{
-    SharedState, SharedTypes, bool_argument, f32_argument, null, some_bool, some_f32, vec3_argument, wrap_vec3,
+    HostNamespace, SharedState, SharedTypes, bool_argument, f32_argument, null, some_bool, some_f32, vec3_argument,
+    wrap_vec3,
 };
-
-struct PhysicsApi;
 
 pub struct ScriptRayHit {
     pub distance: f32,
@@ -34,17 +33,19 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
     let sphere_cast = (state.clone(), types.clone());
 
     let ray_hit = runtime
-        .register_type::<ScriptRayHit>("RayHit")
+        .register_type::<ScriptRayHit>("lantern::physics::RayHit")
         .method("Distance", "() -> f32", Receiver::Immutable, |context, hit, _| some_f32(context, hit.distance))
-        .method("Point", "() -> Vec3", Receiver::Immutable, move |_context, hit, _| wrap_vec3(&ray_types, hit.point))
-        .method("Normal", "() -> Vec3", Receiver::Immutable, {
+        .method("Point", "() -> lantern:::math:::Vec3", Receiver::Immutable, move |_context, hit, _| {
+            wrap_vec3(&ray_types, hit.point)
+        })
+        .method("Normal", "() -> lantern:::math:::Vec3", Receiver::Immutable, {
             let types = types.clone();
             move |_context, hit, _| wrap_vec3(&types, hit.normal)
         })
         .register()?;
 
     let controller_step = runtime
-        .register_type::<ScriptControllerStep>("ControllerStep")
+        .register_type::<ScriptControllerStep>("lantern::physics::ControllerStep")
         .method("Jumped", "() -> bool", Receiver::Immutable, |context, step, _| some_bool(context, step.0.jumped))
         .method("Landed", "() -> bool", Receiver::Immutable, |context, step, _| {
             some_bool(context, step.0.landed_with_speed.is_some())
@@ -58,13 +59,12 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
         })
         .register()?;
 
-    runtime
-        .register_type::<PhysicsApi>("Physics")
+    HostNamespace::new(runtime, "lantern::physics")
         // The first surface along the ray, or null.
-        .static_method(
+        .function(
             "Raycast",
-            "(origin: Vec3, direction: Vec3, maxDistance: f32) -> RayHit?",
-            move |context, _, arguments| {
+            "(origin: lantern:::math:::Vec3, direction: lantern:::math:::Vec3, maxDistance: f32) -> lantern:::physics:::RayHit?",
+            move |context, arguments| {
                 let origin = vec3_argument(&raycast.1, arguments, 0)?;
                 let direction = vec3_argument(&raycast.1, arguments, 1)?.normalize_or_zero();
                 let max_distance = f32_argument(arguments, 2)?;
@@ -75,7 +75,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                         let ray_hit = types
                             .ray_hit
                             .as_ref()
-                            .ok_or_else(|| nyx::CallbackError::Refusal("RayHit is not registered".into()))?;
+                            .ok_or_else(|| nyx::CallbackError::Refusal("lantern:::physics:::RayHit is not registered".into()))?;
                         Ok(Some(ray_hit.wrap(ScriptRayHit {
                             distance: hit.distance,
                             point: hit.point,
@@ -88,10 +88,10 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
         )
         // Sweeps a sphere from `origin` by `motion`: the fraction of `motion` before the first
         // contact (0..1), or null when the way is clear.
-        .static_method(
+        .function(
             "SphereCast",
-            "(radius: f32, origin: Vec3, motion: Vec3) -> f32?",
-            move |context, _, arguments| {
+            "(radius: f32, origin: lantern:::math:::Vec3, motion: lantern:::math:::Vec3) -> f32?",
+            move |context, arguments| {
                 let radius = f32_argument(arguments, 0)?;
                 let origin = vec3_argument(&sphere_cast.1, arguments, 1)?;
                 let motion = vec3_argument(&sphere_cast.1, arguments, 2)?;
@@ -113,8 +113,8 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
     let teleport_types = types.clone();
     let constructor_types = types.clone();
     runtime
-        .register_type::<ScriptCharacterController>("CharacterController")
-        .constructor("(radius: f32, height: f32, feet: Vec3) -> void", move |_context, arguments| {
+        .register_type::<ScriptCharacterController>("lantern::physics::CharacterController")
+        .constructor("(radius: f32, height: f32, feet: lantern:::math:::Vec3) -> void", move |_context, arguments| {
             let settings = ControllerSettings {
                 radius: f32_argument(arguments, 0)?,
                 height: f32_argument(arguments, 1)?,
@@ -126,7 +126,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
         // One fixed step. `moveDirection` is world space, length 0..1 (y ignored).
         .method(
             "Step",
-            "(moveDirection: Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> ControllerStep",
+            "(moveDirection: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> lantern:::physics:::ControllerStep",
             Receiver::Mutable,
             move |_context, controller, arguments| {
                 let input = ControllerInput {
@@ -140,25 +140,25 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 let step_type = types
                     .controller_step
                     .as_ref()
-                    .ok_or_else(|| nyx::CallbackError::Refusal("ControllerStep is not registered".into()))?;
+                    .ok_or_else(|| nyx::CallbackError::Refusal("lantern:::physics:::ControllerStep is not registered".into()))?;
                 Ok(Some(step_type.wrap(ScriptControllerStep(events))?))
             },
         )
-        .method("Teleport", "(feet: Vec3) -> void", Receiver::Mutable, move |_context, controller, arguments| {
+        .method("Teleport", "(feet: lantern:::math:::Vec3) -> void", Receiver::Mutable, move |_context, controller, arguments| {
             let feet = vec3_argument(&teleport_types, arguments, 0)?;
             controller.0.borrow_mut().teleport(feet);
             Ok(None)
         })
-        .method("FeetPosition", "() -> Vec3", Receiver::Immutable, move |_context, controller, _| {
+        .method("FeetPosition", "() -> lantern:::math:::Vec3", Receiver::Immutable, move |_context, controller, _| {
             wrap_vec3(&feet_types, controller.0.borrow().feet_position)
         })
-        .method("CapsuleCenter", "() -> Vec3", Receiver::Immutable, move |_context, controller, _| {
+        .method("CapsuleCenter", "() -> lantern:::math:::Vec3", Receiver::Immutable, move |_context, controller, _| {
             wrap_vec3(&center_types, controller.0.borrow().capsule_center())
         })
-        .method("Velocity", "() -> Vec3", Receiver::Immutable, move |_context, controller, _| {
+        .method("Velocity", "() -> lantern:::math:::Vec3", Receiver::Immutable, move |_context, controller, _| {
             wrap_vec3(&velocity_types, controller.0.borrow().velocity)
         })
-        .method("GroundNormal", "() -> Vec3", Receiver::Immutable, move |_context, controller, _| {
+        .method("GroundNormal", "() -> lantern:::math:::Vec3", Receiver::Immutable, move |_context, controller, _| {
             wrap_vec3(&normal_types, controller.0.borrow().ground_normal)
         })
         .method("IsGrounded", "() -> bool", Receiver::Immutable, |context, controller, _| {

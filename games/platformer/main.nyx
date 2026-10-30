@@ -51,19 +51,19 @@ public:
     OnStart~: () -> void {
         InputSettings:::Configure();
         assets.Load();
-        Renderer:::SetClearColor("87B5E0");
+        lantern:::renderer:::SetClearColor("87B5E0");
         // Linear fog toward the clear (sky) colour: none up to 30 m from the camera, all sky by
         // 90 m, and fog = (distance - 30) / (90 - 30) in between. It hides where the world
         // ends and makes far things read as far.
-        Renderer:::SetFog(30.0f, 90.0f);
-        isAutoplay = Engine:::Flag("LANTERN_AUTOPLAY");
-        showCollisionView = Engine:::Flag("LANTERN_COLLISION_VIEW");
+        lantern:::renderer:::SetFog(30.0f, 90.0f);
+        isAutoplay = lantern:::engine:::Flag("LANTERN_AUTOPLAY");
+        showCollisionView = lantern:::engine:::Flag("LANTERN_COLLISION_VIEW");
         StartLevel();
         // The UI is Chaos components styled by Cosmos, in ui/. The engine draws it every frame
         // after OnRender and moves focus between its buttons with these three actions.
-        GameUi:::SetNavigation(InputSettings:::MENU_UP, InputSettings:::MENU_DOWN, InputSettings:::MENU_CONFIRM);
-        GameUi:::Mount("ui/game-screen.chaos", "GameScreen");
-        Audio:::PlayMusic("theme");
+        lantern:::ui:::SetNavigation(InputSettings:::MENU_UP, InputSettings:::MENU_DOWN, InputSettings:::MENU_CONFIRM);
+        lantern:::ui:::Mount("ui/game-screen.chaos", "GameScreen");
+        lantern:::audio:::PlayMusic("theme");
     }
 
     // Every fixed step, with `dt` always 1/60 s. Only the Playing state simulates, so pausing
@@ -78,7 +78,7 @@ public:
     // Once per display frame, before rendering. `frameSeconds` is real elapsed time, so
     // anything here that changes over time multiplies a per-second rate by it (see Orbit).
     OnUpdate~: (frameSeconds: f32) -> void {
-        if Input:::IsPressed(InputSettings:::TOGGLE_COLLISION_VIEW) {
+        if lantern:::input:::IsPressed(InputSettings:::TOGGLE_COLLISION_VIEW) {
             showCollisionView = !showCollisionView;
         }
         // A button the player chose this frame: the engine runs the UI's handlers just before
@@ -95,7 +95,7 @@ public:
             },
             Playing -> { UpdatePlaying(frameSeconds); },
             Paused -> {
-                if Input:::IsPressed(InputSettings:::PAUSE) {
+                if lantern:::input:::IsPressed(InputSettings:::PAUSE) {
                     SetState(GameState:::Playing);
                 }
             }
@@ -104,7 +104,7 @@ public:
         // the HUD every frame.
         ui.SetStatus(state == GameState:::MainMenu ? "" : rules.statusText);
         ui.SetMessage(rules.IsShowingMessage() ? rules.message : "");
-        ui.SetDebugHudOn(EngineDebug:::IsHudVisible());
+        ui.SetDebugHudOn(lantern:::debug:::IsHudVisible());
         PublishDebugValues();
     }
 
@@ -115,7 +115,7 @@ public:
     // step's position to the current one, and the camera has to follow that same blended
     // position, or the player would jitter against the background.
     OnRender~: (alpha: f32, frameSeconds: f32) -> void {
-        camera.Follow(World:::InterpolatedPosition(player.root, alpha), frameSeconds);
+        camera.Follow(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds);
         if showCollisionView {
             CollisionView:::Draw(player.controller, level.gems);
         }
@@ -126,7 +126,7 @@ public:
     // Before the engine unloads the game, on quit or on F5. The engine releases everything the
     // game made anyway; this stops the music cleanly and empties the level.
     OnExit~: () -> void {
-        Audio:::StopMusic();
+        lantern:::audio:::StopMusic();
         level.Unload();
     }
 
@@ -135,7 +135,7 @@ private:
 
     // The world editor's Play button sets LANTERN_LEVEL to the level being edited.
     LevelPath:: () -> string {
-        levelFromSetting := Engine:::Setting("LANTERN_LEVEL");
+        levelFromSetting := lantern:::engine:::Setting("LANTERN_LEVEL");
         return levelFromSetting == "" ? LEVEL_PATH : levelFromSetting;
     }
     static MAIN_MENU_ORBIT_SPEED :: 0.15f;    // radians per second behind the title screen
@@ -177,7 +177,7 @@ private:
         // The mouse is captured (hidden, and its motion turned into camera look) only while
         // playing; menus need a free cursor. The autopilot never captures it.
         isPlaying := when next <GameState> { Playing -> true, default -> false };
-        Screen:::SetMouseCaptured(isPlaying && !isAutoplay);
+        lantern:::screen:::SetMouseCaptured(isPlaying && !isAutoplay);
     }
 
     // One fixed step of the game. The order is what makes it correct:
@@ -196,9 +196,9 @@ private:
 
         // Input is read per fixed step, not per frame: the engine latches presses so each one is
         // seen by exactly one fixed step, even on a frame that runs none.
-        stick := isAutoplay ? Autopilot:::Stick() : Input:::Vector(InputSettings:::MOVE);
-        jumpPressed := isAutoplay ? Autopilot:::JumpPressed(simulationSeconds) : Input:::IsPressed(InputSettings:::JUMP);
-        jumpHeld := isAutoplay ? Autopilot:::JumpHeld(simulationSeconds) : Input:::IsHeld(InputSettings:::JUMP);
+        stick := isAutoplay ? Autopilot:::Stick() : lantern:::input:::Vector(InputSettings:::MOVE);
+        jumpPressed := isAutoplay ? Autopilot:::JumpPressed(simulationSeconds) : lantern:::input:::IsPressed(InputSettings:::JUMP);
+        jumpHeld := isAutoplay ? Autopilot:::JumpHeld(simulationSeconds) : lantern:::input:::IsHeld(InputSettings:::JUMP);
         // The camera's forward and right let "push up" mean "away from the camera", wherever
         // the camera is looking (Player.Move does the conversion).
         step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, dt);
@@ -216,7 +216,7 @@ private:
         if player.FeetPosition().y < level.killHeight {
             events.Push(GameEvent:::PlayerFell);
         }
-        if !isAutoplay && Input:::IsPressed(InputSettings:::RESET) {
+        if !isAutoplay && lantern:::input:::IsPressed(InputSettings:::RESET) {
             events.Push(GameEvent:::ResetPressed);
         }
         for event: GameEvent in events.Drain() {
@@ -227,12 +227,12 @@ private:
 
     UpdatePlaying~: (frameSeconds: f32) -> void {
         rules.Tick(frameSeconds);
-        if Input:::IsPressed(InputSettings:::PAUSE) {
+        if lantern:::input:::IsPressed(InputSettings:::PAUSE) {
             SetState(GameState:::Paused);
             return;
         }
-        if Input:::IsPressed(InputSettings:::CAPTURE_MOUSE) {
-            Screen:::SetMouseCaptured(true);
+        if lantern:::input:::IsPressed(InputSettings:::CAPTURE_MOUSE) {
+            lantern:::screen:::SetMouseCaptured(true);
         }
         // Mouse and stick need different maths because they report different things:
         // - The mouse reports how far it moved this frame, which is already an amount of turn
@@ -242,8 +242,8 @@ private:
         //   into this frame's turn needs `x frameSeconds`, and LOOK_STICK_SPEED says how many
         //   radians per second a full push is.
         // Once both are "radians this frame" they can simply be added.
-        stickLook := Input:::Vector(InputSettings:::LOOK_STICK) * (frameSeconds * PlayerTuning:::LOOK_STICK_SPEED);
-        camera.Look(Input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
+        stickLook := lantern:::input:::Vector(InputSettings:::LOOK_STICK) * (frameSeconds * PlayerTuning:::LOOK_STICK_SPEED);
+        camera.Look(lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
     }
 
     // Acts on a menu button (ui/main-menu.chaos, ui/pause-menu.chaos). The menus only record
@@ -256,12 +256,12 @@ private:
                 StartLevel();
                 SetState(GameState:::Playing);
             },
-            ToggleDebugHud -> { EngineDebug:::SetHudVisible(!EngineDebug:::IsHudVisible()); },
+            ToggleDebugHud -> { lantern:::debug:::SetHudVisible(!lantern:::debug:::IsHudVisible()); },
             MainMenu -> {
                 StartLevel();
                 SetState(GameState:::MainMenu);
             },
-            Quit -> { Engine:::Quit(); },
+            Quit -> { lantern:::engine:::Quit(); },
             Nothing
         }
     }
@@ -271,13 +271,13 @@ private:
         controller := player.controller;
         feet := controller.FeetPosition();
         velocity := controller.Velocity();
-        EngineDebug:::SetValue("Player/Position", `${feet.x:.2f}, ${feet.y:.2f}, ${feet.z:.2f}`);
+        lantern:::debug:::SetValue("Player/Position", `${feet.x:.2f}, ${feet.y:.2f}, ${feet.z:.2f}`);
         // Horizontal() drops the y part, so this is running speed; falling doesn't count.
-        EngineDebug:::SetValue("Player/Speed", `${velocity.Horizontal().Length():.2f}`);
-        EngineDebug:::SetValue("Player/Grounded", controller.IsGrounded() ? "yes" : "no");
-        EngineDebug:::SetValue("Camera/Yaw", `${Angle:::ToDegrees(camera.yaw):.1f}`);
-        EngineDebug:::SetValue("Camera/Pitch", `${Angle:::ToDegrees(camera.pitch):.1f}`);
-        EngineDebug:::SetValue("Game/Gems", `${rules.collected:d} / ${level.gems.length():d}`);
-        EngineDebug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
+        lantern:::debug:::SetValue("Player/Speed", `${velocity.Horizontal().Length():.2f}`);
+        lantern:::debug:::SetValue("Player/Grounded", controller.IsGrounded() ? "yes" : "no");
+        lantern:::debug:::SetValue("Camera/Yaw", `${lantern:::angle:::ToDegrees(camera.yaw):.1f}`);
+        lantern:::debug:::SetValue("Camera/Pitch", `${lantern:::angle:::ToDegrees(camera.pitch):.1f}`);
+        lantern:::debug:::SetValue("Game/Gems", `${rules.collected:d} / ${level.gems.length():d}`);
+        lantern:::debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
     }
 }

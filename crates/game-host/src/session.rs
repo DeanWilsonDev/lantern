@@ -192,7 +192,7 @@ impl ScriptSession {
         result.map(|_| ()).map_err(failed)
     }
 
-    /// The actions the game named with `GameUi:::SetNavigation`, if it has.
+    /// The actions the game named with `lantern:::ui:::SetNavigation`, if it has.
     pub fn ui_navigation_actions(&self) -> Option<NavigationActions> {
         self.game_ui.borrow().navigation.clone()
     }

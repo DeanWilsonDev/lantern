@@ -6,7 +6,9 @@
 //! - handles cross as `i64` (entity ids, meshes, textures are generational handles packed into
 //!   64 bits), so a script can never hold a dangling pointer; a stale handle throws
 //!   `Error:::NotFound` in the script;
-//! - vectors cross as `Vec3` / `Vec2` host objects, copied in and out.
+//! - vectors cross as `lantern:::math:::Vec3` / `Vec2` host objects, copied in and out;
+//! - every name a script sees is under `lantern:::`, in a lowercase namespace per module
+//!   (`lantern:::input:::IsDown`), registered through `HostNamespace`.
 
 pub mod assets;
 pub mod audio;
@@ -27,7 +29,7 @@ use glam::{Vec2, Vec3};
 use lantern_core::color::Color;
 use lantern_core::handle::Handle;
 use lantern_engine::world::EntityId;
-use nyx::{CallContext, CallbackError, HostType, Runtime, Value};
+use nyx::{CallContext, CallbackError, CallbackResult, HostType, Runtime, Value};
 
 use crate::engine_state::{EngineState, parse_color};
 
@@ -45,6 +47,37 @@ pub struct HostTypes {
 }
 
 pub type SharedTypes = Rc<RefCell<HostTypes>>;
+
+type NamespaceFunction = Box<dyn Fn(&CallContext, &[Value]) -> CallbackResult>;
+
+/// A group of host functions under one namespace path: `HostNamespace::new(runtime,
+/// "lantern::input").function("IsDown", ...)` is `lantern:::input:::IsDown(...)` in a script.
+pub struct HostNamespace {
+    runtime: Runtime,
+    path: String,
+    functions: Vec<(String, String, NamespaceFunction)>,
+}
+
+impl HostNamespace {
+    pub fn new(runtime: &Runtime, path: &str) -> HostNamespace {
+        HostNamespace { runtime: runtime.clone(), path: path.to_string(), functions: Vec::new() }
+    }
+
+    pub fn function<F>(mut self, name: &str, signature: &str, function: F) -> HostNamespace
+    where
+        F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
+    {
+        self.functions.push((name.to_string(), signature.to_string(), Box::new(function)));
+        self
+    }
+
+    pub fn register(self) -> nyx::Result<()> {
+        for (name, signature, function) in self.functions {
+            self.runtime.register_function(&format!("{}::{name}", self.path), &signature, function)?;
+        }
+        Ok(())
+    }
+}
 
 /// Registers every engine type with `runtime`.
 pub fn register_engine_api(

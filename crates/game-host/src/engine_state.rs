@@ -21,7 +21,7 @@ use lantern_world_format::PropertyValue;
 use crate::render_backend::RenderBackend;
 
 /// Every entity a script spawns, or a world file it loads, belongs to this scene, so
-/// `World:::Clear` and a reload remove exactly the game's entities.
+/// `lantern:::world:::Clear` and a reload remove exactly the game's entities.
 pub const GAME_SCENE: SceneId = SceneId(1);
 
 /// Engine actions come first in every action set, so their ids never change. Scripts cannot
@@ -103,13 +103,13 @@ pub struct EngineState {
     /// Meshes and textures the script created; released on reload.
     pub script_meshes: Vec<MeshHandle>,
     pub script_textures: Vec<TextureHandle>,
-    /// Meshes built for loaded world files; released by `World:::Clear` and on reload.
+    /// Meshes built for loaded world files; released by `lantern:::world:::Clear` and on reload.
     pub world_meshes: Vec<MeshHandle>,
     pub entity_tags: HashMap<EntityId, EntityTags>,
     /// Kinematic bodies of world-file entities: moving the entity moves the body.
     pub entity_bodies: HashMap<EntityId, BodyHandle>,
     pub font_atlas: TextureHandle,
-    /// Overrides for `Engine:::Flag`, checked before the environment (tests set these).
+    /// Overrides for `lantern:::engine:::Flag`, checked before the environment (tests set these).
     pub flags: HashMap<String, bool>,
 }
 
@@ -152,7 +152,7 @@ impl EngineState {
         }
     }
 
-    /// `Engine:::Flag`: an override, else an environment variable that is set, not empty
+    /// `lantern:::engine:::Flag`: an override, else an environment variable that is set, not empty
     /// and not "0".
     pub fn flag(&self, name: &str) -> bool {
         if let Some(value) = self.flags.get(name) {
@@ -161,7 +161,7 @@ impl EngineState {
         std::env::var(name).is_ok_and(|value| !value.is_empty() && value != "0")
     }
 
-    /// Removes every game entity, the world-file meshes and all collision (`World:::Clear`).
+    /// Removes every game entity, the world-file meshes and all collision (`lantern:::world:::Clear`).
     pub fn clear_world(&mut self) {
         self.world.despawn_scene(GAME_SCENE);
         for mesh in self.world_meshes.drain(..) {

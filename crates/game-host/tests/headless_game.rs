@@ -228,8 +228,8 @@ fn a_hook_error_names_the_nyx_line_and_its_callers() {
     std::fs::write(
         directory.join("main.nyx"),
         "Broken :: class : Application {\npublic:\n    Run :: () -> void { }\n\
-         \x20   OnFixedUpdate~: (dt: f32) -> void {\n        World:::SetYaw(Target(), dt);\n    }\n\
-         \x20   Target :: () -> i64 {\n        return World:::Find(\"missing\");\n    }\n}\n",
+         \x20   OnFixedUpdate~: (dt: f32) -> void {\n        lantern:::world:::SetYaw(Target(), dt);\n    }\n\
+         \x20   Target :: () -> i64 {\n        return lantern:::world:::Find(\"missing\");\n    }\n}\n",
     )
     .unwrap();
     let state =

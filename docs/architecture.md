@@ -145,7 +145,7 @@ Indentation is call depth; `[Nyx]` marks game code.
 
 ```text
 FrameLoop::run_frame
-├─ 0. host.take_input_configuration()        the game's actions, if Input::: changed them
+├─ 0. host.take_input_configuration()        the game's actions, if lantern:::input::: changed them
 ├─ 1. events
 │   ├─ platform.pump_events()                SDL_PollEvent → PlatformEvent
 │   └─ input_router.handle_event(event)      device state: keys, buttons, axes, mouse delta
@@ -155,7 +155,7 @@ FrameLoop::run_frame
 │   ├─ world.store_previous_transforms()     interpolation start point
 │   ├─ collision.begin_step()                kinematic bodies remember last transform
 │   ├─ [Nyx] OnFixedUpdate(dt)               only while Playing:
-│   │   ├─ MovingPlatform.Move(time)           World:::SetPosition moves entity and body
+│   │   ├─ MovingPlatform.Move(time)           lantern:::world:::SetPosition moves entity and body
 │   │   ├─ Player.Move(stick, ...)             CharacterController.Step: ride platform,
 │   │   │                                        accelerate, gravity, jump, move-and-slide,
 │   │   │                                        step up, ground snap; then shadow raycast
@@ -175,8 +175,8 @@ FrameLoop::run_frame
     ├─ render_world.clear()
     ├─ [Nyx] OnRender(alpha, frameSeconds)
     │   ├─ ThirdPersonCamera.Follow()          interpolated player, sphere-cast so it never
-    │   │                                        clips; Camera:::LookAt
-    │   └─ CollisionView.Draw() (F2)           EngineDebug::: lines
+    │   │                                        clips; lantern:::camera:::LookAt
+    │   └─ CollisionView.Draw() (F2)           lantern:::debug::: lines
     ├─ chaos_ui.update()                     Chaos re-renders slots whose @signals changed,
     │                                          Cosmos styles, nodes read back
     ├─ chaos_ui.draw()                       layout, then overlay quads and text
@@ -197,14 +197,14 @@ FrameLoop::run_frame
 2. `InputRouter` marks the `jump` action (defined by `settings/input-settings.nyx`) pressed and
    latches the edge until a fixed step takes it.
 3. `GameHost::fixed_update` copies the step's snapshot into the engine state and calls
-   `OnFixedUpdate`. `Platformer.Simulate` reads `Input:::IsPressed("jump")` and passes it to
+   `OnFixedUpdate`. `Platformer.Simulate` reads `lantern:::input:::IsPressed("jump")` and passes it to
    `Player.Move`, which calls `controller.Step(...)`: the host runs
    `CharacterController::step` against the collision world. The controller buffers the press
    for 0.12 s, so a press just before landing still jumps.
 4. `Step` returns a `ControllerStep` whose `Jumped()` is true; the game pushes
-   `GameEvent:::PlayerJumped`, and `GameRules.Handle` calls `Audio:::Play("jump", 0.8f)`, which
+   `GameEvent:::PlayerJumped`, and `GameRules.Handle` calls `lantern:::audio:::Play("jump", 0.8f)`, which
    starts a voice in the engine's `AudioSystem`.
-5. `Player.Move` set the player entity's position (`World:::SetPosition`); `extract_draws`
+5. `Player.Move` set the player entity's position (`lantern:::world:::SetPosition`); `extract_draws`
    interpolates it with `alpha` and the GPU backend draws it.
 
 ## Ownership and shutdown
@@ -260,9 +260,9 @@ Resource rules:
 
 - The level is triangles: every world-file piece with a collider adds the same triangles it
   draws to the `CollisionWorld`, so what you see is what you collide with
-  (`lantern_world_format::build_pieces`, loaded by `World:::Load`).
+  (`lantern_world_format::build_pieces`, loaded by `lantern:::world:::Load`).
 - Static triangles live in a uniform 4 m grid. Moving platforms are kinematic bodies with local
-  triangles; `World:::SetPosition` on the entity moves the body too.
+  triangles; `lantern:::world:::SetPosition` on the entity moves the body too.
 - `CharacterController::step` does move-and-slide with capsule casts (conservative advancement
   against triangles), climbs steps up to 0.3 m, refuses slopes over 46°, snaps to the ground
   within 0.3 m, and is carried by moving platforms. D-015 lists the feel numbers and reasons.
@@ -277,7 +277,7 @@ own; SDL's device thread drains the queue. Music is a looping voice on its own v
 ## UI and text
 
 `lantern_renderer_3d::text` lays out an embedded 8×8 bitmap font, scaled by whole pixels for the
-display density. `Overlay:::` draws text and rectangles straight into the `RenderWorld`'s
+display density. `lantern:::overlay:::` draws text and rectangles straight into the `RenderWorld`'s
 overlay quads, and the debug HUD is the same text path, drawing `DebugValues` grouped by their
 first path segment. Menus and the HUD are Chaos and Cosmos (below).
 
@@ -298,7 +298,7 @@ The game's UI is `.chaos` components (Nyx with element trees) styled by `.cosmos
    and fixed positioning, z-index) and rounded boxes, borders, top-to-bottom gradients, soft shadows,
    opacity and the bitmap font, all as overlay quads.
 3. **Focus**: elements with `onPress` or `onRelease` are buttons. The game names its navigation
-   actions with `GameUi:::SetNavigation`; up and down move focus (calling `onFocus`), confirm
+   actions with `lantern:::ui:::SetNavigation`; up and down move focus (calling `onFocus`), confirm
    calls `onPress` then `onRelease`. The mouse works too (D-044): moving over a button focuses
    it, and pressing and releasing on the same button calls `onPress` and `onRelease`. The host
    reads the pointer from the platform's mouse events and passes none while the game has
@@ -312,9 +312,10 @@ objects re-render the `<slot>`s that read them when the game writes them.
 
 `crates/game-host` is the only crate that knows about both the engine and the game.
 
-1. `ScriptSession::load` creates a Nyx runtime, registers the engine API (`api/`: `World`,
-   `Physics`, `CharacterController`, `Input`, `GameUi`, `Overlay`, `Audio`, `Camera`, `EngineDebug`,
-   `Vec3`, ...), adds the game directory as the import search path and mounts the entry file.
+1. `ScriptSession::load` creates a Nyx runtime, registers the engine API (`api/`, all under
+   `lantern:::`: `lantern:::world`, `lantern:::physics`, `lantern:::input`, `lantern:::ui`,
+   `lantern:::overlay`, `lantern:::audio`, `lantern:::camera`, `lantern:::debug`,
+   `lantern:::math:::Vec3`, ...), adds the game directory as the import search path and mounts the entry file.
    Analysis errors come back rendered with file, line and column, and nothing runs.
 2. `GameHost` implements the frame loop's `Game` trait. Around each hook it does the engine's
    part (remember transforms, begin the collision step, recompute world transforms, extract

@@ -1,5 +1,5 @@
 //! `Input`: the game defines its named actions and their bindings, then asks about actions.
-//! Scripts never see keys: `Input:::IsPressed("jump")` reads the snapshot the engine built for
+//! Scripts never see keys: `lantern:::input:::IsPressed("jump")` reads the snapshot the engine built for
 //! the current fixed step or display frame (edges are latched for fixed steps, see
 //! `docs/architecture.md`).
 //!
@@ -15,10 +15,9 @@ use lantern_core::input::{
 use nyx::{CallContext, CallbackError, Runtime, Value};
 
 use super::{
-    SharedState, SharedTypes, f32_argument, invalid, not_found, some_bool, some_f32, string_argument, wrap_vec2,
+    HostNamespace, SharedState, SharedTypes, f32_argument, invalid, not_found, some_bool, some_f32, string_argument,
+    wrap_vec2,
 };
-
-struct InputApi;
 
 const KEYS: [KeyCode; 64] = {
     use KeyCode::*;
@@ -157,13 +156,10 @@ fn gamepad_stick(context: &CallContext, arguments: &[Value], index: usize) -> Re
     device_name(context, &[GamepadStick::Left, GamepadStick::Right], "gamepad stick", arguments, index)
 }
 
-/// Registers `Input:::Define<kind>(name)`.
-fn define(
-    state: &SharedState,
-    kind: ActionKind,
-) -> impl Fn(&CallContext, &nyx::HostType<InputApi>, &[Value]) -> nyx::CallbackResult + 'static {
+/// Registers `lantern:::input:::Define<kind>(name)`.
+fn define(state: &SharedState, kind: ActionKind) -> impl Fn(&CallContext, &[Value]) -> nyx::CallbackResult + 'static {
     let state = state.clone();
-    move |context, _, arguments| {
+    move |context, arguments| {
         let name = string_argument(arguments, 0)?;
         let mut state = state.borrow_mut();
         if state.input.actions.find(&name).is_some() {
@@ -175,13 +171,13 @@ fn define(
     }
 }
 
-/// Registers `Input:::Bind<device>(action, ...)`: `make_binding` reads the device arguments.
+/// Registers `lantern:::input:::Bind<device>(action, ...)`: `make_binding` reads the device arguments.
 fn bind(
     state: &SharedState,
     make_binding: impl Fn(&CallContext, &[Value]) -> Result<Binding, CallbackError> + 'static,
-) -> impl Fn(&CallContext, &nyx::HostType<InputApi>, &[Value]) -> nyx::CallbackResult + 'static {
+) -> impl Fn(&CallContext, &[Value]) -> nyx::CallbackResult + 'static {
     let state = state.clone();
-    move |context, _, arguments| {
+    move |context, arguments| {
         let name = string_argument(arguments, 0)?;
         let binding = make_binding(context, arguments)?;
         let mut state = state.borrow_mut();
@@ -211,27 +207,26 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
     let axis_state = state.clone();
     let vector_state = state.clone();
     let vector_types = types.clone();
-    runtime
-        .register_type::<InputApi>("Input")
-        .static_method("DefineButton", "(name: string) -> void", define(state, ActionKind::Button))
-        .static_method("DefineAxis", "(name: string) -> void", define(state, ActionKind::Axis1D))
-        .static_method("DefineVector", "(name: string) -> void", define(state, ActionKind::Axis2D))
-        .static_method(
+    HostNamespace::new(runtime, "lantern::input")
+        .function("DefineButton", "(name: string) -> void", define(state, ActionKind::Button))
+        .function("DefineAxis", "(name: string) -> void", define(state, ActionKind::Axis1D))
+        .function("DefineVector", "(name: string) -> void", define(state, ActionKind::Axis2D))
+        .function(
             "BindKey",
             "(action: string, key: string) -> void",
             bind(state, |context, arguments| Ok(Binding::Key(key(context, arguments, 1)?))),
         )
-        .static_method(
+        .function(
             "BindMouseButton",
             "(action: string, button: string) -> void",
             bind(state, |context, arguments| Ok(Binding::Mouse(mouse_button(context, arguments, 1)?))),
         )
-        .static_method(
+        .function(
             "BindGamepadButton",
             "(action: string, button: string) -> void",
             bind(state, |context, arguments| Ok(Binding::Gamepad(gamepad_button(context, arguments, 1)?))),
         )
-        .static_method(
+        .function(
             "BindGamepadAxisButton",
             "(action: string, axis: string, threshold: f32) -> void",
             bind(state, |context, arguments| {
@@ -241,14 +236,14 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 })
             }),
         )
-        .static_method(
+        .function(
             "BindKeyAxis",
             "(action: string, negative: string, positive: string) -> void",
             bind(state, |context, arguments| {
                 Ok(Binding::KeyAxis { negative: key(context, arguments, 1)?, positive: key(context, arguments, 2)? })
             }),
         )
-        .static_method(
+        .function(
             "BindGamepadAxis",
             "(action: string, axis: string, scale: f32) -> void",
             bind(state, |context, arguments| {
@@ -258,7 +253,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 })
             }),
         )
-        .static_method(
+        .function(
             "BindKeys",
             "(action: string, up: string, down: string, left: string, right: string) -> void",
             bind(state, |context, arguments| {
@@ -270,35 +265,35 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 })
             }),
         )
-        .static_method(
+        .function(
             "BindStick",
             "(action: string, stick: string, scale: f32) -> void",
             bind(state, |context, arguments| {
                 Ok(Binding::Stick { stick: gamepad_stick(context, arguments, 1)?, scale: f32_argument(arguments, 2)? })
             }),
         )
-        .static_method(
+        .function(
             "BindMouseMotion",
             "(action: string, scale: f32) -> void",
             bind(state, |_context, arguments| Ok(Binding::MouseMotion { scale: f32_argument(arguments, 1)? })),
         )
-        .static_method("IsPressed", "(action: string) -> bool", move |context, _, arguments| {
+        .function("IsPressed", "(action: string) -> bool", move |context, arguments| {
             let action = find_action(context, &pressed_state, arguments)?;
             some_bool(context, pressed_state.borrow().input.snapshot.pressed(action))
         })
-        .static_method("IsReleased", "(action: string) -> bool", move |context, _, arguments| {
+        .function("IsReleased", "(action: string) -> bool", move |context, arguments| {
             let action = find_action(context, &released_state, arguments)?;
             some_bool(context, released_state.borrow().input.snapshot.released(action))
         })
-        .static_method("IsHeld", "(action: string) -> bool", move |context, _, arguments| {
+        .function("IsHeld", "(action: string) -> bool", move |context, arguments| {
             let action = find_action(context, &held_state, arguments)?;
             some_bool(context, held_state.borrow().input.snapshot.held(action))
         })
-        .static_method("Axis", "(action: string) -> f32", move |context, _, arguments| {
+        .function("Axis", "(action: string) -> f32", move |context, arguments| {
             let action = find_action(context, &axis_state, arguments)?;
             some_f32(context, axis_state.borrow().input.snapshot.axis(action))
         })
-        .static_method("Vector", "(action: string) -> Vec2", move |context, _, arguments| {
+        .function("Vector", "(action: string) -> lantern:::math:::Vec2", move |context, arguments| {
             let action = find_action(context, &vector_state, arguments)?;
             let value = vector_state.borrow().input.snapshot.vector(action);
             wrap_vec2(&vector_types, value)

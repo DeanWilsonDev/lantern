@@ -6,19 +6,16 @@ use glam::Vec2;
 use lantern_renderer_3d::text::{GLYPH_SIZE, measure_text};
 use nyx::Runtime;
 
-use super::{SharedState, color_argument, f32_argument, some_f32, string_argument};
-
-struct OverlayApi;
+use super::{HostNamespace, SharedState, color_argument, f32_argument, some_f32, string_argument};
 
 pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
     let rect = state.clone();
     let text = state.clone();
-    runtime
-        .register_type::<OverlayApi>("Overlay")
-        .static_method(
+    HostNamespace::new(runtime, "lantern::overlay")
+        .function(
             "Rect",
             "(x: f32, y: f32, width: f32, height: f32, color: string) -> void",
-            move |context, _, arguments| {
+            move |context, arguments| {
                 let min = Vec2::new(f32_argument(arguments, 0)?, f32_argument(arguments, 1)?);
                 let size = Vec2::new(f32_argument(arguments, 2)?, f32_argument(arguments, 3)?);
                 let color = color_argument(context, arguments, 4)?;
@@ -28,10 +25,10 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
         )
         // Text with its top-left corner at (x, y). `scale` is pixels per font pixel; the font
         // is 8 x 8 (see `GlyphSize`).
-        .static_method(
+        .function(
             "Text",
             "(text: string, x: f32, y: f32, scale: f32, color: string) -> void",
-            move |context, _, arguments| {
+            move |context, arguments| {
                 let content = string_argument(arguments, 0)?;
                 let top_left = Vec2::new(f32_argument(arguments, 1)?, f32_argument(arguments, 2)?);
                 let scale = f32_argument(arguments, 3)?;
@@ -40,13 +37,13 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
                 Ok(None)
             },
         )
-        .static_method("TextWidth", "(text: string, scale: f32) -> f32", |context, _, arguments| {
+        .function("TextWidth", "(text: string, scale: f32) -> f32", |context, arguments| {
             some_f32(context, measure_text(&string_argument(arguments, 0)?, f32_argument(arguments, 1)?).x)
         })
-        .static_method("TextHeight", "(text: string, scale: f32) -> f32", |context, _, arguments| {
+        .function("TextHeight", "(text: string, scale: f32) -> f32", |context, arguments| {
             some_f32(context, measure_text(&string_argument(arguments, 0)?, f32_argument(arguments, 1)?).y)
         })
-        .static_method("GlyphSize", "() -> f32", |context, _, _| some_f32(context, GLYPH_SIZE as f32))
+        .function("GlyphSize", "() -> f32", |context, _| some_f32(context, GLYPH_SIZE as f32))
         .register()?;
     Ok(())
 }

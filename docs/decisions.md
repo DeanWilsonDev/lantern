@@ -580,3 +580,24 @@ Dean answered the three questions D-043 left open.
 
 Cards: `mouse-hover-and-click-in-the-in-game-ui`, `remove-the-immediate-mode-ui-api` and
 `rename-the-element-type-to-lantern-ui-element` under `platformer-game/in-game-ui-with-chaos-and-cosmos`.
+
+## D-045 Every engine name is under lantern:::
+
+Dean asked that every name a script gets from the engine start with `lantern:::`, with lowercase
+namespaces and PascalCase types, and that Lantern never name another engine.
+
+- **Functions.** Each API group registers its calls as host functions under one namespace
+  (`HostNamespace` in `api/mod.rs`): `Input:::IsDown` is now `lantern:::input:::IsDown`,
+  `GameUi:::Mount` is `lantern:::ui:::Mount`, `EngineDebug:::` is `lantern:::debug:::`, and so on,
+  one lowercase namespace per old group. They were static methods of empty marker types before,
+  which made `Input` a type a script could name.
+- **Types.** `Vec3` and `Vec2` are `lantern:::math:::Vec3` and `lantern:::math:::Vec2`;
+  `RayHit`, `ControllerStep` and `CharacterController` are under `lantern:::physics:::`; the UI
+  element is `lantern:::ui:::Element`.
+- **Nyx.** Namespaced host functions and types needed Nyx changes (nyx PR #19, Nyx board
+  GAME-F05-T01). Nyx can't yet build a namespaced value type from braces with the path in front
+  (`lantern:::math:::Vec3 { y: 1.0f }`, GAME-F05-T02), so the game builds vectors from braces
+  where the type is known: a typed local, an argument or a return value.
+
+Card: `naming/lantern-names/move-the-engine-api-under-lantern`.
+
