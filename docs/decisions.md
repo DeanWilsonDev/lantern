@@ -491,3 +491,18 @@ written from the real registrations: the game host's through Nyx's C API
 editor's by `lantern-world-editor --host-surface` after every build. Both are committed, so a fresh
 clone's editor is right before anything is built. The engine's debug type is `EngineDebug`, since
 Nyx's own built-in `Debug` (`Debug:::describe`) took that name and the host can't register it.
+
+## D-042 The game code reads as a tutorial
+
+Dean asked for the game code to explain itself, above all its maths. Every file in
+`games/platformer/` now opens with what it is for and where it sits in the frame (fixed step,
+display frame or render), and every calculation says what it computes and why: the two clocks
+and `alpha`, the camera's spherical coordinates and forward/right vectors, mouse versus stick
+look, turn clamping with angle wrapping, the cosine ease of the platforms, the gem bob, the
+capsule-versus-sphere touch test and the blob shadow's sizing. Maths the engine does on the
+game's behalf (take-off speed v = √(2gh), acceleration, variable jump height, coyote time and
+the jump buffer) is explained from the game's side in `settings/player-tuning.nyx`, with a
+pointer to `crates/physics/src/controller.rs`, rather than by adding comments to the Rust.
+Comments are plain `//` lines, as before, and no code changed: the files are identical once
+comments are stripped. Card: `platformer-game/tutorial-comments-in-the-game-code` on the
+lantern board.

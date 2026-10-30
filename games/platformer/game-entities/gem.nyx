@@ -1,4 +1,7 @@
 // A collectable gem: a world-file entity of kind "gem" that spins and bobs above its home.
+//
+// A collected gem is only hidden, not despawned, so restarting the level can show it again
+// without reloading the world file.
 Gem :: class {
 public:
     entity: i64;
@@ -19,14 +22,22 @@ public:
         World:::SetVisible(entity, true);
     }
 
+    // `time` is the simulation clock, so gems freeze while paused.
     Animate :: (time: f32) -> void {
+        // sin() swings smoothly between -1 and 1, so multiplying by BOB_HEIGHT gives an offset
+        // of up to 10 cm above and below home. time x BOB_SPEED is the angle in radians: at
+        // 2 rad/s one full bob (2π) takes π ≈ 3.1 s. Adding the gem's index shifts each gem's
+        // wave by 1 radian, so neighbouring gems are at different heights instead of bobbing
+        // in lockstep.
         bob := Math:::sin(time * BOB_SPEED + f32(index)) * BOB_HEIGHT;
+        // Always home + offset, not "move up a bit": nothing accumulates, so it can't drift.
         World:::SetPosition(entity, home + Vec3 { y: bob });
+        // Spin: the angle is simply speed x time.
         World:::SetYaw(entity, time * SPIN_SPEED);
     }
 
 private:
     static SPIN_SPEED :: 1.5f;        // radians per second
-    static BOB_SPEED :: 2.0f;
+    static BOB_SPEED :: 2.0f;         // radians per second of the bob's sine wave
     static BOB_HEIGHT :: 0.1f;        // metres
 }

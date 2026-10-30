@@ -4,17 +4,30 @@ GameEvents :: import GameEvents;
 
 // Finds gems the player has just touched. A gem counts once per touch: it must be left before
 // it can be touched again.
+//
+// A system (Umbra's game-systems) works on many entities of one kind each step and reports
+// what it found as events. It decides nothing itself: GameRules decides what a touch means.
 GemSystem :: class {
 public:
     static TRIGGER_RADIUS :: 0.45f;   // metres from the gem's centre to the capsule's surface
 
     // The capsule's axis runs from `capsuleCenter - halfSegment` to `+ halfSegment` in y.
+    //
+    // The test: does a sphere of TRIGGER_RADIUS round the gem overlap the player's capsule?
+    // A capsule is every point within `capsuleRadius` of a line segment (its axis). So the two
+    // overlap when the gem's centre is closer to the segment than the two radii added together.
     DetectTouches~: (gems: Array<Gem>, capsuleCenter: Vec3, halfSegment: f32, capsuleRadius: f32, events~ GameEvents) -> void {
         for gem: Gem in gems {
             center := World:::Position(gem.entity);
+            // The closest point on the axis to the gem. The axis is vertical, so that point has
+            // the capsule's x and z, and the gem's height clamped to the axis's ends: a gem
+            // level with the player's chest is nearest the middle of the axis, and one above the
+            // head is nearest the top end.
             axisY := Math:::clamp(center.y, capsuleCenter.y - halfSegment, capsuleCenter.y + halfSegment);
             closestOnAxis := capsuleCenter.WithY(axisY);
             isInside := closestOnAxis.DistanceTo(center) < TRIGGER_RADIUS + capsuleRadius;
+            // Report the moment of entering, not every step spent inside: compare this step
+            // with the last and act only on the change (an edge, like a button's press).
             wasInside := inside.contains(gem.entity);
             if isInside && !wasInside {
                 inside.add(gem.entity);
@@ -37,5 +50,6 @@ public:
     }
 
 private:
+    // The gems the player was touching at the end of the last step.
     inside~ Array<i64> = [];
 }

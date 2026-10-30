@@ -3,6 +3,13 @@ GameAssets :: import GameAssets;
 
 // The player: an engine character controller, the entities that show it (a capsule body with
 // a visor, parented to a root at the feet) and a blob shadow on the ground below.
+//
+// Two halves that the game keeps in step:
+// - The CharacterController (Rust, crates/physics/src/controller.rs) is the physics. It is not
+//   an entity and draws nothing: it is a capsule shape that it moves through the collision world
+//   each fixed step, deciding velocity from input, gravity and jumping and sliding along walls.
+// - The entities are what you see. After each step Move() copies the controller's feet position
+//   onto `root`, and the engine draws root and its children from that.
 Player :: class {
 public:
     root~ i64 = 0;
@@ -14,6 +21,8 @@ public:
     Spawn~: (assets: GameAssets, spawnPosition: Vec3) -> void {
         spawn = spawnPosition;
         controller = new CharacterController(PlayerTuning:::RADIUS, PlayerTuning:::HEIGHT, spawnPosition);
+        // The game picks the feel; the controller does the physics with these numbers. From
+        // JUMP_HEIGHT and GRAVITY it works out the take-off speed (see PlayerTuning).
         controller.SetWalkSpeed(PlayerTuning:::WALK_SPEED);
         controller.SetJumpHeight(PlayerTuning:::JUMP_HEIGHT);
         controller.SetGravity(PlayerTuning:::GRAVITY);
@@ -21,20 +30,29 @@ public:
 
         // The root sits at the feet; the capsule mesh is centred, so the body is a child lifted
         // by half the height.
+        // Parenting means a child's position is relative to its parent: moving and turning the
+        // root carries the body and visor with it, so Move() only has to place one entity.
         root = World:::Spawn("player", spawnPosition);
         body := World:::Spawn("player_body", Vec3 { y: PlayerTuning:::HEIGHT * 0.5f });
         World:::SetTexturedMesh(body, assets.playerMesh, assets.playerTexture, "E8A33D");
         World:::SetParent(body, root);
         // A visor on the body's front (-Z), so you can see which way the player faces.
+        // Its position is relative to the body's centre: 0.42 m up (eye level, halfway to the
+        // top of the capsule) and 0.3 m forward, just inside the 0.35 m radius so it pokes out of the
+        // curved surface. The unit cube is scaled into a flat bar 0.4 x 0.14 x 0.16 m.
         visor := World:::Spawn("player_visor", Vec3 { y: 0.42f, z: -0.3f });
         World:::SetMesh(visor, assets.unitCubeMesh, "203040");
         World:::SetScale(visor, Vec3 { x: 0.4f, y: 0.14f, z: 0.16f });
         World:::SetParent(visor, body);
+        // The shadow is not parented: it follows the ground, not the player (PlaceShadow).
         shadow = World:::Spawn("player_shadow", spawnPosition);
         World:::SetMesh(shadow, assets.unitSphereMesh, "0D120D");
     }
 
     // Back to the spawn point, at rest, facing forward.
+    // Teleport rather than SetPosition: SetPosition would make the renderer blend from the old
+    // place to the new one over a step (see OnRender's alpha), and the player would visibly
+    // streak across the level.
     Reset~: () -> void {
         controller.Teleport(spawn);
         facingYaw = 0.0f;
@@ -45,11 +63,30 @@ public:
     // One fixed step. `stick` is the movement input (x right, y forward), turned into a world
     // direction with the camera's horizontal `forward` and `right`.
     Move~: (stick: Vec2, forward: Vec3, right: Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> :ControllerStep {
+        // From stick space to world space. The stick says "this much forward, this much
+        // right"; forward and right are those two directions in the world, so the world
+        // direction is the sum of each axis scaled by its amount (a change of basis).
+        // ClampLength(1): pressing W and D together gives a stick of (1, 1), whose length is
+        // √2 ≈ 1.41, which would make diagonal running 41% faster. Clamping the length to 1
+        // fixes that, and still lets a half-pushed analogue stick (length 0.5) walk slowly.
         moveDirection := (forward * stick.y + right * stick.x).ClampLength(1.0f);
+        // The controller turns the direction into velocity: it accelerates toward
+        // direction x walk speed (quickly on the ground, more slowly in the air), applies
+        // gravity, jumps if asked, then moves and slides the capsule.
         step := controller.Step(moveDirection, jumpPressed, jumpHeld, dt);
+        // Turn the body to face where it is going, at a limited speed so it swings round
+        // instead of snapping. LengthSquared() > 0.01 means length > 0.1 (squared to skip a
+        // square root): below that the stick is near its centre, its direction is mostly noise,
+        // and the body should keep facing the way it was.
         if moveDirection.LengthSquared() > 0.01f {
+            // The most it may turn this step: radians per second x seconds per step.
             maximumTurn := PlayerTuning:::TURN_SPEED * dt;
+            // How far it still has to turn. Wrap() takes the short way round: from facing
+            // 170 degrees to -170 degrees is 20 degrees, not 340 the other way.
             difference := Angle:::Wrap(moveDirection.Yaw() - facingYaw);
+            // Take all of the remaining turn if it is small enough, otherwise the step's maximum
+            // in the right direction. The clamp gives a constant turning speed that ends exactly
+            // on the target without overshooting.
             facingYaw += Math:::clamp(difference, -maximumTurn, maximumTurn);
         }
         World:::SetPosition(root, controller.FeetPosition());
@@ -64,8 +101,13 @@ public:
 
 private:
     // Drops the shadow onto the surface below the player; it shrinks with height.
+    // A blob shadow is a cheap stand-in for real shadows, and in a platformer its main job is
+    // gameplay: it shows exactly where you will land.
     PlaceShadow :: () -> void {
         feet := controller.FeetPosition();
+        // Cast down from the capsule's centre rather than the feet. When standing, the feet are
+        // on (or a skin's width above) the floor, and a ray starting there could start at or
+        // below the surface and miss it. 30 m is far enough to find any floor the course has.
         when Physics:::Raycast(controller.CapsuleCenter(), Vec3:::Down(), 30.0f) {
             hit: RayHit -> PlaceShadowOn(hit, feet),
             null -> World:::SetVisible(shadow, false)
@@ -74,9 +116,18 @@ private:
 
     PlaceShadowOn :: (hit: RayHit, feet: Vec3) -> void {
         World:::SetVisible(shadow, true);
+        // Height of the feet above the floor. Max(…, 0) guards against a tiny negative from
+        // float rounding when standing.
         height := Math:::max(feet.y - hit.Point().y, 0.0f);
+        // On the ground the shadow is 2.2 x the radius across, a little wider than the body.
+        // As the player rises it shrinks linearly, 1 - height / 10: 10% smaller per metre,
+        // down to 40% of its size (reached at 6 m, where 1 - 6/10 = 0.4) so it never vanishes.
+        // A smaller shadow reads as "higher up", which helps judge a jump.
         diameter := PlayerTuning:::RADIUS * 2.2f * Math:::clamp(1.0f - height / 10.0f, 0.4f, 1.0f);
+        // Lift it 1 cm off the floor. Two surfaces at exactly the same depth flicker as the
+        // GPU can't decide which is in front (z-fighting).
         World:::SetPosition(shadow, hit.Point() + Vec3 { y: 0.01f });
+        // The sphere is squashed to 1 cm tall, which turns it into a flat round disc.
         World:::SetScale(shadow, Vec3 { x: diameter, y: 0.01f, z: diameter });
     }
 }

@@ -21,14 +21,39 @@ ThirdPersonCamera :: import ThirdPersonCamera;
 // The Lantern platformer (Umbra SnakeApplication). The engine calls the hooks below; everything
 // the game does starts here. Per fixed step: platforms move, the player moves through the
 // collision world, then the step's events go to the rules in the order they happened.
+//
+// How this file meets the engine (docs/game-api.md is the whole seam):
+// - game.json names this file as `entry` and `Platformer` as `application_class`. The engine
+//   makes one Platformer and calls its hooks; the game never calls the engine's loop itself.
+// - Every name with `:::` that isn't imported above (World, Input, Physics, Camera, Audio, ...)
+//   is a host type the Rust engine registers in crates/game-host/src/api/.
+//
+// The two clocks. A game has to answer two different questions every frame:
+// - "What happens next in the world?" That is the simulation, and it must not depend on how fast
+//   the computer draws. If it advanced by however long the last frame took, a 30 fps machine
+//   would take bigger physics steps than a 144 fps one, jumps would reach different heights and
+//   fast objects could pass through walls. So the engine runs OnFixedUpdate with a constant
+//   dt = 1/60 s, as many times per display frame as real time needs (0, 1, 2, ... up to 8, after
+//   which it drops the backlog rather than freezing). Same inputs + same dt = same result.
+// - "What does the player see now?" That is OnUpdate and OnRender, once per display frame, with
+//   `frameSeconds` = the real time since the previous frame. Menus, camera look and on-screen
+//   timers live here because they should respond at the display's rate.
+//
+// A display frame therefore looks like: OnFixedUpdate x N, OnUpdate, OnRender.
 Platformer :: class : Application {
 public:
+    // Required by `Application`; the engine drives the game through the hooks instead.
     Run :: () -> void { }
 
+    // Once, after the engine has loaded the scripts. Order matters: input actions and assets
+    // must exist before the level is loaded, because the level assigns meshes and materials.
     OnStart~: () -> void {
         InputSettings:::Configure();
         assets.Load();
         Renderer:::SetClearColor("87B5E0");
+        // Linear fog toward the clear (sky) colour: none up to 30 m from the camera, all sky by
+        // 90 m, and fog = (distance - 30) / (90 - 30) in between. It hides where the world
+        // ends and makes far things read as far.
         Renderer:::SetFog(30.0f, 90.0f);
         isAutoplay = Engine:::Flag("LANTERN_AUTOPLAY");
         showCollisionView = Engine:::Flag("LANTERN_COLLISION_VIEW");
@@ -36,6 +61,8 @@ public:
         Audio:::PlayMusic("theme");
     }
 
+    // Every fixed step, with `dt` always 1/60 s. Only the Playing state simulates, so pausing
+    // and the title screen freeze the world exactly where it is.
     OnFixedUpdate~: (dt: f32) -> void {
         when state <GameState> {
             Playing -> { Simulate(dt); },
@@ -43,12 +70,16 @@ public:
         }
     }
 
+    // Once per display frame, before rendering. `frameSeconds` is real elapsed time, so
+    // anything here that changes over time multiplies a per-second rate by it (see Orbit).
     OnUpdate~: (frameSeconds: f32) -> void {
         if Input:::IsPressed(InputSettings:::TOGGLE_COLLISION_VIEW) {
             showCollisionView = !showCollisionView;
         }
         when state <GameState> {
             MainMenu -> {
+                // radians per second x seconds this frame = radians to turn this frame. The
+                // title-screen orbit turns at the same speed whatever the frame rate.
                 camera.Orbit(MAIN_MENU_ORBIT_SPEED * frameSeconds);
                 if isAutoplay {
                     SetState(GameState:::Playing);
@@ -64,6 +95,12 @@ public:
         PublishDebugValues();
     }
 
+    // Once per drawn frame. `alpha` (0..1) says how far real time has got between the last two
+    // fixed steps. The simulation only knows positions at step boundaries (60 per second), but
+    // the screen may draw 144 times a second; drawing the last step's position would make
+    // motion stutter. The engine draws entities blended `alpha` of the way from the previous
+    // step's position to the current one, and the camera has to follow that same blended
+    // position, or the player would jitter against the background.
     OnRender~: (alpha: f32, frameSeconds: f32) -> void {
         camera.Follow(World:::InterpolatedPosition(player.root, alpha), frameSeconds);
         if showCollisionView {
@@ -84,6 +121,8 @@ public:
         }
     }
 
+    // Before the engine unloads the game, on quit or on F5. The engine releases everything the
+    // game made anyway; this stops the music cleanly and empties the level.
     OnExit~: () -> void {
         Audio:::StopMusic();
         level.Unload();
@@ -99,6 +138,9 @@ private:
     }
     static MAIN_MENU_ORBIT_SPEED :: 0.15f;    // radians per second behind the title screen
 
+    // The game's modules, one object each (Umbra's folders: assets, scenes, entities, systems,
+    // rules, events). Platformer owns them and passes them to each other, so no module reaches
+    // for another on its own.
     assets~ GameAssets = new GameAssets();
     level~ LevelScene = new LevelScene();
     player~ Player = new Player();
@@ -107,16 +149,21 @@ private:
     rules~ GameRules = new GameRules();
     events~ GameEvents = new GameEvents();
     state~ GameState = GameState:::MainMenu;
+    // The simulation's own clock: the sum of every fixed step's dt. Anything animated from time
+    // (platforms, gems, the autopilot) reads this rather than wall-clock time, so it pauses with
+    // the game and plays out identically on every run.
     simulationSeconds~ f32 = 0.0f;
     isAutoplay~ bool = false;
     showCollisionView~ bool = false;
 
+    // Loads the level and puts every module back to its starting state. Used on start, on
+    // "Restart level" and on going back to the main menu.
     StartLevel~: () -> void {
         loaded := level.Load(LevelPath(), assets.gemMesh);
         guard loaded throw;
         player.Spawn(assets, level.spawnPosition);
         gemSystem.Clear();
-        events.Drain();
+        events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
         camera.ResetBehind(0.0f);
         rules.Start(level);
@@ -125,19 +172,33 @@ private:
     SetState~: (next: GameState) -> void {
         state = next;
         Ui:::ResetFocus();
+        // The mouse is captured (hidden, and its motion turned into camera look) only while
+        // playing; menus need a free cursor. The autopilot never captures it.
         isPlaying := when next <GameState> { Playing -> true, default -> false };
         Screen:::SetMouseCaptured(isPlaying && !isAutoplay);
     }
 
+    // One fixed step of the game. The order is what makes it correct:
+    // 1. Platforms move first, so the character controller can carry a player standing on one
+    //    by exactly this step's platform motion.
+    // 2. The player moves through the collision world, now that the world is where it will be.
+    // 3. Systems look at the result and queue events (touched a gem, fell off).
+    // 4. The rules handle the events in the order they happened.
+    // 5. Gems animate. Touch tests this step used the previous step's gem positions, a 1/60 s
+    //    difference nobody can see.
     Simulate~: (dt: f32) -> void {
         simulationSeconds += dt;
         for platform: MovingPlatform in level.platforms {
             platform.Move(simulationSeconds);
         }
 
+        // Input is read per fixed step, not per frame: the engine latches presses so each one is
+        // seen by exactly one fixed step, even on a frame that runs none.
         stick := isAutoplay ? Autopilot:::Stick() : Input:::Vector(InputSettings:::MOVE);
         jumpPressed := isAutoplay ? Autopilot:::JumpPressed(simulationSeconds) : Input:::IsPressed(InputSettings:::JUMP);
         jumpHeld := isAutoplay ? Autopilot:::JumpHeld(simulationSeconds) : Input:::IsHeld(InputSettings:::JUMP);
+        // The camera's forward and right let "push up" mean "away from the camera", wherever
+        // the camera is looking (Player.Move does the conversion).
         step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, dt);
 
         if step.Jumped() {
@@ -148,6 +209,8 @@ private:
         }
         controller := player.controller;
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        // The kill plane is just a height: once the feet drop below it, the player has fallen
+        // off the course.
         if player.FeetPosition().y < level.killHeight {
             events.Push(GameEvent:::PlayerFell);
         }
@@ -169,10 +232,20 @@ private:
         if Input:::IsPressed(InputSettings:::CAPTURE_MOUSE) {
             Screen:::SetMouseCaptured(true);
         }
+        // Mouse and stick need different maths because they report different things:
+        // - The mouse reports how far it moved this frame, which is already an amount of turn
+        //   (InputSettings scales it to radians). Multiplying it by frameSeconds would make the
+        //   camera turn slower at higher frame rates.
+        // - The stick reports how far it is pushed (-1..1), which is a speed. Turning a speed
+        //   into this frame's turn needs `x frameSeconds`, and LOOK_STICK_SPEED says how many
+        //   radians per second a full push is.
+        // Once both are "radians this frame" they can simply be added.
         stickLook := Input:::Vector(InputSettings:::LOOK_STICK) * (frameSeconds * PlayerTuning:::LOOK_STICK_SPEED);
         camera.Look(Input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
     }
 
+    // The menus are immediate mode: each frame Show() draws the whole menu and says what was
+    // chosen this frame, if anything. Acting on the choice is the game's job, here.
     RunMainMenu~: () -> void {
         when MainMenu:::Show() <MainMenuChoice> {
             Play -> { SetState(GameState:::Playing); },
@@ -198,11 +271,13 @@ private:
         }
     }
 
+    // Lines for the engine's debug HUD (F1). The path before `/` is the group it's shown under.
     PublishDebugValues :: () -> void {
         controller := player.controller;
         feet := controller.FeetPosition();
         velocity := controller.Velocity();
         EngineDebug:::SetValue("Player/Position", `${feet.x:.2f}, ${feet.y:.2f}, ${feet.z:.2f}`);
+        // Horizontal() drops the y part, so this is running speed; falling doesn't count.
         EngineDebug:::SetValue("Player/Speed", `${velocity.Horizontal().Length():.2f}`);
         EngineDebug:::SetValue("Player/Grounded", controller.IsGrounded() ? "yes" : "no");
         EngineDebug:::SetValue("Camera/Yaw", `${Angle:::ToDegrees(camera.yaw):.1f}`);

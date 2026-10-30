@@ -6,6 +6,10 @@ ThirdPersonCamera :: import ThirdPersonCamera;
 
 // What happens in the game: collecting gems, what falling or pressing reset does, which sounds
 // play. The rules react to the step's events and keep the text the HUD shows.
+//
+// Keeping the rules apart from the systems that detect things means "what counts as touching a
+// gem" (GemSystem, maths) and "what touching a gem does" (here, game design) can change
+// independently.
 GameRules :: class {
 public:
     collected~ i32 = 0;
@@ -18,6 +22,8 @@ public:
         ShowMessage("Collect every gem!", 3.0f);
     }
 
+    // Called from the fixed step (Platformer.Simulate), once per event, in the order they were
+    // queued.
     Handle~: (event: GameEvent, level: LevelScene, player~ Player, camera~ ThirdPersonCamera) -> void {
         when event <GameEvent> {
             GemTouched(entity) -> { Collect(entity, level); },
@@ -36,6 +42,9 @@ public:
     }
 
     // Per display frame: counts the message down.
+    // A countdown timer: start at the duration, take away the real time each frame takes, and
+    // it's done at 0. It runs per display frame (not per fixed step) because it only controls
+    // what's on screen.
     Tick~: (frameSeconds: f32) -> void {
         guard messageSecondsLeft > 0.0f;
         messageSecondsLeft -= frameSeconds;
@@ -63,11 +72,18 @@ private:
         }
     }
 
+    // The landing sound gets louder the harder you land. `speed` is how fast the player was
+    // falling (m/s) at touchdown. Below HARD_LANDING_SPEED there is no sound, so hopping down a
+    // small drop stays quiet. Above it, volume = speed / LOUDEST_LANDING_SPEED: a linear map from
+    // speed to 0..1, so a 7.5 m/s landing is half volume, and Min() holds it at full volume
+    // for anything faster than 15 m/s.
     Land :: (speed: f32) -> void {
         guard speed > HARD_LANDING_SPEED;
         Audio:::Play("land", Math:::min(speed / LOUDEST_LANDING_SPEED, 1.0f));
     }
 
+    // Falling off or pressing reset puts the player back at the spawn, with the camera behind
+    // them facing the level's forward.
     ResetPlayer :: (player~ Player, camera~ ThirdPersonCamera) -> void {
         player.Reset();
         camera.ResetBehind(0.0f);
