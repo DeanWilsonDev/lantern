@@ -39,7 +39,7 @@ if(LANTERN_NYX_SOURCE_DIR)
 endif()
 FetchContent_Declare(nyx
     GIT_REPOSITORY https://github.com/DeanWilsonDev/nyx-scripting-language.git
-    GIT_TAG        a8d9f9bde7d0f7f351f8fee6273c9588ee17f762
+    GIT_TAG        336dd90fa38dbbed6219f71569a36f7073a2242c
     GIT_SUBMODULES external/firefly external/lucis-proto
     GIT_SUBMODULES_RECURSE TRUE)
 FetchContent_MakeAvailable(nyx)

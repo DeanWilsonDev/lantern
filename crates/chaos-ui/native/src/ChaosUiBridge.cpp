@@ -442,6 +442,9 @@ struct lantern_chaos_ui {
     // Declared first so it is destroyed last: every node removes itself from it.
     NodeRegistry Registry;
 
+    // The C handle of the runtime the driver runs on, to check mount arguments against.
+    nyx_runtime* RuntimeHandle = nullptr;
+
     Chaos::ChaosNyxDriver Driver;
     Cosmos::Stylesheet    GlobalSheet;
     Cosmos::Stylesheet    ComponentSheet;
@@ -571,6 +574,7 @@ lantern_chaos_ui_status lantern_chaos_ui_create(nyx_runtime* runtime, const char
         // paths, relative to the project root: the whole game directory, as for Nyx imports.
         Config.SearchPaths = {"."};
         auto Ui       = std::make_unique<lantern_chaos_ui>(*Runtime, project_root, std::move(Config));
+        Ui->RuntimeHandle = runtime;
         Ui->Driver.RegisterElementType(ElementTypeName);
         Ui->LoadStylesheets(ui_directory);
         *out_ui = Ui.release();
@@ -589,8 +593,13 @@ lantern_chaos_ui_status lantern_chaos_ui_mount(lantern_chaos_ui* ui, const char*
     try {
         std::vector<nyx::runtime::Value> Arguments;
         for (size_t Index = 0; Index < count; ++Index) {
-            const nyx::runtime::Value* Argument = nyx::capi::HostValue(args[Index]);
-            Arguments.push_back(Argument != nullptr ? *Argument : nyx::runtime::Value());
+            const nyx::runtime::Value* Argument = nyx::capi::HostValue(ui->RuntimeHandle, args[Index]);
+            if (Argument == nullptr) {
+                ui->Messages.push_back(std::string("chaos-ui: argument ") + std::to_string(Index + 1) + " for " +
+                                       component + " is missing or belongs to another Nyx runtime");
+                return LANTERN_CHAOS_UI_ERROR;
+            }
+            Arguments.push_back(*Argument);
         }
         std::filesystem::path Path(file);
         if (Path.is_relative()) Path = std::filesystem::path(ui->Driver.ProjectRoot()) / Path;
