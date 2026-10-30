@@ -62,8 +62,8 @@ static_assert(Value(Cosmos::Position::Absolute) == LANTERN_CHAOS_UI_ABSOLUTE);
 static_assert(Value(Cosmos::Position::Fixed) == LANTERN_CHAOS_UI_FIXED);
 static_assert(Value(Cosmos::Position::Sticky) == LANTERN_CHAOS_UI_STICKY);
 
-// The Nyx type a component's element tree has: `Name :: () -> Lantern:::Component`.
-constexpr const char* ElementTypeName = "Lantern::Component";
+// The Nyx type a component's element tree has: `Name :: () -> Ui:::Element`.
+constexpr const char* ElementTypeName = "Ui::Element";
 
 class UiNode;
 

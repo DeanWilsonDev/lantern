@@ -339,7 +339,6 @@ impl Game for GameHost {
         {
             let mut state = self.state.borrow_mut();
             state.render_world.clear();
-            state.ui_column = None;
         }
         self.call(GameHook::OnRender, &[HookArgument::F32(frame.alpha), HookArgument::F32(frame.frame_seconds)]);
         if let Some(session) = self.session.as_mut() {
@@ -348,9 +347,6 @@ impl Game for GameHost {
         self.report_ui_messages();
         {
             let state = &mut *self.state.borrow_mut();
-            if let Some(unfinished) = state.ui_column.take() {
-                state.ui.end_column(unfinished);
-            }
             if let Some(session) = &self.session {
                 // A Cosmos `px` is a window point, as in the editor: `ui_scale` is twice the
                 // pixel density (the 8x8 font's normal size), so half of it is one point.

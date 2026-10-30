@@ -529,8 +529,8 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
   component's argument, because a host signature can't name a game class or a generic object.
   State is `@signal` fields on a game object (`GameUiModel`); writing one re-renders the
   `<slot>`s that read it.
-- **Element type.** Elements are `Lantern:::Component` (`RegisterElementType`), as Penumbra's are
-  `Penumbra:::Component`. Provisional; a question on the card.
+- **Element type.** Elements are `Ui:::Element` (`RegisterElementType`), as Penumbra's are
+  `Penumbra:::Component`. Dean chose the name (D-044).
 - **Layout defaults.** A frame with no `display` stacks its children in a column, like a menu;
   `display: stack` with no `flex-direction` is a row, as in Cosmos. Children stretch across by
   default. A Cosmos `px` is one window point (half of `Screen:::UiScale()` pixels), so a
@@ -539,8 +539,7 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
 - **Focus.** Elements with `onPress` or `onRelease` are buttons, focused in document order with
   the game's own navigation actions (`GameUi:::SetNavigation`). The focused button and its
   descendants draw with their `:hover` style, and `:active` while confirmed, so Cosmos needs no
-  focus state yet (a card asks for `:focus`). Mouse pointing isn't wired; a question on the
-  feature card asks whether it should be.
+  focus state yet (a card asks for `:focus`). The mouse came later (D-044).
 - **Frame order.** Navigation and its handlers run just before `OnUpdate`, outside any host call,
   so a handler can call the engine; the UI ticks and is read back after `OnStart` and after
   `OnRender`, then drawn on top of the game's overlay. A choice made in a handler is acted on in
@@ -556,3 +555,26 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
   in a `:hover { }` block applies always (cosmos card; use `.label:hover`), no `:focus`, no
   text shadow (cosmos cards), the singleton runtime (chaos card), and the C API interop (Nyx
   GAME-F04-T01, done).
+
+## D-044 Mouse in the in-game UI; Ui::: removed; elements are Ui:::Element
+
+Dean answered the three questions D-043 left open.
+
+- **Mouse: yes.** The platform's mouse events now carry the pointer's window position (from
+  SDL's event `x`/`y`), and the game host tracks the left button from them
+  (`GameHost::handle_event`). Each frame it hands the UI the pointer in pixels with the
+  navigation edges, or none while the game has captured the mouse, since a captured mouse
+  steers the camera. `lantern-chaos-ui` hit-tests the boxes it drew last frame, the last
+  button in drawing order winning. Moving over a button focuses it (`onFocus`). Pressing on a
+  button calls `onPress` and draws it `:active` while the pointer stays on it, releasing on the
+  same button calls `onRelease`, and releasing elsewhere cancels, as on the desktop. A pointer
+  that hasn't moved never takes focus, so keyboard and gamepad navigation aren't fought by a
+  resting mouse. Buttons are hit in node order, not by `z-index`; nothing in the game overlaps.
+- **`Ui:::` removed.** The immediate-mode menus (`lantern_renderer_3d::ui` and the `Ui` host
+  type) had no users left, so there is one way to build UI. `Overlay:::` stays for quick text
+  and rectangles; its registration moved to `api/overlay.rs`.
+- **Element type `Ui:::Element`.** Components return `Ui:::Element`, a name that doesn't tie the
+  game's `.chaos` files to Lantern. It became possible once `Ui` was free.
+
+Cards: `mouse-hover-and-click-in-the-in-game-ui`, `remove-the-immediate-mode-ui-api` and
+`rename-the-element-type-to-ui-element` under `platformer-game/in-game-ui-with-chaos-and-cosmos`.

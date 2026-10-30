@@ -144,22 +144,26 @@ Keep class names unique across the folder.
 
 | Call | |
 |---|---|
-| `GameUi:::Mount(file, component) -> i32` | mounts `component` from `file` (relative to the game directory), passing the game's `Application` object as its one argument: `GameScreen :: (game~ Platformer) -> Lantern:::Component`. Call it from `OnStart` or later |
+| `GameUi:::Mount(file, component) -> i32` | mounts `component` from `file` (relative to the game directory), passing the game's `Application` object as its one argument: `GameScreen :: (game~ Platformer) -> Ui:::Element`. Call it from `OnStart` or later |
 | `GameUi:::Unmount(mount)` | |
 | `GameUi:::SetNavigation(previous, next, confirm)` | the input actions (by name) that move focus and press the focused button |
 
 - **State**: a field marked `@signal` on a game object re-renders every `<slot>` that read it
   when the game writes it. Write only when the value changes, or the slot re-renders every
   frame.
-- **Buttons** are elements with `onPress` or `onRelease`. Focus starts on the first one and moves in the order
-  they appear; moving calls the new button's `onFocus`, confirming calls `onPress` then
-  `onRelease`. Handlers run just before `OnUpdate`, so a handler should record a choice for
-  `OnUpdate` to act on.
+- **Buttons** are elements with `onPress` or `onRelease`. Focus starts on the first one and
+  moves in the order they appear; moving calls the new button's `onFocus`, confirming calls
+  `onPress` then `onRelease`. Handlers run just before `OnUpdate`, so a handler should record a
+  choice for `OnUpdate` to act on.
+- **Mouse**: while the mouse isn't captured (`Screen:::SetMouseCaptured`), moving it over a
+  button focuses that button (`onFocus`), pressing the left button on it calls `onPress` and
+  draws it `:active`, and releasing on the same button calls `onRelease`; releasing anywhere
+  else cancels. A mouse that doesn't move never takes focus from the keyboard.
 - **Drawing**: the engine lays the UI out and draws it after `OnRender`, on top of `Overlay:::`
   drawing. A Cosmos `px` is one window point (`Screen:::UiScale() / 2` pixels). `font-size`
   snaps to multiples of 8, the bitmap font's size. The focused button and its contents use
   their `:hover` style (write `.label:hover`, not a rule nested in `:hover { }`), and `:active`
-  while confirmed.
+  while confirmed or held down by the mouse.
 - **Supported elements**: `<frame>` and `<text>`. Supported properties: `background-color`,
   `background-gradient-start` and `background-gradient-end` (top to bottom), `border-color`,
   `border-width`, `border-radius`, `box-shadow` (colour and blur), `padding`, `margin`,
@@ -170,18 +174,13 @@ Keep class names unique across the folder.
 - Errors in a component or a handler are reported as `UI: ...` like a failed hook. Stylesheet
   problems are logged as warnings.
 
-## UI and overlay
+## Overlay
 
-Call these from `OnRender`. The overlay is cleared every frame. The platformer uses `GameUi`
-instead of `Ui:::`; `Ui:::` is the small immediate-mode alternative.
+Call these from `OnRender`. The overlay is cleared every frame. Menus and the HUD are `GameUi`
+components; `Overlay:::` is for quick text and rectangles.
 
 | Call | |
 |---|---|
-| `Ui:::Begin(top, up, down, confirm)` | start a centred menu column at `top` pixels; the game passes its own navigation edges |
-| `Ui:::Title(text)`, `Label(text)`, `Spacing(rows)` | |
-| `Ui:::Button(text) -> bool` | true on the frame the focused button is confirmed |
-| `Ui:::End()` | (an unfinished column is ended by the engine) |
-| `Ui:::Focused() -> i32`, `Ui:::ResetFocus()` | the focused button's index |
 | `Overlay:::Rect(x, y, width, height, color)` | screen pixels |
 | `Overlay:::Text(text, x, y, scale, color)` | the engine's 8×8 bitmap font |
 | `Overlay:::TextWidth(text, scale) / TextHeight(text, scale) -> f32`, `Overlay:::GlyphSize() -> f32` | |

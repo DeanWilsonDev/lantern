@@ -181,7 +181,7 @@ typedef struct lantern_chaos_ui_node {
 } lantern_chaos_ui_node;
 
 /* Starts Chaos on `runtime`: registers the `Component` base class, the `@signal` decorator,
- * the `.chaos` file kind and the element type `Lantern::Component`, and loads every `.cosmos`
+ * the `.chaos` file kind and the element type `Ui::Element`, and loads every `.cosmos`
  * file directly in `ui_directory` (`global.cosmos` as the global sheet, the rest as component
  * sheets). `project_root` is where `.chaos` imports resolve from.
  *

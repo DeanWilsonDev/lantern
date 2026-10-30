@@ -15,9 +15,9 @@ pub mod engine;
 pub mod game_ui;
 pub mod input;
 pub mod math;
+pub mod overlay;
 pub mod physics;
 pub mod rendering;
-pub mod ui;
 pub mod world;
 
 use std::cell::RefCell;
@@ -61,7 +61,7 @@ pub fn register_engine_api(
     physics::register(runtime, state, types)?;
     rendering::register(runtime, state, types)?;
     audio::register(runtime, state)?;
-    ui::register(runtime, state, types)?;
+    overlay::register(runtime, state)?;
     game_ui::register(runtime, game_ui)?;
     debug::register(runtime, state, types)?;
     Ok(())

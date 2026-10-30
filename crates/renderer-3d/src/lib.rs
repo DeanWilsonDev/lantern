@@ -14,7 +14,6 @@ pub mod primitives;
 pub mod render_world;
 pub mod text;
 pub mod texture;
-pub mod ui;
 
 mod font_data;
 

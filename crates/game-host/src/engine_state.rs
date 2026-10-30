@@ -15,7 +15,6 @@ use lantern_debug::DebugHud;
 use lantern_engine::audio::AudioSystem;
 use lantern_engine::world::{EntityId, SceneId, World};
 use lantern_physics::{BodyHandle, CollisionWorld};
-use lantern_renderer_3d::ui::{Ui, UiColumn};
 use lantern_renderer_3d::{MeshHandle, RenderWorld, TextureHandle};
 use lantern_world_format::PropertyValue;
 
@@ -92,9 +91,6 @@ pub struct EngineState {
     pub renderer: Box<dyn RenderBackend>,
     pub audio: AudioSystem,
     pub render_world: RenderWorld,
-    pub ui: Ui,
-    /// The menu column a script is drawing (between `Ui:::Begin` and `Ui:::End`).
-    pub ui_column: Option<UiColumn>,
     pub debug_values: DebugValues,
     pub debug_hud: DebugHud,
     pub input: InputState,
@@ -131,8 +127,6 @@ impl EngineState {
             renderer,
             audio,
             render_world: RenderWorld { overlay_texture: Some(font_atlas), ..RenderWorld::default() },
-            ui: Ui::default(),
-            ui_column: None,
             debug_values: DebugValues::default(),
             debug_hud: DebugHud { visible: false, ..DebugHud::default() },
             input: InputState::default(),
@@ -190,8 +184,6 @@ impl EngineState {
         }
         self.materials.clear();
         self.audio.stop_music();
-        self.ui = Ui::default();
-        self.ui_column = None;
         self.debug_values.clear();
         self.input = InputState::default();
         self.requests.mouse_captured = Some(false);

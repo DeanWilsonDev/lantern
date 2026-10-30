@@ -46,7 +46,7 @@ pub fn register(runtime: &Runtime, game_ui: &SharedGameUi) -> nyx::Result<()> {
     runtime
         .register_type::<GameUiApi>("GameUi")
         // Mounts `component` from `file` (relative to the game directory) with the game's
-        // Application object as its argument: `Name :: (game~ MyGame) -> Lantern:::Component`.
+        // Application object as its argument: `Name :: (game~ MyGame) -> Ui:::Element`.
         // Returns a number for Unmount. Call it from OnStart or later.
         .static_method("Mount", "(file: string, component: string) -> i32", move |context, _, arguments| {
             let file = string_argument(arguments, 0)?;

@@ -29,7 +29,7 @@ crates/
                                      (Umbra src/raylib-facade)
   renderer-3d/   lantern-renderer-3d CPU-side render data: MeshData, TextureData, primitives,
                                      glTF/PNG loading, Camera, the RenderWorld packet, bitmap font,
-                                     immediate-mode Ui (Umbra src/renderer-2d + user-interface)
+                                     (Umbra src/renderer-2d)
   sdl-gpu/       lantern-sdl-gpu     the SDL GPU backend: GpuRenderer owns the device, pipelines,
                                      meshes and textures, and draws a RenderWorld
   physics/       lantern-physics     triangles, capsule casts, CollisionWorld, kinematic bodies,
@@ -116,7 +116,7 @@ pointers, and the game can't: it holds `i64` handles and host objects.
 | `renderer-2d` | `lantern-renderer-3d` | Three pipelines: lit, lines, overlay. |
 | `physics/collision` | `lantern-physics` | Capsule casts against triangles and a kinematic controller; no rigid bodies. |
 | `debug` + `core/debug` | `lantern_core::debug::DebugValues` + `lantern-debug` | Same path-keyed tree (`"Player/Velocity"`). |
-| `core/user-interface` + `snake-game/ui` | `lantern_renderer_3d::ui::Ui` (engine, `Ui:::` in Nyx) + `games/platformer/ui/` | Immediate-mode labels and buttons with focus navigation. |
+| `core/user-interface` + `snake-game/ui` | `lantern-chaos-ui` (engine, `GameUi:::` in Nyx) + `games/platformer/ui/` | Chaos components styled by Cosmos, with keyboard, gamepad and mouse focus (D-043, D-044). |
 | (none) | `lantern-audio` + `lantern_engine::audio::AudioSystem` | Pure-Rust mixer; the SDL audio stream lives in the facade. |
 | (none) | `lantern-game-host` | The seam between Rust engine and Nyx game. |
 | `snake-game` | `games/platformer` | The whole game, in Nyx. |
@@ -193,7 +193,8 @@ FrameLoop::run_frame
 │   └─ world.update_world_transforms()       hierarchy, parent before child
 ├─ 4. host.frame_update(frame)
 │   ├─ engine keys: F1 HUD, F5 reload
-│   ├─ chaos_ui.navigate()                   menu focus; [Nyx] onFocus / onRelease handlers
+│   ├─ chaos_ui.navigate()                   menu focus from the navigation actions and the
+│   │                                          mouse; [Nyx] onFocus / onPress / onRelease
 │   ├─ [Nyx] OnUpdate(frameSeconds)          F2, pause, camera look, menu orbit, HUD values
 │   ├─ apply the game's requests             mouse capture, quit
 │   ├─ engine HUD values                     frame, script ms, renderer, audio, errors
@@ -203,9 +204,10 @@ FrameLoop::run_frame
     ├─ [Nyx] OnRender(alpha, frameSeconds)
     │   ├─ ThirdPersonCamera.Follow()          interpolated player, sphere-cast so it never
     │   │                                        clips; Camera:::LookAt
-    │   ├─ CollisionView.Draw() (F2)           EngineDebug::: lines
-    │   └─ menus (Ui:::) or HUD text (Overlay:::)
-    ├─ end an unfinished Ui column
+    │   └─ CollisionView.Draw() (F2)           EngineDebug::: lines
+    ├─ chaos_ui.update()                     Chaos re-renders slots whose @signals changed,
+    │                                          Cosmos styles, nodes read back
+    ├─ chaos_ui.draw()                       layout, then overlay quads and text
     ├─ extract_draws(world, alpha)           visible MeshRenderers → DrawItems
     ├─ script error banner, debug HUD (F1)
     └─ renderer.render(&render_world)
@@ -303,12 +305,9 @@ own; SDL's device thread drains the queue. Music is a looping voice on its own v
 ## UI and text
 
 `lantern_renderer_3d::text` lays out an embedded 8×8 bitmap font, scaled by whole pixels for the
-display density. `Ui` is immediate mode: each frame the game's menus (`games/platformer/ui/`)
-call `Ui:::Title`, `Label`, `Button` and `Spacing` between `Ui:::Begin` and `Ui:::End`; keyboard or gamepad up/down moves focus and confirm
-activates. Everything becomes overlay quads in the `RenderWorld`. The debug HUD is the same
-text path, drawing `DebugValues` grouped by their first path segment. The platformer no longer
-uses `Ui:::`; its menus and HUD are Chaos and Cosmos (below), and `Ui:::` stays for small games
-and tests.
+display density. `Overlay:::` draws text and rectangles straight into the `RenderWorld`'s
+overlay quads, and the debug HUD is the same text path, drawing `DebugValues` grouped by their
+first path segment. Menus and the HUD are Chaos and Cosmos (below).
 
 ### Chaos and Cosmos (D-043)
 
@@ -325,10 +324,13 @@ The game's UI is `.chaos` components (Nyx with element trees) styled by `.cosmos
    gap, padding, margin, align, justify, grow, width and height in px, %, vw and vh, absolute
    and fixed positioning, z-index) and rounded boxes, borders, top-to-bottom gradients, soft shadows,
    opacity and the bitmap font, all as overlay quads.
-3. **Focus**: elements with `onPress` or `onRelease` are buttons. The game names its navigation actions with
-   `GameUi:::SetNavigation`; up and down move focus (calling `onFocus`), confirm calls
-   `onPress` then `onRelease`. The focused button and everything inside it draw with their
-   `:hover` style, and with `:active` while confirmed.
+3. **Focus**: elements with `onPress` or `onRelease` are buttons. The game names its navigation
+   actions with `GameUi:::SetNavigation`; up and down move focus (calling `onFocus`), confirm
+   calls `onPress` then `onRelease`. The mouse works too (D-044): moving over a button focuses
+   it, and pressing and releasing on the same button calls `onPress` and `onRelease`. The host
+   reads the pointer from the platform's mouse events and passes none while the game has
+   captured the mouse. The focused button and everything inside it draw with their `:hover`
+   style, and with `:active` while confirmed or held down by the mouse.
 
 A component reads the `Application` object it was mounted with. Fields marked `@signal` on game
 objects re-render the `<slot>`s that read them when the game writes them.
@@ -338,7 +340,7 @@ objects re-render the `<slot>`s that read them when the game writes them.
 `crates/game-host` is the only crate that knows about both the engine and the game.
 
 1. `ScriptSession::load` creates a Nyx runtime, registers the engine API (`api/`: `World`,
-   `Physics`, `CharacterController`, `Input`, `Ui`, `GameUi`, `Overlay`, `Audio`, `Camera`, `EngineDebug`,
+   `Physics`, `CharacterController`, `Input`, `GameUi`, `Overlay`, `Audio`, `Camera`, `EngineDebug`,
    `Vec3`, ...), adds the game directory as the import search path and mounts the entry file.
    Analysis errors come back rendered with file, line and column, and nothing runs.
 2. `GameHost` implements the frame loop's `Game` trait. Around each hook it does the engine's
