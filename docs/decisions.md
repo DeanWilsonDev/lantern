@@ -539,11 +539,16 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
 - **Focus.** Elements with `onPress` or `onRelease` are buttons, focused in document order with
   the game's own navigation actions (`GameUi:::SetNavigation`). The focused button and its
   descendants draw with their `:hover` style, and `:active` while confirmed, so Cosmos needs no
-  focus state yet (a card asks for `:focus`). Mouse pointing isn't wired; a question on the card.
+  focus state yet (a card asks for `:focus`). Mouse pointing isn't wired; a question on the
+  feature card asks whether it should be.
 - **Frame order.** Navigation and its handlers run just before `OnUpdate`, outside any host call,
   so a handler can call the engine; the UI ticks and is read back after `OnStart` and after
   `OnRender`, then drawn on top of the game's overlay. A choice made in a handler is acted on in
   the same frame's `OnUpdate`.
+- **One shared component sheet.** Every `ui/*.cosmos` except `global.cosmos` is merged into
+  Cosmos's component layer, so the files act as one sheet rather than each belonging to its own
+  component. It is enough while class names are unique; a sheet per component (matched by file
+  name) is a card on the lantern board.
 - **One UI per process.** Chaos's reactive runtime is a process-wide singleton, so
   `lantern-chaos-ui` allows one `ChaosUi` at a time (a lock, which keeps parallel tests apart).
   A Chaos card asks for a runtime per instance.

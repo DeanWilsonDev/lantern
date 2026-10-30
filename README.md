@@ -42,8 +42,9 @@ Set `NYX_SOURCE_DIR` to use a checkout somewhere else.
 The game's UI is Chaos components styled by Cosmos (D-043), so one CMake build compiles Nyx,
 Chaos, Cosmos and Lantern's bridge together (`crates/chaos-ui/native`). It uses `../chaos` and
 `../cosmos` when they exist (run `git submodule update --init --recursive` in each), or
-`CHAOS_SOURCE_DIR` and `COSMOS_SOURCE_DIR`, and otherwise fetches both repositories' `proto`
-branches, which needs access to them on GitHub. Because Chaos must run on the same Nyx as the
+`CHAOS_SOURCE_DIR` and `COSMOS_SOURCE_DIR`, and otherwise fetches the commits pinned in
+`crates/chaos-ui/native/CMakeLists.txt`, which needs access to them on GitHub. A checkout beside
+this repository or a `*_SOURCE_DIR` overrides the pin; bump the pinned commits on purpose. Because Chaos must run on the same Nyx as the
 game, `NYX_CAPI_PREFIX` (linking a prebuilt Nyx) no longer works for the game.
 
 ### Arch Linux

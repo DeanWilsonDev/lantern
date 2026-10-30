@@ -129,7 +129,8 @@ pub struct Style {
     pub right: Option<Length>,
     pub bottom: Option<Length>,
     pub left: Option<Length>,
-    pub z_index: i32,
+    /// `z-index`: the drawing level; unset draws at the parent's level.
+    pub z_index: Option<i32>,
     /// `box-shadow`: colour and blur radius in logical pixels.
     pub shadow: Option<(Color, f32)>,
 }
@@ -162,7 +163,7 @@ impl Default for Style {
             right: None,
             bottom: None,
             left: None,
-            z_index: 0,
+            z_index: None,
             shadow: None,
         }
     }
@@ -245,7 +246,7 @@ impl Style {
             right: when(ffi::SET_RIGHT, length(raw.right)),
             bottom: when(ffi::SET_BOTTOM, length(raw.bottom)),
             left: when(ffi::SET_LEFT, length(raw.left)),
-            z_index: if has(ffi::SET_Z_INDEX) { raw.z_index } else { 0 },
+            z_index: has(ffi::SET_Z_INDEX).then_some(raw.z_index),
             shadow: has(ffi::SET_SHADOW).then(|| (color(raw.shadow_color), raw.shadow_blur.max(0.0))),
         }
     }

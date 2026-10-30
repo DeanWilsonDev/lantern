@@ -99,12 +99,22 @@ impl ScriptSession {
         let types = SharedTypes::default();
         let game_ui = SharedGameUi::default();
         register_engine_api(&runtime, state, &types, &game_ui).map_err(runtime_error)?;
-        runtime.add_import_search_path(scripts_directory).map_err(runtime_error)?;
+        // On any failure below, empty what the host functions share: the runtime holds those
+        // closures and they hold the Chaos UI and the types, so leaving them would keep the Chaos
+        // UI (one per process) alive and stop every reload.
+        let release_shared = || {
+            *game_ui.borrow_mut() = GameUiState::default();
+            *types.borrow_mut() = HostTypes::default();
+        };
+        if let Err(error) = runtime.add_import_search_path(scripts_directory) {
+            release_shared();
+            return Err(runtime_error(error));
+        }
         // Before mounting, so the game's classes can declare `@signal` fields.
         match start_chaos(&runtime, scripts_directory) {
             Ok(chaos) => game_ui.borrow_mut().chaos = Some(Rc::new(chaos)),
             Err(error) => {
-                *types.borrow_mut() = HostTypes::default();
+                release_shared();
                 return Err(error);
             }
         }
@@ -112,8 +122,7 @@ impl ScriptSession {
             Ok(program) => program,
             Err(error) => {
                 let diagnostics = runtime.render_diagnostics().unwrap_or_default();
-                *game_ui.borrow_mut() = GameUiState::default();
-                *types.borrow_mut() = HostTypes::default();
+                release_shared();
                 return Err(if diagnostics.trim().is_empty() {
                     format!("{}: {error}", entry_path.display())
                 } else {
@@ -121,13 +130,25 @@ impl ScriptSession {
                 });
             }
         };
-        game_ui.borrow_mut().application = Some(program.application().map_err(runtime_error)?);
-        let mut defined_hooks = Vec::new();
-        for hook in GameHook::ALL {
-            if program.defines_method(hook.method_name()).map_err(runtime_error)? {
-                defined_hooks.push(hook);
+        let find_hooks = || -> nyx::Result<(Value, Vec<GameHook>)> {
+            let application = program.application()?;
+            let mut defined_hooks = Vec::new();
+            for hook in GameHook::ALL {
+                if program.defines_method(hook.method_name())? {
+                    defined_hooks.push(hook);
+                }
             }
-        }
+            Ok((application, defined_hooks))
+        };
+        let (application, defined_hooks) = match find_hooks() {
+            Ok(found) => found,
+            Err(error) => {
+                drop(program);
+                release_shared();
+                return Err(runtime_error(error));
+            }
+        };
+        game_ui.borrow_mut().application = Some(application);
         Ok(ScriptSession {
             program,
             runtime,

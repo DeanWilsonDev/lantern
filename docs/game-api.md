@@ -137,7 +137,10 @@ the game decides what a kind means.
 
 The game's menus and HUD are Chaos components (`.chaos`) styled by Cosmos stylesheets
 (`.cosmos`), all in the game's `ui/` folder (D-043). Every `.cosmos` file there is loaded at start:
-`global.cosmos` as the global sheet, the rest as component sheets.
+`global.cosmos` as the global sheet, and all the others together as one shared component sheet.
+So a rule in `hud.cosmos` can match an element in a menu, `:root` variables from every file share
+one namespace, and a class defined in two files isn't reported (the later file, by name, wins).
+Keep class names unique across the folder.
 
 | Call | |
 |---|---|

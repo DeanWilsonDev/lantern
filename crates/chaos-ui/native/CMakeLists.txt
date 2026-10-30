@@ -39,8 +39,7 @@ if(LANTERN_NYX_SOURCE_DIR)
 endif()
 FetchContent_Declare(nyx
     GIT_REPOSITORY https://github.com/DeanWilsonDev/nyx-scripting-language.git
-    GIT_TAG        proto
-    GIT_SHALLOW    TRUE
+    GIT_TAG        a8d9f9bde7d0f7f351f8fee6273c9588ee17f762
     GIT_SUBMODULES external/firefly external/lucis-proto
     GIT_SUBMODULES_RECURSE TRUE)
 FetchContent_MakeAvailable(nyx)
@@ -50,8 +49,7 @@ if(LANTERN_CHAOS_SOURCE_DIR)
 endif()
 FetchContent_Declare(chaos
     GIT_REPOSITORY https://github.com/DeanWilsonDev/chaos.git
-    GIT_TAG        proto
-    GIT_SHALLOW    TRUE
+    GIT_TAG        a2de61b9ae94f830551c0cd414fc007aa4b44d56
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(chaos)
 
@@ -60,8 +58,7 @@ if(LANTERN_COSMOS_SOURCE_DIR)
 endif()
 FetchContent_Declare(cosmos
     GIT_REPOSITORY https://github.com/DeanWilsonDev/cosmos.git
-    GIT_TAG        proto
-    GIT_SHALLOW    TRUE
+    GIT_TAG        faba928f6f29dbb6fecd434ba8c0123533f7998e
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(cosmos)
 

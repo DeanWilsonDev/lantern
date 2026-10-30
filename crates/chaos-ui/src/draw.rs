@@ -147,7 +147,7 @@ pub fn draw(nodes: &[UiNode], styles: &[&Style], rects: &[Rect], overlay: &mut O
         let (parent_opacity, parent_level) =
             nodes[index].parent.map_or((1.0, 0), |parent| (opacity[parent], level[parent]));
         opacity[index] = parent_opacity * styles[index].opacity;
-        level[index] = if styles[index].z_index != 0 { styles[index].z_index } else { parent_level };
+        level[index] = styles[index].z_index.unwrap_or(parent_level);
     }
     let mut order: Vec<usize> = (0..nodes.len()).collect();
     order.sort_by_key(|&index| level[index]);

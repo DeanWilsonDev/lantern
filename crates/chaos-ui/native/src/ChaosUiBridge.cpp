@@ -38,6 +38,30 @@
 
 namespace {
 
+template <typename CosmosEnum> constexpr int Value(CosmosEnum Entry) { return static_cast<int>(Entry); }
+
+static_assert(Value(Cosmos::LengthUnit::Px) == LANTERN_CHAOS_UI_PX);
+static_assert(Value(Cosmos::LengthUnit::Percent) == LANTERN_CHAOS_UI_PERCENT);
+static_assert(Value(Cosmos::LengthUnit::Vw) == LANTERN_CHAOS_UI_VW);
+static_assert(Value(Cosmos::LengthUnit::Vh) == LANTERN_CHAOS_UI_VH);
+static_assert(Value(Cosmos::Display::Stack) == LANTERN_CHAOS_UI_DISPLAY_STACK);
+static_assert(Value(Cosmos::Display::Inline) == LANTERN_CHAOS_UI_DISPLAY_INLINE);
+static_assert(Value(Cosmos::FlexDirection::Row) == LANTERN_CHAOS_UI_ROW);
+static_assert(Value(Cosmos::FlexDirection::Column) == LANTERN_CHAOS_UI_COLUMN);
+static_assert(Value(Cosmos::Align::Start) == LANTERN_CHAOS_UI_ALIGN_START);
+static_assert(Value(Cosmos::Align::Center) == LANTERN_CHAOS_UI_ALIGN_CENTER);
+static_assert(Value(Cosmos::Align::End) == LANTERN_CHAOS_UI_ALIGN_END);
+static_assert(Value(Cosmos::Align::Stretch) == LANTERN_CHAOS_UI_ALIGN_STRETCH);
+static_assert(Value(Cosmos::Justify::Start) == LANTERN_CHAOS_UI_JUSTIFY_START);
+static_assert(Value(Cosmos::Justify::Center) == LANTERN_CHAOS_UI_JUSTIFY_CENTER);
+static_assert(Value(Cosmos::Justify::End) == LANTERN_CHAOS_UI_JUSTIFY_END);
+static_assert(Value(Cosmos::Justify::SpaceBetween) == LANTERN_CHAOS_UI_JUSTIFY_SPACE_BETWEEN);
+static_assert(Value(Cosmos::Position::Static) == LANTERN_CHAOS_UI_STATIC);
+static_assert(Value(Cosmos::Position::Relative) == LANTERN_CHAOS_UI_RELATIVE);
+static_assert(Value(Cosmos::Position::Absolute) == LANTERN_CHAOS_UI_ABSOLUTE);
+static_assert(Value(Cosmos::Position::Fixed) == LANTERN_CHAOS_UI_FIXED);
+static_assert(Value(Cosmos::Position::Sticky) == LANTERN_CHAOS_UI_STICKY);
+
 // The Nyx type a component's element tree has: `Name :: () -> Lantern:::Component`.
 constexpr const char* ElementTypeName = "Lantern::Component";
 
@@ -579,7 +603,11 @@ lantern_chaos_ui_status lantern_chaos_ui_mount(lantern_chaos_ui* ui, const char*
             return LANTERN_CHAOS_UI_ERROR;
         }
         Mounted.Tree = BuildNode(ui->Registry, *Mounted.Root, true);
-        if (!Mounted.Tree) return LANTERN_CHAOS_UI_ERROR;
+        if (!Mounted.Tree) {
+            ui->Messages.push_back(std::string("chaos-ui: ") + component + " from " + file +
+                                   " has no element at its root to draw (a root must be an element, not a bare <slot>)");
+            return LANTERN_CHAOS_UI_ERROR;
+        }
         Mounted.Slots = chaos::ResolveSlots(*Mounted.Tree, *Mounted.Root, ui->MountFunction());
         for (std::unique_ptr<chaos::SlotState>& Slot : Mounted.Slots) Slot->Reconcile();
         ui->CollectDriverDiagnostics();
