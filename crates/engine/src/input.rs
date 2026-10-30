@@ -1,4 +1,4 @@
-//! Input routing (Umbra `InputSystem` + `InputDispatcher` + `ActionRouter`).
+//! Input routing: platform events in, the per-frame action snapshot out.
 //!
 //! Platform events update device state as they arrive. Once per display frame `end_frame_events`
 //! evaluates the bindings into action states. Two consumers read them:

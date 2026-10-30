@@ -114,7 +114,7 @@ first frame after restoring measures zero elapsed time, so the game does not lur
 - **Scenes are tagged entities.** Each entity records the `SceneId` that spawned it;
   `World::despawn_scene` removes exactly those. The app's `LevelScene` also owns the GPU meshes
   it created and releases them in `unload(self, ...)`, which takes the scene by value so it
-  cannot be used afterwards. Umbra's scene stack is not reproduced because the demo has one
+  cannot be used afterwards. There is no scene stack because the demo has one
   level; game states (menu, playing, paused) live in the app.
 - **The level is code** (`apps/platformer-game/src/level.rs`): boxes and ramps only. The same
   data builds render meshes and, from M4, collision, so the two cannot disagree. A scene file
@@ -172,7 +172,7 @@ The behaviour below still holds; since D-023 it is written in Nyx (`games/platfo
 the engine's (D-027).
 
 - **Game states** are an enum in the app (`MainMenu`, `Playing`, `Paused`) with the
-  transitions written out in `game.rs`, rather than Umbra's `IGameState` objects and state
+  transitions written out in `game.rs`, rather than state objects and a state
   machine. Three states with no shared behaviour do not need a framework. The simulation only
   advances while `Playing`; the menu shows the level behind it with a slowly orbiting camera.
 - **Menu input** uses the per-frame snapshot (menus are presentation); gameplay uses the
@@ -252,7 +252,7 @@ Superseded on 2026-10-27 by D-023 to D-030: the snapshot, the commands, the nati
   material names. The editor has no game kinds compiled in.
 - A missing or broken palette falls back to generic blocks, ramps and markers, so the editor
   can open any world.
-- **Why:** this keeps the editor isolated, which Umbra's planned editor also needs. A different
+- **Why:** this keeps the editor isolated. A different
   game ships a different palette and uses the same editor binary.
 
 ## D-020 The editor's split: Rust logic and viewport, Nyx/Chaos/Cosmos panels
@@ -392,12 +392,12 @@ about 150 µs, `OnUpdate` 40 µs and `OnRender` 50 µs per call.
 
 The 3D view, the template thumbnails and the turntable preview are all `<viewport renderer="…">`
 elements in `.chaos` files. The primitive is new in Penumbra and penumbra-ui-backend; a renderer
-is anything that implements `Umbra::IViewportRenderer` (umbra-interfaces): it fills an RGBA
+is anything that implements `Umbra::IViewportRenderer` (from the umbra-interfaces library): it fills an RGBA
 buffer each frame and gets pointer, wheel, key and hover events in its own coordinates. The
 editor registers three renderers by name (`level`, `preview`, `thumbnail:<template>`) from
 `EditorHost::RegisterViewportRenderers` before the UI runs, and the Chaos tree picks them by
-name. The old `LanternViewport` native widget is deleted. This is the shape Umbra's own editor
-can reuse: a renderer per view, named in the UI, no widget code per view.
+name. The old `LanternViewport` native widget is deleted. Each view is a renderer, named in
+the UI, with no widget code per view.
 
 ## D-032 Editor UI state lives in one Nyx `Application`
 
@@ -516,8 +516,8 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
 (GAME-F04), Chaos and Cosmos boards (epic `lantern-in-game-ui-gaps`).
 
 - **Backend shape.** Chaos and Cosmos are C++, so a small C++ bridge (`crates/chaos-ui/native`)
-  is the Chaos backend: each element is a plain node implementing `Umbra::IWidget`, the contract
-  Chaos was designed to reconcile against for Umbra, and `Cosmos::IStyleTarget`. The bridge
+  is the Chaos backend: each element is a plain node implementing `Umbra::IWidget` (from the
+  umbra-interfaces library), the contract Chaos reconciles against, and `Cosmos::IStyleTarget`. The bridge
   hands Rust a flat snapshot of nodes with resolved styles over a C API; layout, drawing and
   focus are Rust (`lantern-chaos-ui`). That keeps the engine's drawing in one language and the
   C++ surface small. Penumbra isn't used: it is a desktop widget toolkit with its own renderer.

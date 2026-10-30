@@ -1,4 +1,4 @@
-//! Lantern's SDL GPU backend (Umbra's `IRenderer` + Raylib renderer facade).
+//! Lantern's SDL GPU renderer backend.
 //!
 //! `GpuRenderer` owns the GPU device, the pipelines and every GPU resource. The game talks to it
 //! with `lantern-renderer-3d` types only: it uploads `MeshData` / `TextureData` and gets

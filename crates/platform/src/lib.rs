@@ -1,4 +1,4 @@
-//! Platform vocabulary (Umbra `src/platform` and `core/window`).
+//! Platform vocabulary: windows, events, devices and timing.
 //!
 //! This crate says *what* a platform provides: a window with a size and pixel density, a stream
 //! of events, a monotonic clock and mouse capture. `lantern-sdl-facade` says *how*, with SDL3.
@@ -8,7 +8,7 @@
 
 use lantern_core::input::{GamepadAxis, GamepadButton, KeyCode, MouseButton};
 
-/// What the game asks for when it opens its window (Umbra `WindowConfig`).
+/// What the game asks for when it opens its window.
 #[derive(Clone, Debug)]
 pub struct WindowConfig {
     pub title: String,
@@ -114,8 +114,8 @@ pub trait PlatformBackend {
     fn set_mouse_captured(&mut self, captured: bool);
 }
 
-/// A device that plays interleaved stereo `f32` samples (Umbra keeps audio behind the raylib
-/// facade the same way). The engine's audio system mixes on the main thread and keeps a short
+/// A device that plays interleaved stereo `f32` samples, kept behind the SDL facade like the
+/// window and input. The engine's audio system mixes on the main thread and keeps a short
 /// queue topped up through this trait (decision D-006), so no audio code runs on SDL's thread.
 pub trait AudioSink {
     /// Frames per second the sink expects. The mixer runs at this rate.

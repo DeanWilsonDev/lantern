@@ -1,4 +1,4 @@
-//! SDL3 adapters (Umbra `src/raylib-facade`).
+//! SDL3 adapters for the platform: window, events, input and audio.
 //!
 //! This crate and `lantern-sdl-gpu` are the only places that call SDL. Every `unsafe` block
 //! states the invariant that makes it sound. Other crates see `lantern_platform` types only.

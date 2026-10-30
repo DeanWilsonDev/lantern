@@ -1,7 +1,7 @@
-//! Debug HUD and debug drawing (Umbra `src/debug`).
+//! Debug HUD and debug drawing.
 //!
 //! - `DebugHud` draws a `DebugValues` list as a text panel, grouped by the first path segment
-//!   (`"Player/Velocity"` goes under "Player"), the way Umbra's `DebugHUD` shows its tree.
+//!   (`"Player/Velocity"` goes under "Player").
 //! - `debug_draw` adds wireframe shapes to a `RenderWorld`'s line list: capsules, triangle
 //!   edges and axes. Lines are depth-tested, so they read correctly in the scene.
 //!

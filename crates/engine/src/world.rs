@@ -1,11 +1,10 @@
 //! The world: entities with names, transforms, an optional parent and an optional mesh
-//! renderer (Umbra `EntityManager` + `Entity` + `TransformComponent2D`, without the component
-//! pipelines).
+//! renderer, with no component pipelines.
 //!
 //! - Entities are `EntityId`s: generational handles, so a despawned entity's id stops working
 //!   instead of silently aliasing a new entity.
 //! - Every entity records the scene that spawned it, so leaving a scene despawns exactly what
-//!   it added (Umbra `Scene::OnExit`, minus the iterator invalidation).
+//!   it added, without invalidating anything being iterated.
 //! - World transforms are recomputed parents-first, roots in slot order and children in the order
 //!   they were attached, so the result never depends on hash-map order.
 //! - Each fixed step starts with `store_previous_transforms`; rendering interpolates between

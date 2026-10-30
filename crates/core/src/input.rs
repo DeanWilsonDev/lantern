@@ -1,5 +1,4 @@
-//! Input vocabulary: devices, named actions, bindings and the per-frame snapshot
-//! (Umbra `core/input`: `Action`, `ActionSet`, `KeyCode`, `KeyBinding`, `ActionValue`).
+//! Input vocabulary: devices, named actions, bindings and the per-frame snapshot.
 //!
 //! Gameplay never reads keys. It asks about *actions* ("jump", "move") through an
 //! `InputSnapshot`, which `lantern_engine::input::InputRouter` builds from device state and the
@@ -139,7 +138,7 @@ pub struct ActionDefinition {
     pub kind: ActionKind,
 }
 
-/// The game's named actions (Umbra `ActionSet::RegisterAction`).
+/// The game's named actions.
 #[derive(Clone, Debug, Default)]
 pub struct ActionSet {
     actions: Vec<ActionDefinition>,
@@ -213,7 +212,7 @@ pub enum Binding {
     },
 }
 
-/// Action → bindings (Umbra `KeyMap`, built with `Bind("Up").Digital({...})`).
+/// Action → bindings.
 #[derive(Clone, Debug, Default)]
 pub struct Bindings {
     entries: Vec<(ActionId, Binding)>,

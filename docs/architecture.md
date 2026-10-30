@@ -1,9 +1,9 @@
 # Lantern architecture
 
 Lantern is a small, readable 3D engine prototype written to answer one question: *what must a
-small 3D platformer engine actually do each frame?* It follows Umbra's domain split (see
-`umbra-audit.md`) but replaces Umbra's interfaces, injector and managers with concrete Rust types
-owned by one composition root. Decisions and their reasons are in `decisions.md`; this document
+small 3D platformer engine actually do each frame?* It splits the engine into domains (core,
+platform, facade, renderer, physics, debug, engine), each a crate, and uses concrete Rust types
+owned by one composition root rather than interfaces, an injector and managers. Decisions and their reasons are in `decisions.md`; this document
 describes the result.
 
 **All game code is Nyx and all engine code is Rust** (D-023). The game lives in
@@ -22,23 +22,20 @@ Cargo.toml                  workspace root (default members: everything except t
 crates/
   core/          lantern-core        math conventions, generational handles and pools, fixed-step
                                      clock, input actions and bindings, colours, logging, debug
-                                     values (Umbra src/core)
+                                     values
   platform/      lantern-platform    backend-neutral vocabulary: PlatformEvent, WindowMetrics, the
-                                     PlatformBackend and AudioSink traits (Umbra src/platform)
+                                     PlatformBackend and AudioSink traits
   sdl-facade/    lantern-sdl-facade  SDL3 context, window, event pump, gamepad, audio stream
-                                     (Umbra src/raylib-facade)
   renderer-3d/   lantern-renderer-3d CPU-side render data: MeshData, TextureData, primitives,
-                                     glTF/PNG loading, Camera, the RenderWorld packet, bitmap font,
-                                     (Umbra src/renderer-2d)
+                                     glTF/PNG loading, Camera, the RenderWorld packet, bitmap font
   sdl-gpu/       lantern-sdl-gpu     the SDL GPU backend: GpuRenderer owns the device, pipelines,
                                      meshes and textures, and draws a RenderWorld
   physics/       lantern-physics     triangles, capsule casts, CollisionWorld, kinematic bodies,
-                                     CharacterController (Umbra src/physics)
+                                     CharacterController
   audio/         lantern-audio       WAV decoding, SoundBank, software Mixer (new)
-  debug/         lantern-debug       DebugHud panel and debug_draw helpers (Umbra src/debug)
+  debug/         lantern-debug       DebugHud panel and debug_draw helpers
   engine/        lantern-engine      FrameLoop and the Game trait, InputRouter, World (entities,
                                      transforms, hierarchy, scenes), extract_draws, AudioSystem
-                                     (Umbra src/engine)
   nyx-sys/       nyx-sys             raw Nyx C ABI bindings (bindgen; builds Nyx with CMake)
   nyx/           nyx                 safe Nyx wrapper
   chaos-ui/      lantern-chaos-ui    the game's UI: Chaos components and Cosmos styles run by a
@@ -57,7 +54,7 @@ apps/
   world-editor/                      the world editor: Penumbra shell (C++, CMake) with panels
                                      in Nyx, Chaos and Cosmos; see docs/editor.md
 games/
-  platformer/                        the demo game, all Nyx (Umbra src/snake-game)
+  platformer/                        the demo game, all Nyx
     game.json                        title, entry file, Application class, assets directory
     main.nyx                         Platformer :: class : Application, the hooks
     settings/                        input map, player tuning
@@ -97,30 +94,6 @@ registers.
 `nyx`/`nyx-sys` see the Nyx C ABI. Engine, physics, audio and the game host never touch raw
 pointers, and the game can't: it holds `i64` handles and host objects.
 
-## Umbra → Lantern mapping
-
-| Umbra | Lantern | Notes |
-|---|---|---|
-| `Core::IApplication` + `Engine::Application` | `lantern_engine::frame_loop::{FrameLoop, Game}`, implemented by `GameHost`, which calls the Nyx `Application` class's hooks | The loop calls `fixed_update`, `frame_update`, `render`; the host turns them into `OnFixedUpdate`, `OnUpdate`, `OnRender`. |
-| `SnakeApplication` | `games/platformer/main.nyx` (`Platformer :: class : Application`) | The game's own composition: input, assets, level, states. |
-| `DependencyInjector` registrations | plain construction in `lantern_game_host::run` | Construction order is dependency order; see "Ownership and shutdown". |
-| `IWindow`, `IInputBackend` + Raylib facades | `lantern_platform::PlatformBackend`, implemented by `lantern_sdl_facade::SdlPlatform` | Tests drive the loop with a scripted fake platform. |
-| `SystemManager` / `GameSystemManager` | the fixed call order in `Platformer.Simulate` (`main.nyx`) and `games/platformer/game-systems/` | Order is code you can read, not registration order. |
-| `SceneManager` + `Scene` | `games/platformer/game-scenes/level-scene.nyx` over `World:::Load` / `World:::Clear` | Everything the game spawns carries the game's `SceneId`, so a clear or reload removes exactly those. There is one level, so no scene stack (D-016). |
-| `EntityManager` + component pipelines | `lantern_engine::world::World` with generational `EntityId` and `ComponentStore<T>` | Iteration is in slot order, so it is deterministic. |
-| `IGameState` + `StateMachine` | `GameState` enum (`MainMenu`, `Playing`, `Paused`) in `game-state/game-state.nyx`, matched with `when` | Three states with no shared behaviour do not need a framework (D-016). |
-| `snake-game/game-events` | `GameEvent` enum and `GameEvents` queue (`game-events/game-event.nyx`) | Events from a step, handled by `GameRules` in order. |
-| `ActionSet`, `KeyMap`, `InputDispatcher`, `ActionRouter` | `lantern_core::input::{ActionSet, Bindings, InputSnapshot}` + `lantern_engine::input::InputRouter` | Named actions with latched edges, read from a snapshot instead of event-bus callbacks. |
-| `IRenderComponentManager` | `lantern_engine::extract::extract_draws` | Fills a `RenderWorld`; the renderer never sees entities. |
-| `IRenderer` + Raylib renderer facade | `lantern_sdl_gpu::GpuRenderer` | One concrete backend; a trait would be added with a second one. |
-| `renderer-2d` | `lantern-renderer-3d` | Three pipelines: lit, lines, overlay. |
-| `physics/collision` | `lantern-physics` | Capsule casts against triangles and a kinematic controller; no rigid bodies. |
-| `debug` + `core/debug` | `lantern_core::debug::DebugValues` + `lantern-debug` | Same path-keyed tree (`"Player/Velocity"`). |
-| `core/user-interface` + `snake-game/ui` | `lantern-chaos-ui` (engine, `GameUi:::` in Nyx) + `games/platformer/ui/` | Chaos components styled by Cosmos, with keyboard, gamepad and mouse focus (D-043, D-044). |
-| (none) | `lantern-audio` + `lantern_engine::audio::AudioSystem` | Pure-Rust mixer; the SDL audio stream lives in the facade. |
-| (none) | `lantern-game-host` | The seam between Rust engine and Nyx game. |
-| `snake-game` | `games/platformer` | The whole game, in Nyx. |
-
 ## Conventions (stated once, tested in `lantern-core`)
 
 | Topic | Convention |
@@ -138,8 +111,7 @@ pointers, and the game can't: it holds `i64` handles and host objects.
 
 ## Timing
 
-`lantern_core::time::FixedStepClock` implements the proposal from Umbra's
-`game-loop-architecture.md`:
+`lantern_core::time::FixedStepClock` runs the simulation at a fixed step:
 
 - fixed step: 1/60 s;
 - each display frame adds the measured time (clamped to `MAX_FRAME_TIME` = 0.25 s) to an
@@ -317,7 +289,8 @@ The game's UI is `.chaos` components (Nyx with element trees) styled by `.cosmos
 1. **The C++ bridge** (`crates/chaos-ui/native`, C API in `include/lantern_chaos_ui.h`) starts
    Chaos on the game's own Nyx runtime, reached through Nyx's `nyx-host-interop.hpp`, so
    components and game code share objects. Each mounted element is a plain node that
-   implements `Umbra::IWidget`, the backend-neutral contract Chaos reconciles against, and
+   implements `Umbra::IWidget` (from the umbra-interfaces library), the backend-neutral contract
+   Chaos reconciles against, and
    `Cosmos::IStyleTarget`, so Cosmos resolves its style. A snapshot hands Rust every node with
    its text, events and resolved style (plus its `:hover` and `:active` overlays).
 2. **Layout and drawing** are Rust (`layout.rs`, `draw.rs`): a flexbox subset (column or row,

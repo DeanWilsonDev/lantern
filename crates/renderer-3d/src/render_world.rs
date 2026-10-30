@@ -1,5 +1,5 @@
-//! `RenderWorld`: everything the backend needs to draw one frame, and nothing it doesn't
-//! (Umbra's render component manager, replaced by an extracted packet).
+//! `RenderWorld`: everything the backend needs to draw one frame, and nothing it doesn't.
+//! The engine extracts it from the world once per frame.
 
 use glam::{Mat4, Vec2, Vec3};
 use lantern_core::color::Color;

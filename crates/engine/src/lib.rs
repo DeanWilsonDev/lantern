@@ -1,4 +1,4 @@
-//! Lantern's engine layer (Umbra `src/engine`): the frame loop, input routing, the world of
+//! Lantern's engine layer: the frame loop, input routing, the world of
 //! entities and transforms, scenes, the game state machine and render extraction.
 //!
 //! The engine owns no platform, GPU, audio or script objects. The game executable constructs

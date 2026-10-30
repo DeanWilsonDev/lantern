@@ -2,7 +2,7 @@
 //!
 //! Lines look like `[  12.345s] INFO  [renderer] selected GPU driver: vulkan`. The bracketed
 //! context is the log target, which every Lantern crate sets to its subsystem name
-//! (`log::info!(target: "renderer", ...)`), mirroring Umbra's `[Application] ...` prefixes.
+//! (`log::info!(target: "renderer", ...)`).
 //! `LANTERN_LOG=debug` (or trace, info, warn, error) changes the level at startup.
 
 use std::io::Write;
