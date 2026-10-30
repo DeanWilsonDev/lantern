@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use glam::Vec2;
-use lantern_chaos_ui::{ChaosUi, Navigation, NodeKind};
+use lantern_chaos_ui::{ChaosUi, Navigation, NodeKind, Pointer};
 use lantern_core::color::Color;
 use lantern_renderer_3d::render_world::Overlay;
 
@@ -62,11 +62,11 @@ public:
 const MENU: &str = r#"
 MenuModel :: import MenuModel;
 
-Menu :: (model~ MenuModel) -> Lantern:::Component {
+Menu :: (model~ MenuModel) -> lantern:::ui:::Element {
     return (
         <frame class="menu">
             <slot>
-                !{(() -> Lantern:::Component {
+                !{(() -> lantern:::ui:::Element {
                     return (<text class="title">{model.title}</text>);
                 })()}
             </slot>
@@ -208,8 +208,81 @@ fn navigation_focuses_buttons_and_confirm_calls_on_release() {
 fn a_broken_component_reports_why() {
     let game = TempGame::new("broken");
     let (_runtime, ui, program) = setup(&game);
-    game.write("ui/Broken.chaos", "Broken :: () -> Lantern:::Component {\n    return (<frame>);\n}\n");
+    game.write("ui/Broken.chaos", "Broken :: () -> lantern:::ui:::Element {\n    return (<frame>);\n}\n");
     let error = ui.mount("ui/Broken.chaos", "Broken", &[]).unwrap_err();
     assert!(error.contains("Broken"), "{error}");
     let _ = program;
+}
+
+fn pointer_at(position: Vec2, pressed: bool, released: bool, held: bool) -> Navigation {
+    Navigation { pointer: Some(Pointer { position, pressed, released, held }), ..Navigation::default() }
+}
+
+fn button_centres(ui: &ChaosUi) -> Vec<(u64, Vec2)> {
+    let mut overlay = Overlay::default();
+    let rects = ui.draw(&mut overlay, Vec2::new(800.0, 600.0), 1.0);
+    ui.nodes()
+        .iter()
+        .zip(&rects)
+        .filter(|(node, _)| node.focusable)
+        .map(|(node, rect)| (node.id, (rect.min + rect.max) * 0.5))
+        .collect()
+}
+
+#[test]
+fn the_mouse_focuses_a_button_it_moves_over_and_clicks_it() {
+    let game = TempGame::new("mouse-click");
+    let (_runtime, ui, program) = setup(&game);
+    ui.mount("ui/Menu.chaos", "Menu", &[model_of(&program)]).unwrap();
+    ui.update();
+    let buttons = button_centres(&ui);
+    let (play, quit) = (buttons[0], buttons[1]);
+
+    ui.navigate(pointer_at(quit.1, false, false, false));
+    assert_eq!(ui.focused(), Some(quit.0));
+    assert_eq!(call(&program, "Moves", &[]).unwrap().as_i32().unwrap(), 1);
+
+    // A quick click (down and up in one frame) on Play focuses and chooses it.
+    ui.navigate(pointer_at(play.1, true, true, false));
+    assert_eq!(ui.focused(), Some(play.0));
+    assert_eq!(call(&program, "Chosen", &[]).unwrap().as_str().unwrap(), "play");
+    assert!(ui.take_messages().is_empty());
+}
+
+#[test]
+fn releasing_the_mouse_off_the_pressed_button_cancels_the_click() {
+    let game = TempGame::new("mouse-cancel");
+    let (_runtime, ui, program) = setup(&game);
+    ui.mount("ui/Menu.chaos", "Menu", &[model_of(&program)]).unwrap();
+    ui.update();
+    let buttons = button_centres(&ui);
+    let (play, quit) = (buttons[0], buttons[1]);
+
+    ui.navigate(pointer_at(play.1, true, false, true));
+    ui.navigate(pointer_at(quit.1, false, true, false));
+    assert_eq!(call(&program, "Chosen", &[]).unwrap().as_str().unwrap(), "");
+
+    // Down and up on the same button, over two frames, clicks it.
+    ui.navigate(pointer_at(quit.1, true, false, true));
+    ui.navigate(pointer_at(quit.1, false, false, true));
+    assert_eq!(call(&program, "Chosen", &[]).unwrap().as_str().unwrap(), "");
+    ui.navigate(pointer_at(quit.1, false, true, false));
+    assert_eq!(call(&program, "Chosen", &[]).unwrap().as_str().unwrap(), "quit");
+}
+
+#[test]
+fn a_still_mouse_leaves_keyboard_focus_alone() {
+    let game = TempGame::new("mouse-still");
+    let (_runtime, ui, program) = setup(&game);
+    ui.mount("ui/Menu.chaos", "Menu", &[model_of(&program)]).unwrap();
+    ui.update();
+    let buttons = button_centres(&ui);
+    let (play, quit) = (buttons[0], buttons[1]);
+
+    ui.navigate(pointer_at(play.1, false, false, false));
+    assert_eq!(ui.focused(), Some(play.0));
+    ui.navigate(Navigation { next: true, ..pointer_at(play.1, false, false, false) });
+    assert_eq!(ui.focused(), Some(quit.0), "the keyboard moved focus and the mouse didn't move");
+    ui.navigate(pointer_at(play.1, false, false, false));
+    assert_eq!(ui.focused(), Some(quit.0));
 }

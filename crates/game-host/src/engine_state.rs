@@ -15,14 +15,13 @@ use lantern_debug::DebugHud;
 use lantern_engine::audio::AudioSystem;
 use lantern_engine::world::{EntityId, SceneId, World};
 use lantern_physics::{BodyHandle, CollisionWorld};
-use lantern_renderer_3d::ui::{Ui, UiColumn};
 use lantern_renderer_3d::{MeshHandle, RenderWorld, TextureHandle};
 use lantern_world_format::PropertyValue;
 
 use crate::render_backend::RenderBackend;
 
 /// Every entity a script spawns, or a world file it loads, belongs to this scene, so
-/// `World:::Clear` and a reload remove exactly the game's entities.
+/// `lantern:::world:::Clear` and a reload remove exactly the game's entities.
 pub const GAME_SCENE: SceneId = SceneId(1);
 
 /// Engine actions come first in every action set, so their ids never change. Scripts cannot
@@ -92,9 +91,6 @@ pub struct EngineState {
     pub renderer: Box<dyn RenderBackend>,
     pub audio: AudioSystem,
     pub render_world: RenderWorld,
-    pub ui: Ui,
-    /// The menu column a script is drawing (between `Ui:::Begin` and `Ui:::End`).
-    pub ui_column: Option<UiColumn>,
     pub debug_values: DebugValues,
     pub debug_hud: DebugHud,
     pub input: InputState,
@@ -107,13 +103,13 @@ pub struct EngineState {
     /// Meshes and textures the script created; released on reload.
     pub script_meshes: Vec<MeshHandle>,
     pub script_textures: Vec<TextureHandle>,
-    /// Meshes built for loaded world files; released by `World:::Clear` and on reload.
+    /// Meshes built for loaded world files; released by `lantern:::world:::Clear` and on reload.
     pub world_meshes: Vec<MeshHandle>,
     pub entity_tags: HashMap<EntityId, EntityTags>,
     /// Kinematic bodies of world-file entities: moving the entity moves the body.
     pub entity_bodies: HashMap<EntityId, BodyHandle>,
     pub font_atlas: TextureHandle,
-    /// Overrides for `Engine:::Flag`, checked before the environment (tests set these).
+    /// Overrides for `lantern:::engine:::Flag`, checked before the environment (tests set these).
     pub flags: HashMap<String, bool>,
 }
 
@@ -131,8 +127,6 @@ impl EngineState {
             renderer,
             audio,
             render_world: RenderWorld { overlay_texture: Some(font_atlas), ..RenderWorld::default() },
-            ui: Ui::default(),
-            ui_column: None,
             debug_values: DebugValues::default(),
             debug_hud: DebugHud { visible: false, ..DebugHud::default() },
             input: InputState::default(),
@@ -158,7 +152,7 @@ impl EngineState {
         }
     }
 
-    /// `Engine:::Flag`: an override, else an environment variable that is set, not empty
+    /// `lantern:::engine:::Flag`: an override, else an environment variable that is set, not empty
     /// and not "0".
     pub fn flag(&self, name: &str) -> bool {
         if let Some(value) = self.flags.get(name) {
@@ -167,7 +161,7 @@ impl EngineState {
         std::env::var(name).is_ok_and(|value| !value.is_empty() && value != "0")
     }
 
-    /// Removes every game entity, the world-file meshes and all collision (`World:::Clear`).
+    /// Removes every game entity, the world-file meshes and all collision (`lantern:::world:::Clear`).
     pub fn clear_world(&mut self) {
         self.world.despawn_scene(GAME_SCENE);
         for mesh in self.world_meshes.drain(..) {
@@ -190,8 +184,6 @@ impl EngineState {
         }
         self.materials.clear();
         self.audio.stop_music();
-        self.ui = Ui::default();
-        self.ui_column = None;
         self.debug_values.clear();
         self.input = InputState::default();
         self.requests.mouse_captured = Some(false);

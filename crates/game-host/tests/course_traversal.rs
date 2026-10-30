@@ -1,6 +1,6 @@
 //! M4 gate: a scripted pilot runs the course's jumps, including the moving platform, at several
 //! display rates. Collision is built from the real world file (assets/worlds/course.world.json)
-//! the way `World:::Load` builds it, and the platform follows the path the game's
+//! the way `lantern:::world:::Load` builds it, and the platform follows the path the game's
 //! `MovingPlatform` gives it (games/platformer/game-entities/moving-platform.nyx).
 //!
 //! The pilot works like a player: once per display frame it looks at the state and decides

@@ -1,4 +1,4 @@
-//! Lantern's collision and character movement (Umbra `src/physics`, extended to 3D).
+//! Lantern's 3D collision and character movement.
 //!
 //! - `geometry`: closest-point queries between points, segments and triangles.
 //! - `world`: static triangles in a uniform grid, kinematic bodies (moving platforms), and the

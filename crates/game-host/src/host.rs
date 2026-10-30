@@ -10,18 +10,28 @@
 use std::path::PathBuf;
 
 use glam::Vec2;
-use lantern_chaos_ui::Navigation;
+use lantern_chaos_ui::{Navigation, Pointer};
 use lantern_core::color::Color;
-use lantern_core::input::{ActionSet, Bindings};
+use lantern_core::input::{ActionSet, Bindings, MouseButton};
 use lantern_engine::extract::extract_draws;
 use lantern_engine::frame_loop::{FixedStepContext, FrameContext, Game};
-use lantern_platform::PlatformBackend;
+use lantern_platform::{PlatformBackend, PlatformEvent};
 use lantern_renderer_3d::text::{self, scale_for_density};
 use lantern_sdl_gpu::FrameReport;
 
 use crate::api::SharedState;
 use crate::engine_state::{ENGINE_RELOAD_ACTION, ENGINE_TOGGLE_HUD_ACTION, EngineState};
 use crate::session::{GameHook, HookArgument, ScriptSession};
+
+/// The mouse as the UI sees it: where it is (window points) and the left button's edges since
+/// the last frame.
+#[derive(Default)]
+struct MouseForUi {
+    position: Option<Vec2>,
+    left_went_down: bool,
+    left_went_up: bool,
+    left_held: bool,
+}
 
 /// Where a game's scripts are and which class to run.
 #[derive(Clone, Debug)]
@@ -46,6 +56,11 @@ pub struct GameHost {
     /// Save the last frame here as a PNG when quitting (smoke tests).
     pub capture_path: Option<PathBuf>,
     quit: bool,
+    mouse: MouseForUi,
+    /// Whether the game has captured the mouse (it then moves the camera, not a pointer).
+    mouse_captured: bool,
+    /// Physical pixels per window point, from the last frame's window metrics.
+    pixels_per_point: f32,
 }
 
 impl GameHost {
@@ -63,6 +78,9 @@ impl GameHost {
             max_frames: None,
             capture_path: None,
             quit: false,
+            mouse: MouseForUi::default(),
+            mouse_captured: false,
+            pixels_per_point: 1.0,
         };
         host.start_session();
         host
@@ -111,6 +129,14 @@ impl GameHost {
     /// The game's Chaos UI before `OnUpdate`: focus moves and button handlers run. The engine
     /// state isn't borrowed here, since the handlers are game code that calls the engine.
     fn navigate_ui(&mut self) {
+        let mouse = std::mem::take(&mut self.mouse);
+        self.mouse = MouseForUi { position: mouse.position, left_held: mouse.left_held, ..MouseForUi::default() };
+        let pointer = mouse.position.filter(|_| !self.mouse_captured).map(|position| Pointer {
+            position: position * self.pixels_per_point,
+            pressed: mouse.left_went_down,
+            released: mouse.left_went_up,
+            held: mouse.left_held,
+        });
         let Some(session) = self.session.as_mut() else { return };
         let navigation = match session.ui_navigation_actions() {
             Some(actions) => {
@@ -120,10 +146,12 @@ impl GameHost {
                     previous: pressed(&actions.previous),
                     next: pressed(&actions.next),
                     confirm: pressed(&actions.confirm),
+                    pointer: None,
                 }
             }
             None => Navigation::default(),
         };
+        let navigation = Navigation { pointer, ..navigation };
         session.navigate_ui(navigation);
         self.report_ui_messages();
     }
@@ -237,6 +265,24 @@ impl GameHost {
 }
 
 impl Game for GameHost {
+    fn handle_event(&mut self, event: &PlatformEvent, _platform: &mut dyn PlatformBackend) {
+        match *event {
+            PlatformEvent::MouseMoved { x, y, .. } => self.mouse.position = Some(Vec2::new(x, y)),
+            PlatformEvent::MouseButtonDown { button: MouseButton::Left, x, y } => {
+                self.mouse.position = Some(Vec2::new(x, y));
+                self.mouse.left_went_down = true;
+                self.mouse.left_held = true;
+            }
+            PlatformEvent::MouseButtonUp { button: MouseButton::Left, x, y } => {
+                self.mouse.position = Some(Vec2::new(x, y));
+                self.mouse.left_went_up = true;
+                self.mouse.left_held = false;
+            }
+            PlatformEvent::FocusLost => self.mouse.left_held = false,
+            _ => {}
+        }
+    }
+
     fn fixed_update(&mut self, step: &FixedStepContext) {
         if self.session.is_none() {
             return;
@@ -257,6 +303,9 @@ impl Game for GameHost {
             let mut state = self.state.borrow_mut();
             state.screen_size = Vec2::new(frame.window.pixel_width as f32, frame.window.pixel_height as f32);
             state.ui_scale = scale_for_density(2, frame.window.pixel_density);
+            if frame.window.logical_width > 0 && frame.window.pixel_width > 0 {
+                self.pixels_per_point = frame.window.pixel_width as f32 / frame.window.logical_width as f32;
+            }
             state.input.snapshot = frame.input.clone();
             (frame.input.pressed(ENGINE_RELOAD_ACTION), frame.input.pressed(ENGINE_TOGGLE_HUD_ACTION))
         };
@@ -273,6 +322,7 @@ impl Game for GameHost {
             let mut state = self.state.borrow_mut();
             if let Some(captured) = state.requests.mouse_captured.take() {
                 platform.set_mouse_captured(captured);
+                self.mouse_captured = captured;
             }
             if std::mem::take(&mut state.requests.quit) {
                 self.quit = true;
@@ -289,7 +339,6 @@ impl Game for GameHost {
         {
             let mut state = self.state.borrow_mut();
             state.render_world.clear();
-            state.ui_column = None;
         }
         self.call(GameHook::OnRender, &[HookArgument::F32(frame.alpha), HookArgument::F32(frame.frame_seconds)]);
         if let Some(session) = self.session.as_mut() {
@@ -298,9 +347,6 @@ impl Game for GameHost {
         self.report_ui_messages();
         {
             let state = &mut *self.state.borrow_mut();
-            if let Some(unfinished) = state.ui_column.take() {
-                state.ui.end_column(unfinished);
-            }
             if let Some(session) = &self.session {
                 // A Cosmos `px` is a window point, as in the editor: `ui_scale` is twice the
                 // pixel density (the 8x8 font's normal size), so half of it is one point.

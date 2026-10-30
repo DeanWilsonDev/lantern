@@ -192,7 +192,7 @@ impl ScriptSession {
         result.map(|_| ()).map_err(failed)
     }
 
-    /// The actions the game named with `GameUi:::SetNavigation`, if it has.
+    /// The actions the game named with `lantern:::ui:::SetNavigation`, if it has.
     pub fn ui_navigation_actions(&self) -> Option<NavigationActions> {
         self.game_ui.borrow().navigation.clone()
     }
@@ -231,6 +231,11 @@ impl ScriptSession {
         self.game_ui.borrow().chaos.as_ref().map(|chaos| chaos.nodes()).unwrap_or_default()
     }
 
+    /// The UI's buttons and their boxes in window pixels, as last drawn (tests click through this).
+    pub fn ui_button_rects(&self) -> Vec<(u64, lantern_chaos_ui::Rect)> {
+        self.game_ui.borrow().chaos.as_ref().map(|chaos| chaos.button_rects()).unwrap_or_default()
+    }
+
     /// What Chaos and Cosmos reported since the last call: component and stylesheet errors,
     /// failed event handlers.
     pub fn take_ui_messages(&self) -> Vec<String> {
@@ -259,7 +264,7 @@ pub fn engine_host_surface() -> Result<String, String> {
     let game_ui = SharedGameUi::default();
     let runtime = Runtime::new().map_err(runtime_error)?;
     register_engine_api(&runtime, &shared_state, &types, &game_ui).map_err(runtime_error)?;
-    // Chaos adds `Component`, `Lantern::Component` and the `@signal` decorator.
+    // Chaos adds `Component`, `lantern::ui::Element` and the `@signal` decorator.
     let chaos = ChaosUi::new(&runtime, Path::new(""), Path::new(""))?;
     let manifest = runtime.write_host_surface().map_err(runtime_error);
     drop(chaos);

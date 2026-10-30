@@ -1,4 +1,4 @@
-//! Render extraction (Umbra's render component manager, inverted): the world is read once per
+//! Render extraction: the world is read once per
 //! display frame and turned into `DrawItem`s. The renderer never sees entities.
 
 use lantern_renderer_3d::RenderWorld;

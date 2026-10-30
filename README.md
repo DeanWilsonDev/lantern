@@ -2,8 +2,8 @@
 
 A small, readable 3D engine prototype in Rust, and a third-person platformer built on it. All
 game code is Nyx (`games/platformer/`), hosted through Nyx's C ABI; all engine code is Rust
-(`crates/`), and `crates/game-host` is the seam between them. Lantern follows the domain split of Umbra (the C++
-engine in the snake repository) and is meant as a reference for a later rewrite.
+(`crates/`), and `crates/game-host` is the seam between them. Lantern is a
+tutorial repository and a prototype for a later engine.
 
 - `docs/brief.md` — what the prototype is for and its milestones.
 - `docs/architecture.md` — the tour: crates, per-frame sequence, ownership and shutdown, the

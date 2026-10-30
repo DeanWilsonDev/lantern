@@ -1,4 +1,4 @@
-//! Backend-neutral rendering data (Umbra `src/renderer-2d`, grown into 3D).
+//! Backend-neutral rendering data.
 //!
 //! The game describes a frame as a `RenderWorld`: a camera, a light, a list of draw items
 //! (mesh + texture + transform + colour), debug lines and a 2D overlay. A backend
@@ -14,7 +14,6 @@ pub mod primitives;
 pub mod render_world;
 pub mod text;
 pub mod texture;
-pub mod ui;
 
 mod font_data;
 

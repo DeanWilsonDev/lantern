@@ -1,4 +1,4 @@
-//! The frame loop (Umbra `Application::Run`, with the fixed-step proposal implemented).
+//! The frame loop, with a fixed simulation step.
 //!
 //! ```text
 //! loop {
@@ -40,7 +40,7 @@ pub struct FrameContext<'a> {
     pub window: WindowMetrics,
 }
 
-/// The game's side of the loop (Umbra `IApplication`'s update / render hooks).
+/// The game's side of the loop: its update and render hooks.
 pub trait Game {
     /// Called for every platform event, after the input router has seen it.
     fn handle_event(&mut self, _event: &PlatformEvent, _platform: &mut dyn PlatformBackend) {}

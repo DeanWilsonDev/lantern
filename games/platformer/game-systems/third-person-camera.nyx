@@ -18,11 +18,11 @@ public:
     distance~ f32 = DEFAULT_DISTANCE;
 
     // A look delta in radians (+x turns right, +y looks up).
-    Look~: (delta: Vec2) -> void {
+    Look~: (delta: lantern:::math:::Vec2) -> void {
         // Turning right is negative yaw (positive yaw turns left), hence the minus.
-        // Angle:::Wrap folds the result back into -π..π. Without it yaw would grow forever as
+        // lantern:::angle:::Wrap folds the result back into -π..π. Without it yaw would grow forever as
         // the player spins, losing float precision, and comparing two yaws would need care.
-        yaw = Angle:::Wrap(yaw - delta.x);
+        yaw = lantern:::angle:::Wrap(yaw - delta.x);
         // Pitch is clamped rather than wrapped: past straight up or straight down the camera
         // would flip over. The limits stop it just short of overhead and a little below the
         // player's head.
@@ -30,7 +30,7 @@ public:
     }
 
     Orbit~: (radians: f32) -> void {
-        yaw = Angle:::Wrap(yaw + radians);
+        yaw = lantern:::angle:::Wrap(yaw + radians);
     }
 
     ResetBehind~: (newYaw: f32) -> void {
@@ -46,22 +46,23 @@ public:
     // it is (-1, 0, 0). Pitch is left out on purpose: looking down at the player must not make
     // "forward" push them into the ground, so only the horizontal part of the view counts.
     // The result has length 1 because sin² + cos² = 1.
-    Forward :: () -> Vec3 {
-        return Vec3 { x: -Math:::sin(yaw), z: -Math:::cos(yaw) };
+    Forward :: () -> lantern:::math:::Vec3 {
+        return { x: -Math:::sin(yaw), z: -Math:::cos(yaw) };
     }
 
     // Forward turned a quarter turn clockwise (to the right) seen from above:
     // (cos yaw, 0, -sin yaw). It is also Forward x Up. At yaw 0 it is (1, 0, 0), +X.
-    Right :: () -> Vec3 {
-        return Vec3 { x: Math:::cos(yaw), z: -Math:::sin(yaw) };
+    Right :: () -> lantern:::math:::Vec3 {
+        return { x: Math:::cos(yaw), z: -Math:::sin(yaw) };
     }
 
     // Places the camera behind `playerFeet`, pulled in so nothing sits between the pivot and the
     // lens. Moving in is instant; easing back out takes RETURN_SPEED.
-    Follow~: (playerFeet: Vec3, frameSeconds: f32) -> void {
+    Follow~: (playerFeet: lantern:::math:::Vec3, frameSeconds: f32) -> void {
         // Orbit around the head, not the feet, so the player sits low in the frame and you can
         // see where you are going.
-        pivot := playerFeet + Vec3 { y: PIVOT_HEIGHT };
+        headHeight: lantern:::math:::Vec3 = { y: PIVOT_HEIGHT };
+        pivot := playerFeet + headHeight;
         // Spherical to Cartesian: the unit vector from the pivot out to the camera.
         // - cos(pitch) is how much of the length lies flat; sin(pitch) is how much is vertical.
         // - The flat part points along (sin yaw, cos yaw) in x and z, which is -Forward(): the
@@ -70,7 +71,7 @@ public:
         //   20 degrees) gives y = +0.34, so the camera is raised and looks down.
         // Its length is 1, since cos²(pitch)(sin²(yaw) + cos²(yaw)) + sin²(pitch) = 1, so
         // `backward * distance` is exactly `distance` metres away.
-        backward := Vec3 {
+        backward: lantern:::math:::Vec3 = {
             x: Math:::cos(pitch) * Math:::sin(yaw),
             y: -Math:::sin(pitch),
             z: Math:::cos(pitch) * Math:::cos(yaw)
@@ -81,7 +82,7 @@ public:
         // see the player. A sphere, not a ray, because the lens has size: the near plane must
         // not poke through a wall even when the centre of the view is clear. MIN_DISTANCE stops
         // the camera ending up inside the player's head when backed into a corner.
-        allowedDistance := when Physics:::SphereCast(COLLISION_RADIUS, pivot, backward * distance) {
+        allowedDistance := when lantern:::physics:::SphereCast(COLLISION_RADIUS, pivot, backward * distance) {
             fraction: f32 -> Math:::max(distance * fraction, MIN_DISTANCE),
             null -> distance
         };
@@ -96,7 +97,7 @@ public:
             ? allowedDistance
             : Math:::min(currentDistance + RETURN_SPEED * frameSeconds, allowedDistance);
         // Eye at pivot + direction x distance, looking back at the pivot.
-        Camera:::LookAt(pivot + backward * currentDistance, pivot);
+        lantern:::camera:::LookAt(pivot + backward * currentDistance, pivot);
     }
 
 private:

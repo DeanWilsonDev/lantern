@@ -1,9 +1,9 @@
 //! `World`: entities, their transforms and meshes, and world files.
 //!
-//! Entities are `i64` ids. A world file (`World:::Load`) spawns one entity per file entity,
+//! Entities are `i64` ids. A world file (`lantern:::world:::Load`) spawns one entity per file entity,
 //! with its render mesh and collision; game code finds them by `kind` and reads their
-//! `properties` (`World:::FindByKind("gem")`, `World:::NumberProperty(id, "period_seconds")`).
-//! Everything spawned here belongs to the game and is removed by `World:::Clear` or a reload.
+//! `properties` (`lantern:::world:::FindByKind("gem")`, `lantern:::world:::NumberProperty(id, "period_seconds")`).
+//! Everything spawned here belongs to the game and is removed by `lantern:::world:::Clear` or a reload.
 
 use std::collections::HashMap;
 
@@ -14,12 +14,11 @@ use lantern_world_format::{ColliderKind, PropertyValue, WorldFile, build_pieces}
 use nyx::{CallContext, CallbackError, Runtime, Value};
 
 use super::{
-    SharedState, SharedTypes, color_argument, entity_from_script, entity_to_script, f32_argument, handle_from_script,
-    i64_argument, not_found, some_bool, some_f32, some_i64, some_string, string_argument, vec3_argument, wrap_vec3,
+    HostNamespace, SharedState, SharedTypes, color_argument, entity_from_script, entity_to_script, f32_argument,
+    handle_from_script, i64_argument, not_found, some_bool, some_f32, some_i64, some_string, string_argument,
+    vec3_argument, wrap_vec3,
 };
 use crate::engine_state::{EngineState, EntityTags, GAME_SCENE};
-
-struct WorldApi;
 
 fn live_entity(
     context: &CallContext,
@@ -129,9 +128,8 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
     let set_scale = (state.clone(), types.clone());
     let visible = state.clone();
     let set_visible = state.clone();
-    runtime
-        .register_type::<WorldApi>("World")
-        .static_method("Load", "(path: string) -> i32", move |context, _, arguments| {
+    HostNamespace::new(runtime, "lantern::world")
+        .function("Load", "(path: string) -> i32", move |context, arguments| {
             let relative = string_argument(arguments, 0)?;
             let mut state = load.borrow_mut();
             let path = state.asset_path(&relative);
@@ -143,31 +141,31 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             log::info!(target: "world", "loaded {}: {count} entities", path.display());
             Ok(Some(context.make_i32(count as i32)?))
         })
-        .static_method("Clear", "() -> void", move |_context, _, _| {
+        .function("Clear", "() -> void", move |_context, _| {
             clear.borrow_mut().clear_world();
             Ok(None)
         })
-        .static_method("Spawn", "(name: string, position: Vec3) -> i64", move |context, _, arguments| {
+        .function("Spawn", "(name: string, position: lantern:::math:::Vec3) -> i64", move |context, arguments| {
             let name = string_argument(arguments, 0)?;
             let position = vec3_argument(&spawn.1, arguments, 1)?;
             let entity = spawn.0.borrow_mut().world.spawn(&name, GAME_SCENE, Transform::from_translation(position));
             some_i64(context, entity_to_script(entity))
         })
-        .static_method("Despawn", "(entity: i64) -> void", move |context, _, arguments| {
+        .function("Despawn", "(entity: i64) -> void", move |context, arguments| {
             let mut state = despawn.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
             state.world.despawn(entity);
             state.entity_tags.remove(&entity);
             Ok(None)
         })
-        .static_method("Find", "(name: string) -> i64", move |context, _, arguments| {
+        .function("Find", "(name: string) -> i64", move |context, arguments| {
             let name = string_argument(arguments, 0)?;
             match find.borrow().world.find_by_name(&name) {
                 Some(entity) => some_i64(context, entity_to_script(entity)),
                 None => Err(not_found(context, format!("no entity named '{name}'"))),
             }
         })
-        .static_method("FindByKind", "(kind: string) -> Array<i64>", move |context, _, arguments| {
+        .function("FindByKind", "(kind: string) -> Array<i64>", move |context, arguments| {
             let wanted = string_argument(arguments, 0)?;
             let state = find_kind.borrow();
             // World order (spawn order), so a file's gem_0 comes before gem_1.
@@ -179,18 +177,18 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 .collect::<nyx::Result<Vec<Value>>>()?;
             Ok(Some(context.make_array(&ids)?))
         })
-        .static_method("Kind", "(entity: i64) -> string", move |context, _, arguments| {
+        .function("Kind", "(entity: i64) -> string", move |context, arguments| {
             let state = kind.borrow();
             let entity = live_entity(context, &state, arguments, 0)?;
             some_string(context, state.entity_tags.get(&entity).map_or("", |tags| tags.kind.as_str()))
         })
-        .static_method("HasProperty", "(entity: i64, key: string) -> bool", move |context, _, arguments| {
+        .function("HasProperty", "(entity: i64, key: string) -> bool", move |context, arguments| {
             let state = has_property.borrow();
             let entity = live_entity(context, &state, arguments, 0)?;
             let key = string_argument(arguments, 1)?;
             some_bool(context, state.entity_tags.get(&entity).is_some_and(|tags| tags.properties.contains_key(&key)))
         })
-        .static_method("NumberProperty", "(entity: i64, key: string) -> f32", move |context, _, arguments| {
+        .function("NumberProperty", "(entity: i64, key: string) -> f32", move |context, arguments| {
             let state = number_property.borrow();
             let entity = live_entity(context, &state, arguments, 0)?;
             let key = string_argument(arguments, 1)?;
@@ -199,7 +197,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 _ => Err(not_found(context, format!("the property '{key}' is not a number"))),
             }
         })
-        .static_method("TextProperty", "(entity: i64, key: string) -> string", move |context, _, arguments| {
+        .function("TextProperty", "(entity: i64, key: string) -> string", move |context, arguments| {
             let state = text_property.borrow();
             let entity = live_entity(context, &state, arguments, 0)?;
             let key = string_argument(arguments, 1)?;
@@ -208,7 +206,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 _ => Err(not_found(context, format!("the property '{key}' is not text"))),
             }
         })
-        .static_method("VectorProperty", "(entity: i64, key: string) -> Vec3", move |context, _, arguments| {
+        .function("VectorProperty", "(entity: i64, key: string) -> lantern:::math:::Vec3", move |context, arguments| {
             let value = {
                 let state = vector_property.0.borrow();
                 let entity = live_entity(context, &state, arguments, 0)?;
@@ -220,13 +218,13 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             };
             wrap_vec3(&vector_property.1, value)
         })
-        .static_method("SetMaterial", "(material: string, texture: i64) -> void", move |_context, _, arguments| {
+        .function("SetMaterial", "(material: string, texture: i64) -> void", move |_context, arguments| {
             let material = string_argument(arguments, 0)?;
             let texture = handle_from_script(i64_argument(arguments, 1)?);
             set_material.borrow_mut().materials.insert(material, texture);
             Ok(None)
         })
-        .static_method("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", move |context, _, arguments| {
+        .function("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", move |context, arguments| {
             let mut state = set_mesh.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
             let mesh = handle_from_script(i64_argument(arguments, 1)?);
@@ -236,10 +234,10 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             }
             Ok(None)
         })
-        .static_method(
+        .function(
             "SetTexturedMesh",
             "(entity: i64, mesh: i64, texture: i64, tint: string) -> void",
-            move |context, _, arguments| {
+            move |context, arguments| {
                 let mut state = set_textured_mesh.borrow_mut();
                 let entity = live_entity(context, &state, arguments, 0)?;
                 let mesh = handle_from_script(i64_argument(arguments, 1)?);
@@ -251,7 +249,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 Ok(None)
             },
         )
-        .static_method("SetTint", "(entity: i64, tint: string) -> void", move |context, _, arguments| {
+        .function("SetTint", "(entity: i64, tint: string) -> void", move |context, arguments| {
             let mut state = set_tint.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
             let tint = color_argument(context, arguments, 1)?;
@@ -260,7 +258,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             }
             Ok(None)
         })
-        .static_method("SetParent", "(child: i64, parent: i64) -> void", move |context, _, arguments| {
+        .function("SetParent", "(child: i64, parent: i64) -> void", move |context, arguments| {
             let mut state = set_parent.borrow_mut();
             let child = live_entity(context, &state, arguments, 0)?;
             let parent = live_entity(context, &state, arguments, 1)?;
@@ -270,7 +268,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
                 .map_err(|error| super::invalid(context, format!("cannot parent: {error:?}")))?;
             Ok(None)
         })
-        .static_method("Position", "(entity: i64) -> Vec3", move |context, _, arguments| {
+        .function("Position", "(entity: i64) -> lantern:::math:::Vec3", move |context, arguments| {
             let value = {
                 let state = position.0.borrow();
                 let entity = live_entity(context, &state, arguments, 0)?;
@@ -278,7 +276,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             };
             wrap_vec3(&position.1, value)
         })
-        .static_method("WorldPosition", "(entity: i64) -> Vec3", move |context, _, arguments| {
+        .function("WorldPosition", "(entity: i64) -> lantern:::math:::Vec3", move |context, arguments| {
             let value = {
                 let state = world_position.0.borrow();
                 let entity = live_entity(context, &state, arguments, 0)?;
@@ -288,16 +286,20 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
         })
         // Where the entity is drawn this frame: between the last two fixed steps (`alpha` is
         // `OnRender`'s argument).
-        .static_method("InterpolatedPosition", "(entity: i64, alpha: f32) -> Vec3", move |context, _, arguments| {
-            let value = {
-                let state = interpolated.0.borrow();
-                let entity = live_entity(context, &state, arguments, 0)?;
-                let alpha = f32_argument(arguments, 1)?;
-                state.world.get(entity).map_or(Vec3::ZERO, |data| data.interpolated_world(alpha).w_axis.truncate())
-            };
-            wrap_vec3(&interpolated.1, value)
-        })
-        .static_method("SetPosition", "(entity: i64, position: Vec3) -> void", move |context, _, arguments| {
+        .function(
+            "InterpolatedPosition",
+            "(entity: i64, alpha: f32) -> lantern:::math:::Vec3",
+            move |context, arguments| {
+                let value = {
+                    let state = interpolated.0.borrow();
+                    let entity = live_entity(context, &state, arguments, 0)?;
+                    let alpha = f32_argument(arguments, 1)?;
+                    state.world.get(entity).map_or(Vec3::ZERO, |data| data.interpolated_world(alpha).w_axis.truncate())
+                };
+                wrap_vec3(&interpolated.1, value)
+            },
+        )
+        .function("SetPosition", "(entity: i64, position: lantern:::math:::Vec3) -> void", move |context, arguments| {
             let position = vec3_argument(&set_position_state.1, arguments, 1)?;
             let mut state = set_position_state.0.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
@@ -305,7 +307,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             Ok(None)
         })
         // Moves without interpolating from the old position (a respawn).
-        .static_method("Teleport", "(entity: i64, position: Vec3) -> void", move |context, _, arguments| {
+        .function("Teleport", "(entity: i64, position: lantern:::math:::Vec3) -> void", move |context, arguments| {
             let position = vec3_argument(&teleport.1, arguments, 1)?;
             let mut state = teleport.0.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
@@ -313,7 +315,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             state.world.teleport(entity, position);
             Ok(None)
         })
-        .static_method("SetYaw", "(entity: i64, yaw: f32) -> void", move |context, _, arguments| {
+        .function("SetYaw", "(entity: i64, yaw: f32) -> void", move |context, arguments| {
             let mut state = set_yaw.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
             let yaw = f32_argument(arguments, 1)?;
@@ -322,7 +324,7 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             }
             Ok(None)
         })
-        .static_method("SetScale", "(entity: i64, scale: Vec3) -> void", move |context, _, arguments| {
+        .function("SetScale", "(entity: i64, scale: lantern:::math:::Vec3) -> void", move |context, arguments| {
             let scale = vec3_argument(&set_scale.1, arguments, 1)?;
             let mut state = set_scale.0.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
@@ -331,13 +333,13 @@ pub fn register(runtime: &Runtime, state: &SharedState, types: &SharedTypes) -> 
             }
             Ok(None)
         })
-        .static_method("IsVisible", "(entity: i64) -> bool", move |context, _, arguments| {
+        .function("IsVisible", "(entity: i64) -> bool", move |context, arguments| {
             let state = visible.borrow();
             let entity = live_entity(context, &state, arguments, 0)?;
             let shown = state.world.get(entity).and_then(|data| data.mesh_renderer).is_none_or(|mesh| mesh.visible);
             some_bool(context, shown)
         })
-        .static_method("SetVisible", "(entity: i64, visible: bool) -> void", move |context, _, arguments| {
+        .function("SetVisible", "(entity: i64, visible: bool) -> void", move |context, arguments| {
             let mut state = set_visible.borrow_mut();
             let entity = live_entity(context, &state, arguments, 0)?;
             let shown = super::bool_argument(arguments, 1)?;

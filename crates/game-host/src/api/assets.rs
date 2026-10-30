@@ -8,12 +8,9 @@ use lantern_renderer_3d::{MeshData, TextureData, primitives};
 use nyx::{CallContext, CallbackError, Runtime, Value};
 
 use super::{
-    SharedState, color_argument, f32_argument, handle_to_script, i32_argument, invalid, not_found, some_i64,
-    string_argument,
+    HostNamespace, SharedState, color_argument, f32_argument, handle_to_script, i32_argument, invalid, not_found,
+    some_i64, string_argument,
 };
-
-struct TexturesApi;
-struct MeshesApi;
 
 fn create_texture(context: &CallContext, state: &SharedState, texture: &TextureData) -> nyx::CallbackResult {
     let mut state = state.borrow_mut();
@@ -41,18 +38,17 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
     let load_texture = state.clone();
     let checker = state.clone();
     let solid = state.clone();
-    runtime
-        .register_type::<TexturesApi>("Textures")
-        .static_method("Load", "(path: string) -> i64", move |context, _, arguments| {
+    HostNamespace::new(runtime, "lantern::textures")
+        .function("Load", "(path: string) -> i64", move |context, arguments| {
             let relative = string_argument(arguments, 0)?;
             let path = load_texture.borrow().asset_path(&relative);
             let texture = TextureData::load_png(&path).map_err(|error| not_found(context, error.0))?;
             create_texture(context, &load_texture, &texture)
         })
-        .static_method(
+        .function(
             "Checker",
             "(size: i32, cells: i32, first: string, second: string) -> i64",
-            move |context, _, arguments| {
+            move |context, arguments| {
                 let size = positive_count(context, arguments, 0)?;
                 let cells = positive_count(context, arguments, 1)?;
                 let first = color_argument(context, arguments, 2)?;
@@ -60,7 +56,7 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
                 create_texture(context, &checker, &TextureData::checker(size, cells, first, second))
             },
         )
-        .static_method("Solid", "(color: string) -> i64", move |context, _, arguments| {
+        .function("Solid", "(color: string) -> i64", move |context, arguments| {
             let color = color_argument(context, arguments, 0)?;
             create_texture(context, &solid, &TextureData::solid(color))
         })
@@ -71,18 +67,17 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
     let sphere = state.clone();
     let cube = state.clone();
     let gem = state.clone();
-    runtime
-        .register_type::<MeshesApi>("Meshes")
-        .static_method("Load", "(path: string) -> i64", move |context, _, arguments| {
+    HostNamespace::new(runtime, "lantern::meshes")
+        .function("Load", "(path: string) -> i64", move |context, arguments| {
             let relative = string_argument(arguments, 0)?;
             let path = load_mesh.borrow().asset_path(&relative);
             let mesh = load_gltf_mesh(&path).map_err(|error| not_found(context, error.to_string()))?;
             create_mesh(context, &load_mesh, &mesh)
         })
-        .static_method(
+        .function(
             "Capsule",
             "(radius: f32, halfHeight: f32, segments: i32, rings: i32) -> i64",
-            move |context, _, arguments| {
+            move |context, arguments| {
                 let mesh = primitives::capsule(
                     f32_argument(arguments, 0)?,
                     f32_argument(arguments, 1)?,
@@ -92,7 +87,7 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
                 create_mesh(context, &capsule, &mesh)
             },
         )
-        .static_method("Sphere", "(radius: f32, segments: i32, rings: i32) -> i64", move |context, _, arguments| {
+        .function("Sphere", "(radius: f32, segments: i32, rings: i32) -> i64", move |context, arguments| {
             let mesh = primitives::sphere(
                 f32_argument(arguments, 0)?,
                 positive_count(context, arguments, 1)?,
@@ -100,10 +95,10 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
             );
             create_mesh(context, &sphere, &mesh)
         })
-        .static_method("Cube", "(size: f32) -> i64", move |context, _, arguments| {
+        .function("Cube", "(size: f32) -> i64", move |context, arguments| {
             create_mesh(context, &cube, &primitives::cube(f32_argument(arguments, 0)?))
         })
-        .static_method("Gem", "(radius: f32, height: f32) -> i64", move |context, _, arguments| {
+        .function("Gem", "(radius: f32, height: f32) -> i64", move |context, arguments| {
             create_mesh(context, &gem, &primitives::gem(f32_argument(arguments, 0)?, f32_argument(arguments, 1)?))
         })
         .register()?;

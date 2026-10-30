@@ -1,4 +1,4 @@
-//! Linear RGBA colours (Umbra `core/color`).
+//! Linear RGBA colours.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {

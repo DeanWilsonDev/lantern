@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use lantern_core::input::KeyCode;
+use lantern_core::input::{KeyCode, MouseButton};
 use lantern_engine::audio::AudioSystem;
 use lantern_engine::frame_loop::FrameLoop;
 use lantern_engine::input::InputRouter;
@@ -32,6 +32,15 @@ impl ScriptedPlatform {
 }
 
 impl ScriptedPlatform {
+    fn click_next_frame(&mut self, position: glam::Vec2) {
+        let (x, y) = (position.x, position.y);
+        self.queued_events.push_back(vec![PlatformEvent::MouseMoved { delta_x: 0.0, delta_y: 0.0, x, y }]);
+        self.queued_events.push_back(vec![
+            PlatformEvent::MouseButtonDown { button: MouseButton::Left, x, y },
+            PlatformEvent::MouseButtonUp { button: MouseButton::Left, x, y },
+        ]);
+    }
+
     fn hold_key_for_frames(&mut self, key: KeyCode, frames: usize) {
         self.queued_events.push_back(vec![PlatformEvent::KeyDown { key, repeat: false }]);
         for _ in 1..frames {
@@ -177,6 +186,24 @@ fn the_main_menu_waits_for_play() {
 }
 
 #[test]
+fn clicking_play_with_the_mouse_starts_the_game() {
+    let (mut host, _stats) = start_platformer(&[]);
+    let mut platform = ScriptedPlatform::default();
+    let mut frame_loop = FrameLoop::new(InputRouter::new(Default::default(), Default::default()));
+    run_frames(&mut frame_loop, &mut platform, &mut host, 2);
+    let buttons = host.script_session().expect("the game loaded").ui_button_rects();
+    assert_eq!(buttons.len(), 2, "Play and Quit");
+    let play = buttons[0].1;
+
+    platform.click_next_frame((play.min + play.max) * 0.5);
+    run_frames(&mut frame_loop, &mut platform, &mut host, 60);
+    assert_no_script_error(&host);
+    let time: f32 = debug_value(&host, "Game/Time").parse().expect("Game/Time");
+    assert!(time > 0.5, "Play was clicked: {time}");
+    assert!(platform.mouse_captured, "playing captures the mouse");
+}
+
+#[test]
 fn walking_into_a_gem_collects_it() {
     let (mut host, _stats) = start_platformer(&[]);
     let mut platform = ScriptedPlatform::default();
@@ -201,8 +228,8 @@ fn a_hook_error_names_the_nyx_line_and_its_callers() {
     std::fs::write(
         directory.join("main.nyx"),
         "Broken :: class : Application {\npublic:\n    Run :: () -> void { }\n\
-         \x20   OnFixedUpdate~: (dt: f32) -> void {\n        World:::SetYaw(Target(), dt);\n    }\n\
-         \x20   Target :: () -> i64 {\n        return World:::Find(\"missing\");\n    }\n}\n",
+         \x20   OnFixedUpdate~: (dt: f32) -> void {\n        lantern:::world:::SetYaw(Target(), dt);\n    }\n\
+         \x20   Target :: () -> i64 {\n        return lantern:::world:::Find(\"missing\");\n    }\n}\n",
     )
     .unwrap();
     let state =

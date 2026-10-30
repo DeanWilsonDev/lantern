@@ -13,7 +13,7 @@ namespace WorldEditor {
 
 // Each renderer draws through the Rust backend's C API and hands the pixels back to the
 // `<viewport renderer="...">` element that shows it. All editing logic stays in Rust; these
-// classes only translate Umbra's viewport contract into lantern_editor_* calls.
+// classes only translate the viewport contract into lantern_editor_* calls.
 
 std::uint32_t ToModifierBits(const Umbra::ViewportModifiers& Modifiers);
 

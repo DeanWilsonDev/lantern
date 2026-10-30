@@ -114,7 +114,7 @@ first frame after restoring measures zero elapsed time, so the game does not lur
 - **Scenes are tagged entities.** Each entity records the `SceneId` that spawned it;
   `World::despawn_scene` removes exactly those. The app's `LevelScene` also owns the GPU meshes
   it created and releases them in `unload(self, ...)`, which takes the scene by value so it
-  cannot be used afterwards. Umbra's scene stack is not reproduced because the demo has one
+  cannot be used afterwards. There is no scene stack because the demo has one
   level; game states (menu, playing, paused) live in the app.
 - **The level is code** (`apps/platformer-game/src/level.rs`): boxes and ramps only. The same
   data builds render meshes and, from M4, collision, so the two cannot disagree. A scene file
@@ -172,7 +172,7 @@ The behaviour below still holds; since D-023 it is written in Nyx (`games/platfo
 the engine's (D-027).
 
 - **Game states** are an enum in the app (`MainMenu`, `Playing`, `Paused`) with the
-  transitions written out in `game.rs`, rather than Umbra's `IGameState` objects and state
+  transitions written out in `game.rs`, rather than state objects and a state
   machine. Three states with no shared behaviour do not need a framework. The simulation only
   advances while `Playing`; the menu shows the level behind it with a slowly orbiting camera.
 - **Menu input** uses the per-frame snapshot (menus are presentation); gameplay uses the
@@ -252,7 +252,7 @@ Superseded on 2026-10-27 by D-023 to D-030: the snapshot, the commands, the nati
   material names. The editor has no game kinds compiled in.
 - A missing or broken palette falls back to generic blocks, ramps and markers, so the editor
   can open any world.
-- **Why:** this keeps the editor isolated, which Umbra's planned editor also needs. A different
+- **Why:** this keeps the editor isolated. A different
   game ships a different palette and uses the same editor binary.
 
 ## D-020 The editor's split: Rust logic and viewport, Nyx/Chaos/Cosmos panels
@@ -392,12 +392,12 @@ about 150 µs, `OnUpdate` 40 µs and `OnRender` 50 µs per call.
 
 The 3D view, the template thumbnails and the turntable preview are all `<viewport renderer="…">`
 elements in `.chaos` files. The primitive is new in Penumbra and penumbra-ui-backend; a renderer
-is anything that implements `Umbra::IViewportRenderer` (umbra-interfaces): it fills an RGBA
+is anything that implements `Umbra::IViewportRenderer` (from the umbra-interfaces library): it fills an RGBA
 buffer each frame and gets pointer, wheel, key and hover events in its own coordinates. The
 editor registers three renderers by name (`level`, `preview`, `thumbnail:<template>`) from
 `EditorHost::RegisterViewportRenderers` before the UI runs, and the Chaos tree picks them by
-name. The old `LanternViewport` native widget is deleted. This is the shape Umbra's own editor
-can reuse: a renderer per view, named in the UI, no widget code per view.
+name. The old `LanternViewport` native widget is deleted. Each view is a renderer, named in
+the UI, with no widget code per view.
 
 ## D-032 Editor UI state lives in one Nyx `Application`
 
@@ -516,8 +516,8 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
 (GAME-F04), Chaos and Cosmos boards (epic `lantern-in-game-ui-gaps`).
 
 - **Backend shape.** Chaos and Cosmos are C++, so a small C++ bridge (`crates/chaos-ui/native`)
-  is the Chaos backend: each element is a plain node implementing `Umbra::IWidget`, the contract
-  Chaos was designed to reconcile against for Umbra, and `Cosmos::IStyleTarget`. The bridge
+  is the Chaos backend: each element is a plain node implementing `Umbra::IWidget` (from the
+  umbra-interfaces library), the contract Chaos reconciles against, and `Cosmos::IStyleTarget`. The bridge
   hands Rust a flat snapshot of nodes with resolved styles over a C API; layout, drawing and
   focus are Rust (`lantern-chaos-ui`). That keeps the engine's drawing in one language and the
   C++ surface small. Penumbra isn't used: it is a desktop widget toolkit with its own renderer.
@@ -529,8 +529,8 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
   component's argument, because a host signature can't name a game class or a generic object.
   State is `@signal` fields on a game object (`GameUiModel`); writing one re-renders the
   `<slot>`s that read it.
-- **Element type.** Elements are `Lantern:::Component` (`RegisterElementType`), as Penumbra's are
-  `Penumbra:::Component`. Provisional; a question on the card.
+- **Element type.** Elements are `lantern:::ui:::Element` (`RegisterElementType`), as
+  Penumbra's are `Penumbra:::Component`. Dean chose the name (D-044).
 - **Layout defaults.** A frame with no `display` stacks its children in a column, like a menu;
   `display: stack` with no `flex-direction` is a row, as in Cosmos. Children stretch across by
   default. A Cosmos `px` is one window point (half of `Screen:::UiScale()` pixels), so a
@@ -539,8 +539,7 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
 - **Focus.** Elements with `onPress` or `onRelease` are buttons, focused in document order with
   the game's own navigation actions (`GameUi:::SetNavigation`). The focused button and its
   descendants draw with their `:hover` style, and `:active` while confirmed, so Cosmos needs no
-  focus state yet (a card asks for `:focus`). Mouse pointing isn't wired; a question on the
-  feature card asks whether it should be.
+  focus state yet (a card asks for `:focus`). The mouse came later (D-044).
 - **Frame order.** Navigation and its handlers run just before `OnUpdate`, outside any host call,
   so a handler can call the engine; the UI ticks and is read back after `OnStart` and after
   `OnRender`, then drawn on top of the game's overlay. A choice made in a handler is acted on in
@@ -556,3 +555,49 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
   in a `:hover { }` block applies always (cosmos card; use `.label:hover`), no `:focus`, no
   text shadow (cosmos cards), the singleton runtime (chaos card), and the C API interop (Nyx
   GAME-F04-T01, done).
+
+## D-044 Mouse in the in-game UI; Ui::: removed; elements are lantern:::ui:::Element
+
+Dean answered the three questions D-043 left open.
+
+- **Mouse: yes.** The platform's mouse events now carry the pointer's window position (from
+  SDL's event `x`/`y`), and the game host tracks the left button from them
+  (`GameHost::handle_event`). Each frame it hands the UI the pointer in pixels with the
+  navigation edges, or none while the game has captured the mouse, since a captured mouse
+  steers the camera. `lantern-chaos-ui` hit-tests the boxes it drew last frame, the last
+  button in drawing order winning. Moving over a button focuses it (`onFocus`). Pressing on a
+  button calls `onPress` and draws it `:active` while the pointer stays on it, releasing on the
+  same button calls `onRelease`, and releasing elsewhere cancels, as on the desktop. A pointer
+  that hasn't moved never takes focus, so keyboard and gamepad navigation aren't fought by a
+  resting mouse. Buttons are hit in node order, not by `z-index`; nothing in the game overlaps.
+- **`Ui:::` removed.** The immediate-mode menus (`lantern_renderer_3d::ui` and the `Ui` host
+  type) had no users left, so there is one way to build UI. `Overlay:::` stays for quick text
+  and rectangles; its registration moved to `api/overlay.rs`.
+- **Element type `lantern:::ui:::Element`.** Components return `lantern:::ui:::Element`. The
+  name says where an element comes from: a game element is the engine's, and an application
+  element is `Penumbra:::Component`, so the two never read alike in one codebase. Engine names
+  start with `lantern:::`, and namespaces are lowercase; `Element` is PascalCase as a type. Nyx takes a three-part name as an element type as it is.
+
+Cards: `mouse-hover-and-click-in-the-in-game-ui`, `remove-the-immediate-mode-ui-api` and
+`rename-the-element-type-to-lantern-ui-element` under `platformer-game/in-game-ui-with-chaos-and-cosmos`.
+
+## D-045 Every engine name is under lantern:::
+
+Dean asked that every name a script gets from the engine start with `lantern:::`, with lowercase
+namespaces and PascalCase types, and that Lantern never name another engine.
+
+- **Functions.** Each API group registers its calls as host functions under one namespace
+  (`HostNamespace` in `api/mod.rs`): `Input:::IsDown` is now `lantern:::input:::IsDown`,
+  `GameUi:::Mount` is `lantern:::ui:::Mount`, `EngineDebug:::` is `lantern:::debug:::`, and so on,
+  one lowercase namespace per old group. They were static methods of empty marker types before,
+  which made `Input` a type a script could name.
+- **Types.** `Vec3` and `Vec2` are `lantern:::math:::Vec3` and `lantern:::math:::Vec2`;
+  `RayHit`, `ControllerStep` and `CharacterController` are under `lantern:::physics:::`; the UI
+  element is `lantern:::ui:::Element`.
+- **Nyx.** Namespaced host functions and types needed Nyx changes (nyx PR #19, Nyx board
+  GAME-F05-T01). Nyx can't yet build a namespaced value type from braces with the path in front
+  (`lantern:::math:::Vec3 { y: 1.0f }`, GAME-F05-T02), so the game builds vectors from braces
+  where the type is known: a typed local, an argument or a return value.
+
+Card: `naming/lantern-names/move-the-engine-api-under-lantern`.
+

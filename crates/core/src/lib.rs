@@ -1,4 +1,4 @@
-//! Lantern's core vocabulary (Umbra `src/core`).
+//! Lantern's core vocabulary.
 //!
 //! Everything here is plain data and small algorithms with no platform or GPU dependency, so
 //! every other crate can share it and it can be unit tested on any machine.

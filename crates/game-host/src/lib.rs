@@ -90,7 +90,7 @@ fn environment_flag(name: &str) -> bool {
 /// `LANTERN_GPU_DRIVER=vulkan|metal|direct3d12`, `LANTERN_VSYNC=0`, `LANTERN_ASSETS=dir`,
 /// `LANTERN_MAX_FRAMES=n` (quit after n frames), `LANTERN_CAPTURE_PATH=x.png` (save the last
 /// frame), `LANTERN_DEBUG_HUD=1` (start with the HUD on). Games read their own flags with
-/// `Engine:::Flag` (the platformer: `LANTERN_AUTOPLAY`, `LANTERN_COLLISION_VIEW`).
+/// `lantern:::engine:::Flag` (the platformer: `LANTERN_AUTOPLAY`, `LANTERN_COLLISION_VIEW`).
 pub fn run(game_directory: &Path) -> Result<(), Box<dyn std::error::Error>> {
     use lantern_engine::audio::AudioSystem;
     use lantern_engine::frame_loop::FrameLoop;

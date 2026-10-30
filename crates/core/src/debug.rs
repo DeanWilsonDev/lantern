@@ -1,7 +1,7 @@
 //! Debug values: a path-keyed list of named values that any system can publish
-//! (Umbra `core/debug/DebugValue` + `DebugHUD::Set("Player/Position", ...)`).
+//! (`"Player/Position"`).
 //!
-//! Unlike Umbra's `unordered_map` tree, entries keep the order they were first set in, so the
+//! Entries keep the order they were first set in, so the
 //! HUD doesn't reshuffle between frames.
 
 use glam::Vec3;

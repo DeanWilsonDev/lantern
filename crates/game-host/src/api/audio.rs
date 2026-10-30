@@ -3,18 +3,15 @@
 
 use nyx::Runtime;
 
-use super::{SharedState, f32_argument, string_argument};
-
-struct AudioApi;
+use super::{HostNamespace, SharedState, f32_argument, string_argument};
 
 pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
     let load = state.clone();
     let play = state.clone();
     let music = state.clone();
     let stop = state.clone();
-    runtime
-        .register_type::<AudioApi>("Audio")
-        .static_method("Load", "(name: string, path: string) -> void", move |_context, _, arguments| {
+    HostNamespace::new(runtime, "lantern::audio")
+        .function("Load", "(name: string, path: string) -> void", move |_context, arguments| {
             let name = string_argument(arguments, 0)?;
             let relative = string_argument(arguments, 1)?;
             let mut state = load.borrow_mut();
@@ -22,19 +19,19 @@ pub fn register(runtime: &Runtime, state: &SharedState) -> nyx::Result<()> {
             state.audio.load_sound(&name, &path);
             Ok(None)
         })
-        .static_method("Play", "(name: string, volume: f32) -> void", move |_context, _, arguments| {
+        .function("Play", "(name: string, volume: f32) -> void", move |_context, arguments| {
             let name = string_argument(arguments, 0)?;
             let volume = f32_argument(arguments, 1)?;
             play.borrow_mut().audio.play(&name, volume);
             Ok(None)
         })
         // Loops on the music bus, replacing any music already playing.
-        .static_method("PlayMusic", "(name: string) -> void", move |_context, _, arguments| {
+        .function("PlayMusic", "(name: string) -> void", move |_context, arguments| {
             let name = string_argument(arguments, 0)?;
             music.borrow_mut().audio.play_music(&name);
             Ok(None)
         })
-        .static_method("StopMusic", "() -> void", move |_context, _, _| {
+        .function("StopMusic", "() -> void", move |_context, _| {
             stop.borrow_mut().audio.stop_music();
             Ok(None)
         })

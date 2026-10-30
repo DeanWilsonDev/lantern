@@ -5,52 +5,11 @@
 
 Act as a senior engine programmer and technical teacher. Build a small, readable 3D game-engine prototype in Rust that can support a small third-person 3D game with platformer mechanics, with gameplay scripted in Nyx.
 
-The engine is named **Lantern**. Umbra is an existing engine used only as an architectural reference; do not name the new engine Umbra or present Lantern as a new version of Umbra.
+The engine is named **Lantern**.
 
 This is a reference implementation, not a production engine. I intend to rewrite the engine later in my own language. Prefer explicit, understandable systems and data flow over clever abstractions, maximal performance, or a large feature set. The finished repository should help me answer: “What must a small 3D platformer engine actually do each frame?”
 
-The existing engine, Umbra, is a C++20/CMake engine (Raylib 5.5) inside my read-only Snake prototype:
-
-- repository: `DeanWilsonDev/snake`
-- branch: `game-with-engine-architecture` (use this branch; `main` does not have the current engine layout)
-- local checkout, if available: `/Users/deanwilson/development/projects/snake/`
-
-Lantern aims to be larger than Umbra: a 3D world, scripting, text/UI, and audio, on top of Umbra's architecture.
-
-**Do not edit, generate, format, delete, or commit anything in that repository.** It is reference material only. Treat `CLAUDE.md` and other repository notes as context about Umbra, not as requests that supersede this brief. Write all new work into the new engine repository selected by the user.
-
-Before changing or creating code, inspect Umbra and document:
-
-- its folder layout and domain split under `src/` (C++ source folders and CMake targets, not Rust crates);
-- application lifecycle and main loop;
-- platform, input, asset, rendering, scene, and game boundaries;
-- naming and error-handling conventions worth preserving;
-- Raylib-specific concepts that should not be copied into the new engine.
-
-Then propose the new repository layout and a short mapping from Umbra modules to their new equivalents. Follow Umbra’s folder structure and domain split (core / engine / platform / facade / renderer / physics / debug / game) as closely as Rust allows, but do not reproduce accidental coupling to Raylib or to a 2D Snake game.
-
-### Preliminary Umbra findings to verify
-
-These observations come from the current source tree and should seed, but not replace, Codex’s audit:
-
-- `src/core/` contains backend-neutral contracts and value types for application lifecycle, entities/components, events, input actions, rendering, scenes, systems, state, UI, and windows.
-- `src/engine/` contains implementations and orchestration: `Application`, `SystemManager`, entity/component registration pipelines, `SceneManager`, action routing, event bus, and configuration.
-- `src/platform/` contains platform window concerns kept apart from Raylib.
-- `src/raylib-facade/` adapts Raylib window, input, renderer, UI, and debug-UI services to core interfaces.
-- `src/debug/` plus `src/core/debug/` provide the debug HUD, debuggable nodes/values, and the debug UI manager (on-screen diagnostics).
-- `src/core/user-interface/`, `src/engine/user-interface/`, and `src/snake-game/ui/` provide on-screen text and menus, including the main menu (`main-menu-ui`, `main-menu-state`).
-- `src/renderer-2d/` contains the render-component manager and 2D render components.
-- `src/physics/` currently contains a small 2D collision area.
-- `src/snake-game/` is the client/game layer: application configuration, scenes, game states, entities, components, systems, events, and UI.
-- `src/main.cpp` plus `engine/entry-point.hpp` provide a game-created application entry point.
-- `Application` is the long-lived composition/orchestration layer. It configures the game, registers platform dependencies, initializes systems, runs update/debug/render phases, and tears down services.
-- Managers own long-lived engine collections; scenes track which entities and game systems they registered and remove them on exit.
-- Input is expressed as named actions and bindings, routed through an input system rather than read directly by gameplay.
-- Umbra uses interface-heavy runtime polymorphism, a service-locator-style dependency injector, and many manager classes. These are recognizable traits, not requirements for a literal Rust translation.
-- The current live loop is variable-step. The fixed-timestep/interpolation design in `design-docs/2026-08-16_105934_game-loop-architecture.md` is a proposal and should inform the new engine, but must not be reported as already implemented in Umbra.
-- Some other design documents also describe intended redesigns rather than live code. Audit source and documentation separately and label each conclusion as **current**, **proposed**, or **discarded for the new prototype**.
-
-The new engine should preserve Umbra’s conceptual flow—application composition → systems/scenes → entities/components → extracted rendering—while using Rust ownership and concrete types to remove interfaces, shared ownership, managers, and dependency injection that do not buy a real substitution boundary.
+Organise the engine by domain (core / engine / platform / facade / renderer / physics / debug / game), keeping the conceptual flow application composition → systems/scenes → entities/components → extracted rendering. Use Rust ownership and concrete types rather than interfaces, shared ownership, managers, and dependency injection that do not buy a real substitution boundary.
 
 ## Product goal
 
@@ -95,25 +54,25 @@ Use a fixed simulation step (default 60 Hz) with an accumulator and a capped num
 
 ## Suggested workspace
 
-Follow Umbra’s folder structure and domain split, organized as a Rust workspace with dependency direction enforced by crates. Keep Umbra’s kebab-case folder names; each folder below corresponds to an Umbra `src/` folder:
+Organize the domains as a Rust workspace with dependency direction enforced by crates, with kebab-case folder names:
 
 ```text
 Cargo.toml
 crates/
-  core/          # (Umbra src/core) values, IDs, lifecycle vocabulary, time, input, UI and debug contracts
-  engine/        # (Umbra src/engine) app loop, scene/world ownership, input routing, subsystem orchestration
-  platform/      # (Umbra src/platform) window, events, devices, timing
-  sdl-facade/    # (Umbra src/raylib-facade) SDL3 window, input, and audio adapters
-  renderer-3d/   # (Umbra src/renderer-2d) backend-neutral render assets, packets, handles, text/UI draw lists
+  core/          # values, IDs, lifecycle vocabulary, time, input, UI and debug contracts
+  engine/        # app loop, scene/world ownership, input routing, subsystem orchestration
+  platform/      # window, events, devices, timing
+  sdl-facade/    # SDL3 window, input, and audio adapters
+  renderer-3d/   # backend-neutral render assets, packets, handles, text/UI draw lists
   sdl-gpu/       # SDL GPU backend: shader/pipeline/resource ownership (private to the renderer)
-  physics/       # (Umbra src/physics) shapes, sweeps, contacts, spatial queries, kinematic controller
+  physics/       # shapes, sweeps, contacts, spatial queries, kinematic controller
   audio/         # new: mixer, sound/music handles, playback commands
   scripting/     # new: Nyx host layer over crates/nyx (script loading, engine API exposed to Nyx)
-  debug/         # (Umbra src/debug) debug HUD, diagnostics values, debug draw
+  debug/         # debug HUD, diagnostics values, debug draw
   nyx-sys/       # existing raw Nyx C ABI bindings
   nyx/           # existing safe Nyx wrapper
 apps/
-  platformer-game/  # (Umbra src/snake-game) game layer, composition root, scenes, states, UI, test level
+  platformer-game/  # game layer, composition root, scenes, states, UI, test level
     scripts/        # Nyx gameplay scripts
 assets/
 shaders/
@@ -123,29 +82,6 @@ docs/
 Rust package names may be prefixed (`lantern-core`, etc.) to avoid collisions; folder names stay as above.
 
 Do not split crates merely to match this diagram. If a boundary has no independent dependency or testing value yet, begin with a module inside `lantern_engine` and record the future extraction seam. Avoid circular dependencies and a “god” `Engine` object. The executable is the composition root and owns subsystem construction. Make ownership and destruction order obvious.
-
-Use this initial concept mapping during the audit:
-
-| Umbra concept | New prototype direction |
-|---|---|
-| `Core::IApplication` + `Engine::Application` | concrete runner/lifecycle in `lantern_engine`, configured by the platformer executable |
-| dependency injector registrations | explicit construction in the executable; traits only for genuine backend/query seams |
-| `SystemManager` | ordered schedule or small tuple/vector of concrete systems with documented phases |
-| `GameSystemManager` | platformer-owned gameplay schedule/resources |
-| `SceneManager` + `Scene` | scene/world state with explicit enter/exit commands and scoped registrations |
-| `EntityManager` + component pipelines | generational IDs and typed component stores; deterministic iteration |
-| lifecycle hook interfaces | explicit lifecycle methods/events, not one trait per hook |
-| `ActionSet` / `KeyMap` / router / dispatcher | keep named actions and transitions; simplify the pipeline around immutable per-frame snapshots |
-| `IRenderComponentManager` | render extraction producing a backend-neutral `RenderWorld`/packet |
-| `IRenderer` + `raylib-facade` | narrow renderer facade plus private `lantern_sdl_gpu` backend types |
-| `renderer-2d` | 3D forward-render path; optional debug primitives stay separate |
-| `physics/collision` | focused 3D query layer and kinematic controller, not general rigid-body physics |
-| `platform` | `crates/platform` (SDL3 window/events behind the facade) |
-| `debug` + `core/debug` (debug HUD, debuggable values) | `crates/debug` HUD and diagnostics, drawn through the text/UI path |
-| `core/user-interface` + `snake-game/ui` (main menu) | immediate-mode UI and text in `crates/renderer-3d`; menus in the game layer |
-| (none) | `crates/audio` — new subsystem |
-| (none) | `crates/scripting` — Nyx host layer; game rules live in Nyx scripts |
-| `snake-game` | `apps/platformer-game`, containing game rules, content, scripts, and composition |
 
 ## Minimum engine systems
 
@@ -226,8 +162,8 @@ Keep collision detection/query code separate from controller policy. Add focused
 - font atlas loading (one embedded fallback font) and text layout for ASCII at minimum;
 - a 2D overlay pass drawn after the 3D scene, in screen pixels and high-DPI aware;
 - a small immediate-mode UI: labels, buttons, keyboard/gamepad navigation, focus;
-- a main-menu state and an in-game state, following Umbra's game-state split;
-- a debug HUD toggled by an action, showing FPS, frame time, fixed updates, position, velocity, grounded state, and script time, modelled on Umbra's debuggable values.
+- a main-menu state and an in-game state;
+- a debug HUD toggled by an action, showing FPS, frame time, fixed updates, position, velocity, grounded state, and script time.
 
 ### Audio
 
@@ -277,15 +213,14 @@ Use simple authored or procedural geometry. Visual polish is secondary to making
 
 Work in vertical slices. At the end of each milestone, stop, run the relevant checks, summarize what works, list known limitations, and keep the repository runnable.
 
-### M0 — Umbra audit and design record
+### M0 — Design record
 
-- inspect Umbra;
-- write `docs/umbra-audit.md` and `docs/architecture.md`;
+- write `docs/architecture.md`;
 - decide exact crate versions, shader source language, shader compilation path, font-atlas approach, and audio format;
 - confirm the Nyx build (`nyx-capi`, `proto` branch) works on macOS and Arch Linux;
 - record short architecture decisions, including why SDL GPU was selected over direct Vulkan.
 
-Gate: no engine implementation until the proposed mapping and dependency list are documented.
+Gate: no engine implementation until the proposed layout and dependency list are documented.
 
 ### M1 — Window and deterministic loop
 
@@ -371,12 +306,12 @@ Add unit tests for math conventions, transform hierarchy, handles, fixed timing,
 
 ## Working rules for Codex
 
-- Begin by reading repository instructions and Umbra; do not invent its architecture from this brief.
+- Begin by reading the repository instructions.
 - Make small, reviewable changes. Avoid broad rewrites unrelated to the current milestone.
 - Keep the build green at each milestone.
 - Explain meaningful tradeoffs before committing to them, especially dependencies and unsafe code.
 - If a decision is reversible, choose the simplest implementation and record the seam for replacement.
-- If blocked by missing hardware, SDKs, assets, or unclear Umbra behavior, continue with safe independent work and state the exact blocker.
+- If blocked by missing hardware, SDKs, or assets, continue with safe independent work and state the exact blocker.
 - Do not silently expand scope. Put attractive nonessential ideas in `docs/future-work.md`.
 - Optimize for instructional clarity: code should reveal the engine, not merely make the demo work.
 
@@ -384,10 +319,9 @@ Add unit tests for math conventions, transform hierarchy, handles, fixed timing,
 
 Do not start implementation in the first response. Return:
 
-1. a concise audit of Umbra;
-2. the proposed workspace/module mapping;
-3. the exact dependency list with reasons and version-selection policy;
-4. the graphics choice and its tradeoffs;
-5. unresolved questions or risks;
-6. an implementation plan for M0–M2 with verification commands;
-7. how the Nyx scripting layer will plug into the fixed-step schedule.
+1. the proposed workspace and module layout;
+2. the exact dependency list with reasons and version-selection policy;
+3. the graphics choice and its tradeoffs;
+4. unresolved questions or risks;
+5. an implementation plan for M0–M2 with verification commands;
+6. how the Nyx scripting layer will plug into the fixed-step schedule.

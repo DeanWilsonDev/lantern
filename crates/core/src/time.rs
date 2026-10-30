@@ -1,4 +1,4 @@
-//! Fixed-step timing (the proposal in Umbra's `game-loop-architecture.md`, implemented).
+//! Fixed-step timing.
 //!
 //! The simulation always advances in steps of exactly `step_seconds`. Each display frame feeds
 //! the measured frame time into an accumulator; whole steps are taken out of it and the remainder
