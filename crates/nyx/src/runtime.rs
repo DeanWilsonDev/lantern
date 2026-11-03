@@ -140,6 +140,10 @@ impl Runtime {
         }
     }
 
+    pub fn remove_standard_namespace(&self, standard_namespace: &str) -> Result<()> {
+        self.check(unsafe { sys::nyx_runtime_remove_standard_namespace(self.raw(), nyx_str(standard_namespace)) })
+    }
+
     pub fn write_host_surface(&self) -> Result<String> {
         let mut raw = ptr::null_mut();
         self.check(unsafe { sys::nyx_runtime_write_host_surface(self.raw(), &mut raw) })?;

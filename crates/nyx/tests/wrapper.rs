@@ -129,6 +129,26 @@ fn the_host_surface_lists_registered_functions() {
 }
 
 #[test]
+fn a_removed_standard_namespace_refuses_its_import() {
+    let runtime = Runtime::new().unwrap();
+    let source = "Math :: import standard:::Math;\nHalf :: () -> f32 { return Math:::sqrt(0.25f); }\n";
+    let program = mount(&runtime, source);
+    assert!(program.call_function("Half", &[]).unwrap().is_some());
+
+    runtime.remove_standard_namespace("Math").unwrap();
+    let error = runtime
+        .mount_source(&format!("{source}\n{EMPTY_APPLICATION}"), "removed.nyx", "Game")
+        .err()
+        .expect("the import is refused");
+    assert_eq!(error.status, Status::Refused);
+    assert_eq!(runtime.diagnostics()[0].code, "NYX0493");
+    assert_eq!(
+        runtime.remove_standard_namespace("Teleport").unwrap_err().status,
+        Status::InvalidArgument
+    );
+}
+
+#[test]
 fn host_failure_reaches_the_host_as_a_nyx_failure() {
     let runtime = Runtime::new().unwrap();
     runtime
