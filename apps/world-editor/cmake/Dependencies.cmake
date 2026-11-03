@@ -67,7 +67,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(penumbra)
 
 # Chaos adds nyx-proto (on `proto`) itself, along with Amanuensis, Firefly and Lucis; the editor
-# links the `nyx-core` and `nyx-json` targets that creates.
+# links the `nyx-core` target that creates.
 FetchContent_Declare(
     chaos
     GIT_REPOSITORY https://github.com/DeanWilsonDev/chaos.git
@@ -125,6 +125,6 @@ add_library(penumbra_ui_backend_host STATIC
     ${penumbra_ui_backend_src_SOURCE_DIR}/src/PenumbraUiBackend/ChaosApplicationHost.cpp)
 target_include_directories(penumbra_ui_backend_host PUBLIC ${penumbra_ui_backend_src_SOURCE_DIR}/include)
 target_compile_features(penumbra_ui_backend_host PUBLIC cxx_std_26)
-target_link_libraries(penumbra_ui_backend_host PUBLIC penumbra_ui_backend penumbra_icons nyx-json)
+target_link_libraries(penumbra_ui_backend_host PUBLIC penumbra_ui_backend penumbra_icons)
 
 cmake_policy(POP)
