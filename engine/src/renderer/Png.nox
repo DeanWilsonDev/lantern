@@ -1,0 +1,151 @@
+lantern:::renderer :: namespace {
+    PNG_STORED_BLOCK_LIMIT: usize : 65535;
+
+    Crc32Table :: () -> Array<u32>! {
+        table~ Array<u32>! = [];
+        for entry~ u32 = 0; entry < 256; entry += 1 {
+            value~ u32 = entry;
+            for bit~ u32 = 0; bit < 8; bit += 1 {
+                if (value & 1) != 0 {
+                    value = 3988292384 ^ (value >> 1);
+                } else {
+                    value = value >> 1;
+                }
+            }
+            table.push(value);
+        }
+        return table!;
+    }
+
+    Crc32 :: (table: Array<u32>, bytes: Array<u8>, start: usize, end: usize) -> u32 {
+        crc~ u32 = 4294967295;
+        for index~ usize = start; index < end; index += 1 {
+            crc = table[usize((crc ^ u32(bytes[index])) & 255)] ^ (crc >> 8);
+        }
+        return crc ^ 4294967295;
+    }
+
+    Adler32 :: (bytes: Array<u8>) -> u32 {
+        low~ u32 = 1;
+        high~ u32 = 0;
+        for byte in bytes {
+            low = (low + u32(byte)) % 65521;
+            high = (high + low) % 65521;
+        }
+        return (high << 16) | low;
+    }
+
+    ByteWriter :: class {
+    public:
+        bytes~ Array<u8>! = [];
+
+        ByteWriter~: () { }
+
+        !ByteWriter~: () {
+            delete bytes;
+        }
+
+        Push~: (byte: u8) -> void {
+            bytes.push(byte);
+        }
+
+        PushBigEndian32~: (value: u32) -> void {
+            bytes.push(u8((value >> 24) & 255));
+            bytes.push(u8((value >> 16) & 255));
+            bytes.push(u8((value >> 8) & 255));
+            bytes.push(u8(value & 255));
+        }
+
+        PushAscii~: (text: string) -> void {
+            for index~ usize = 0; index < text.length(); index += 1 {
+                bytes.push(text.byteAt(index));
+            }
+        }
+
+        PushAll~: (source: Array<u8>) -> void {
+            for byte in source {
+                bytes.push(byte);
+            }
+        }
+
+        PushChunk~: (crcTable: Array<u32>, kind: string, payload: Array<u8>) -> void {
+            PushBigEndian32(u32(payload.length()));
+            typeStart: usize = bytes.length();
+            PushAscii(kind);
+            PushAll(payload);
+            PushBigEndian32(Crc32(crcTable, bytes, typeStart, bytes.length()));
+        }
+
+        TakeBytes~: () -> Array<u8>! {
+            taken: Array<u8>! = bytes!;
+            bytes = [];
+            return taken!;
+        }
+    }
+
+    StoredZlibStream :: (uncompressed: Array<u8>) -> Array<u8>! {
+        stream := new ByteWriter();
+        defer delete stream;
+        stream->Push(120);
+        stream->Push(1);
+        start~ usize = 0;
+        while true {
+            blockLength~ usize = uncompressed.length() - start;
+            if blockLength > PNG_STORED_BLOCK_LIMIT {
+                blockLength = PNG_STORED_BLOCK_LIMIT;
+            }
+            isLast: bool = start + blockLength == uncompressed.length();
+            if isLast {
+                stream->Push(1);
+            } else {
+                stream->Push(0);
+            }
+            complement: usize = PNG_STORED_BLOCK_LIMIT - blockLength;
+            stream->Push(u8(blockLength & 255));
+            stream->Push(u8((blockLength >> 8) & 255));
+            stream->Push(u8(complement & 255));
+            stream->Push(u8((complement >> 8) & 255));
+            stream->PushAll(uncompressed.slice(start, start + blockLength));
+            start += blockLength;
+            if isLast {
+                break;
+            }
+        }
+        stream->PushBigEndian32(Adler32(uncompressed));
+        return stream->TakeBytes();
+    }
+
+    EncodePng :: (texture: TextureData*) -> Array<u8>! {
+        crcTable: Array<u32>! = Crc32Table();
+        defer delete crcTable;
+        png := new ByteWriter();
+        defer delete png;
+        signature: Array<u8>! = [137, 80, 78, 71, 13, 10, 26, 10];
+        png->PushAll(signature);
+        delete signature;
+        header := new ByteWriter();
+        defer delete header;
+        header->PushBigEndian32(texture->width);
+        header->PushBigEndian32(texture->height);
+        header->Push(8);
+        header->Push(6);
+        header->Push(0);
+        header->Push(0);
+        header->Push(0);
+        png->PushChunk(crcTable, "IHDR", header->bytes);
+        rowLength: usize = usize(texture->width) * 4;
+        filtered := new ByteWriter();
+        defer delete filtered;
+        for row~ usize = 0; row < usize(texture->height); row += 1 {
+            filtered->Push(0);
+            filtered->PushAll(texture->rgba8.slice(row * rowLength, (row + 1) * rowLength));
+        }
+        compressed: Array<u8>! = StoredZlibStream(filtered->bytes);
+        png->PushChunk(crcTable, "IDAT", compressed);
+        delete compressed;
+        ending: Array<u8>! = [];
+        png->PushChunk(crcTable, "IEND", ending);
+        delete ending;
+        return png->TakeBytes();
+    }
+}
