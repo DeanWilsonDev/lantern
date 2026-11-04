@@ -1,0 +1,94 @@
+lantern:::stub :: namespace {
+    StubGame :: class {
+        implements:
+            lantern:::engine:::Game;
+    public:
+        quit~ lantern:::core:::ActionId = lantern:::core:::ActionId { };
+        configured~ bool = false;
+        quitPressed~ bool = false;
+        minimized~ bool = false;
+        frames~ u64 = 0;
+        maximumFrames~ u64 = 0;
+        steps~ u64 = 0;
+        renders~ u64 = 0;
+        rendersWhileMinimized~ u64 = 0;
+        resizeEvents~ u32 = 0;
+        minimizeEvents~ u32 = 0;
+        restoreEvents~ u32 = 0;
+
+        StubGame~: (frameLimit: u64) {
+            maximumFrames = frameLimit;
+        }
+
+        HandleEvent~: (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void {
+            when event <lantern:::platform:::PlatformEvent> {
+                WindowResized -> {
+                    resizeEvents += 1;
+                    ReportWindow("resized", platform->CurrentWindowMetrics());
+                },
+                WindowMinimized -> {
+                    minimizeEvents += 1;
+                    minimized = true;
+                    lantern:::core:::LogInfo("stub", "minimised");
+                },
+                WindowRestored -> {
+                    restoreEvents += 1;
+                    minimized = false;
+                    lantern:::core:::LogInfo("stub", "restored");
+                },
+                QuitRequested -> {
+                    lantern:::core:::LogInfo("stub", "quit requested");
+                },
+                default -> {},
+            }
+        }
+
+        FixedUpdate~: (step: lantern:::engine:::FixedStepContext) -> void {
+            steps += 1;
+            if step.input->Pressed(quit) {
+                quitPressed = true;
+            }
+        }
+
+        FrameUpdate~: (frame: lantern:::engine:::FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void {
+            frames += 1;
+        }
+
+        Render~: (frame: lantern:::engine:::FrameContext) -> void {
+            unsafe {
+                lantern:::posix:::usleep(16000);
+            }
+            renders += 1;
+            if minimized {
+                rendersWhileMinimized += 1;
+            }
+        }
+
+        WantsToQuit :: () -> bool {
+            return quitPressed || (maximumFrames > 0 && frames >= maximumFrames);
+        }
+
+        UpdateInputConfiguration~: (input: lantern:::engine:::InputRouter~*) -> void {
+            if configured {
+                return;
+            }
+            configured = true;
+            actions := new lantern:::core:::ActionSet();
+            quit = actions->Register("quit", lantern:::core:::ActionKind:::Button);
+            bindings := new lantern:::core:::Bindings();
+            bindings->Bind(quit, lantern:::core:::Binding:::Key(lantern:::core:::KeyCode:::Escape));
+            input->Reconfigure(actions!, bindings!);
+        }
+
+        Summary :: () -> string! {
+            summary: string! = `${frames} frames, ${steps} fixed steps, ${renders} renders (${rendersWhileMinimized} while minimised), ${resizeEvents} resizes, ${minimizeEvents} minimises, ${restoreEvents} restores`;
+            return summary!;
+        }
+    }
+
+    ReportWindow :: (what: string, metrics: lantern:::platform:::WindowMetrics) -> void {
+        message: string! = `${what}: ${metrics.logicalWidth}x${metrics.logicalHeight} points, ${metrics.pixelWidth}x${metrics.pixelHeight} pixels`;
+        lantern:::core:::LogInfo("stub", message);
+        delete message;
+    }
+}

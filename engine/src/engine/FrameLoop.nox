@@ -1,0 +1,124 @@
+lantern:::engine :: namespace {
+    FixedStepContext :: struct {
+        input~ lantern:::core:::InputSnapshot*;
+        stepSeconds~ f32 = 0.0f;
+        stepIndex~ u64 = 0;
+    }
+
+    FrameContext :: struct {
+        input~ lantern:::core:::InputSnapshot*;
+        frameSeconds~ f32 = 0.0f;
+        alpha~ f32 = 0.0f;
+        plan~ lantern:::core:::FixedStepPlan = lantern:::core:::FixedStepPlan { };
+        stats~ lantern:::core:::FrameStats = lantern:::core:::FrameStats { };
+        window~ lantern:::platform:::WindowMetrics = lantern:::platform:::WindowMetrics { };
+    }
+
+    Game :: interface {
+        HandleEvent~ (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
+        FixedUpdate~ (step: FixedStepContext) -> void : 0;
+        FrameUpdate~ (frame: FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
+        Render~ (frame: FrameContext) -> void : 0;
+        WantsToQuit : () -> bool : 0;
+        UpdateInputConfiguration~ (input: InputRouter~*) -> void : 0;
+    }
+
+    LoopStatus :: enum {
+        Running,
+        Finished
+    }
+
+    FrameLoop :: class {
+    public:
+        input~ InputRouter*!;
+        clock~ lantern:::core:::FixedStepClock = lantern:::core:::FixedStepClock { };
+        stats~ lantern:::core:::FrameStats = lantern:::core:::FrameStats { };
+        previousTime~ f64? = null;
+        wasMinimized~ bool = false;
+        quitRequested~ bool = false;
+
+        FrameLoop~: (router: InputRouter*!) {
+            input = router!;
+        }
+
+        !FrameLoop~: () {
+            delete input;
+        }
+
+        Stats :: () -> lantern:::core:::FrameStats {
+            return stats;
+        }
+
+        Run~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> void {
+            lantern:::core:::LogInfo("engine", "frame loop started");
+            while RunFrame(platform, game) == LoopStatus:::Running { }
+            finishedMessage: string! = `frame loop finished after ${stats.frames} frames, ${clock.TotalSteps()} fixed steps`;
+            lantern:::core:::LogInfo("engine", finishedMessage);
+            delete finishedMessage;
+        }
+
+        RunFrame~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> LoopStatus {
+            game->UpdateInputConfiguration(input);
+
+            events~ Array<lantern:::platform:::PlatformEvent>! = platform->PumpEvents();
+            for event in events {
+                when event <lantern:::platform:::PlatformEvent> {
+                    QuitRequested -> {
+                        quitRequested = true;
+                    },
+                    default -> {},
+                }
+                input->HandleEvent(event);
+                game->HandleEvent(event, platform);
+            }
+            delete events;
+            input->EndFrameEvents();
+
+            now: f64 = platform->SecondsSinceStart();
+            window := platform->CurrentWindowMetrics();
+            frameSeconds~ f64 = 0.0f;
+            if previous := previousTime {
+                if !wasMinimized {
+                    frameSeconds = now - previous;
+                }
+            }
+            previousTime = now;
+            wasMinimized = window.minimized;
+            plan~ lantern:::core:::FixedStepPlan = lantern:::core:::FixedStepPlan { };
+            if !window.minimized {
+                plan = clock.Advance(frameSeconds);
+            }
+            stats.Record(frameSeconds, plan);
+
+            stepSeconds: f32 = clock.StepSeconds();
+            firstStepIndex: u64 = clock.TotalSteps() - u64(plan.stepCount);
+            for step~ u32 = 0; step < plan.stepCount; step++ {
+                snapshot := input->TakeFixedStepSnapshot();
+                game->FixedUpdate(FixedStepContext { input: snapshot, stepSeconds: stepSeconds, stepIndex: firstStepIndex + u64(step) });
+                delete snapshot;
+            }
+
+            frame := FrameContext {
+                input: input->FrameSnapshot(),
+                frameSeconds: f32(frameSeconds),
+                alpha: plan.alpha,
+                plan: plan,
+                stats: stats,
+                window: window
+            };
+            game->FrameUpdate(frame, platform);
+            if window.IsDrawableEmpty() {
+                unsafe {
+                    lantern:::posix:::usleep(16000);
+                }
+            } else {
+                game->Render(frame);
+            }
+
+            if quitRequested || game->WantsToQuit() {
+                return LoopStatus:::Finished;
+            }
+            return LoopStatus:::Running;
+        }
+    }
+}

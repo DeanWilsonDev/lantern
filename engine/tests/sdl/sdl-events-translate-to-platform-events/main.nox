@@ -1,0 +1,87 @@
+Sdl :: import Sdl;
+lantern :: import lantern;
+
+Describe :: (translated: lantern:::sdl:::TranslatedEvent) -> string! {
+    return when translated <lantern:::sdl:::TranslatedEvent> {
+        Event(event) -> DescribePlatformEvent(event),
+        GamepadAdded(id) -> `gamepad ${id} added`,
+        GamepadRemoved(id) -> `gamepad ${id} removed`,
+        Ignored -> "ignored" + "",
+    };
+}
+
+DescribePlatformEvent :: (event: lantern:::platform:::PlatformEvent) -> string! {
+    return when event <lantern:::platform:::PlatformEvent> {
+        KeyDown(key, repeat) -> `key down ${key == lantern:::core:::KeyCode:::W}, repeat ${repeat}`,
+        KeyUp(key) -> `key up ${key == lantern:::core:::KeyCode:::W}`,
+        MouseMoved(deltaX, deltaY, x, y) -> `mouse moved ${deltaX:.1f} ${deltaY:.1f} to ${x:.1f} ${y:.1f}`,
+        GamepadAxisMoved(axis, value) -> `axis left y ${axis == lantern:::core:::GamepadAxis:::LeftY} value ${value:.3f}`,
+        GamepadButtonDown(button) -> `button south ${button == lantern:::core:::GamepadButton:::South}`,
+        QuitRequested -> "quit requested" + "",
+        default -> "something else" + "",
+    };
+}
+
+Report :: (event: Sdl:::SDL_Event~*) -> void {
+    described := Describe(lantern:::sdl:::Translate(event));
+    print(described);
+    delete described;
+}
+
+main :: () -> i32 {
+    event~ Sdl:::SDL_Event = Sdl:::SDL_Event { };
+    unsafe {
+        key: Sdl:::SDL_KeyboardEvent~* = reinterpret<Sdl:::SDL_KeyboardEvent>(event);
+        key->type = Sdl:::SDL_EVENT_KEY_DOWN;
+        key->scancode = Sdl:::SDL_SCANCODE_W;
+        key->down = true;
+    }
+    Report(event);
+    unsafe {
+        key: Sdl:::SDL_KeyboardEvent~* = reinterpret<Sdl:::SDL_KeyboardEvent>(event);
+        key->type = Sdl:::SDL_EVENT_KEY_UP;
+        key->down = false;
+    }
+    Report(event);
+    unsafe {
+        key: Sdl:::SDL_KeyboardEvent~* = reinterpret<Sdl:::SDL_KeyboardEvent>(event);
+        key->type = Sdl:::SDL_EVENT_KEY_DOWN;
+        key->scancode = Sdl:::SDL_SCANCODE_KP_1;
+        key->down = true;
+    }
+    Report(event);
+    unsafe {
+        motion: Sdl:::SDL_MouseMotionEvent~* = reinterpret<Sdl:::SDL_MouseMotionEvent>(event);
+        motion->type = Sdl:::SDL_EVENT_MOUSE_MOTION;
+        motion->xrel = 4.0f;
+        motion->yrel = -2.0f;
+        motion->x = 104.0f;
+        motion->y = 98.0f;
+    }
+    Report(event);
+    unsafe {
+        axis: Sdl:::SDL_GamepadAxisEvent~* = reinterpret<Sdl:::SDL_GamepadAxisEvent>(event);
+        axis->type = Sdl:::SDL_EVENT_GAMEPAD_AXIS_MOTION;
+        axis->axis = u8(Sdl:::SDL_GAMEPAD_AXIS_LEFTY);
+        axis->value = 16384;
+    }
+    Report(event);
+    unsafe {
+        button: Sdl:::SDL_GamepadButtonEvent~* = reinterpret<Sdl:::SDL_GamepadButtonEvent>(event);
+        button->type = Sdl:::SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+        button->button = u8(Sdl:::SDL_GAMEPAD_BUTTON_SOUTH);
+        button->down = true;
+    }
+    Report(event);
+    unsafe {
+        device: Sdl:::SDL_GamepadDeviceEvent~* = reinterpret<Sdl:::SDL_GamepadDeviceEvent>(event);
+        device->type = Sdl:::SDL_EVENT_GAMEPAD_ADDED;
+        device->which = 7;
+    }
+    Report(event);
+    unsafe {
+        reinterpret<Sdl:::SDL_CommonEvent>(event)->type = Sdl:::SDL_EVENT_QUIT;
+    }
+    Report(event);
+    return 0;
+}

@@ -1,0 +1,85 @@
+Sdl :: import Sdl;
+
+lantern:::sdlaudio :: foreign "SDL3" {
+    SDL_PutAudioStreamData :: (stream: raw Sdl:::SDL_AudioStream~*, samples: Array<f32>, byteLength: i32) -> bool;
+}
+
+lantern:::sdl :: namespace {
+    AUDIO_CHANNEL_COUNT: usize : 2;
+
+    SdlAudioOutput :: class {
+        implements:
+            lantern:::platform:::AudioSink;
+    public:
+        stream~ raw Sdl:::SDL_AudioStream~* = null;
+        sampleRate~ u32 = 0;
+
+        SdlAudioOutput~: (openedStream: raw Sdl:::SDL_AudioStream~*, rate: u32) {
+            stream = openedStream;
+            sampleRate = rate;
+        }
+
+        !SdlAudioOutput~: () {
+            unsafe {
+                Sdl:::SDL_DestroyAudioStream(stream);
+            }
+        }
+
+        static Open :: (context: SdlContext~*, rate: u32) -> SdlAudioOutput*!? {
+            if !context->InitAudio() {
+                return null;
+            }
+            spec~ Sdl:::SDL_AudioSpec = Sdl:::SDL_AudioSpec { format: Sdl:::SDL_AUDIO_F32, channels: i32(AUDIO_CHANNEL_COUNT), freq: i32(rate) };
+            opened~ raw Sdl:::SDL_AudioStream~* = null;
+            unsafe {
+                opened = Sdl:::SDL_OpenAudioDeviceStream(Sdl:::SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, spec, null, null);
+            }
+            if opened == null {
+                LogSdlError("audio", "SDL_OpenAudioDeviceStream");
+                return null;
+            }
+            resumed~ bool = false;
+            unsafe {
+                resumed = Sdl:::SDL_ResumeAudioStreamDevice(opened);
+            }
+            if !resumed {
+                LogSdlError("audio", "SDL_ResumeAudioStreamDevice");
+                unsafe {
+                    Sdl:::SDL_DestroyAudioStream(opened);
+                }
+                return null;
+            }
+            message: string! = `audio output open: ${rate} Hz stereo f32`;
+            lantern:::core:::LogInfo("audio", message);
+            delete message;
+            output := new SdlAudioOutput(opened, rate);
+            return output!;
+        }
+
+        SampleRate :: () -> u32 {
+            return sampleRate;
+        }
+
+        QueuedFrames :: () -> usize {
+            queuedBytes~ i32 = 0;
+            unsafe {
+                queuedBytes = Sdl:::SDL_GetAudioStreamQueued(stream);
+            }
+            if queuedBytes <= 0 {
+                return 0;
+            }
+            return usize(queuedBytes) / (AUDIO_CHANNEL_COUNT * 4);
+        }
+
+        PushFrames~: (interleavedStereo: Array<f32>) -> void {
+            byteLength: usize = interleavedStereo.length() * 4;
+            pushed~ bool = false;
+            unsafe {
+                pushed = lantern:::sdlaudio:::SDL_PutAudioStreamData(stream, interleavedStereo, i32(byteLength));
+            }
+            if !pushed {
+                LogSdlError("audio", "SDL_PutAudioStreamData");
+            }
+        }
+    }
+}
