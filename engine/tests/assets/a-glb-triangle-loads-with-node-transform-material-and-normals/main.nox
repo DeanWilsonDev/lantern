@@ -1,0 +1,80 @@
+lantern :: import lantern;
+
+FloatBits :: struct {
+    value~ f32 = 0.0f;
+}
+
+FloatBytes :: struct {
+    bytes~ u8[4] = [0, 0, 0, 0];
+}
+
+PushLittleEndian32 :: (writer: lantern:::renderer:::ByteWriter~*, value: u32) -> void {
+    writer->Push(u8(value & 255));
+    writer->Push(u8((value >> 8) & 255));
+    writer->Push(u8((value >> 16) & 255));
+    writer->Push(u8((value >> 24) & 255));
+}
+
+PushFloat :: (writer: lantern:::renderer:::ByteWriter~*, value: f32) -> void {
+    bits~ FloatBits = FloatBits { value: value };
+    unsafe {
+        bytes: FloatBytes~* = reinterpret<FloatBytes>(bits);
+        for byteIndex~ usize = 0; byteIndex < 4; byteIndex += 1 {
+            writer->Push(bytes->bytes[byteIndex]);
+        }
+    }
+}
+
+TinyGlb :: () -> Array<u8>! {
+    json~ string! = "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}]," + "";
+    json += "\"nodes\":[{\"mesh\":0,\"translation\":[0,2,0]}],";
+    json += "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"material\":0}]}],";
+    json += "\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0,0,1]}}],";
+    json += "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,1,0]}],";
+    json += "\"bufferViews\":[{\"buffer\":0,\"byteLength\":36}],";
+    json += "\"buffers\":[{\"byteLength\":36}]}";
+    while json.length() % 4 != 0 {
+        json += " ";
+    }
+    binaryLength: u32 = 36;
+    total: u32 = 12 + 8 + u32(json.length()) + 8 + binaryLength;
+    writer := new lantern:::renderer:::ByteWriter();
+    defer delete writer;
+    writer->PushAscii("glTF");
+    PushLittleEndian32(writer, 2);
+    PushLittleEndian32(writer, total);
+    PushLittleEndian32(writer, u32(json.length()));
+    writer->PushAscii("JSON");
+    writer->PushAscii(json);
+    delete json;
+    PushLittleEndian32(writer, binaryLength);
+    writer->PushAscii("BIN");
+    writer->Push(0);
+    positions: f32[9] = [0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f];
+    for position in positions {
+        PushFloat(writer, position);
+    }
+    return writer->TakeBytes();
+}
+
+main :: () -> i32 {
+    glb: Array<u8>! = TinyGlb();
+    defer delete glb;
+    when lantern:::renderer:::GltfMeshFromBytes(glb, ".") {
+        Result:::Ok(mesh) -> {
+            assert(mesh->TriangleCount() == 1, "one triangle");
+            first: lantern:::renderer:::Vertex = mesh->vertices[0];
+            assert(first.position[0] == 0.0f && first.position[1] == 2.0f && first.position[2] == 0.0f, "the node's translation moves it");
+            assert(first.color[0] == 1.0f && first.color[1] == 0.0f && first.color[2] == 0.0f && first.color[3] == 1.0f, "the material colours it red");
+            assert(first.normal[0] == 0.0f && first.normal[1] == 0.0f && first.normal[2] == 1.0f, "the computed face normal faces +Z");
+            delete mesh;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    print("a glb triangle loads with node transform material and normals");
+    return 0;
+}

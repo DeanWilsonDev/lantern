@@ -1,0 +1,328 @@
+Cgltf :: import Cgltf;
+
+lantern:::gltfnodes :: foreign "c" {
+    memmove :: (destination: raw Cgltf:::cgltf_node~*~*, source: raw Cgltf:::cgltf_node~*~*, byteCount: usize) -> raw lantern:::renderer:::GltfNodePointer[1048576]*;
+}
+
+lantern:::gltfprimitives :: foreign "c" {
+    memmove :: (destination: raw Cgltf:::cgltf_primitive~*, source: raw Cgltf:::cgltf_primitive~*, byteCount: usize) -> raw Cgltf:::cgltf_primitive[1048576]*;
+}
+
+lantern:::gltfmemory :: foreign "cgltf" {
+    cgltf_parse :: (options: raw Cgltf:::cgltf_options*, bytes: Array<u8>, size: usize, outData: raw Cgltf:::cgltf_data~*~*) -> u32;
+    cgltf_accessor_unpack_floats :: (accessor: raw Cgltf:::cgltf_accessor*, out: Array<f32~>, floatCount: usize) -> usize;
+    cgltf_accessor_unpack_indices :: (accessor: raw Cgltf:::cgltf_accessor*, out: Array<u32~>, outComponentSize: usize, indexCount: usize) -> usize;
+}
+
+lantern:::renderer :: namespace {
+    Cgltf :: import Cgltf;
+
+    GltfNodePointer :: struct {
+        node~ raw Cgltf:::cgltf_node~* = null;
+    }
+
+    GltfResultName :: (result: u32) -> string {
+        names: string[11] = ["success", "data too short", "unknown format", "invalid JSON", "invalid glTF", "invalid options",
+            "file not found", "I/O error", "out of memory", "legacy glTF", "unknown result"];
+        if result < 10 {
+            return names[usize(result)];
+        }
+        return names[10];
+    }
+
+    GltfLoadFailure :: (errorPrefix: string, message: string!) -> Result<MeshData*!, string!> {
+        if errorPrefix.length() == 0 {
+            return Result<MeshData*!, string!>:::Err(message!);
+        }
+        prefixed: string! = `${errorPrefix}: ${message}`;
+        delete message;
+        return Result<MeshData*!, string!>:::Err(prefixed!);
+    }
+
+    LoadGltfMesh :: (path: string) -> Result<MeshData*!, string!> {
+        options~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
+        data~ raw Cgltf:::cgltf_data~* = null;
+        result~ u32 = 0;
+        unsafe {
+            result = Cgltf:::cgltf_parse_file(options, path, data);
+        }
+        if result != Cgltf:::cgltf_result_success {
+            return GltfLoadFailure(path, `not valid glTF: ${GltfResultName(result)}`);
+        }
+        return MeshFromParsedGltf(data, path, "", path);
+    }
+
+    GltfMeshFromBytes :: (bytes: Array<u8>, baseDirectory: string) -> Result<MeshData*!, string!> {
+        options~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
+        data~ raw Cgltf:::cgltf_data~* = null;
+        result~ u32 = 0;
+        unsafe {
+            result = lantern:::gltfmemory:::cgltf_parse(options, bytes, bytes.length(), data);
+        }
+        if result != Cgltf:::cgltf_result_success {
+            return GltfLoadFailure("", `not valid glTF: ${GltfResultName(result)}`);
+        }
+        return MeshFromParsedGltf(data, baseDirectory, "/", "");
+    }
+
+    MeshFromParsedGltf :: (data: raw Cgltf:::cgltf_data~*, bufferPathStart: string, bufferPathEnd: string, errorPrefix: string) -> Result<MeshData*!, string!> {
+        bufferBase: string! = bufferPathStart + bufferPathEnd;
+        options~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
+        loadResult~ u32 = 0;
+        validateResult~ u32 = 0;
+        scene~ raw Cgltf:::cgltf_scene~* = null;
+        unsafe {
+            loadResult = Cgltf:::cgltf_load_buffers(options, data, bufferBase);
+        }
+        delete bufferBase;
+        unsafe {
+            if loadResult == Cgltf:::cgltf_result_success {
+                validateResult = Cgltf:::cgltf_validate(data);
+            }
+            scene = data->scene;
+            if scene == null && data->scenes_count > 0 {
+                scene = data->scenes;
+            }
+        }
+        if loadResult != Cgltf:::cgltf_result_success {
+            unsafe {
+                Cgltf:::cgltf_free(data);
+            }
+            return GltfLoadFailure(errorPrefix, `buffers: ${GltfResultName(loadResult)}`);
+        }
+        if validateResult != Cgltf:::cgltf_result_success {
+            unsafe {
+                Cgltf:::cgltf_free(data);
+            }
+            return GltfLoadFailure(errorPrefix, `not valid glTF: ${GltfResultName(validateResult)}`);
+        }
+        if scene == null {
+            unsafe {
+                Cgltf:::cgltf_free(data);
+            }
+            return GltfLoadFailure(errorPrefix, "the file has no scene" + "");
+        }
+        mesh := new MeshData();
+        problem~ string!? = null;
+        unsafe {
+            rootCount: usize = scene->nodes_count;
+            if rootCount > 0 {
+                roots := lantern:::gltfnodes:::memmove(scene->nodes, scene->nodes, 0);
+                for rootIndex~ usize = 0; rootIndex < rootCount; rootIndex += 1 {
+                    found: string!? = AppendGltfNode(roots^*[rootIndex].node, Mat4 { }, mesh);
+                    if found != null {
+                        problem = found!;
+                        break;
+                    }
+                }
+            }
+            Cgltf:::cgltf_free(data);
+        }
+        if message := problem {
+            text: string! = message + "";
+            delete problem;
+            delete mesh;
+            return GltfLoadFailure(errorPrefix, text!);
+        }
+        invalid: string!? = mesh->Validate();
+        if message := invalid {
+            text: string! = `no usable triangles: ${message}`;
+            delete invalid;
+            delete mesh;
+            return GltfLoadFailure(errorPrefix, text!);
+        }
+        return Result<MeshData*!, string!>:::Ok(mesh!);
+    }
+
+    LocalNodeTransform :: (node: raw Cgltf:::cgltf_node~*) -> Mat4 {
+        local~ Mat4 = Mat4 { };
+        unsafe {
+            Cgltf:::cgltf_node_transform_local(node, local.elements[0]);
+        }
+        return local;
+    }
+
+    AppendGltfNode :: (node: raw Cgltf:::cgltf_node~*, parent: Mat4, mesh: MeshData~*) -> string!? {
+        world: Mat4 = parent * LocalNodeTransform(node);
+        unsafe {
+            nodeMesh: raw Cgltf:::cgltf_mesh~* = node->mesh;
+            if nodeMesh != null && nodeMesh->primitives_count > 0 {
+                primitives := lantern:::gltfprimitives:::memmove(nodeMesh->primitives, nodeMesh->primitives, 0);
+                for primitiveIndex~ usize = 0; primitiveIndex < nodeMesh->primitives_count; primitiveIndex += 1 {
+                    primitive: raw Cgltf:::cgltf_primitive* = primitives^*[primitiveIndex];
+                    if primitive->type != Cgltf:::cgltf_primitive_type_triangles {
+                        lantern:::core:::Log(lantern:::core:::LogLevel:::Warn, "assets", "skipping a non-triangle primitive");
+                        continue;
+                    }
+                    problem: string!? = AppendGltfPrimitive(primitive, world, mesh);
+                    if problem != null {
+                        return problem!;
+                    }
+                }
+            }
+            childCount: usize = node->children_count;
+            if childCount > 0 {
+                children := lantern:::gltfnodes:::memmove(node->children, node->children, 0);
+                for childIndex~ usize = 0; childIndex < childCount; childIndex += 1 {
+                    problem: string!? = AppendGltfNode(children^*[childIndex].node, world, mesh);
+                    if problem != null {
+                        return problem!;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    UnpackAccessorFloats :: (accessor: raw Cgltf:::cgltf_accessor*, componentCount: usize, vertexCount: usize, fallback: Vec4) -> Array<Vec4>! {
+        values~ Array<Vec4>! = [];
+        if accessor == null {
+            for vertexIndex~ usize = 0; vertexIndex < vertexCount; vertexIndex += 1 {
+                values.push(fallback);
+            }
+            return values!;
+        }
+        sourceComponents~ usize = 0;
+        unsafe {
+            sourceComponents = Cgltf:::cgltf_num_components(accessor->type);
+        }
+        floats~ Array<f32>! = [];
+        for floatIndex~ usize = 0; floatIndex < vertexCount * sourceComponents; floatIndex += 1 {
+            floats.push(0.0f);
+        }
+        unsafe {
+            lantern:::gltfmemory:::cgltf_accessor_unpack_floats(accessor, floats.borrow().mutable(), floats.length());
+        }
+        for vertexIndex~ usize = 0; vertexIndex < vertexCount; vertexIndex += 1 {
+            value~ Vec4 = fallback;
+            start: usize = vertexIndex * sourceComponents;
+            if sourceComponents > 0 {
+                value.x = floats[start];
+            }
+            if sourceComponents > 1 {
+                value.y = floats[start + 1];
+            }
+            if sourceComponents > 2 && componentCount > 2 {
+                value.z = floats[start + 2];
+            }
+            if sourceComponents > 3 && componentCount > 3 {
+                value.w = floats[start + 3];
+            }
+            values.push(value);
+        }
+        delete floats;
+        return values!;
+    }
+
+    PrimitiveIndices :: (primitive: raw Cgltf:::cgltf_primitive*, vertexCount: usize) -> Array<u32>! {
+        indices~ Array<u32>! = [];
+        accessor~ raw Cgltf:::cgltf_accessor~* = null;
+        unsafe {
+            accessor = primitive->indices;
+        }
+        if accessor == null {
+            for vertexIndex~ usize = 0; vertexIndex < vertexCount; vertexIndex += 1 {
+                indices.push(u32(vertexIndex));
+            }
+            return indices!;
+        }
+        indexCount~ usize = 0;
+        unsafe {
+            indexCount = accessor->count;
+        }
+        for index~ usize = 0; index < indexCount; index += 1 {
+            indices.push(0);
+        }
+        unsafe {
+            lantern:::gltfmemory:::cgltf_accessor_unpack_indices(accessor, indices.borrow().mutable(), 4, indexCount);
+        }
+        return indices!;
+    }
+
+    Vec3Of :: (value: Vec4) -> Vec3 {
+        return Vec3 { x: value.x, y: value.y, z: value.z };
+    }
+
+    AppendGltfPrimitive :: (primitive: raw Cgltf:::cgltf_primitive*, world: Mat4, mesh: MeshData~*) -> string!? {
+        positionAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        normalAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        uvAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        colorAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        baseColor~ Vec4 = Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f };
+        vertexCount~ usize = 0;
+        unsafe {
+            positionAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_position, 0);
+            normalAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_normal, 0);
+            uvAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_texcoord, 0);
+            colorAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_color, 0);
+            material: raw Cgltf:::cgltf_material~* = primitive->material;
+            if material != null {
+                factor := material->pbr_metallic_roughness.base_color_factor;
+                if material->has_pbr_metallic_roughness != 0 {
+                    baseColor = Vec4 { x: factor[0], y: factor[1], z: factor[2], w: factor[3] };
+                }
+            }
+            if positionAccessor != null {
+                vertexCount = positionAccessor->count;
+            }
+        }
+        if positionAccessor == null {
+            return "a primitive has no POSITION" + "";
+        }
+        positions: Array<Vec4>! = UnpackAccessorFloats(positionAccessor, 3, vertexCount, Vec4 { });
+        defer delete positions;
+        normals: Array<Vec4>! = UnpackAccessorFloats(normalAccessor, 3, vertexCount, Vec4 { });
+        defer delete normals;
+        uvs: Array<Vec4>! = UnpackAccessorFloats(uvAccessor, 2, vertexCount, Vec4 { });
+        defer delete uvs;
+        rawColors: Array<Vec4>! = UnpackAccessorFloats(colorAccessor, 4, vertexCount, Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f });
+        defer delete rawColors;
+        indices~ Array<u32>! = PrimitiveIndices(primitive, vertexCount);
+        defer delete indices;
+        for index in indices {
+            if usize(index) >= vertexCount {
+                return "an index is out of range" + "";
+            }
+        }
+        if lantern:::core:::Determinant3(world) < 0.0f {
+            for start~ usize = 0; start + 2 < indices.length(); start += 3 {
+                second: u32 = indices[start + 1];
+                indices[start + 1] = indices[start + 2];
+                indices[start + 2] = second;
+            }
+        }
+        colors~ Array<Vec4>! = [];
+        defer delete colors;
+        for color in rawColors {
+            colors.push(Vec4 { x: color.x * baseColor.x, y: color.y * baseColor.y, z: color.z * baseColor.z, w: color.w * baseColor.w });
+        }
+        if normalAccessor != null {
+            normalMatrix: lantern:::core:::NormalMatrix = lantern:::core:::NormalMatrix:::FromTransform(world);
+            base: u32 = u32(mesh->vertices.length());
+            for vertexIndex~ usize = 0; vertexIndex < vertexCount; vertexIndex += 1 {
+                position: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[vertexIndex]));
+                normal: Vec3 = lantern:::core:::NormalizeOr3(normalMatrix.Apply(Vec3Of(normals[vertexIndex])), lantern:::core:::WorldUp());
+                uv: Vec2 = Vec2 { x: uvs[vertexIndex].x, y: uvs[vertexIndex].y };
+                mesh->vertices.push(Vertex:::Create(position, normal, uv, colors[vertexIndex]));
+            }
+            for index in indices {
+                mesh->indices.push(base + index);
+            }
+            return null;
+        }
+        for start~ usize = 0; start + 2 < indices.length(); start += 3 {
+            first: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[usize(indices[start])]));
+            second: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[usize(indices[start + 1])]));
+            third: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[usize(indices[start + 2])]));
+            faceNormal: Vec3 = lantern:::core:::NormalizeOr3((second - first).cross(third - first), lantern:::core:::WorldUp());
+            corners: Vec3[3] = [first, second, third];
+            for corner~ usize = 0; corner < 3; corner += 1 {
+                sourceIndex: usize = usize(indices[start + corner]);
+                mesh->indices.push(u32(mesh->vertices.length()));
+                uv: Vec2 = Vec2 { x: uvs[sourceIndex].x, y: uvs[sourceIndex].y };
+                mesh->vertices.push(Vertex:::Create(corners[corner], faceNormal, uv, colors[sourceIndex]));
+            }
+        }
+        return null;
+    }
+}

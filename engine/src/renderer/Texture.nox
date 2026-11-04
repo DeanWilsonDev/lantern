@@ -1,4 +1,16 @@
+lantern:::stbmemory :: foreign "stb_image" {
+    stbi_load_from_memory :: (buffer: Array<u8>, length: i32, width: raw i32~*, height: raw i32~*, channelsInFile: raw i32~*, desiredChannels: i32) -> raw u8~*;
+}
+
+lantern:::bytecopy :: foreign "c" {
+    memcpy :: (destination: Array<u8~>, source: raw u8*, byteCount: usize) -> raw u8~*;
+}
+
 lantern:::renderer :: namespace {
+    StbImage :: import StbImage;
+
+    RGBA_CHANNELS: i32 : 4;
+
     TextureFilter :: enum {
         Linear,
         Nearest
@@ -65,6 +77,65 @@ lantern:::renderer :: namespace {
                 }
             }
             return texture!;
+        }
+
+        static FromStbPixels :: (pixels: raw u8~*, width: i32, height: i32) -> TextureData*! {
+            texture := new TextureData(u32(width), u32(height), TextureFilter:::Linear, TextureWrap:::Repeat);
+            byteCount: usize = usize(width) * usize(height) * 4;
+            for byteIndex~ usize = 0; byteIndex < byteCount; byteIndex += 1 {
+                texture->rgba8.push(0);
+            }
+            unsafe {
+                lantern:::bytecopy:::memcpy(texture->rgba8.borrow().mutable(), pixels, byteCount);
+                StbImage:::stbi_image_free(pixels);
+            }
+            return texture!;
+        }
+
+        static StbFailure :: (context: string) -> string! {
+            reason~ string! = "unknown failure" + "";
+            unsafe {
+                failure: raw u8* = StbImage:::stbi_failure_reason();
+                if failure != null {
+                    delete reason;
+                    reason = copyCString(failure);
+                }
+            }
+            message: string! = `${context}: ${reason}`;
+            delete reason;
+            return message!;
+        }
+
+        static FromPngBytes :: (bytes: Array<u8>) -> Result<TextureData*!, string!> {
+            width~ i32 = 0;
+            height~ i32 = 0;
+            channels~ i32 = 0;
+            pixels~ raw u8~* = null;
+            unsafe {
+                pixels = lantern:::stbmemory:::stbi_load_from_memory(bytes, i32(bytes.length()), width, height, channels, RGBA_CHANNELS);
+            }
+            if pixels == null {
+                return Result<TextureData*!, string!>:::Err(TextureData:::StbFailure("PNG data"));
+            }
+            return Result<TextureData*!, string!>:::Ok(TextureData:::FromStbPixels(pixels, width, height));
+        }
+
+        static LoadPng :: (path: string) -> Result<TextureData*!, string!> {
+            width~ i32 = 0;
+            height~ i32 = 0;
+            channels~ i32 = 0;
+            pixels~ raw u8~* = null;
+            unsafe {
+                pixels = StbImage:::stbi_load(path, width, height, channels, RGBA_CHANNELS);
+            }
+            if pixels == null {
+                return Result<TextureData*!, string!>:::Err(TextureData:::StbFailure(path));
+            }
+            return Result<TextureData*!, string!>:::Ok(TextureData:::FromStbPixels(pixels, width, height));
+        }
+
+        ToPngBytes :: () -> Array<u8>! {
+            return EncodePng(this);
         }
 
         PixelOffset :: (x: u32, y: u32) -> usize {

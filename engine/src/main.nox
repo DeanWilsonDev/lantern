@@ -1,6 +1,4 @@
 Sdl :: import Sdl;
-Cgltf :: import Cgltf;
-StbImage :: import StbImage;
 
 lantern:::scaffold :: namespace {
     ReportSdlVersion :: () -> void {
@@ -15,39 +13,33 @@ lantern:::scaffold :: namespace {
     }
 
     ReportImageSize :: (path: string) -> bool {
-        width~ i32 = 0;
-        height~ i32 = 0;
-        channels~ i32 = 0;
-        found~ i32 = 0;
-        unsafe {
-            found = StbImage:::stbi_info(path, width, height, channels);
+        when lantern:::renderer:::TextureData:::LoadPng(path) {
+            Result:::Ok(texture) -> {
+                print(`stb_image: ${path} is ${texture->width}x${texture->height}`);
+                delete texture;
+                return true;
+            },
+            Result:::Err(message) -> {
+                print(`stb_image could not read ${message}`);
+                delete message;
+                return false;
+            }
         }
-        if found == 0 {
-            print(`stb_image could not read ${path}`);
-            return false;
-        }
-        print(`stb_image: ${path} is ${width}x${height}, ${channels} channels`);
-        return true;
     }
 
     ReportModelMeshes :: (path: string) -> bool {
-        options~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
-        data~ raw Cgltf:::cgltf_data~* = null;
-        result~ Cgltf:::cgltf_result = 0;
-        unsafe {
-            result = Cgltf:::cgltf_parse_file(options, path, data);
+        when lantern:::renderer:::LoadGltfMesh(path) {
+            Result:::Ok(mesh) -> {
+                print(`cgltf: ${path} has ${mesh->TriangleCount()} triangles`);
+                delete mesh;
+                return true;
+            },
+            Result:::Err(message) -> {
+                print(`cgltf could not load ${message}`);
+                delete message;
+                return false;
+            }
         }
-        if result != Cgltf:::cgltf_result_success {
-            print(`cgltf could not parse ${path}: result ${result}`);
-            return false;
-        }
-        meshCount~ usize = 0;
-        unsafe {
-            meshCount = data->meshes_count;
-            Cgltf:::cgltf_free(data);
-        }
-        print(`cgltf: ${path} has ${meshCount} meshes`);
-        return true;
     }
 }
 
