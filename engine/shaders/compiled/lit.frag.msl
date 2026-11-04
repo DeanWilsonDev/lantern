@@ -1,0 +1,64 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct MaterialUniforms
+{
+    float4 color;
+};
+
+struct LightUniforms
+{
+    float4 direction_to_light;
+    float4 light_color;
+    float4 ambient_color;
+    float4 fog_color;
+    float4 fog_and_output;
+    float4 camera_position;
+};
+
+struct main0_out
+{
+    float4 output_color [[color(0)]];
+};
+
+struct main0_in
+{
+    float3 world_position [[user(locn0)]];
+    float3 world_normal [[user(locn1)]];
+    float2 surface_uv [[user(locn2)]];
+    float4 surface_color [[user(locn3)]];
+};
+
+static inline __attribute__((always_inline))
+float3 EncodeSrgb(thread const float3& linear_color)
+{
+    float3 low = linear_color * 12.9200000762939453125;
+    float3 high = (pow(linear_color, float3(0.4166666567325592041015625)) * 1.05499994754791259765625) - float3(0.054999999701976776123046875);
+    return select(high, low, linear_color <= float3(0.003130800090730190277099609375));
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light [[buffer(0)]], constant MaterialUniforms& material [[buffer(1)]], texture2d<float> albedo_texture [[texture(0)]], sampler albedo_textureSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    float4 albedo = (albedo_texture.sample(albedo_textureSmplr, in.surface_uv) * in.surface_color) * material.color;
+    float3 normal = fast::normalize(in.world_normal);
+    float diffuse = fast::max(dot(normal, light.direction_to_light.xyz), 0.0);
+    float hemisphere = 0.64999997615814208984375 + (0.3499999940395355224609375 * normal.y);
+    float3 lit = albedo.xyz * ((light.ambient_color.xyz * hemisphere) + (light.light_color.xyz * diffuse));
+    float distance_to_camera = distance(in.world_position, light.camera_position.xyz);
+    float fog_range = fast::max(light.fog_and_output.y - light.fog_and_output.x, 0.001000000047497451305389404296875);
+    float fog = fast::clamp((distance_to_camera - light.fog_and_output.x) / fog_range, 0.0, 1.0);
+    lit = mix(lit, light.fog_color.xyz, float3(fog));
+    if (light.fog_and_output.w > 0.5)
+    {
+        float3 param = lit;
+        lit = EncodeSrgb(param);
+    }
+    out.output_color = float4(lit, 1.0);
+    return out;
+}
+
