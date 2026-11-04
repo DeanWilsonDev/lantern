@@ -1,0 +1,214 @@
+lantern:::core :: namespace {
+    KeyCode :: enum {
+        A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+        Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
+        Up, Down, Left, Right,
+        Space, Enter, Escape, Tab, Backspace, Backquote,
+        LeftShift, RightShift, LeftControl, RightControl, LeftAlt, RightAlt,
+        F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12
+    }
+
+    MouseButton :: enum {
+        Left,
+        Right,
+        Middle
+    }
+
+    GamepadButton :: enum {
+        South, East, West, North,
+        Back, Start,
+        LeftStick, RightStick,
+        LeftShoulder, RightShoulder,
+        DPadUp, DPadDown, DPadLeft, DPadRight
+    }
+
+    GamepadAxis :: enum {
+        LeftX,
+        LeftY,
+        RightX,
+        RightY,
+        LeftTrigger,
+        RightTrigger
+    }
+
+    GamepadStick :: enum {
+        Left,
+        Right
+    }
+
+    ActionKind :: enum {
+        Button,
+        Axis1D,
+        Axis2D
+    }
+
+    ActionId :: struct {
+        value~ u16 = 0;
+
+        operator == :: (other: ActionId) -> bool {
+            return value == other.value;
+        }
+
+        operator< :: (other: ActionId) -> bool {
+            return value < other.value;
+        }
+    }
+
+    ActionSet :: class {
+    public:
+        names~ Array<string!>! = [];
+        kinds~ Array<ActionKind>! = [];
+
+        ActionSet~: () { }
+
+        !ActionSet~: () {
+            names.freeAll();
+            delete kinds;
+        }
+
+        Register~: (name: string, kind: ActionKind) -> ActionId {
+            if Find(name) != null {
+                panic("an action is registered twice");
+            }
+            assert(names.length() < 65536, "fewer than 65536 actions");
+            id := ActionId { value: u16(names.length()) };
+            names.push(`${name}`);
+            kinds.push(kind);
+            return id;
+        }
+
+        Find :: (name: string) -> ActionId? {
+            for index~ usize = 0; index < names.length(); index++ {
+                if names[index] == name {
+                    return ActionId { value: u16(index) };
+                }
+            }
+            return null;
+        }
+
+        Name :: (id: ActionId) -> string {
+            return names[usize(id.value)];
+        }
+
+        Kind :: (id: ActionId) -> ActionKind {
+            return kinds[usize(id.value)];
+        }
+
+        Length :: () -> usize {
+            return names.length();
+        }
+
+        IsEmpty :: () -> bool {
+            return names.length() == 0;
+        }
+    }
+
+    Binding :: enum {
+        Key(key: KeyCode),
+        Mouse(button: MouseButton),
+        Gamepad(button: GamepadButton),
+        GamepadAxisButton(axis: GamepadAxis, threshold: f32),
+        KeyAxis(negative: KeyCode, positive: KeyCode),
+        GamepadAxisValue(axis: GamepadAxis, scale: f32),
+        KeyVector(up: KeyCode, down: KeyCode, left: KeyCode, right: KeyCode),
+        Stick(stick: GamepadStick, scale: f32),
+        MouseMotion(scale: f32)
+    }
+
+    BoundAction :: struct {
+        action~ ActionId = ActionId { };
+        binding~ Binding = Binding:::MouseMotion(0.0f);
+    }
+
+    Bindings :: class {
+    public:
+        entries~ Array<BoundAction>! = [];
+
+        Bindings~: () { }
+
+        !Bindings~: () {
+            delete entries;
+        }
+
+        Bind~: (action: ActionId, binding: Binding) -> void {
+            entries.push(BoundAction { action: action, binding: binding });
+        }
+
+        ForAction :: (action: ActionId) -> Array<Binding>! {
+            found~ Array<Binding>! = [];
+            for entry in entries {
+                if entry.action == action {
+                    found.push(entry.binding);
+                }
+            }
+            return found!;
+        }
+    }
+
+    ActionState :: struct {
+        held~ bool = false;
+        pressed~ bool = false;
+        released~ bool = false;
+        value~ Vec2 = Vec2 { };
+
+        operator == :: (other: ActionState) -> bool {
+            return held == other.held && pressed == other.pressed && released == other.released && value == other.value;
+        }
+    }
+
+    InputSnapshot :: class {
+    public:
+        states~ Array<ActionState>! = [];
+
+        InputSnapshot~: () { }
+
+        !InputSnapshot~: () {
+            delete states;
+        }
+
+        Copy :: () -> InputSnapshot*! {
+            copied := new InputSnapshot();
+            for state in states {
+                copied->states.push(state);
+            }
+            return copied!;
+        }
+
+        State :: (action: ActionId) -> ActionState {
+            index: usize = usize(action.value);
+            if index >= states.length() {
+                return ActionState { };
+            }
+            return states[index];
+        }
+
+        Held :: (action: ActionId) -> bool {
+            return State(action).held;
+        }
+
+        Pressed :: (action: ActionId) -> bool {
+            return State(action).pressed;
+        }
+
+        Released :: (action: ActionId) -> bool {
+            return State(action).released;
+        }
+
+        Axis :: (action: ActionId) -> f32 {
+            return State(action).value.x;
+        }
+
+        Vector :: (action: ActionId) -> Vec2 {
+            return State(action).value;
+        }
+    }
+
+    ApplyRadialDeadZone :: (stick: Vec2, deadZone: f32) -> Vec2 {
+        length: f32 = Vec2Length(stick);
+        if length <= deadZone {
+            return Vec2 { };
+        }
+        scaled: f32 = Math:::min((length - deadZone) / (1.0f - deadZone), 1.0f);
+        return stick / length * scaled;
+    }
+}

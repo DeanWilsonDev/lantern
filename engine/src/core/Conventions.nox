@@ -1,0 +1,138 @@
+lantern:::core :: namespace {
+    WorldUp :: () -> Vec3 {
+        return Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+    }
+
+    WorldForward :: () -> Vec3 {
+        return Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+    }
+
+    WorldRight :: () -> Vec3 {
+        return Vec3 { x: 1.0f, y: 0.0f, z: 0.0f };
+    }
+
+    YawRotation :: (yawRadians: f32) -> Quaternion {
+        return QuaternionFromRotationY(yawRadians);
+    }
+
+    DirectionFromYaw :: (yawRadians: f32) -> Vec3 {
+        return RotateVector(YawRotation(yawRadians), WorldForward());
+    }
+
+    YawFromDirection :: (direction: Vec3) -> f32 {
+        return Math:::atan2(-direction.x, -direction.z);
+    }
+
+    Perspective :: (verticalFieldOfViewRadians: f32, aspectRatio: f32, nearPlane: f32, farPlane: f32) -> Mat4 {
+        halfAngle: f32 = 0.5f * verticalFieldOfViewRadians;
+        height: f32 = Math:::cos(halfAngle) / Math:::sin(halfAngle);
+        width: f32 = height / aspectRatio;
+        depthRange: f32 = farPlane / (nearPlane - farPlane);
+        return MatrixFromColumns(
+            Vec4 { x: width, y: 0.0f, z: 0.0f, w: 0.0f },
+            Vec4 { x: 0.0f, y: height, z: 0.0f, w: 0.0f },
+            Vec4 { x: 0.0f, y: 0.0f, z: depthRange, w: -1.0f },
+            Vec4 { x: 0.0f, y: 0.0f, z: depthRange * nearPlane, w: 0.0f });
+    }
+
+    MoveTowards :: (current: f32, target: f32, maxDelta: f32) -> f32 {
+        if Math:::abs(target - current) <= maxDelta {
+            return target;
+        }
+        direction: f32 = when (target > current) {
+            true -> 1.0f,
+            false -> -1.0f,
+        };
+        return current + direction * maxDelta;
+    }
+
+    WrapAngle :: (angleRadians: f32) -> f32 {
+        remainder~ f32 = 0.0f;
+        unsafe {
+            remainder = lantern:::libm:::fmodf(angleRadians + Math:::PI, Math:::TAU);
+        }
+        if remainder < 0.0f {
+            remainder += Math:::TAU;
+        }
+        wrapped~ f32 = remainder - Math:::PI;
+        if wrapped <= -Math:::PI {
+            wrapped += Math:::TAU;
+        }
+        return wrapped;
+    }
+
+    Aabb :: struct {
+        min~ Vec3 = Vec3 { };
+        max~ Vec3 = Vec3 { };
+
+        static Empty :: () -> Aabb {
+            return Aabb { min: Splat3(INFINITY), max: Splat3(-INFINITY) };
+        }
+
+        static Create :: (first: Vec3, second: Vec3) -> Aabb {
+            return Aabb { min: ComponentMin3(first, second), max: ComponentMax3(first, second) };
+        }
+
+        static FromCenterHalfExtents :: (center: Vec3, halfExtents: Vec3) -> Aabb {
+            return Aabb { min: center - Abs3(halfExtents), max: center + Abs3(halfExtents) };
+        }
+
+        static FromPoints :: (points: Array<Vec3>) -> Aabb {
+            bounds~ Aabb = Aabb:::Empty();
+            for point in points {
+                bounds = bounds.GrownTo(point);
+            }
+            return bounds;
+        }
+
+        IsEmpty :: () -> bool {
+            return min.x > max.x || min.y > max.y || min.z > max.z;
+        }
+
+        GrownTo :: (point: Vec3) -> Aabb {
+            return Aabb { min: ComponentMin3(min, point), max: ComponentMax3(max, point) };
+        }
+
+        Union :: (other: Aabb) -> Aabb {
+            return Aabb { min: ComponentMin3(min, other.min), max: ComponentMax3(max, other.max) };
+        }
+
+        Expanded :: (amount: f32) -> Aabb {
+            return Aabb { min: min - Splat3(amount), max: max + Splat3(amount) };
+        }
+
+        Center :: () -> Vec3 {
+            return (min + max) * 0.5f;
+        }
+
+        HalfExtents :: () -> Vec3 {
+            return (max - min) * 0.5f;
+        }
+
+        Overlaps :: (other: Aabb) -> bool {
+            return min.x <= other.max.x && min.y <= other.max.y && min.z <= other.max.z
+                && max.x >= other.min.x && max.y >= other.min.y && max.z >= other.min.z;
+        }
+
+        ContainsPoint :: (point: Vec3) -> bool {
+            return min.x <= point.x && min.y <= point.y && min.z <= point.z
+                && max.x >= point.x && max.y >= point.y && max.z >= point.z;
+        }
+
+        Transformed :: (transform: Mat4) -> Aabb {
+            if IsEmpty() {
+                return Aabb { min: min, max: max };
+            }
+            bounds~ Aabb = Aabb:::Empty();
+            for corner~ i32 = 0; corner < 8; corner++ {
+                cornerPoint := Vec3 {
+                    x: when ((corner & 1) == 0) { true -> min.x, false -> max.x },
+                    y: when ((corner & 2) == 0) { true -> min.y, false -> max.y },
+                    z: when ((corner & 4) == 0) { true -> min.z, false -> max.z }
+                };
+                bounds = bounds.GrownTo(TransformPoint3(transform, cornerPoint));
+            }
+            return bounds;
+        }
+    }
+}

@@ -1,0 +1,144 @@
+lantern:::core :: namespace {
+    Handle<T> :: struct {
+        index~ u32 = 0;
+        generation~ u32 = 0;
+
+        Index :: () -> u32 {
+            return index;
+        }
+
+        Generation :: () -> u32 {
+            return generation;
+        }
+
+        ToBits :: () -> u64 {
+            return (u64(generation) << 32) | u64(index);
+        }
+
+        operator == :: (other: Handle<T>) -> bool {
+            return index == other.index && generation == other.generation;
+        }
+
+        operator< :: (other: Handle<T>) -> bool {
+            if index != other.index {
+                return index < other.index;
+            }
+            return generation < other.generation;
+        }
+    }
+
+    HandleFromBits<T> :: (bits: u64) -> Handle<T> {
+        return Handle<T> { index: u32(bits & 4294967295), generation: u32(bits >> 32) };
+    }
+
+    CastHandle<T, U> :: (handle: Handle<T>) -> Handle<U> {
+        return Handle<U> { index: handle.index, generation: handle.generation };
+    }
+
+    Pool<T> :: class {
+    public:
+        values~ Array<T>! = [];
+        generations~ Array<u32>! = [];
+        occupied~ Array<bool>! = [];
+        freeIndices~ Array<u32>! = [];
+        liveCount~ usize = 0;
+
+        Pool~: () { }
+
+        !Pool~: () {
+            delete values;
+            delete generations;
+            delete occupied;
+            delete freeIndices;
+        }
+
+        Insert~: (value: T) -> Handle<T> {
+            liveCount += 1;
+            if index := freeIndices.pop() {
+                slot: usize = usize(index);
+                values[slot] = value;
+                occupied[slot] = true;
+                return Handle<T> { index: index, generation: generations[slot] };
+            }
+            assert(values.length() < 4294967295, "a pool holds fewer than 2^32 values");
+            index: u32 = u32(values.length());
+            values.push(value);
+            generations.push(0);
+            occupied.push(true);
+            return Handle<T> { index: index, generation: 0 };
+        }
+
+        Resolves :: (handle: Handle<T>) -> bool {
+            slot: usize = usize(handle.index);
+            return slot < values.length() && occupied[slot] && generations[slot] == handle.generation;
+        }
+
+        Contains :: (handle: Handle<T>) -> bool {
+            return Resolves(handle);
+        }
+
+        Get :: (handle: Handle<T>) -> T? {
+            if !Resolves(handle) {
+                return null;
+            }
+            return values[usize(handle.index)];
+        }
+
+        Borrow :: (handle: Handle<T>) -> T*? {
+            if !Resolves(handle) {
+                return null;
+            }
+            return values[usize(handle.index)];
+        }
+
+        BorrowMutable~: (handle: Handle<T>) -> T~*? {
+            if !Resolves(handle) {
+                return null;
+            }
+            return values[usize(handle.index)];
+        }
+
+        Remove~: (handle: Handle<T>) -> T? {
+            if !Resolves(handle) {
+                return null;
+            }
+            slot: usize = usize(handle.index);
+            removed: T = values[slot];
+            occupied[slot] = false;
+            generations[slot] = generations[slot].wrappingAdd(1);
+            freeIndices.push(handle.index);
+            liveCount -= 1;
+            return removed;
+        }
+
+        Length :: () -> usize {
+            return liveCount;
+        }
+
+        IsEmpty :: () -> bool {
+            return liveCount == 0;
+        }
+
+        LiveHandles :: () -> Array<Handle<T>>! {
+            handles~ Array<Handle<T>>! = [];
+            for slot~ usize = 0; slot < values.length(); slot++ {
+                if occupied[slot] {
+                    handles.push(Handle<T> { index: u32(slot), generation: generations[slot] });
+                }
+            }
+            return handles!;
+        }
+
+        Drain~: () -> Array<T>! {
+            drained~ Array<T>! = [];
+            handles~ Array<Handle<T>>! = LiveHandles();
+            defer delete handles;
+            for handle in handles {
+                if removed := Remove(handle) {
+                    drained.push(removed);
+                }
+            }
+            return drained!;
+        }
+    }
+}

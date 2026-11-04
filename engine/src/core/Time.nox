@@ -1,0 +1,120 @@
+lantern:::core :: namespace {
+    FIXED_STEP_SECONDS: f32 : 1.0f / 60.0f;
+    MAX_STEPS_PER_FRAME: u32 : 8;
+    MAX_FRAME_SECONDS: f64 : 0.25f;
+    SNAP_THRESHOLD_SECONDS: f64 : 0.0002f;
+    FRAME_HISTORY_LENGTH: usize : 120;
+
+    FixedStepPlan :: struct {
+        stepCount~ u32 = 0;
+        alpha~ f32 = 0.0f;
+        droppedSeconds~ f64 = 0.0f;
+    }
+
+    FixedStepClock :: struct {
+        stepSeconds~ f64 = f64(FIXED_STEP_SECONDS);
+        maxStepsPerFrame~ u32 = MAX_STEPS_PER_FRAME;
+        accumulatorSeconds~ f64 = 0.0f;
+        totalSteps~ u64 = 0;
+
+        static Create :: (stepSeconds: f64, maxStepsPerFrame: u32) -> FixedStepClock {
+            assert(stepSeconds > 0.0f, "the fixed step must be positive");
+            assert(maxStepsPerFrame > 0, "a frame must be allowed at least one step");
+            return FixedStepClock { stepSeconds: stepSeconds, maxStepsPerFrame: maxStepsPerFrame };
+        }
+
+        StepSeconds :: () -> f32 {
+            return f32(stepSeconds);
+        }
+
+        TotalSteps :: () -> u64 {
+            return totalSteps;
+        }
+
+        Advance ~: (measuredFrameSeconds: f64) -> FixedStepPlan {
+            frameSeconds~ f64 = measuredFrameSeconds;
+            if frameSeconds < 0.0f {
+                frameSeconds = 0.0f;
+            }
+            if frameSeconds > MAX_FRAME_SECONDS {
+                frameSeconds = MAX_FRAME_SECONDS;
+            }
+            difference~ f64 = frameSeconds - stepSeconds;
+            if difference < 0.0f {
+                difference = -difference;
+            }
+            if difference < SNAP_THRESHOLD_SECONDS {
+                frameSeconds = stepSeconds;
+            }
+            accumulatorSeconds += frameSeconds;
+
+            stepCount~ u32 = 0;
+            while accumulatorSeconds >= stepSeconds && stepCount < maxStepsPerFrame {
+                accumulatorSeconds -= stepSeconds;
+                stepCount += 1;
+            }
+
+            droppedSeconds~ f64 = 0.0f;
+            if accumulatorSeconds >= stepSeconds {
+                wholeStepsBehind~ f64 = 0.0f;
+                unsafe {
+                    wholeStepsBehind = lantern:::libm:::floor(accumulatorSeconds / stepSeconds);
+                }
+                droppedSeconds = wholeStepsBehind * stepSeconds;
+                accumulatorSeconds -= droppedSeconds;
+            }
+
+            totalSteps += u64(stepCount);
+            return FixedStepPlan { stepCount: stepCount, alpha: f32(accumulatorSeconds / stepSeconds), droppedSeconds: droppedSeconds };
+        }
+    }
+
+    FrameStats :: struct {
+        frameSeconds~ f64[120] = filled<f64, 120>(0.0f);
+        next~ usize = 0;
+        filledCount~ usize = 0;
+        lastStepCount~ u32 = 0;
+        frames~ u64 = 0;
+        droppedSecondsTotal~ f64 = 0.0f;
+
+        Record ~: (measuredFrameSeconds: f64, plan: FixedStepPlan) -> void {
+            frameSeconds[next] = measuredFrameSeconds;
+            next = (next + 1) % FRAME_HISTORY_LENGTH;
+            if filledCount < FRAME_HISTORY_LENGTH {
+                filledCount += 1;
+            }
+            lastStepCount = plan.stepCount;
+            droppedSecondsTotal += plan.droppedSeconds;
+            frames += 1;
+        }
+
+        AverageFrameMilliseconds :: () -> f64 {
+            if filledCount == 0 {
+                return 0.0f;
+            }
+            sum~ f64 = 0.0f;
+            for index~ usize = 0; index < filledCount; index++ {
+                sum += frameSeconds[index];
+            }
+            return sum / f64(filledCount) * 1000.0f;
+        }
+
+        WorstFrameMilliseconds :: () -> f64 {
+            worst~ f64 = 0.0f;
+            for index~ usize = 0; index < filledCount; index++ {
+                if frameSeconds[index] > worst {
+                    worst = frameSeconds[index];
+                }
+            }
+            return worst * 1000.0f;
+        }
+
+        FramesPerSecond :: () -> f64 {
+            average: f64 = AverageFrameMilliseconds();
+            if average <= 0.0f {
+                return 0.0f;
+            }
+            return 1000.0f / average;
+        }
+    }
+}
