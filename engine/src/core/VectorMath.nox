@@ -1,0 +1,77 @@
+lantern:::core :: namespace {
+    INFINITY: f32 : 1.0f / 0.0f;
+
+    Splat3 :: (value: f32) -> Vec3 {
+        return Vec3 { x: value, y: value, z: value };
+    }
+
+    ComponentMin3 :: (left: Vec3, right: Vec3) -> Vec3 {
+        return Vec3 { x: Math:::min(left.x, right.x), y: Math:::min(left.y, right.y), z: Math:::min(left.z, right.z) };
+    }
+
+    ComponentMax3 :: (left: Vec3, right: Vec3) -> Vec3 {
+        return Vec3 { x: Math:::max(left.x, right.x), y: Math:::max(left.y, right.y), z: Math:::max(left.z, right.z) };
+    }
+
+    Abs3 :: (vector: Vec3) -> Vec3 {
+        return Vec3 { x: Math:::abs(vector.x), y: Math:::abs(vector.y), z: Math:::abs(vector.z) };
+    }
+
+    Vec2Length :: (vector: Vec2) -> f32 {
+        return Math:::sqrt(vector.x * vector.x + vector.y * vector.y);
+    }
+
+    QuaternionFromRotationY :: (radians: f32) -> Quaternion {
+        half: f32 = radians * 0.5f;
+        return Quaternion { x: 0.0f, y: Math:::sin(half), z: 0.0f, w: Math:::cos(half) };
+    }
+
+    RotateVector :: (rotation: Quaternion, vector: Vec3) -> Vec3 {
+        axis := Vec3 { x: rotation.x, y: rotation.y, z: rotation.z };
+        axisLengthSquared: f32 = axis.dot(axis);
+        scaledVector := vector * (rotation.w * rotation.w - axisLengthSquared);
+        scaledAxis := axis * (vector.dot(axis) * 2.0f);
+        scaledCross := axis.cross(vector) * (rotation.w * 2.0f);
+        return scaledVector + scaledAxis + scaledCross;
+    }
+
+    MatrixFromColumns :: (xAxis: Vec4, yAxis: Vec4, zAxis: Vec4, wAxis: Vec4) -> Mat4 {
+        result~ Mat4 = Mat4 { };
+        result.elements = [xAxis.x, xAxis.y, xAxis.z, xAxis.w, yAxis.x, yAxis.y, yAxis.z, yAxis.w,
+            zAxis.x, zAxis.y, zAxis.z, zAxis.w, wAxis.x, wAxis.y, wAxis.z, wAxis.w];
+        return result;
+    }
+
+    MatrixFromRotationTranslation :: (rotation: Quaternion, translation: Vec3) -> Mat4 {
+        x2: f32 = rotation.x + rotation.x;
+        y2: f32 = rotation.y + rotation.y;
+        z2: f32 = rotation.z + rotation.z;
+        xx: f32 = rotation.x * x2;
+        xy: f32 = rotation.x * y2;
+        xz: f32 = rotation.x * z2;
+        yy: f32 = rotation.y * y2;
+        yz: f32 = rotation.y * z2;
+        zz: f32 = rotation.z * z2;
+        wx: f32 = rotation.w * x2;
+        wy: f32 = rotation.w * y2;
+        wz: f32 = rotation.w * z2;
+        return MatrixFromColumns(
+            Vec4 { x: 1.0f - (yy + zz), y: xy + wz, z: xz - wy, w: 0.0f },
+            Vec4 { x: xy - wz, y: 1.0f - (xx + zz), z: yz + wx, w: 0.0f },
+            Vec4 { x: xz + wy, y: yz - wx, z: 1.0f - (xx + yy), w: 0.0f },
+            Vec4 { x: translation.x, y: translation.y, z: translation.z, w: 1.0f });
+    }
+
+    MatrixFromQuaternion :: (rotation: Quaternion) -> Mat4 {
+        return MatrixFromRotationTranslation(rotation, Vec3 { });
+    }
+
+    TransformPoint3 :: (transform: Mat4, point: Vec3) -> Vec3 {
+        e := transform.elements;
+        return Vec3 {
+            x: e[0] * point.x + e[4] * point.y + e[8] * point.z + e[12],
+            y: e[1] * point.x + e[5] * point.y + e[9] * point.z + e[13],
+            z: e[2] * point.x + e[6] * point.y + e[10] * point.z + e[14]
+        };
+    }
+}

@@ -4,8 +4,9 @@ This directory is the Nox rewrite of Lantern's Rust engine (`crates/`), on the `
 `games/platformer/` is meant to run on it unchanged. The Rust engine stays on `proto` as the reference, and the work is
 tracked on the board's `engine-on-nox` epic (`docs/kanban/engine-on-nox`), one feature per milestone.
 
-So far it's the scaffold (milestone L0): a Nox project, its C dependencies through Mist, the SDL3 and Nyx bindings,
-the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each.
+So far it has the scaffold (milestone L0): a Nox project, its C dependencies through Mist, the SDL3 and Nyx bindings,
+the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each. It also has
+the core module (milestone L1), described under "Layout".
 
 ## What you need
 
@@ -54,6 +55,27 @@ through stb_image and cgltf. Run it from this directory, since the asset paths a
   until `mist resolve` tells `nox build` where Mist's builds are.
 
 Each binding records the host's struct layouts, so `generated/` is written on each machine and isn't committed.
+
+## Layout
+
+- `src/core/` is the Rust `core` crate: `Conventions.nox` (axes, yaw, perspective, `MoveTowards`, `WrapAngle`, `Aabb`)
+  over `VectorMath.nox`, `Handle.nox` (`Handle<T>` and `Pool<T>`), `Time.nox` (`FixedStepClock`, `FrameStats`),
+  `Input.nox` (keys, buttons, actions, bindings, `InputSnapshot`, the radial dead zone), `Color.nox`, `Debug.nox`
+  (`DebugValues`), `Logging.nox` (the stderr logger, filtered by `LANTERN_LOG`), `Text.nox` (padding and fixed
+  decimals) and `LibM.nox` (the libm functions they call).
+- `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
+  `PlatformBackend` and `AudioSink` interfaces a backend implements.
+- `tests/<module>/<test>/` is one test program each: a `main.nox`, a `nox.json` naming the engine sources it needs,
+  and an `expected.txt` with the exit code and output it must produce. They're the Rust tests, one program per test.
+
+## Testing
+
+```sh
+./tools/run-tests.sh
+```
+
+runs `nox test` over every suite under `tests/`, and passes its arguments through (`--backend c`, for one). It needs a
+`nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
 
 ## Shaders
 

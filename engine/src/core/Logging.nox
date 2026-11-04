@@ -1,0 +1,156 @@
+lantern:::posix :: foreign "c" {
+    write :: (fileDescriptor: i32, text: string, length: usize) -> isize;
+}
+
+LoggerState :: struct {
+    installed~ bool = false;
+    startNanoseconds~ u64 = 0;
+    maximumLevel~ i32 = 3;
+}
+
+lanternLogger~ LoggerState = LoggerState { };
+
+lantern:::core :: namespace {
+    STANDARD_ERROR: i32 : 2;
+
+    LogLevel :: enum {
+        Error,
+        Warn,
+        Info,
+        Debug,
+        Trace
+    }
+
+    LogLevelFilter :: enum {
+        Off,
+        Error,
+        Warn,
+        Info,
+        Debug,
+        Trace
+    }
+
+    LevelRank :: (level: LogLevel) -> i32 {
+        return when level {
+            LogLevel:::Error -> 1,
+            LogLevel:::Warn -> 2,
+            LogLevel:::Info -> 3,
+            LogLevel:::Debug -> 4,
+            LogLevel:::Trace -> 5,
+        };
+    }
+
+    FilterRank :: (filter: LogLevelFilter) -> i32 {
+        return when filter {
+            LogLevelFilter:::Off -> 0,
+            LogLevelFilter:::Error -> 1,
+            LogLevelFilter:::Warn -> 2,
+            LogLevelFilter:::Info -> 3,
+            LogLevelFilter:::Debug -> 4,
+            LogLevelFilter:::Trace -> 5,
+        };
+    }
+
+    LevelName :: (level: LogLevel) -> string {
+        return when level {
+            LogLevel:::Error -> "ERROR",
+            LogLevel:::Warn -> "WARN",
+            LogLevel:::Info -> "INFO",
+            LogLevel:::Debug -> "DEBUG",
+            LogLevel:::Trace -> "TRACE",
+        };
+    }
+
+    ParseLogLevelFilter :: (text: string) -> LogLevelFilter? {
+        lowered: string! = text.toLower();
+        defer delete lowered;
+        if lowered == "off" {
+            return LogLevelFilter:::Off;
+        }
+        if lowered == "error" {
+            return LogLevelFilter:::Error;
+        }
+        if lowered == "warn" {
+            return LogLevelFilter:::Warn;
+        }
+        if lowered == "info" {
+            return LogLevelFilter:::Info;
+        }
+        if lowered == "debug" {
+            return LogLevelFilter:::Debug;
+        }
+        if lowered == "trace" {
+            return LogLevelFilter:::Trace;
+        }
+        return null;
+    }
+
+    InitLogging :: (defaultLevel: LogLevelFilter) -> void {
+        level~ LogLevelFilter = defaultLevel;
+        requestedLevel: string!? = environmentVariable("LANTERN_LOG");
+        defer delete requestedLevel;
+        if requested := requestedLevel {
+            if parsed := ParseLogLevelFilter(requested) {
+                level = parsed;
+            }
+        }
+        unsafe {
+            if lanternLogger.installed {
+                return;
+            }
+            lanternLogger.installed = true;
+            lanternLogger.startNanoseconds = monotonicNanoseconds();
+            lanternLogger.maximumLevel = FilterRank(level);
+        }
+    }
+
+    LogEnabled :: (level: LogLevel) -> bool {
+        unsafe {
+            return lanternLogger.installed && LevelRank(level) <= lanternLogger.maximumLevel;
+        }
+    }
+
+    FormatLogLine :: (seconds: f64, level: LogLevel, target: string, message: string) -> string! {
+        time: string! = FixedDecimals(seconds, 3, 8);
+        defer delete time;
+        name: string! = PadEnd(LevelName(level), 5);
+        defer delete name;
+        return `[${time}s] ${name} [${target}] ${message}`;
+    }
+
+    Log :: (level: LogLevel, target: string, message: string) -> void {
+        if !LogEnabled(level) {
+            return;
+        }
+        elapsedNanoseconds~ u64 = 0;
+        unsafe {
+            elapsedNanoseconds = monotonicNanoseconds() - lanternLogger.startNanoseconds;
+        }
+        line~ string! = FormatLogLine(f64(elapsedNanoseconds) / 1000000000.0f, level, target, message);
+        defer delete line;
+        line += "\n";
+        unsafe {
+            lantern:::posix:::write(STANDARD_ERROR, line, line.length());
+        }
+    }
+
+    LogError :: (target: string, message: string) -> void {
+        Log(LogLevel:::Error, target, message);
+    }
+
+    LogWarn :: (target: string, message: string) -> void {
+        Log(LogLevel:::Warn, target, message);
+    }
+
+    LogInfo :: (target: string, message: string) -> void {
+        Log(LogLevel:::Info, target, message);
+    }
+
+    LogDebug :: (target: string, message: string) -> void {
+        Log(LogLevel:::Debug, target, message);
+    }
+
+    LogTrace :: (target: string, message: string) -> void {
+        Log(LogLevel:::Trace, target, message);
+    }
+}

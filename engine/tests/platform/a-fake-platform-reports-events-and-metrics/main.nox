@@ -1,0 +1,64 @@
+lantern :: import lantern;
+
+FakePlatform :: class {
+    implements:
+        lantern:::platform:::PlatformBackend;
+public:
+    captured~ bool = false;
+    pumps~ i32 = 0;
+
+    FakePlatform~: () { }
+
+    PumpEvents~: () -> Array<lantern:::platform:::PlatformEvent>! {
+        pumps += 1;
+        events~ Array<lantern:::platform:::PlatformEvent>! = [];
+        events.push(lantern:::platform:::PlatformEvent:::KeyDown(lantern:::core:::KeyCode:::Space, false));
+        if pumps == 2 {
+            events.push(lantern:::platform:::PlatformEvent:::QuitRequested);
+        }
+        return events!;
+    }
+
+    SecondsSinceStart :: () -> f64 {
+        return f64(pumps) / 60.0f;
+    }
+
+    CurrentWindowMetrics :: () -> lantern:::platform:::WindowMetrics {
+        return lantern:::platform:::WindowMetrics { logicalWidth: 640, logicalHeight: 360, pixelWidth: 1280, pixelHeight: 720, pixelDensity: 2.0f };
+    }
+
+    SetMouseCaptured~: (captured: bool) -> void {
+        this->captured = captured;
+    }
+}
+
+Describe :: (event: lantern:::platform:::PlatformEvent) -> string {
+    return when event {
+        lantern:::platform:::PlatformEvent:::KeyDown(key, repeat) -> "key down",
+        lantern:::platform:::PlatformEvent:::QuitRequested -> "quit requested",
+        default -> "something else",
+    };
+}
+
+Run :: (platform: lantern:::platform:::PlatformBackend~*) -> void {
+    platform->SetMouseCaptured(true);
+    for pump~ i32 = 0; pump < 2; pump++ {
+        events~ Array<lantern:::platform:::PlatformEvent>! = platform->PumpEvents();
+        for event in events {
+            print(Describe(event));
+        }
+        delete events;
+    }
+    metrics := platform->CurrentWindowMetrics();
+    print(`${metrics.pixelWidth}x${metrics.pixelHeight}, aspect ${metrics.AspectRatio():.3f}, empty ${metrics.IsDrawableEmpty()}`);
+    minimized := lantern:::platform:::WindowMetrics { pixelWidth: 1280, pixelHeight: 720, minimized: true };
+    print(`minimized empty ${minimized.IsDrawableEmpty()}, zero-height aspect ${lantern:::platform:::WindowMetrics { }.AspectRatio():.1f}`);
+}
+
+main :: () -> i32 {
+    platform := new FakePlatform();
+    defer delete platform;
+    Run(platform);
+    print(`captured ${platform->captured}`);
+    return 0;
+}

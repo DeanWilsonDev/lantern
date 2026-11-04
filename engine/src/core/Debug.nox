@@ -1,0 +1,150 @@
+lantern:::core :: namespace {
+    DebugValue :: enum {
+        Text,
+        Number(number: f64),
+        Integer(integer: i64),
+        Flag(value: bool),
+        Vector(vector: Vec3)
+    }
+
+    DisplayVector :: (vector: Vec3) -> string! {
+        x: string! = FixedDecimals(f64(vector.x), 2, 6);
+        defer delete x;
+        y: string! = FixedDecimals(f64(vector.y), 2, 6);
+        defer delete y;
+        z: string! = FixedDecimals(f64(vector.z), 2, 6);
+        defer delete z;
+        return `${x} ${y} ${z}`;
+    }
+
+    DebugGroup :: (path: string) -> string {
+        if slash := path.indexOf("/", 0) {
+            return path.substring(0, slash);
+        }
+        return "";
+    }
+
+    DebugName :: (path: string) -> string {
+        if slash := path.indexOf("/", 0) {
+            return path.substring(slash + 1, path.length() - slash - 1);
+        }
+        return path;
+    }
+
+    DebugValues :: class {
+    public:
+        paths~ Array<string!>! = [];
+        texts~ Array<string!>! = [];
+        values~ Array<DebugValue>! = [];
+
+        DebugValues~: () { }
+
+        !DebugValues~: () {
+            paths.freeAll();
+            texts.freeAll();
+            delete values;
+        }
+
+        IndexOf :: (path: string) -> usize? {
+            for index~ usize = 0; index < paths.length(); index++ {
+                if paths[index] == path {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        Store~: (path: string, value: DebugValue, text: string) -> void {
+            if index := IndexOf(path) {
+                values[index] = value;
+                texts.remove(index);
+                texts.insert(index, `${text}`);
+                return;
+            }
+            paths.push(`${path}`);
+            texts.push(`${text}`);
+            values.push(value);
+        }
+
+        SetText~: (path: string, text: string) -> void {
+            Store(path, DebugValue:::Text, text);
+        }
+
+        SetNumber~: (path: string, number: f64) -> void {
+            Store(path, DebugValue:::Number(number), "");
+        }
+
+        SetInteger~: (path: string, integer: i64) -> void {
+            Store(path, DebugValue:::Integer(integer), "");
+        }
+
+        SetFlag~: (path: string, flag: bool) -> void {
+            Store(path, DebugValue:::Flag(flag), "");
+        }
+
+        SetVector~: (path: string, vector: Vec3) -> void {
+            Store(path, DebugValue:::Vector(vector), "");
+        }
+
+        Get :: (path: string) -> DebugValue? {
+            if index := IndexOf(path) {
+                return values[index];
+            }
+            return null;
+        }
+
+        Length :: () -> usize {
+            return paths.length();
+        }
+
+        PathAt :: (index: usize) -> string {
+            return paths[index];
+        }
+
+        ValueAt :: (index: usize) -> DebugValue {
+            return values[index];
+        }
+
+        TextAt :: (index: usize) -> string {
+            return texts[index];
+        }
+
+        DisplayAt :: (index: usize) -> string! {
+            return when values[index] {
+                DebugValue:::Text -> `${texts[index]}`,
+                DebugValue:::Number(number) -> FixedDecimals(number, 2, 0),
+                DebugValue:::Integer(integer) -> `${integer}`,
+                DebugValue:::Flag(flag) -> YesOrNo(flag),
+                DebugValue:::Vector(vector) -> DisplayVector(vector),
+            };
+        }
+
+        RemovePrefix~: (prefix: string) -> void {
+            index~ usize = 0;
+            while index < paths.length() {
+                if paths[index].startsWith(prefix) {
+                    paths.remove(index);
+                    texts.remove(index);
+                    values.remove(index);
+                } else {
+                    index += 1;
+                }
+            }
+        }
+
+        Clear~: () -> void {
+            while paths.length() > 0 {
+                paths.remove(paths.length() - 1);
+                texts.remove(texts.length() - 1);
+                values.remove(values.length() - 1);
+            }
+        }
+    }
+
+    YesOrNo :: (flag: bool) -> string! {
+        if flag {
+            return "yes" + "";
+        }
+        return "no" + "";
+    }
+}
