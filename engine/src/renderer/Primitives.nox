@@ -1,0 +1,206 @@
+lantern:::renderer :: namespace {
+    White4 :: () -> Vec4 {
+        return Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f };
+    }
+
+    PushQuad :: (mesh: MeshData~*, center: Vec3, normal: Vec3, right: Vec3, up: Vec3, halfSize: Vec2, uvSize: Vec2) -> void {
+        base: u32 = u32(mesh->vertices.length());
+        signsRight: f32[4] = [-1.0f, 1.0f, 1.0f, -1.0f];
+        signsUp: f32[4] = [-1.0f, -1.0f, 1.0f, 1.0f];
+        for corner~ usize = 0; corner < 4; corner++ {
+            signRight: f32 = signsRight[corner];
+            signUp: f32 = signsUp[corner];
+            position := center + right * halfSize.x * signRight + up * halfSize.y * signUp;
+            uv := Vec2 { x: (signRight + 1.0f) * 0.5f * uvSize.x, y: (1.0f - signUp) * 0.5f * uvSize.y };
+            mesh->vertices.push(Vertex:::Create(position, normal, uv, White4()));
+        }
+        mesh->indices.push(base);
+        mesh->indices.push(base + 1);
+        mesh->indices.push(base + 2);
+        mesh->indices.push(base);
+        mesh->indices.push(base + 2);
+        mesh->indices.push(base + 3);
+    }
+
+    Component :: (vector: Vec3, axis: Vec3) -> f32 {
+        return vector.dot(lantern:::core:::Abs3(axis));
+    }
+
+    Axis3 :: (x: f32, y: f32, z: f32) -> Vec3 {
+        return Vec3 { x: x, y: y, z: z };
+    }
+
+    BoxMesh :: (halfExtents: Vec3, worldUvs: bool) -> MeshData*! {
+        mesh := new MeshData();
+        normals: Vec3[6] = [Axis3(1.0f, 0.0f, 0.0f), Axis3(-1.0f, 0.0f, 0.0f), Axis3(0.0f, 1.0f, 0.0f), Axis3(0.0f, -1.0f, 0.0f), Axis3(0.0f, 0.0f, 1.0f), Axis3(0.0f, 0.0f, -1.0f)];
+        rights: Vec3[6] = [Axis3(0.0f, 0.0f, -1.0f), Axis3(0.0f, 0.0f, 1.0f), Axis3(1.0f, 0.0f, 0.0f), Axis3(1.0f, 0.0f, 0.0f), Axis3(1.0f, 0.0f, 0.0f), Axis3(-1.0f, 0.0f, 0.0f)];
+        ups: Vec3[6] = [Axis3(0.0f, 1.0f, 0.0f), Axis3(0.0f, 1.0f, 0.0f), Axis3(0.0f, 0.0f, -1.0f), Axis3(0.0f, 0.0f, 1.0f), Axis3(0.0f, 1.0f, 0.0f), Axis3(0.0f, 1.0f, 0.0f)];
+        for face~ usize = 0; face < 6; face++ {
+            normal := normals[face];
+            right := rights[face];
+            up := ups[face];
+            halfSize := Vec2 { x: Component(halfExtents, right), y: Component(halfExtents, up) };
+            uvSize~ Vec2 = Vec2 { x: 1.0f, y: 1.0f };
+            if worldUvs {
+                uvSize = halfSize * 2.0f;
+            }
+            PushQuad(mesh, normal * Component(halfExtents, normal), normal, right, up, halfSize, uvSize);
+        }
+        return mesh!;
+    }
+
+    Cube :: (size: f32) -> MeshData*! {
+        return BoxMesh(lantern:::core:::Splat3(size * 0.5f), false);
+    }
+
+    Plane :: (width: f32, depth: f32) -> MeshData*! {
+        mesh := new MeshData();
+        halfSize := Vec2 { x: width * 0.5f, y: depth * 0.5f };
+        PushQuad(mesh, Vec3 { }, Axis3(0.0f, 1.0f, 0.0f), Axis3(1.0f, 0.0f, 0.0f), Axis3(0.0f, 0.0f, -1.0f), halfSize, halfSize * 2.0f);
+        return mesh!;
+    }
+
+    PushFan :: (mesh: MeshData~*, corners: Array<Vec3>, uvs: Array<Vec2>) -> void {
+        normal := lantern:::core:::Normalize3((corners[1] - corners[0]).cross(corners[2] - corners[0]));
+        base: u32 = u32(mesh->vertices.length());
+        for index~ usize = 0; index < corners.length(); index++ {
+            mesh->vertices.push(Vertex:::Create(corners[index], normal, uvs[index], White4()));
+        }
+        for triangle~ u32 = 1; triangle < u32(corners.length()) - 1; triangle++ {
+            mesh->indices.push(base);
+            mesh->indices.push(base + triangle);
+            mesh->indices.push(base + triangle + 1);
+        }
+    }
+
+    PushPolygon4 :: (mesh: MeshData~*, corners: Vec3[4], uvs: Vec2[4]) -> void {
+        cornerList~ Array<Vec3>! = [];
+        defer delete cornerList;
+        uvList~ Array<Vec2>! = [];
+        defer delete uvList;
+        for index~ usize = 0; index < 4; index++ {
+            cornerList.push(corners[index]);
+            uvList.push(uvs[index]);
+        }
+        PushFan(mesh, cornerList, uvList);
+    }
+
+    PushPolygon3 :: (mesh: MeshData~*, corners: Vec3[3], uvs: Vec2[3]) -> void {
+        cornerList~ Array<Vec3>! = [];
+        defer delete cornerList;
+        uvList~ Array<Vec2>! = [];
+        defer delete uvList;
+        for index~ usize = 0; index < 3; index++ {
+            cornerList.push(corners[index]);
+            uvList.push(uvs[index]);
+        }
+        PushFan(mesh, cornerList, uvList);
+    }
+
+    Ramp :: (width: f32, height: f32, length: f32) -> MeshData*! {
+        w: f32 = width * 0.5f;
+        l: f32 = length * 0.5f;
+        mesh := new MeshData();
+        slopeLength~ f32 = 0.0f;
+        unsafe {
+            slopeLength = lantern:::libm:::hypotf(height, length);
+        }
+        PushPolygon4(mesh,
+            [Axis3(-w, 0.0f, l), Axis3(w, 0.0f, l), Axis3(w, height, -l), Axis3(-w, height, -l)],
+            [Vec2 { x: 0.0f, y: slopeLength }, Vec2 { x: width, y: slopeLength }, Vec2 { x: width, y: 0.0f }, Vec2 { }]);
+        PushPolygon4(mesh,
+            [Axis3(w, 0.0f, -l), Axis3(-w, 0.0f, -l), Axis3(-w, height, -l), Axis3(w, height, -l)],
+            [Vec2 { x: 0.0f, y: height }, Vec2 { x: width, y: height }, Vec2 { x: width, y: 0.0f }, Vec2 { }]);
+        PushPolygon4(mesh,
+            [Axis3(-w, 0.0f, -l), Axis3(w, 0.0f, -l), Axis3(w, 0.0f, l), Axis3(-w, 0.0f, l)],
+            [Vec2 { }, Vec2 { x: width, y: 0.0f }, Vec2 { x: width, y: length }, Vec2 { x: 0.0f, y: length }]);
+        PushPolygon3(mesh,
+            [Axis3(w, 0.0f, l), Axis3(w, 0.0f, -l), Axis3(w, height, -l)],
+            [Vec2 { x: 0.0f, y: height }, Vec2 { x: length, y: height }, Vec2 { x: length, y: 0.0f }]);
+        PushPolygon3(mesh,
+            [Axis3(-w, 0.0f, -l), Axis3(-w, 0.0f, l), Axis3(-w, height, -l)],
+            [Vec2 { x: 0.0f, y: height }, Vec2 { x: length, y: height }, Vec2 { x: 0.0f, y: 0.0f }]);
+        return mesh!;
+    }
+
+    Capsule :: (radius: f32, halfHeight: f32, segments: u32, rings: u32) -> MeshData*! {
+        assert(segments >= 3 && rings >= 2 && rings % 2 == 0, "need at least 3 segments and an even ring count");
+        polarAngles~ Array<f32>! = [];
+        defer delete polarAngles;
+        yOffsets~ Array<f32>! = [];
+        defer delete yOffsets;
+        for ring~ u32 = 0; ring <= rings / 2; ring++ {
+            polarAngles.push(Math:::PI * f32(ring) / f32(rings));
+            yOffsets.push(halfHeight);
+        }
+        for ring~ u32 = rings / 2; ring <= rings; ring++ {
+            polarAngles.push(Math:::PI * f32(ring) / f32(rings));
+            yOffsets.push(-halfHeight);
+        }
+        totalHeight: f32 = 2.0f * (radius + halfHeight);
+        mesh := new MeshData();
+        for row~ usize = 0; row < polarAngles.length(); row++ {
+            polar: f32 = polarAngles[row];
+            for segment~ u32 = 0; segment <= segments; segment++ {
+                azimuth: f32 = Math:::TAU * f32(segment) / f32(segments);
+                normal := Vec3 { x: Math:::sin(polar) * Math:::cos(azimuth), y: Math:::cos(polar), z: -Math:::sin(polar) * Math:::sin(azimuth) };
+                position := normal * radius + Vec3 { x: 0.0f, y: yOffsets[row], z: 0.0f };
+                uv := Vec2 { x: f32(segment) / f32(segments), y: (radius + halfHeight - position.y) / totalHeight };
+                mesh->vertices.push(Vertex:::Create(position, normal, uv, White4()));
+            }
+        }
+        columns: u32 = segments + 1;
+        rowCount: u32 = u32(polarAngles.length());
+        for row~ u32 = 0; row < rowCount - 1; row++ {
+            for segment~ u32 = 0; segment < segments; segment++ {
+                topLeft: u32 = row * columns + segment;
+                topRight: u32 = topLeft + 1;
+                bottomLeft: u32 = topLeft + columns;
+                bottomRight: u32 = bottomLeft + 1;
+                PushTriangleUnlessDegenerate(mesh, topLeft, bottomLeft, bottomRight);
+                PushTriangleUnlessDegenerate(mesh, topLeft, bottomRight, topRight);
+            }
+        }
+        return mesh!;
+    }
+
+    PushTriangleUnlessDegenerate :: (mesh: MeshData~*, first: u32, second: u32, third: u32) -> void {
+        a := mesh->vertices[usize(first)].Position();
+        b := mesh->vertices[usize(second)].Position();
+        c := mesh->vertices[usize(third)].Position();
+        if lantern:::core:::LengthSquared3((b - a).cross(c - a)) > 0.000000000001f {
+            mesh->indices.push(first);
+            mesh->indices.push(second);
+            mesh->indices.push(third);
+        }
+    }
+
+    Sphere :: (radius: f32, segments: u32, rings: u32) -> MeshData*! {
+        return Capsule(radius, 0.0f, segments, rings);
+    }
+
+    Gem :: (radius: f32, height: f32) -> MeshData*! {
+        top := Vec3 { x: 0.0f, y: height * 0.5f, z: 0.0f };
+        bottom := -top;
+        ring: Vec3[4] = [Axis3(radius, 0.0f, 0.0f), Axis3(0.0f, 0.0f, -radius), Axis3(-radius, 0.0f, 0.0f), Axis3(0.0f, 0.0f, radius)];
+        mesh := new MeshData();
+        for index~ usize = 0; index < 4; index++ {
+            a := ring[index];
+            b := ring[(index + 1) % 4];
+            PushGemTriangle(mesh, a, b, top);
+            PushGemTriangle(mesh, b, a, bottom);
+        }
+        return mesh!;
+    }
+
+    PushGemTriangle :: (mesh: MeshData~*, first: Vec3, second: Vec3, third: Vec3) -> void {
+        normal := lantern:::core:::Normalize3((second - first).cross(third - first));
+        base: u32 = u32(mesh->vertices.length());
+        mesh->vertices.push(Vertex:::Create(first, normal, Vec2 { x: 0.0f, y: 1.0f }, White4()));
+        mesh->vertices.push(Vertex:::Create(second, normal, Vec2 { x: 1.0f, y: 1.0f }, White4()));
+        mesh->vertices.push(Vertex:::Create(third, normal, Vec2 { x: 0.5f, y: 0.0f }, White4()));
+        mesh->indices.push(base);
+        mesh->indices.push(base + 1);
+        mesh->indices.push(base + 2);
+    }
+}

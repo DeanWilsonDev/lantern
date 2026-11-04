@@ -1,0 +1,74 @@
+lantern:::renderer :: namespace {
+    TextureFilter :: enum {
+        Linear,
+        Nearest
+    }
+
+    TextureWrap :: enum {
+        Repeat,
+        Clamp
+    }
+
+    ToSrgbByte :: (linear: f32) -> u8 {
+        clamped: f32 = Math:::clamp(linear, 0.0f, 1.0f);
+        encoded~ f32 = clamped * 12.92f;
+        if clamped > 0.0031308f {
+            encoded = 1.055f * Math:::pow(clamped, 1.0f / 2.4f) - 0.055f;
+        }
+        return u8(encoded * 255.0f + 0.5f);
+    }
+
+    TextureData :: class {
+    public:
+        width~ u32 = 0;
+        height~ u32 = 0;
+        rgba8~ Array<u8>! = [];
+        filter~ TextureFilter = TextureFilter:::Linear;
+        wrap~ TextureWrap = TextureWrap:::Repeat;
+
+        TextureData~: (newWidth: u32, newHeight: u32, newFilter: TextureFilter, newWrap: TextureWrap) {
+            width = newWidth;
+            height = newHeight;
+            filter = newFilter;
+            wrap = newWrap;
+        }
+
+        !TextureData~: () {
+            delete rgba8;
+        }
+
+        static Solid :: (color: lantern:::core:::Color) -> TextureData*! {
+            texture := new TextureData(1, 1, TextureFilter:::Nearest, TextureWrap:::Repeat);
+            texture->rgba8.push(ToSrgbByte(color.r));
+            texture->rgba8.push(ToSrgbByte(color.g));
+            texture->rgba8.push(ToSrgbByte(color.b));
+            texture->rgba8.push(u8(color.a * 255.0f));
+            return texture!;
+        }
+
+        static Checker :: (size: u32, cells: u32, first: lantern:::core:::Color, second: lantern:::core:::Color) -> TextureData*! {
+            cellSize~ u32 = size / cells;
+            if cellSize < 1 {
+                cellSize = 1;
+            }
+            texture := new TextureData(size, size, TextureFilter:::Linear, TextureWrap:::Repeat);
+            for y~ u32 = 0; y < size; y += 1 {
+                for x~ u32 = 0; x < size; x += 1 {
+                    color~ lantern:::core:::Color = second;
+                    if ((x / cellSize) + (y / cellSize)) % 2 == 0 {
+                        color = first;
+                    }
+                    texture->rgba8.push(ToSrgbByte(color.r));
+                    texture->rgba8.push(ToSrgbByte(color.g));
+                    texture->rgba8.push(ToSrgbByte(color.b));
+                    texture->rgba8.push(255);
+                }
+            }
+            return texture!;
+        }
+
+        PixelOffset :: (x: u32, y: u32) -> usize {
+            return usize((y * width + x) * 4);
+        }
+    }
+}

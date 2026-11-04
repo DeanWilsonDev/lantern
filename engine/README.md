@@ -6,7 +6,8 @@ tracked on the board's `engine-on-nox` epic (`docs/kanban/engine-on-nox`), one f
 
 So far it has the scaffold (milestone L0): a Nox project, its C dependencies through Mist, the SDL3 and Nyx bindings,
 the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each. It also has
-the core module (milestone L1) and the window and frame loop (milestone L2), described under "Layout".
+the core module (milestone L1), the window and frame loop (milestone L2) and the backend-neutral half of the renderer
+(the first part of milestone L3), described under "Layout".
 
 ## What you need
 
@@ -78,12 +79,19 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `SdlWindow`, `SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
   `SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `SdlAudioOutput` (an `AudioSink` on
   the default playback device). Delete the platform and the audio output before the context.
+- `src/renderer/` is the Rust `renderer-3d` crate's backend-neutral data: `Camera`, `Mesh.nox` (`Vertex`, 48 bytes
+  as the lit shader reads it, and `MeshData`), `Primitives.nox` (cube, box, plane, ramp, capsule, sphere, gem),
+  `RenderWorld.nox` (`DrawItem`, `DirectionalLight`, the debug lines and the 2D `Overlay`), `Texture.nox`
+  (`TextureData`, solid and checker textures, sRGB encoding) and the bitmap font: `FontData.nox` holds the glyphs of
+  Daniel Hepper's public-domain `font8x8_basic`, and `Text.nox` bakes them into the 128x48 atlas and lays text out into
+  the overlay.
 - `src/stub/` is the stub game `main` runs until the engine can draw: it quits on Escape and counts what the loop
   calls, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
   `PlatformBackend` and `AudioSink` interfaces a backend implements.
 - `tests/<module>/<test>/` is one test program each: a `main.nox`, a `nox.json` naming the engine sources it needs,
-  and an `expected.txt` with the exit code and output it must produce. They're the Rust tests, one program per test.
+  and an `expected.txt` with the exit code and output it must produce. They're the Rust tests, one program per test. Code a suite's
+  tests share is in `tests/support/<suite>/`.
 
 ## Testing
 

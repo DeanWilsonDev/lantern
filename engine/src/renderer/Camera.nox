@@ -1,0 +1,44 @@
+lantern:::renderer :: namespace {
+    Camera :: struct {
+        position~ Vec3 = Vec3 { x: 0.0f, y: 2.0f, z: 6.0f };
+        forward~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+        verticalFieldOfViewRadians~ f32 = 60.0f * (Math:::PI / 180.0f);
+        nearPlane~ f32 = 0.1f;
+        farPlane~ f32 = 300.0f;
+        orthographicHalfHeight~ f32? = null;
+
+        static Default :: () -> Camera {
+            return Camera:::LookAt(Vec3 { x: 0.0f, y: 2.0f, z: 6.0f }, Vec3 { });
+        }
+
+        static LookAt :: (position: Vec3, target: Vec3) -> Camera {
+            forward := lantern:::core:::NormalizeOr3(target - position, lantern:::core:::WorldForward());
+            return Camera { position: position, forward: forward };
+        }
+
+        View :: () -> Mat4 {
+            up~ Vec3 = lantern:::core:::WorldUp();
+            if lantern:::core:::LengthSquared3(forward.cross(lantern:::core:::WorldUp())) < 0.000001f {
+                up = lantern:::core:::WorldForward();
+            }
+            return lantern:::core:::LookToRightHanded(position, forward, up);
+        }
+
+        Projection :: (aspectRatio: f32) -> Mat4 {
+            safeAspect: f32 = Math:::max(aspectRatio, 0.001f);
+            if halfHeight := orthographicHalfHeight {
+                halfWidth: f32 = halfHeight * safeAspect;
+                return lantern:::core:::OrthographicRightHanded(-halfWidth, halfWidth, -halfHeight, halfHeight, -farPlane, farPlane);
+            }
+            return lantern:::core:::Perspective(verticalFieldOfViewRadians, safeAspect, nearPlane, farPlane);
+        }
+
+        IsOrthographic :: () -> bool {
+            return orthographicHalfHeight != null;
+        }
+
+        ViewProjection :: (aspectRatio: f32) -> Mat4 {
+            return Projection(aspectRatio) * View();
+        }
+    }
+}

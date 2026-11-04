@@ -41,6 +41,73 @@ lantern:::core :: namespace {
         return Vec2 { };
     }
 
+    LengthReciprocal3 :: (vector: Vec3) -> f32 {
+        return 1.0f / Math:::sqrt(vector.dot(vector));
+    }
+
+    Normalize3 :: (vector: Vec3) -> Vec3 {
+        return vector * LengthReciprocal3(vector);
+    }
+
+    NormalizeOr3 :: (vector: Vec3, fallback: Vec3) -> Vec3 {
+        reciprocal: f32 = LengthReciprocal3(vector);
+        if reciprocal > 0.0f && reciprocal < INFINITY {
+            return vector * reciprocal;
+        }
+        return fallback;
+    }
+
+    LengthSquared3 :: (vector: Vec3) -> f32 {
+        return vector.dot(vector);
+    }
+
+    IsFinite3 :: (vector: Vec3) -> bool {
+        return IsFinite(vector.x) && IsFinite(vector.y) && IsFinite(vector.z);
+    }
+
+    IsFinite :: (value: f32) -> bool {
+        return value == value && value < INFINITY && value > -INFINITY;
+    }
+
+    Signum :: (value: f32) -> f32 {
+        if value != value {
+            return value;
+        }
+        if value < 0.0f || (value == 0.0f && 1.0f / value < 0.0f) {
+            return -1.0f;
+        }
+        return 1.0f;
+    }
+
+    AnyOrthonormalVector3 :: (vector: Vec3) -> Vec3 {
+        sign: f32 = Signum(vector.z);
+        a: f32 = -1.0f / (sign + vector.z);
+        b: f32 = vector.x * vector.y * a;
+        return Vec3 { x: b, y: sign + vector.y * vector.y * a, z: -vector.y };
+    }
+
+    LookToRightHanded :: (eye: Vec3, direction: Vec3, up: Vec3) -> Mat4 {
+        forward := direction;
+        side := Normalize3(forward.cross(up));
+        upward := side.cross(forward);
+        return MatrixFromColumns(
+            Vec4 { x: side.x, y: upward.x, z: -forward.x, w: 0.0f },
+            Vec4 { x: side.y, y: upward.y, z: -forward.y, w: 0.0f },
+            Vec4 { x: side.z, y: upward.z, z: -forward.z, w: 0.0f },
+            Vec4 { x: -eye.dot(side), y: -eye.dot(upward), z: eye.dot(forward), w: 1.0f });
+    }
+
+    OrthographicRightHanded :: (left: f32, right: f32, bottom: f32, top: f32, nearPlane: f32, farPlane: f32) -> Mat4 {
+        reciprocalWidth: f32 = 1.0f / (right - left);
+        reciprocalHeight: f32 = 1.0f / (top - bottom);
+        reciprocalDepth: f32 = 1.0f / (nearPlane - farPlane);
+        return MatrixFromColumns(
+            Vec4 { x: reciprocalWidth + reciprocalWidth, y: 0.0f, z: 0.0f, w: 0.0f },
+            Vec4 { x: 0.0f, y: reciprocalHeight + reciprocalHeight, z: 0.0f, w: 0.0f },
+            Vec4 { x: 0.0f, y: 0.0f, z: reciprocalDepth, w: 0.0f },
+            Vec4 { x: -(left + right) * reciprocalWidth, y: -(top + bottom) * reciprocalHeight, z: reciprocalDepth * nearPlane, w: 1.0f });
+    }
+
     QuaternionFromRotationY :: (radians: f32) -> Quaternion {
         half: f32 = radians * 0.5f;
         return Quaternion { x: 0.0f, y: Math:::sin(half), z: 0.0f, w: Math:::cos(half) };
