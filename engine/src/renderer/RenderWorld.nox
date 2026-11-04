@@ -1,0 +1,164 @@
+lantern:::renderer :: namespace {
+    MeshTag :: struct { }
+
+    TextureTag :: struct { }
+
+    LINE_VERTEX_STRIDE: u32 : 28;
+    OVERLAY_VERTEX_STRIDE: u32 : 32;
+
+    DrawItem :: struct {
+        mesh~ lantern:::core:::Handle<MeshTag> = lantern:::core:::Handle<MeshTag> { };
+        texture~ lantern:::core:::Handle<TextureTag>? = null;
+        transform~ Mat4 = Mat4 { };
+        color~ lantern:::core:::Color = lantern:::core:::Color { };
+    }
+
+    DirectionalLight :: struct {
+        direction~ Vec3 = Vec3 { };
+        color~ lantern:::core:::Color = lantern:::core:::Color { };
+        ambient~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+
+        static Default :: () -> DirectionalLight {
+            return DirectionalLight {
+                direction: lantern:::core:::Normalize3(Vec3 { x: -0.4f, y: -1.0f, z: -0.3f }),
+                color: lantern:::core:::Color:::Rgb(1.0f, 0.96f, 0.88f),
+                ambient: lantern:::core:::Color:::Rgb(0.28f, 0.32f, 0.4f)
+            };
+        }
+    }
+
+    LineVertex :: struct {
+        position~ f32[3] = [0.0f, 0.0f, 0.0f];
+        color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
+    }
+
+    OverlayVertex :: struct {
+        position~ f32[2] = [0.0f, 0.0f];
+        uv~ f32[2] = [0.0f, 0.0f];
+        color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
+
+        static Create :: (position: Vec2, uv: Vec2, color: lantern:::core:::Color) -> OverlayVertex {
+            return OverlayVertex { position: [position.x, position.y], uv: [uv.x, uv.y], color: color.ToArray() };
+        }
+    }
+
+    Overlay :: class {
+    public:
+        vertices~ Array<OverlayVertex>! = [];
+
+        Overlay~: () { }
+
+        !Overlay~: () {
+            delete vertices;
+        }
+
+        Quad~: (minimum: Vec2, maximum: Vec2, uvMinimum: Vec2, uvMaximum: Vec2, color: lantern:::core:::Color) -> void {
+            topLeft: OverlayVertex = OverlayVertex:::Create(minimum, uvMinimum, color);
+            topRight: OverlayVertex = OverlayVertex:::Create(Vec2 { x: maximum.x, y: minimum.y }, Vec2 { x: uvMaximum.x, y: uvMinimum.y }, color);
+            bottomRight: OverlayVertex = OverlayVertex:::Create(maximum, uvMaximum, color);
+            bottomLeft: OverlayVertex = OverlayVertex:::Create(Vec2 { x: minimum.x, y: maximum.y }, Vec2 { x: uvMinimum.x, y: uvMaximum.y }, color);
+            vertices.push(topLeft);
+            vertices.push(bottomLeft);
+            vertices.push(bottomRight);
+            vertices.push(topLeft);
+            vertices.push(bottomRight);
+            vertices.push(topRight);
+        }
+
+        Rect~: (minimum: Vec2, maximum: Vec2, color: lantern:::core:::Color) -> void {
+            white: Vec2 = WhiteTexelUv();
+            Quad(minimum, maximum, white, white, color);
+        }
+
+        Triangle~: (first: Vec2, second: Vec2, third: Vec2, firstColor: lantern:::core:::Color, secondColor: lantern:::core:::Color, thirdColor: lantern:::core:::Color) -> void {
+            white: Vec2 = WhiteTexelUv();
+            vertices.push(OverlayVertex:::Create(first, white, firstColor));
+            vertices.push(OverlayVertex:::Create(second, white, secondColor));
+            vertices.push(OverlayVertex:::Create(third, white, thirdColor));
+        }
+
+        Text~: (text: string, topLeft: Vec2, scale: f32, color: lantern:::core:::Color) -> void {
+            PushText(this, text, topLeft, scale, color);
+        }
+
+        Clear~: () -> void {
+            vertices.clear();
+        }
+    }
+
+    RenderWorld :: class {
+    public:
+        camera~ Camera = Camera { };
+        light~ DirectionalLight = DirectionalLight { };
+        clearColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.42f, g: 0.6f, b: 0.85f };
+        fogStart~ f32 = 60.0f;
+        fogEnd~ f32 = 160.0f;
+        draws~ Array<DrawItem>! = [];
+        lines~ Array<LineVertex>! = [];
+        overlay~ Overlay*!;
+        overlayTexture~ lantern:::core:::Handle<TextureTag>? = null;
+
+        RenderWorld~: () {
+            camera = Camera:::Default();
+            light = DirectionalLight:::Default();
+            overlay = new Overlay();
+        }
+
+        !RenderWorld~: () {
+            delete draws;
+            delete lines;
+            delete overlay;
+        }
+
+        Clear~: () -> void {
+            draws.clear();
+            lines.clear();
+            overlay->Clear();
+        }
+
+        Draw~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color) -> void {
+            draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color });
+        }
+
+        Line~: (start: Vec3, end: Vec3, color: lantern:::core:::Color) -> void {
+            lines.push(LineVertex { position: [start.x, start.y, start.z], color: color.ToArray() });
+            lines.push(LineVertex { position: [end.x, end.y, end.z], color: color.ToArray() });
+        }
+
+        AabbLines~: (bounds: lantern:::core:::Aabb, color: lantern:::core:::Color) -> void {
+            edgeStarts: u32[12] = [0, 2, 4, 6, 0, 1, 4, 5, 0, 1, 2, 3];
+            edgeEnds: u32[12] = [1, 3, 5, 7, 2, 3, 6, 7, 4, 5, 6, 7];
+            for edge~ usize = 0; edge < 12; edge += 1 {
+                Line(AabbCorner(bounds, edgeStarts[edge]), AabbCorner(bounds, edgeEnds[edge]), color);
+            }
+        }
+
+        CircleLines~: (center: Vec3, normal: Vec3, radius: f32, segments: u32, color: lantern:::core:::Color) -> void {
+            axis: Vec3 = lantern:::core:::NormalizeOr3(normal, lantern:::core:::WorldUp());
+            tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(axis);
+            bitangent: Vec3 = axis.cross(tangent);
+            for index~ u32 = 0; index < segments; index += 1 {
+                Line(CirclePoint(center, tangent, bitangent, radius, index, segments), CirclePoint(center, tangent, bitangent, radius, index + 1, segments), color);
+            }
+        }
+    }
+
+    AabbCorner :: (bounds: lantern:::core:::Aabb, index: u32) -> Vec3 {
+        corner~ Vec3 = bounds.min;
+        if (index & 1) != 0 {
+            corner.x = bounds.max.x;
+        }
+        if (index & 2) != 0 {
+            corner.y = bounds.max.y;
+        }
+        if (index & 4) != 0 {
+            corner.z = bounds.max.z;
+        }
+        return corner;
+    }
+
+    CirclePoint :: (center: Vec3, tangent: Vec3, bitangent: Vec3, radius: f32, index: u32, segments: u32) -> Vec3 {
+        angle: f32 = (2.0f * Math:::PI) * f32(index) / f32(segments);
+        return center + (tangent * Math:::cos(angle) + bitangent * Math:::sin(angle)) * radius;
+    }
+}

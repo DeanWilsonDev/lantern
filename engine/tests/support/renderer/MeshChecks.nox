@@ -1,0 +1,39 @@
+lantern:::meshchecks :: namespace {
+    ProjectToNdc :: (camera: lantern:::renderer:::Camera, aspectRatio: f32, point: Vec3) -> Vec3 {
+        clip: Vec4 = camera.ViewProjection(aspectRatio).transform(Vec4 { x: point.x, y: point.y, z: point.z, w: 1.0f });
+        return Vec3 { x: clip.x / clip.w, y: clip.y / clip.w, z: clip.z / clip.w };
+    }
+
+    IsFiniteMatrix :: (matrix: Mat4) -> bool {
+        for element in matrix.elements {
+            if !lantern:::core:::IsFinite(element) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    VertexNormal :: (vertex: lantern:::renderer:::Vertex) -> Vec3 {
+        return vertex.Normal();
+    }
+
+    AssertOutwardAndCounterClockwise :: (mesh: lantern:::renderer:::MeshData*, name: string) -> void {
+        problem: string!? = mesh->Validate();
+        if text := problem {
+            print(`${name}: ${text}`);
+        }
+        assert(problem == null, "the mesh is valid");
+        delete problem;
+        for start~ usize = 0; start + 2 < mesh->indices.length(); start += 3 {
+            first: lantern:::renderer:::Vertex = mesh->vertices[usize(mesh->indices[start])];
+            second: lantern:::renderer:::Vertex = mesh->vertices[usize(mesh->indices[start + 1])];
+            third: lantern:::renderer:::Vertex = mesh->vertices[usize(mesh->indices[start + 2])];
+            faceNormal: Vec3 = (second.Position() - first.Position()).cross(third.Position() - first.Position());
+            vertexNormal: Vec3 = first.Normal() + second.Normal() + third.Normal();
+            if faceNormal.dot(vertexNormal) <= 0.0f {
+                print(`${name}: triangle at index ${start} winds the wrong way`);
+            }
+            assert(faceNormal.dot(vertexNormal) > 0.0f, "triangles wind counter-clockwise with outward normals");
+        }
+    }
+}

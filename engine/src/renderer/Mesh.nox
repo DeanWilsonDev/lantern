@@ -1,0 +1,105 @@
+lantern:::renderer :: namespace {
+    VERTEX_STRIDE: u32 : 48;
+
+    Vertex :: struct {
+        position~ f32[3] = [0.0f, 0.0f, 0.0f];
+        normal~ f32[3] = [0.0f, 0.0f, 0.0f];
+        uv~ f32[2] = [0.0f, 0.0f];
+        color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
+
+        static Create :: (position: Vec3, normal: Vec3, uv: Vec2, color: Vec4) -> Vertex {
+            return Vertex {
+                position: [position.x, position.y, position.z],
+                normal: [normal.x, normal.y, normal.z],
+                uv: [uv.x, uv.y],
+                color: [color.x, color.y, color.z, color.w]
+            };
+        }
+
+        Position :: () -> Vec3 {
+            return Vec3 { x: position[0], y: position[1], z: position[2] };
+        }
+
+        Normal :: () -> Vec3 {
+            return Vec3 { x: normal[0], y: normal[1], z: normal[2] };
+        }
+    }
+
+    Triangle :: struct {
+        first~ Vec3 = Vec3 { };
+        second~ Vec3 = Vec3 { };
+        third~ Vec3 = Vec3 { };
+    }
+
+    MeshData :: class {
+    public:
+        vertices~ Array<Vertex>! = [];
+        indices~ Array<u32>! = [];
+
+        MeshData~: () { }
+
+        !MeshData~: () {
+            delete vertices;
+            delete indices;
+        }
+
+        Bounds :: () -> lantern:::core:::Aabb {
+            bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
+            for vertex in vertices {
+                bounds = bounds.GrownTo(vertex.Position());
+            }
+            return bounds;
+        }
+
+        TriangleCount :: () -> usize {
+            return indices.length() / 3;
+        }
+
+        Validate :: () -> string!? {
+            if indices.length() % 3 != 0 {
+                problem: string! = `${indices.length()} indices is not a whole number of triangles`;
+                return problem!;
+            }
+            for index in indices {
+                if usize(index) >= vertices.length() {
+                    problem: string! = `index ${index} is past the ${vertices.length()} vertices`;
+                    return problem!;
+                }
+            }
+            if vertices.length() == 0 {
+                return "a mesh needs at least one vertex" + "";
+            }
+            return null;
+        }
+
+        Triangles :: () -> Array<Triangle>! {
+            triangles~ Array<Triangle>! = [];
+            for start~ usize = 0; start + 2 < indices.length(); start += 3 {
+                triangles.push(Triangle {
+                    first: vertices[usize(indices[start])].Position(),
+                    second: vertices[usize(indices[start + 1])].Position(),
+                    third: vertices[usize(indices[start + 2])].Position()
+                });
+            }
+            return triangles!;
+        }
+
+        Append~: (other: MeshData*) -> void {
+            offset: u32 = u32(vertices.length());
+            for vertex in other->vertices {
+                vertices.push(vertex);
+            }
+            for index in other->indices {
+                indices.push(index + offset);
+            }
+        }
+
+        VertexByteLength :: () -> usize {
+            return vertices.length() * usize(VERTEX_STRIDE);
+        }
+
+        IndexByteLength :: () -> usize {
+            return indices.length() * 4;
+        }
+    }
+}
