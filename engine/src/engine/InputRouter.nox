@@ -1,0 +1,344 @@
+lantern:::engine :: namespace {
+    STICK_DEAD_ZONE: f32 : 0.18f;
+    AXIS_DEAD_ZONE: f32 : 0.15f;
+
+    SmallSet<T> :: class {
+    public:
+        members~ Array<T>! = [];
+
+        SmallSet~: () { }
+
+        !SmallSet~: () {
+            delete members;
+        }
+
+        Contains :: (member: T) -> bool {
+            for existing in members {
+                if existing == member {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        Insert~: (member: T) -> void {
+            if !Contains(member) {
+                members.push(member);
+            }
+        }
+
+        Remove~: (member: T) -> void {
+            for index~ usize = 0; index < members.length(); index++ {
+                if members[index] == member {
+                    members.swapRemove(index);
+                    return;
+                }
+            }
+        }
+
+        Clear~: () -> void {
+            members.clear();
+        }
+    }
+
+    AxisValue :: struct {
+        axis~ lantern:::core:::GamepadAxis = lantern:::core:::GamepadAxis:::LeftX;
+        value~ f32 = 0.0f;
+    }
+
+    DeviceState :: class {
+    public:
+        keysDown~ SmallSet<lantern:::core:::KeyCode>*!;
+        keysTapped~ SmallSet<lantern:::core:::KeyCode>*!;
+        mouseDown~ SmallSet<lantern:::core:::MouseButton>*!;
+        mouseTapped~ SmallSet<lantern:::core:::MouseButton>*!;
+        gamepadDown~ SmallSet<lantern:::core:::GamepadButton>*!;
+        gamepadTapped~ SmallSet<lantern:::core:::GamepadButton>*!;
+        gamepadAxes~ Array<AxisValue>! = [];
+        mouseDelta~ Vec2 = Vec2 { };
+
+        DeviceState~: () {
+            keysDown = new SmallSet<lantern:::core:::KeyCode>();
+            keysTapped = new SmallSet<lantern:::core:::KeyCode>();
+            mouseDown = new SmallSet<lantern:::core:::MouseButton>();
+            mouseTapped = new SmallSet<lantern:::core:::MouseButton>();
+            gamepadDown = new SmallSet<lantern:::core:::GamepadButton>();
+            gamepadTapped = new SmallSet<lantern:::core:::GamepadButton>();
+        }
+
+        !DeviceState~: () {
+            delete keysDown;
+            delete keysTapped;
+            delete mouseDown;
+            delete mouseTapped;
+            delete gamepadDown;
+            delete gamepadTapped;
+            delete gamepadAxes;
+        }
+
+        Key :: (key: lantern:::core:::KeyCode) -> bool {
+            return keysDown->Contains(key) || keysTapped->Contains(key);
+        }
+
+        Axis :: (axis: lantern:::core:::GamepadAxis) -> f32 {
+            for entry in gamepadAxes {
+                if entry.axis == axis {
+                    return entry.value;
+                }
+            }
+            return 0.0f;
+        }
+
+        SetAxis~: (axis: lantern:::core:::GamepadAxis, value: f32) -> void {
+            for index~ usize = 0; index < gamepadAxes.length(); index++ {
+                if gamepadAxes[index].axis == axis {
+                    gamepadAxes[index].value = value;
+                    return;
+                }
+            }
+            gamepadAxes.push(AxisValue { axis: axis, value: value });
+        }
+
+        ReleaseEverything~: () -> void {
+            keysDown->Clear();
+            mouseDown->Clear();
+            gamepadDown->Clear();
+            gamepadAxes.clear();
+        }
+
+        ClearFrameData~: () -> void {
+            keysTapped->Clear();
+            mouseTapped->Clear();
+            gamepadTapped->Clear();
+            mouseDelta = Vec2 { };
+        }
+    }
+
+    BindingResult :: struct {
+        held~ bool = false;
+        value~ Vec2 = Vec2 { };
+    }
+
+    InputRouter :: class {
+    public:
+        actions~ lantern:::core:::ActionSet*!;
+        bindings~ lantern:::core:::Bindings*!;
+        devices~ DeviceState*!;
+        heldLastFrame~ Array<bool>! = [];
+        frameSnapshot~ lantern:::core:::InputSnapshot*!;
+        latchedPressed~ Array<bool>! = [];
+        latchedReleased~ Array<bool>! = [];
+
+        InputRouter~: (newActions: lantern:::core:::ActionSet*!, newBindings: lantern:::core:::Bindings*!) {
+            actions = newActions!;
+            bindings = newBindings!;
+            devices = new DeviceState();
+            frameSnapshot = new lantern:::core:::InputSnapshot();
+            ResetActionState();
+        }
+
+        !InputRouter~: () {
+            delete actions;
+            delete bindings;
+            delete devices;
+            delete heldLastFrame;
+            delete frameSnapshot;
+            delete latchedPressed;
+            delete latchedReleased;
+        }
+
+        Actions :: () -> lantern:::core:::ActionSet* {
+            return actions;
+        }
+
+        Reconfigure~: (newActions: lantern:::core:::ActionSet*!, newBindings: lantern:::core:::Bindings*!) -> void {
+            delete actions;
+            delete bindings;
+            actions = newActions!;
+            bindings = newBindings!;
+            ResetActionState();
+        }
+
+        ResetActionState~: () -> void {
+            actionCount: usize = actions->Length();
+            heldLastFrame.clear();
+            latchedPressed.clear();
+            latchedReleased.clear();
+            frameSnapshot->states.clear();
+            for index~ usize = 0; index < actionCount; index++ {
+                heldLastFrame.push(false);
+                latchedPressed.push(false);
+                latchedReleased.push(false);
+                frameSnapshot->states.push(lantern:::core:::ActionState { });
+            }
+        }
+
+        HandleEvent~: (event: lantern:::platform:::PlatformEvent) -> void {
+            when event <lantern:::platform:::PlatformEvent> {
+                KeyDown(key, _) -> {
+                    devices->keysDown->Insert(key);
+                    devices->keysTapped->Insert(key);
+                },
+                KeyUp(key) -> {
+                    devices->keysDown->Remove(key);
+                },
+                MouseButtonDown(button, _, _) -> {
+                    devices->mouseDown->Insert(button);
+                    devices->mouseTapped->Insert(button);
+                },
+                MouseButtonUp(button, _, _) -> {
+                    devices->mouseDown->Remove(button);
+                },
+                MouseMoved(deltaX, deltaY, _, _) -> {
+                    devices->mouseDelta = devices->mouseDelta + Vec2 { x: deltaX, y: deltaY };
+                },
+                GamepadButtonDown(button) -> {
+                    devices->gamepadDown->Insert(button);
+                    devices->gamepadTapped->Insert(button);
+                },
+                GamepadButtonUp(button) -> {
+                    devices->gamepadDown->Remove(button);
+                },
+                GamepadAxisMoved(axis, value) -> {
+                    devices->SetAxis(axis, value);
+                },
+                FocusLost -> {
+                    devices->ReleaseEverything();
+                },
+                GamepadDisconnected -> {
+                    devices->ReleaseEverything();
+                },
+                default -> {},
+            }
+        }
+
+        EndFrameEvents~: () -> void {
+            for index~ usize = 0; index < actions->Length(); index++ {
+                action := lantern:::core:::ActionId { value: u16(index) };
+                actionBindings := bindings->ForAction(action);
+                result := EvaluateAction(actions->Kind(action), actionBindings, devices);
+                delete actionBindings;
+                wasHeld: bool = heldLastFrame[index];
+                pressed: bool = result.held && !wasHeld;
+                released: bool = !result.held && wasHeld;
+                frameSnapshot->states[index] = lantern:::core:::ActionState {
+                    held: result.held,
+                    pressed: pressed,
+                    released: released,
+                    value: result.value
+                };
+                latchedPressed[index] = latchedPressed[index] || pressed;
+                latchedReleased[index] = latchedReleased[index] || released;
+                heldLastFrame[index] = result.held;
+            }
+            devices->ClearFrameData();
+        }
+
+        FrameSnapshot :: () -> lantern:::core:::InputSnapshot* {
+            return frameSnapshot;
+        }
+
+        TakeFixedStepSnapshot~: () -> lantern:::core:::InputSnapshot*! {
+            snapshot := new lantern:::core:::InputSnapshot();
+            for index~ usize = 0; index < frameSnapshot->states.length(); index++ {
+                frameState := frameSnapshot->states[index];
+                snapshot->states.push(lantern:::core:::ActionState {
+                    held: frameState.held,
+                    pressed: latchedPressed[index],
+                    released: latchedReleased[index],
+                    value: frameState.value
+                });
+                latchedPressed[index] = false;
+                latchedReleased[index] = false;
+            }
+            return snapshot!;
+        }
+    }
+
+    EvaluateAction :: (kind: lantern:::core:::ActionKind, actionBindings: Array<lantern:::core:::Binding>, devices: DeviceState*) -> BindingResult {
+        held~ bool = false;
+        value~ Vec2 = Vec2 { };
+        unbounded~ bool = false;
+        for binding in actionBindings {
+            bindingResult := EvaluateBinding(binding, devices);
+            held = held || bindingResult.held;
+            when binding <lantern:::core:::Binding> {
+                MouseMotion(_) -> {
+                    unbounded = true;
+                },
+                default -> {},
+            }
+            if kind == lantern:::core:::ActionKind:::Button {
+                value = lantern:::core:::ComponentMax2(value, bindingResult.value);
+            } else {
+                value = value + bindingResult.value;
+            }
+        }
+        if kind == lantern:::core:::ActionKind:::Axis1D {
+            value.x = Math:::clamp(value.x, -1.0f, 1.0f);
+        }
+        if kind == lantern:::core:::ActionKind:::Axis2D && !unbounded {
+            value = lantern:::core:::ClampLengthMax2(value, 1.0f);
+        }
+        if kind != lantern:::core:::ActionKind:::Button {
+            held = !(value == Vec2 { });
+        }
+        return BindingResult { held: held, value: value };
+    }
+
+    ButtonValue :: (held: bool) -> BindingResult {
+        if held {
+            return BindingResult { held: true, value: Vec2 { x: 1.0f, y: 0.0f } };
+        }
+        return BindingResult { held: false, value: Vec2 { } };
+    }
+
+    KeyValue :: (devices: DeviceState*, key: lantern:::core:::KeyCode) -> f32 {
+        if devices->Key(key) {
+            return 1.0f;
+        }
+        return 0.0f;
+    }
+
+    ValueResult :: (value: Vec2) -> BindingResult {
+        return BindingResult { held: !(value == Vec2 { }), value: value };
+    }
+
+    EvaluateBinding :: (binding: lantern:::core:::Binding, devices: DeviceState*) -> BindingResult {
+        return when binding <lantern:::core:::Binding> {
+            Key(key) -> ButtonValue(devices->Key(key)),
+            Mouse(button) -> ButtonValue(devices->mouseDown->Contains(button) || devices->mouseTapped->Contains(button)),
+            Gamepad(button) -> ButtonValue(devices->gamepadDown->Contains(button) || devices->gamepadTapped->Contains(button)),
+            GamepadAxisButton(axis, threshold) -> ButtonValue(AxisPastThreshold(devices->Axis(axis), threshold)),
+            KeyAxis(negative, positive) -> ValueResult(Vec2 { x: KeyValue(devices, positive) - KeyValue(devices, negative), y: 0.0f }),
+            GamepadAxisValue(axis, scale) -> ValueResult(Vec2 { x: AxisOutsideDeadZone(devices->Axis(axis)) * scale, y: 0.0f }),
+            KeyVector(up, down, left, right) -> ValueResult(lantern:::core:::NormalizeOrZero2(Vec2 {
+                x: KeyValue(devices, right) - KeyValue(devices, left),
+                y: KeyValue(devices, up) - KeyValue(devices, down)
+            })),
+            Stick(stick, scale) -> ValueResult(lantern:::core:::ApplyRadialDeadZone(StickAxes(devices, stick), STICK_DEAD_ZONE) * scale),
+            MouseMotion(scale) -> ValueResult(Vec2 { x: devices->mouseDelta.x, y: -devices->mouseDelta.y } * scale)
+        };
+    }
+
+    AxisPastThreshold :: (value: f32, threshold: f32) -> bool {
+        if threshold >= 0.0f {
+            return value >= threshold;
+        }
+        return value <= threshold;
+    }
+
+    AxisOutsideDeadZone :: (raw: f32) -> f32 {
+        if Math:::abs(raw) < AXIS_DEAD_ZONE {
+            return 0.0f;
+        }
+        return raw;
+    }
+
+    StickAxes :: (devices: DeviceState*, stick: lantern:::core:::GamepadStick) -> Vec2 {
+        if stick == lantern:::core:::GamepadStick:::Left {
+            return Vec2 { x: devices->Axis(lantern:::core:::GamepadAxis:::LeftX), y: devices->Axis(lantern:::core:::GamepadAxis:::LeftY) };
+        }
+        return Vec2 { x: devices->Axis(lantern:::core:::GamepadAxis:::RightX), y: devices->Axis(lantern:::core:::GamepadAxis:::RightY) };
+    }
+}

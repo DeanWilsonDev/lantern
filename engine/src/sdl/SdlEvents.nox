@@ -1,0 +1,325 @@
+Sdl :: import Sdl;
+
+lantern:::sdl :: namespace {
+    TranslatedEvent :: enum {
+        Event(event: lantern:::platform:::PlatformEvent),
+        GamepadAdded(id: u32),
+        GamepadRemoved(id: u32),
+        Ignored
+    }
+
+    Translate :: (event: Sdl:::SDL_Event~*) -> TranslatedEvent {
+        eventType~ u32 = 0;
+        unsafe {
+            eventType = reinterpret<Sdl:::SDL_CommonEvent>(event)->type;
+        }
+        if eventType == Sdl:::SDL_EVENT_QUIT {
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::QuitRequested);
+        }
+        if eventType == Sdl:::SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED {
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::WindowResized);
+        }
+        if eventType == Sdl:::SDL_EVENT_WINDOW_MINIMIZED {
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::WindowMinimized);
+        }
+        if eventType == Sdl:::SDL_EVENT_WINDOW_RESTORED {
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::WindowRestored);
+        }
+        if eventType == Sdl:::SDL_EVENT_WINDOW_FOCUS_GAINED {
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::FocusGained);
+        }
+        if eventType == Sdl:::SDL_EVENT_WINDOW_FOCUS_LOST {
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::FocusLost);
+        }
+        if eventType == Sdl:::SDL_EVENT_KEY_DOWN || eventType == Sdl:::SDL_EVENT_KEY_UP {
+            keyEvent~ Sdl:::SDL_KeyboardEvent = Sdl:::SDL_KeyboardEvent { };
+            unsafe {
+                keyEvent = reinterpret<Sdl:::SDL_KeyboardEvent>(event)^*;
+            }
+            if key := KeyFromScancode(keyEvent.scancode) {
+                if keyEvent.down {
+                    return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::KeyDown(key, keyEvent.repeat));
+                }
+                return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::KeyUp(key));
+            }
+            return TranslatedEvent:::Ignored;
+        }
+        if eventType == Sdl:::SDL_EVENT_MOUSE_MOTION {
+            motion~ Sdl:::SDL_MouseMotionEvent = Sdl:::SDL_MouseMotionEvent { };
+            unsafe {
+                motion = reinterpret<Sdl:::SDL_MouseMotionEvent>(event)^*;
+            }
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::MouseMoved(motion.xrel, motion.yrel, motion.x, motion.y));
+        }
+        if eventType == Sdl:::SDL_EVENT_MOUSE_BUTTON_DOWN || eventType == Sdl:::SDL_EVENT_MOUSE_BUTTON_UP {
+            buttonEvent~ Sdl:::SDL_MouseButtonEvent = Sdl:::SDL_MouseButtonEvent { };
+            unsafe {
+                buttonEvent = reinterpret<Sdl:::SDL_MouseButtonEvent>(event)^*;
+            }
+            if button := MouseButtonFromSdl(i32(buttonEvent.button)) {
+                if buttonEvent.down {
+                    return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::MouseButtonDown(button, buttonEvent.x, buttonEvent.y));
+                }
+                return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::MouseButtonUp(button, buttonEvent.x, buttonEvent.y));
+            }
+            return TranslatedEvent:::Ignored;
+        }
+        if eventType == Sdl:::SDL_EVENT_MOUSE_WHEEL {
+            wheel~ Sdl:::SDL_MouseWheelEvent = Sdl:::SDL_MouseWheelEvent { };
+            unsafe {
+                wheel = reinterpret<Sdl:::SDL_MouseWheelEvent>(event)^*;
+            }
+            return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::MouseWheel(wheel.y));
+        }
+        if eventType == Sdl:::SDL_EVENT_GAMEPAD_ADDED || eventType == Sdl:::SDL_EVENT_GAMEPAD_REMOVED {
+            device~ Sdl:::SDL_GamepadDeviceEvent = Sdl:::SDL_GamepadDeviceEvent { };
+            unsafe {
+                device = reinterpret<Sdl:::SDL_GamepadDeviceEvent>(event)^*;
+            }
+            if eventType == Sdl:::SDL_EVENT_GAMEPAD_ADDED {
+                return TranslatedEvent:::GamepadAdded(device.which);
+            }
+            return TranslatedEvent:::GamepadRemoved(device.which);
+        }
+        if eventType == Sdl:::SDL_EVENT_GAMEPAD_BUTTON_DOWN || eventType == Sdl:::SDL_EVENT_GAMEPAD_BUTTON_UP {
+            gamepadButton~ Sdl:::SDL_GamepadButtonEvent = Sdl:::SDL_GamepadButtonEvent { };
+            unsafe {
+                gamepadButton = reinterpret<Sdl:::SDL_GamepadButtonEvent>(event)^*;
+            }
+            if button := GamepadButtonFromSdl(i32(gamepadButton.button)) {
+                if gamepadButton.down {
+                    return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::GamepadButtonDown(button));
+                }
+                return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::GamepadButtonUp(button));
+            }
+            return TranslatedEvent:::Ignored;
+        }
+        if eventType == Sdl:::SDL_EVENT_GAMEPAD_AXIS_MOTION {
+            axisEvent~ Sdl:::SDL_GamepadAxisEvent = Sdl:::SDL_GamepadAxisEvent { };
+            unsafe {
+                axisEvent = reinterpret<Sdl:::SDL_GamepadAxisEvent>(event)^*;
+            }
+            raw: f32 = f32(axisEvent.value) / 32767.0f;
+            sdlAxis: i32 = i32(axisEvent.axis);
+            if sdlAxis == Sdl:::SDL_GAMEPAD_AXIS_LEFTX {
+                return AxisEvent(lantern:::core:::GamepadAxis:::LeftX, raw);
+            }
+            if sdlAxis == Sdl:::SDL_GAMEPAD_AXIS_LEFTY {
+                return AxisEvent(lantern:::core:::GamepadAxis:::LeftY, -raw);
+            }
+            if sdlAxis == Sdl:::SDL_GAMEPAD_AXIS_RIGHTX {
+                return AxisEvent(lantern:::core:::GamepadAxis:::RightX, raw);
+            }
+            if sdlAxis == Sdl:::SDL_GAMEPAD_AXIS_RIGHTY {
+                return AxisEvent(lantern:::core:::GamepadAxis:::RightY, -raw);
+            }
+            if sdlAxis == Sdl:::SDL_GAMEPAD_AXIS_LEFT_TRIGGER {
+                return AxisEvent(lantern:::core:::GamepadAxis:::LeftTrigger, raw);
+            }
+            if sdlAxis == Sdl:::SDL_GAMEPAD_AXIS_RIGHT_TRIGGER {
+                return AxisEvent(lantern:::core:::GamepadAxis:::RightTrigger, raw);
+            }
+            return TranslatedEvent:::Ignored;
+        }
+        return TranslatedEvent:::Ignored;
+    }
+
+    AxisEvent :: (axis: lantern:::core:::GamepadAxis, value: f32) -> TranslatedEvent {
+        return TranslatedEvent:::Event(lantern:::platform:::PlatformEvent:::GamepadAxisMoved(axis, Math:::clamp(value, -1.0f, 1.0f)));
+    }
+
+    MouseButtonFromSdl :: (button: i32) -> lantern:::core:::MouseButton? {
+        if button == Sdl:::SDL_BUTTON_LEFT {
+            return lantern:::core:::MouseButton:::Left;
+        }
+        if button == Sdl:::SDL_BUTTON_RIGHT {
+            return lantern:::core:::MouseButton:::Right;
+        }
+        if button == Sdl:::SDL_BUTTON_MIDDLE {
+            return lantern:::core:::MouseButton:::Middle;
+        }
+        return null;
+    }
+
+    GamepadButtonFromSdl :: (button: i32) -> lantern:::core:::GamepadButton? {
+        sdlValues: i32[14] = [
+            Sdl:::SDL_GAMEPAD_BUTTON_SOUTH,
+            Sdl:::SDL_GAMEPAD_BUTTON_EAST,
+            Sdl:::SDL_GAMEPAD_BUTTON_WEST,
+            Sdl:::SDL_GAMEPAD_BUTTON_NORTH,
+            Sdl:::SDL_GAMEPAD_BUTTON_BACK,
+            Sdl:::SDL_GAMEPAD_BUTTON_START,
+            Sdl:::SDL_GAMEPAD_BUTTON_LEFT_STICK,
+            Sdl:::SDL_GAMEPAD_BUTTON_RIGHT_STICK,
+            Sdl:::SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,
+            Sdl:::SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,
+            Sdl:::SDL_GAMEPAD_BUTTON_DPAD_UP,
+            Sdl:::SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+            Sdl:::SDL_GAMEPAD_BUTTON_DPAD_LEFT,
+            Sdl:::SDL_GAMEPAD_BUTTON_DPAD_RIGHT
+        ];
+        lanternValues: lantern:::core:::GamepadButton[14] = [
+            lantern:::core:::GamepadButton:::South,
+            lantern:::core:::GamepadButton:::East,
+            lantern:::core:::GamepadButton:::West,
+            lantern:::core:::GamepadButton:::North,
+            lantern:::core:::GamepadButton:::Back,
+            lantern:::core:::GamepadButton:::Start,
+            lantern:::core:::GamepadButton:::LeftStick,
+            lantern:::core:::GamepadButton:::RightStick,
+            lantern:::core:::GamepadButton:::LeftShoulder,
+            lantern:::core:::GamepadButton:::RightShoulder,
+            lantern:::core:::GamepadButton:::DPadUp,
+            lantern:::core:::GamepadButton:::DPadDown,
+            lantern:::core:::GamepadButton:::DPadLeft,
+            lantern:::core:::GamepadButton:::DPadRight
+        ];
+        for index~ usize = 0; index < 14; index++ {
+            if sdlValues[index] == button {
+                return lanternValues[index];
+            }
+        }
+        return null;
+    }
+
+    KeyFromScancode :: (scancode: u32) -> lantern:::core:::KeyCode? {
+        sdlValues: u32[64] = [
+            Sdl:::SDL_SCANCODE_A,
+            Sdl:::SDL_SCANCODE_B,
+            Sdl:::SDL_SCANCODE_C,
+            Sdl:::SDL_SCANCODE_D,
+            Sdl:::SDL_SCANCODE_E,
+            Sdl:::SDL_SCANCODE_F,
+            Sdl:::SDL_SCANCODE_G,
+            Sdl:::SDL_SCANCODE_H,
+            Sdl:::SDL_SCANCODE_I,
+            Sdl:::SDL_SCANCODE_J,
+            Sdl:::SDL_SCANCODE_K,
+            Sdl:::SDL_SCANCODE_L,
+            Sdl:::SDL_SCANCODE_M,
+            Sdl:::SDL_SCANCODE_N,
+            Sdl:::SDL_SCANCODE_O,
+            Sdl:::SDL_SCANCODE_P,
+            Sdl:::SDL_SCANCODE_Q,
+            Sdl:::SDL_SCANCODE_R,
+            Sdl:::SDL_SCANCODE_S,
+            Sdl:::SDL_SCANCODE_T,
+            Sdl:::SDL_SCANCODE_U,
+            Sdl:::SDL_SCANCODE_V,
+            Sdl:::SDL_SCANCODE_W,
+            Sdl:::SDL_SCANCODE_X,
+            Sdl:::SDL_SCANCODE_Y,
+            Sdl:::SDL_SCANCODE_Z,
+            Sdl:::SDL_SCANCODE_0,
+            Sdl:::SDL_SCANCODE_1,
+            Sdl:::SDL_SCANCODE_2,
+            Sdl:::SDL_SCANCODE_3,
+            Sdl:::SDL_SCANCODE_4,
+            Sdl:::SDL_SCANCODE_5,
+            Sdl:::SDL_SCANCODE_6,
+            Sdl:::SDL_SCANCODE_7,
+            Sdl:::SDL_SCANCODE_8,
+            Sdl:::SDL_SCANCODE_9,
+            Sdl:::SDL_SCANCODE_UP,
+            Sdl:::SDL_SCANCODE_DOWN,
+            Sdl:::SDL_SCANCODE_LEFT,
+            Sdl:::SDL_SCANCODE_RIGHT,
+            Sdl:::SDL_SCANCODE_SPACE,
+            Sdl:::SDL_SCANCODE_RETURN,
+            Sdl:::SDL_SCANCODE_ESCAPE,
+            Sdl:::SDL_SCANCODE_TAB,
+            Sdl:::SDL_SCANCODE_BACKSPACE,
+            Sdl:::SDL_SCANCODE_GRAVE,
+            Sdl:::SDL_SCANCODE_LSHIFT,
+            Sdl:::SDL_SCANCODE_RSHIFT,
+            Sdl:::SDL_SCANCODE_LCTRL,
+            Sdl:::SDL_SCANCODE_RCTRL,
+            Sdl:::SDL_SCANCODE_LALT,
+            Sdl:::SDL_SCANCODE_RALT,
+            Sdl:::SDL_SCANCODE_F1,
+            Sdl:::SDL_SCANCODE_F2,
+            Sdl:::SDL_SCANCODE_F3,
+            Sdl:::SDL_SCANCODE_F4,
+            Sdl:::SDL_SCANCODE_F5,
+            Sdl:::SDL_SCANCODE_F6,
+            Sdl:::SDL_SCANCODE_F7,
+            Sdl:::SDL_SCANCODE_F8,
+            Sdl:::SDL_SCANCODE_F9,
+            Sdl:::SDL_SCANCODE_F10,
+            Sdl:::SDL_SCANCODE_F11,
+            Sdl:::SDL_SCANCODE_F12
+        ];
+        lanternValues: lantern:::core:::KeyCode[64] = [
+            lantern:::core:::KeyCode:::A,
+            lantern:::core:::KeyCode:::B,
+            lantern:::core:::KeyCode:::C,
+            lantern:::core:::KeyCode:::D,
+            lantern:::core:::KeyCode:::E,
+            lantern:::core:::KeyCode:::F,
+            lantern:::core:::KeyCode:::G,
+            lantern:::core:::KeyCode:::H,
+            lantern:::core:::KeyCode:::I,
+            lantern:::core:::KeyCode:::J,
+            lantern:::core:::KeyCode:::K,
+            lantern:::core:::KeyCode:::L,
+            lantern:::core:::KeyCode:::M,
+            lantern:::core:::KeyCode:::N,
+            lantern:::core:::KeyCode:::O,
+            lantern:::core:::KeyCode:::P,
+            lantern:::core:::KeyCode:::Q,
+            lantern:::core:::KeyCode:::R,
+            lantern:::core:::KeyCode:::S,
+            lantern:::core:::KeyCode:::T,
+            lantern:::core:::KeyCode:::U,
+            lantern:::core:::KeyCode:::V,
+            lantern:::core:::KeyCode:::W,
+            lantern:::core:::KeyCode:::X,
+            lantern:::core:::KeyCode:::Y,
+            lantern:::core:::KeyCode:::Z,
+            lantern:::core:::KeyCode:::Digit0,
+            lantern:::core:::KeyCode:::Digit1,
+            lantern:::core:::KeyCode:::Digit2,
+            lantern:::core:::KeyCode:::Digit3,
+            lantern:::core:::KeyCode:::Digit4,
+            lantern:::core:::KeyCode:::Digit5,
+            lantern:::core:::KeyCode:::Digit6,
+            lantern:::core:::KeyCode:::Digit7,
+            lantern:::core:::KeyCode:::Digit8,
+            lantern:::core:::KeyCode:::Digit9,
+            lantern:::core:::KeyCode:::Up,
+            lantern:::core:::KeyCode:::Down,
+            lantern:::core:::KeyCode:::Left,
+            lantern:::core:::KeyCode:::Right,
+            lantern:::core:::KeyCode:::Space,
+            lantern:::core:::KeyCode:::Enter,
+            lantern:::core:::KeyCode:::Escape,
+            lantern:::core:::KeyCode:::Tab,
+            lantern:::core:::KeyCode:::Backspace,
+            lantern:::core:::KeyCode:::Backquote,
+            lantern:::core:::KeyCode:::LeftShift,
+            lantern:::core:::KeyCode:::RightShift,
+            lantern:::core:::KeyCode:::LeftControl,
+            lantern:::core:::KeyCode:::RightControl,
+            lantern:::core:::KeyCode:::LeftAlt,
+            lantern:::core:::KeyCode:::RightAlt,
+            lantern:::core:::KeyCode:::F1,
+            lantern:::core:::KeyCode:::F2,
+            lantern:::core:::KeyCode:::F3,
+            lantern:::core:::KeyCode:::F4,
+            lantern:::core:::KeyCode:::F5,
+            lantern:::core:::KeyCode:::F6,
+            lantern:::core:::KeyCode:::F7,
+            lantern:::core:::KeyCode:::F8,
+            lantern:::core:::KeyCode:::F9,
+            lantern:::core:::KeyCode:::F10,
+            lantern:::core:::KeyCode:::F11,
+            lantern:::core:::KeyCode:::F12
+        ];
+        for index~ usize = 0; index < 64; index++ {
+            if sdlValues[index] == scancode {
+                return lanternValues[index];
+            }
+        }
+        return null;
+    }
+}

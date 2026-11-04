@@ -1,0 +1,91 @@
+Sdl :: import Sdl;
+
+lantern:::sdl :: namespace {
+    LastSdlError :: (context: string) -> string! {
+        message~ string! = "" + "";
+        unsafe {
+            delete message;
+            message = copyCString(Sdl:::SDL_GetError());
+        }
+        described: string! = `${context}: ${message}`;
+        delete message;
+        return described!;
+    }
+
+    LogSdlError :: (target: string, context: string) -> void {
+        described := LastSdlError(context);
+        lantern:::core:::LogWarn(target, described);
+        delete described;
+    }
+
+    SdlVersionText :: () -> string! {
+        version~ i32 = 0;
+        unsafe {
+            version = Sdl:::SDL_GetVersion();
+        }
+        text: string! = `${version / 1000000}.${(version / 1000) % 1000}.${version % 1000}`;
+        return text!;
+    }
+
+    CurrentVideoDriver :: () -> string! {
+        driver~ string! = "none" + "";
+        unsafe {
+            name := Sdl:::SDL_GetCurrentVideoDriver();
+            if name != null {
+                delete driver;
+                driver = copyCString(name);
+            }
+        }
+        return driver!;
+    }
+
+    SdlContext :: class {
+    public:
+        audioInitialised~ bool = false;
+
+        SdlContext~: () { }
+
+        !SdlContext~: () {
+            lantern:::core:::LogInfo("platform", "shutting SDL down");
+            unsafe {
+                Sdl:::SDL_Quit();
+            }
+        }
+
+        static Init :: () -> SdlContext*!? {
+            initialised~ bool = false;
+            unsafe {
+                Sdl:::SDL_SetHint(Sdl:::SDL_HINT_APP_NAME, "Lantern");
+                initialised = Sdl:::SDL_Init(Sdl:::SDL_INIT_VIDEO | Sdl:::SDL_INIT_EVENTS | Sdl:::SDL_INIT_GAMEPAD);
+            }
+            if !initialised {
+                described := LastSdlError("SDL_Init");
+                lantern:::core:::LogError("platform", described);
+                delete described;
+                return null;
+            }
+            version := SdlVersionText();
+            driver := CurrentVideoDriver();
+            message: string! = `SDL ${version} initialised, video driver: ${driver}`;
+            lantern:::core:::LogInfo("platform", message);
+            delete message;
+            delete version;
+            delete driver;
+            context := new SdlContext();
+            return context!;
+        }
+
+        InitAudio~: () -> bool {
+            if audioInitialised {
+                return true;
+            }
+            unsafe {
+                audioInitialised = Sdl:::SDL_InitSubSystem(Sdl:::SDL_INIT_AUDIO);
+            }
+            if !audioInitialised {
+                LogSdlError("audio", "SDL_InitSubSystem(AUDIO)");
+            }
+            return audioInitialised;
+        }
+    }
+}

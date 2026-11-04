@@ -1,0 +1,123 @@
+lantern:::testing :: namespace {
+    ScriptedFrame :: struct {
+        time~ f64 = 0.0f;
+        event~ lantern:::platform:::PlatformEvent? = null;
+    }
+
+    ScriptedPlatform :: class {
+        implements:
+            lantern:::platform:::PlatformBackend;
+    public:
+        frames~ Array<ScriptedFrame>! = [];
+        nextFrame~ usize = 0;
+        now~ f64 = 0.0f;
+        minimized~ bool = false;
+
+        ScriptedPlatform~: () { }
+
+        !ScriptedPlatform~: () {
+            delete frames;
+        }
+
+        AddFrame~: (time: f64) -> void {
+            frames.push(ScriptedFrame { time: time });
+        }
+
+        AddFrameWith~: (time: f64, event: lantern:::platform:::PlatformEvent) -> void {
+            frames.push(ScriptedFrame { time: time, event: event });
+        }
+
+        HasFrames :: () -> bool {
+            return nextFrame < frames.length();
+        }
+
+        PumpEvents~: () -> Array<lantern:::platform:::PlatformEvent>! {
+            events~ Array<lantern:::platform:::PlatformEvent>! = [];
+            if nextFrame < frames.length() {
+                frame := frames[nextFrame];
+                nextFrame += 1;
+                now = frame.time;
+                if event := frame.event {
+                    when event <lantern:::platform:::PlatformEvent> {
+                        WindowMinimized -> {
+                            minimized = true;
+                        },
+                        WindowRestored -> {
+                            minimized = false;
+                        },
+                        default -> {},
+                    }
+                    events.push(event);
+                }
+            }
+            return events!;
+        }
+
+        SecondsSinceStart :: () -> f64 {
+            return now;
+        }
+
+        CurrentWindowMetrics :: () -> lantern:::platform:::WindowMetrics {
+            if minimized {
+                return lantern:::platform:::WindowMetrics { logicalWidth: 640, logicalHeight: 360, minimized: true };
+            }
+            return lantern:::platform:::WindowMetrics { logicalWidth: 640, logicalHeight: 360, pixelWidth: 640, pixelHeight: 360 };
+        }
+
+        SetMouseCaptured~: (captured: bool) -> void { }
+    }
+
+    RecordingGame :: class {
+        implements:
+            lantern:::engine:::Game;
+    public:
+        jump~ lantern:::core:::ActionId = lantern:::core:::ActionId { };
+        steps~ u32 = 0;
+        jumpsSeen~ u32 = 0;
+        renders~ u32 = 0;
+        position~ f32 = 0.0f;
+        velocityPerSecond~ f32 = 3.0f;
+
+        RecordingGame~: () { }
+
+        HandleEvent~: (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void { }
+
+        FixedUpdate~: (step: lantern:::engine:::FixedStepContext) -> void {
+            steps += 1;
+            if step.input->Pressed(jump) {
+                jumpsSeen += 1;
+            }
+            position += velocityPerSecond * step.stepSeconds;
+        }
+
+        FrameUpdate~: (frame: lantern:::engine:::FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void { }
+
+        Render~: (frame: lantern:::engine:::FrameContext) -> void {
+            renders += 1;
+        }
+
+        WantsToQuit :: () -> bool {
+            return false;
+        }
+
+        UpdateInputConfiguration~: (input: lantern:::engine:::InputRouter~*) -> void { }
+    }
+
+    MakeLoop :: () -> lantern:::engine:::FrameLoop*! {
+        actions := new lantern:::core:::ActionSet();
+        jump := actions->Register("jump", lantern:::core:::ActionKind:::Button);
+        bindings := new lantern:::core:::Bindings();
+        bindings->Bind(jump, lantern:::core:::Binding:::Key(lantern:::core:::KeyCode:::Space));
+        frameLoop := new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(actions!, bindings!));
+        return frameLoop!;
+    }
+
+    RunScript :: (frameLoop: lantern:::engine:::FrameLoop~*, platform: ScriptedPlatform~*, game: RecordingGame~*) -> void {
+        while platform->HasFrames() {
+            status := frameLoop->RunFrame(platform, game);
+            if status == lantern:::engine:::LoopStatus:::Finished {
+                return;
+            }
+        }
+    }
+}

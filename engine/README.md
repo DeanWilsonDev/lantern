@@ -6,7 +6,7 @@ tracked on the board's `engine-on-nox` epic (`docs/kanban/engine-on-nox`), one f
 
 So far it has the scaffold (milestone L0): a Nox project, its C dependencies through Mist, the SDL3 and Nyx bindings,
 the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each. It also has
-the core module (milestone L1), described under "Layout".
+the core module (milestone L1) and the window and frame loop (milestone L2), described under "Layout".
 
 ## What you need
 
@@ -42,9 +42,16 @@ From this directory:
 LIBRARY_PATH=generated/mist:/opt/homebrew/lib nox run
 ```
 
-On Arch, leave `/opt/homebrew/lib` out of `LIBRARY_PATH`. `nox run` builds `build/lantern` and runs it, and it prints
-the SDL version, the size of `assets/textures/ground.png` and the number of meshes in `assets/models/gem.glb`, read
-through stb_image and cgltf. Run it from this directory, since the asset paths are relative to it.
+On Arch, leave `/opt/homebrew/lib` out of `LIBRARY_PATH`. `nox run` builds `build/lantern` and runs it. It prints the
+SDL version, the size of `assets/textures/ground.png` and the number of meshes in `assets/models/gem.glb`, read through
+stb_image and cgltf, then opens a window and runs a stub game in the frame loop until you press Escape or close the
+window. It logs window events to standard error and prints a summary of frames, fixed steps and renders when it stops.
+Run it from this directory, since the asset paths are relative to it.
+
+- `LANTERN_LOG` sets the log level (`error`, `warn`, `info`, `debug`, `trace` or `off`; `info` by default).
+- `LANTERN_MAX_FRAMES=N` stops after N frames.
+- `LANTERN_WINDOW_SCRIPT=1` resizes the window to 800x450 on frame 5, minimises it on frame 15, restores it on frame 30
+  and asks to quit on frame 45.
 
 - `bind-sdl.sh` runs `nox bind-c` over SDL3's headers and writes `generated/sdl.nox`. It looks for `SDL3/SDL.h` under
   `/opt/homebrew/include`, `/usr/local/include` and `/usr/include`; pass another include directory as its argument.
@@ -63,6 +70,16 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `Input.nox` (keys, buttons, actions, bindings, `InputSnapshot`, the radial dead zone), `Color.nox`, `Debug.nox`
   (`DebugValues`), `Logging.nox` (the stderr logger, filtered by `LANTERN_LOG`), `Text.nox` (padding and fixed
   decimals) and `LibM.nox` (the libm functions they call).
+- `src/engine/` is the frame loop from the Rust `engine` crate: `InputRouter.nox` turns platform events into each
+  frame's action snapshot and latches presses and releases until a fixed step takes them, and `FrameLoop.nox` runs
+  events, the fixed steps, the frame update and the render for a `Game`, pausing the simulation while the window is
+  minimised.
+- `src/sdl/` is the Rust `sdl-facade` crate: `SdlContext` (initialises SDL and shuts it down when deleted),
+  `SdlWindow`, `SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
+  `SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `SdlAudioOutput` (an `AudioSink` on
+  the default playback device). Delete the platform and the audio output before the context.
+- `src/stub/` is the stub game `main` runs until the engine can draw: it quits on Escape and counts what the loop
+  calls, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
   `PlatformBackend` and `AudioSink` interfaces a backend implements.
 - `tests/<module>/<test>/` is one test program each: a `main.nox`, a `nox.json` naming the engine sources it needs,
@@ -76,6 +93,15 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
 
 runs `nox test` over every suite under `tests/`, and passes its arguments through (`--backend c`, for one). It needs a
 `nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
+The `tests/sdl` programs link SDL3 and read `generated/sdl.nox`, so run `./tools/bind-sdl.sh` first.
+
+```sh
+./tools/check-window.sh
+```
+
+runs `build/lantern` with `LANTERN_WINDOW_SCRIPT=1` and checks its log: the window resized, minimised and restored, the
+stub game didn't render while it was minimised, and it quit. With no `DISPLAY` it starts Xvfb and openbox (which it
+needs for minimising), as in a cloud session; on a desktop it uses the display you're on. Build first.
 
 ## Shaders
 

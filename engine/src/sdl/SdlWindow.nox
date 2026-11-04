@@ -1,0 +1,105 @@
+Sdl :: import Sdl;
+
+lantern:::sdl :: namespace {
+    NonNegative :: (value: i32) -> u32 {
+        if value < 0 {
+            return 0;
+        }
+        return u32(value);
+    }
+
+    SdlWindow :: class {
+    public:
+        raw_~ raw Sdl:::SDL_Window~* = null;
+
+        SdlWindow~: (window: raw Sdl:::SDL_Window~*) {
+            raw_ = window;
+        }
+
+        !SdlWindow~: () {
+            unsafe {
+                Sdl:::SDL_DestroyWindow(raw_);
+            }
+        }
+
+        static Create :: (context: SdlContext*, config: lantern:::platform:::WindowConfig) -> SdlWindow*!? {
+            flags~ u64 = Sdl:::SDL_WINDOW_HIGH_PIXEL_DENSITY;
+            if config.resizable {
+                flags = flags | Sdl:::SDL_WINDOW_RESIZABLE;
+            }
+            window~ raw Sdl:::SDL_Window~* = null;
+            unsafe {
+                window = Sdl:::SDL_CreateWindow(config.title, i32(config.width), i32(config.height), flags);
+            }
+            if window == null {
+                described := LastSdlError("SDL_CreateWindow");
+                lantern:::core:::LogError("platform", described);
+                delete described;
+                return null;
+            }
+            created := new SdlWindow(window);
+            metrics := created->Metrics();
+            message: string! = `window ${metrics.logicalWidth}x${metrics.logicalHeight} points, ${metrics.pixelWidth}x${metrics.pixelHeight} pixels, density ${metrics.pixelDensity:.2f}`;
+            lantern:::core:::LogInfo("platform", message);
+            delete message;
+            return created!;
+        }
+
+        Raw :: () -> raw Sdl:::SDL_Window~* {
+            return raw_;
+        }
+
+        Metrics :: () -> lantern:::platform:::WindowMetrics {
+            logicalWidth~ i32 = 0;
+            logicalHeight~ i32 = 0;
+            pixelWidth~ i32 = 0;
+            pixelHeight~ i32 = 0;
+            density~ f32 = 0.0f;
+            flags~ u64 = 0;
+            unsafe {
+                Sdl:::SDL_GetWindowSize(raw_, logicalWidth, logicalHeight);
+                Sdl:::SDL_GetWindowSizeInPixels(raw_, pixelWidth, pixelHeight);
+                density = Sdl:::SDL_GetWindowPixelDensity(raw_);
+                flags = Sdl:::SDL_GetWindowFlags(raw_);
+            }
+            return lantern:::platform:::WindowMetrics {
+                logicalWidth: NonNegative(logicalWidth),
+                logicalHeight: NonNegative(logicalHeight),
+                pixelWidth: NonNegative(pixelWidth),
+                pixelHeight: NonNegative(pixelHeight),
+                pixelDensity: when (density > 0.0f) { true -> density, false -> 1.0f },
+                minimized: (flags & Sdl:::SDL_WINDOW_MINIMIZED) == Sdl:::SDL_WINDOW_MINIMIZED
+            };
+        }
+
+        Resize :: (width: i32, height: i32) -> bool {
+            resized~ bool = false;
+            unsafe {
+                resized = Sdl:::SDL_SetWindowSize(raw_, width, height);
+            }
+            return resized;
+        }
+
+        Minimize :: () -> bool {
+            minimized~ bool = false;
+            unsafe {
+                minimized = Sdl:::SDL_MinimizeWindow(raw_);
+            }
+            return minimized;
+        }
+
+        Restore :: () -> bool {
+            restored~ bool = false;
+            unsafe {
+                restored = Sdl:::SDL_RestoreWindow(raw_);
+            }
+            return restored;
+        }
+
+        SetTitle :: (title: string) -> void {
+            unsafe {
+                Sdl:::SDL_SetWindowTitle(raw_, title);
+            }
+        }
+    }
+}
