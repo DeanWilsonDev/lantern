@@ -1,0 +1,62 @@
+Sdl :: import Sdl;
+Cgltf :: import Cgltf;
+StbImage :: import StbImage;
+
+lantern:::scaffold :: namespace {
+    ReportSdlVersion :: () -> void {
+        version~ i32 = 0;
+        unsafe {
+            version = Sdl:::SDL_GetVersion();
+        }
+        major: i32 = version / 1000000;
+        minor: i32 = (version / 1000) % 1000;
+        micro: i32 = version % 1000;
+        print(`SDL ${major}.${minor}.${micro}`);
+    }
+
+    ReportImageSize :: (path: string) -> bool {
+        width~ i32 = 0;
+        height~ i32 = 0;
+        channels~ i32 = 0;
+        found~ i32 = 0;
+        unsafe {
+            found = StbImage:::stbi_info(path, width, height, channels);
+        }
+        if found == 0 {
+            print(`stb_image could not read ${path}`);
+            return false;
+        }
+        print(`stb_image: ${path} is ${width}x${height}, ${channels} channels`);
+        return true;
+    }
+
+    ReportModelMeshes :: (path: string) -> bool {
+        options~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
+        data~ raw Cgltf:::cgltf_data~* = null;
+        result~ Cgltf:::cgltf_result = 0;
+        unsafe {
+            result = Cgltf:::cgltf_parse_file(options, path, data);
+        }
+        if result != Cgltf:::cgltf_result_success {
+            print(`cgltf could not parse ${path}: result ${result}`);
+            return false;
+        }
+        meshCount~ usize = 0;
+        unsafe {
+            meshCount = data->meshes_count;
+            Cgltf:::cgltf_free(data);
+        }
+        print(`cgltf: ${path} has ${meshCount} meshes`);
+        return true;
+    }
+}
+
+main :: () -> i32 {
+    lantern:::scaffold:::ReportSdlVersion();
+    imageRead: bool = lantern:::scaffold:::ReportImageSize("../assets/textures/ground.png");
+    modelRead: bool = lantern:::scaffold:::ReportModelMeshes("../assets/models/gem.glb");
+    if imageRead && modelRead {
+        return 0;
+    }
+    return 1;
+}

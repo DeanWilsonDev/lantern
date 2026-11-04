@@ -47,7 +47,7 @@ set(CIMMERIAN_ENABLE_VISUAL_TESTING ON CACHE BOOL
 
 FetchContent_Declare(
     cimmerian
-    GIT_REPOSITORY https://github.com/DeanWilsonDev/cimmerian.git
+    GIT_REPOSITORY https://github.com/fearlessgamedev/cimmerian-testing-framework.git
     GIT_TAG        ${LANTERN_CIMMERIAN_GIT_TAG}
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES ""
@@ -58,7 +58,7 @@ FetchContent_MakeAvailable(cimmerian)
 
 FetchContent_Declare(
     penumbra
-    GIT_REPOSITORY https://github.com/DeanWilsonDev/penumbra.git
+    GIT_REPOSITORY https://github.com/fearlessgamedev/penumbra-ui-engine.git
     GIT_TAG        ${LANTERN_PENUMBRA_GIT_TAG}
     GIT_SHALLOW    TRUE
     EXCLUDE_FROM_ALL
@@ -70,7 +70,7 @@ FetchContent_MakeAvailable(penumbra)
 # links the `nyx-core` target that creates.
 FetchContent_Declare(
     chaos
-    GIT_REPOSITORY https://github.com/DeanWilsonDev/chaos.git
+    GIT_REPOSITORY https://github.com/fearlessgamedev/chaos-ui-framework.git
     GIT_TAG        ${LANTERN_CHAOS_GIT_TAG}
     GIT_SHALLOW    TRUE
     EXCLUDE_FROM_ALL
@@ -80,7 +80,7 @@ FetchContent_MakeAvailable(chaos)
 
 FetchContent_Declare(
     cosmos
-    GIT_REPOSITORY https://github.com/DeanWilsonDev/cosmos.git
+    GIT_REPOSITORY https://github.com/fearlessgamedev/cosmos-styling-language.git
     GIT_TAG        ${LANTERN_COSMOS_GIT_TAG}
     GIT_SHALLOW    TRUE
     EXCLUDE_FROM_ALL
@@ -94,7 +94,7 @@ FetchContent_MakeAvailable(cosmos)
 # above. Its submodules are those vendored copies, so they aren't fetched.
 FetchContent_Declare(
     penumbra_ui_backend_src
-    GIT_REPOSITORY https://github.com/DeanWilsonDev/penumbra-ui-backend.git
+    GIT_REPOSITORY https://github.com/fearlessgamedev/penumbra-bridge.git
     GIT_TAG        ${LANTERN_PENUMBRA_UI_BACKEND_GIT_TAG}
     GIT_SHALLOW    TRUE
     GIT_SUBMODULES ""
