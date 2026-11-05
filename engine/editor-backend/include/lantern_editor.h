@@ -157,6 +157,7 @@ void lantern_editor_invert_selection(LanternEditor* editor);
 void lantern_editor_select_kind(LanternEditor* editor, const char* kind);
 void lantern_editor_select_children(LanternEditor* editor);
 bool lantern_editor_set_parent(LanternEditor* editor, int64_t child, int64_t parent);
+bool lantern_editor_move_before(LanternEditor* editor, int64_t child, int64_t sibling);
 
 /* Editing the selection as a whole. Axes are "x", "y" or "z". */
 bool lantern_editor_set_selection_field(LanternEditor* editor, const char* field, const char* text);

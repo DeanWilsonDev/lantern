@@ -1,0 +1,120 @@
+lantern :: import lantern;
+
+CourseSession :: () -> lantern:::editor:::EditorSession*!? {
+    when lantern:::editor:::Palette:::Load("../assets/editor/palette.json") {
+        Result:::Ok(palette) -> {
+            when lantern:::editor:::EditorSession:::Open("../assets/worlds/course.world.json", palette!) {
+                Result:::Ok(session) -> {
+                    session->SetViewportSize(Vec2 { x: 1280.0f, y: 720.0f });
+                    return session!;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return null;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return null;
+        }
+    }
+}
+
+
+KeyNamed :: (session: lantern:::editor:::EditorSession*, name: string) -> u64 {
+    for entity in session->World()->entities {
+        if entity->name == name {
+            return entity->id;
+        }
+    }
+    assert(false, "the course has the named entity");
+    return 0;
+}
+
+IndexOf :: (session: lantern:::editor:::EditorSession*, key: u64) -> usize {
+    return session->World()->IndexOf(key) ?? 0;
+}
+
+EntityOf :: (session: lantern:::editor:::EditorSession*, key: u64) -> lantern:::world:::WorldEntity*? {
+    guard index := session->World()->IndexOf(key) return null;
+    return session->World()->entities[index];
+}
+
+WorldOrigin :: (session: lantern:::editor:::EditorSession~*, key: u64) -> Vec3 {
+    return session->WorldOriginOf(key);
+}
+
+OutlineIndexOf :: (session: lantern:::editor:::EditorSession~*, key: u64) -> usize {
+    outline~ Array<lantern:::editor:::OutlineRow*!>! = session->Outline();
+    found~ usize = 0;
+    for index~ usize = 0; index < outline.length(); index++ {
+        if outline[index]->key == key {
+            found = index;
+        }
+    }
+    outline.freeAll();
+    return found;
+}
+
+MovingBeforeARootSiblingReordersTheRoot :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    first: u64 = KeyNamed(session, "stair_1");
+    third: u64 = KeyNamed(session, "stair_3");
+    count: usize = session->World()->entities.length();
+    moved: bool = session->MoveBefore(third, first);
+    assert(moved, "a root entity moves before another root entity");
+    assert(IndexOf(session, third) + 1 == IndexOf(session, first), "stair_3 sits just before stair_1");
+    assert(session->World()->entities.length() == count, "the move keeps every entity");
+    thirdRow: usize = OutlineIndexOf(session, third);
+    firstRow: usize = OutlineIndexOf(session, first);
+    assert(thirdRow + 1 == firstRow, "the outline lists stair_3 just before stair_1");
+    movedBack: bool = session->MoveBefore(first, third);
+    assert(movedBack, "moving down past a sibling works too");
+    assert(IndexOf(session, first) + 1 == IndexOf(session, third), "stair_1 sits just before stair_3 again");
+    session->Undo();
+    session->Undo();
+    assert(IndexOf(session, first) < IndexOf(session, third) && IndexOf(session, third) == IndexOf(session, first) + 2,
+           "undo puts the stairs back in their first order");
+    unchanged: bool = session->MoveBefore(third, third);
+    assert(unchanged, "moving an entity before itself changes nothing");
+}
+
+MovingBeforeAnotherParentsChildReparents :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    floor: u64 = KeyNamed(session, "start_floor");
+    post: u64 = KeyNamed(session, "canopy_post_1");
+    wall: u64 = KeyNamed(session, "back_wall");
+    parented: bool = session->SetParent(post, floor);
+    assert(parented, "the post takes the floor as its parent");
+    before: Vec3 = WorldOrigin(session, wall);
+    moved: bool = session->MoveBefore(wall, post);
+    assert(moved, "the wall moves before the post");
+    if entity := EntityOf(session, wall) {
+        assert(lantern:::editor:::SameOptionalU64(entity->parent, floor), "the wall takes the post's parent");
+    }
+    after: Vec3 = WorldOrigin(session, wall);
+    assert((after - before).length() < 0.0001f, "the wall stays where it is in the world");
+    assert(IndexOf(session, wall) + 1 == IndexOf(session, post), "the wall sits just before the post");
+    cycle: bool = session->MoveBefore(floor, post);
+    assert(!cycle, "the floor can't move in among its own children");
+    toEnd: bool = session->MoveBefore(wall, null);
+    assert(toEnd, "a move with no sibling goes to the end of the root");
+    if entity := EntityOf(session, wall) {
+        assert(entity->parent == null, "the wall is back at the root");
+    }
+    assert(IndexOf(session, wall) + 1 == session->World()->entities.length(), "the wall is last");
+}
+
+main :: () -> i32 {
+    MovingBeforeARootSiblingReordersTheRoot();
+    MovingBeforeAnotherParentsChildReparents();
+    print("the outliner moves entities before their siblings");
+    return 0;
+}

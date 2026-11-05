@@ -132,8 +132,9 @@ saves the rendered viewport.
   local space, pivot, frame, duplicate, group, delete, play and stop, the camera preset
   dropdown, the view toggles, the command palette and settings. Every button has a tooltip.
 - **Outliner**: the entity tree with a search box, kind icons, expand and collapse, eye and
-  lock toggles per row, click and Shift-click selection, and drag-and-drop re-parenting (drop
-  on a row to parent, on the empty tail to unparent). Right-click opens a context menu.
+  lock toggles per row, click and Shift-click selection, and drag-and-drop: drop on a row to
+  parent under it, on the line between two rows to move just before the lower one (taking its
+  parent), and on the empty tail to move to the end of the root. Right-click opens a context menu.
 - **Viewport**: the level, with the camera's description and the controls hint in its header.
   Drop a template from the asset browser into it to add an entity under the cursor.
 - **Inspector**: the selection's fields in collapsible groups. Vectors edit X, Y and Z side by
