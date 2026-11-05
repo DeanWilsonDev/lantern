@@ -1,0 +1,72 @@
+lantern:::debug :: namespace {
+    CIRCLE_SEGMENTS: u32 : 16;
+
+    Capsule :: (renderWorld: lantern:::renderer:::RenderWorld~*, center: Vec3, radius: f32, halfSegment: f32, color: lantern:::core:::Color) -> void {
+        up: Vec3 = Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+        top: Vec3 = center + up * halfSegment;
+        bottom: Vec3 = center - up * halfSegment;
+        renderWorld->CircleLines(top, up, radius, CIRCLE_SEGMENTS, color);
+        renderWorld->CircleLines(bottom, up, radius, CIRCLE_SEGMENTS, color);
+        sides: Array<Vec3>! = [Vec3 { x: 1.0f, y: 0.0f, z: 0.0f }, Vec3 { x: -1.0f, y: 0.0f, z: 0.0f }, Vec3 { x: 0.0f, y: 0.0f, z: 1.0f }, Vec3 { x: 0.0f, y: 0.0f, z: -1.0f }];
+        for side in sides {
+            renderWorld->Line(bottom + side * radius, top + side * radius, color);
+        }
+        delete sides;
+        CapArcs(renderWorld, top, bottom, Vec3 { x: 1.0f, y: 0.0f, z: 0.0f }, radius, color);
+        CapArcs(renderWorld, top, bottom, Vec3 { x: 0.0f, y: 0.0f, z: 1.0f }, radius, color);
+    }
+
+    CapArcs :: (renderWorld: lantern:::renderer:::RenderWorld~*, top: Vec3, bottom: Vec3, side: Vec3, radius: f32, color: lantern:::core:::Color) -> void {
+        Arc(renderWorld, top, 1.0f, side, radius, color);
+        Arc(renderWorld, bottom, -1.0f, side, radius, color);
+    }
+
+    Arc :: (renderWorld: lantern:::renderer:::RenderWorld~*, cap: Vec3, upSign: f32, side: Vec3, radius: f32, color: lantern:::core:::Color) -> void {
+        up: Vec3 = Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+        halfSegments: u32 = CIRCLE_SEGMENTS / 2;
+        previous~ Vec3 = Vec3 { };
+        for index~ u32 = 0; index <= halfSegments; index++ {
+            angle: f32 = Math:::PI * f32(index) / f32(halfSegments);
+            point: Vec3 = cap + side * Math:::cos(angle) * radius + up * upSign * Math:::sin(angle) * radius;
+            if index > 0 {
+                renderWorld->Line(previous, point, color);
+            }
+            previous = point;
+        }
+    }
+
+    Sphere :: (renderWorld: lantern:::renderer:::RenderWorld~*, center: Vec3, radius: f32, color: lantern:::core:::Color) -> void {
+        renderWorld->CircleLines(center, Vec3 { x: 1.0f, y: 0.0f, z: 0.0f }, radius, CIRCLE_SEGMENTS, color);
+        renderWorld->CircleLines(center, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }, radius, CIRCLE_SEGMENTS, color);
+        renderWorld->CircleLines(center, Vec3 { x: 0.0f, y: 0.0f, z: 1.0f }, radius, CIRCLE_SEGMENTS, color);
+    }
+
+    TriangleEdges :: (renderWorld: lantern:::renderer:::RenderWorld~*, triangles: Array<lantern:::renderer:::Triangle>, color: lantern:::core:::Color) -> void {
+        for triangle in triangles {
+            a: Vec3 = triangle.first;
+            b: Vec3 = triangle.second;
+            c: Vec3 = triangle.third;
+            lift: Vec3 = lantern:::core:::NormalizeOr3((b - a).cross(c - a), Vec3 { }) * 0.003f;
+            renderWorld->Line(a + lift, b + lift, color);
+            renderWorld->Line(b + lift, c + lift, color);
+            renderWorld->Line(c + lift, a + lift, color);
+        }
+    }
+
+    Arrow :: (renderWorld: lantern:::renderer:::RenderWorld~*, start: Vec3, vector: Vec3, color: lantern:::core:::Color) -> void {
+        end: Vec3 = start + vector;
+        renderWorld->Line(start, end, color);
+        length: f32 = vector.length();
+        if length < 0.0001f {
+            return;
+        }
+        direction: Vec3 = vector / length;
+        side: Vec3 = lantern:::core:::AnyOrthonormalVector3(direction) * length * 0.1f;
+        angles: Array<f32>! = [0.0f, Math:::TAU / 3.0f, 2.0f * Math:::TAU / 3.0f];
+        for angle in angles {
+            rotated: Vec3 = lantern:::core:::RotateVector(lantern:::core:::QuaternionFromAxisAngle(direction, angle), side);
+            renderWorld->Line(end, end - direction * length * 0.2f + rotated, color);
+        }
+        delete angles;
+    }
+}

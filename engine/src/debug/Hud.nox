@@ -1,0 +1,73 @@
+lantern:::debug :: namespace {
+    ERROR_GROUP: string : "Errors";
+
+    DebugHud :: class {
+    public:
+        visible~ bool = true;
+        background~ lantern:::core:::Color = lantern:::core:::Color { r: 0.02f, g: 0.02f, b: 0.05f, a: 0.72f };
+        groupColor~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 0.82f, b: 0.3f, a: 1.0f };
+        nameColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.7f, g: 0.72f, b: 0.8f, a: 1.0f };
+        valueColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.95f, g: 0.95f, b: 0.97f, a: 1.0f };
+        errorColor~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 0.4f, b: 0.35f, a: 1.0f };
+
+        DebugHud~: () { }
+
+        Toggle~: () -> void {
+            visible = !visible;
+        }
+
+        Draw :: (values: lantern:::core:::DebugValues*, overlay: lantern:::renderer:::Overlay~*, topLeft: Vec2, scale: f32) -> void {
+            if !visible || values->Length() == 0 {
+                return;
+            }
+            glyph: f32 = f32(lantern:::renderer:::GLYPH_SIZE) * scale;
+            lineHeight: f32 = glyph * 1.25f;
+            padding: f32 = glyph * 0.5f;
+            widestName~ f32 = 0.0f;
+            for index~ usize = 0; index < values->Length(); index++ {
+                widestName = Math:::max(widestName, lantern:::renderer:::MeasureText(lantern:::core:::DebugName(values->PathAt(index)), scale).x);
+            }
+            nameColumn: f32 = widestName + glyph * 2.0f;
+            width~ f32 = 0.0f;
+            lineCount~ usize = 0;
+            for index~ usize = 0; index < values->Length(); index++ {
+                path: string = values->PathAt(index);
+                if StartsGroup(values, index) {
+                    width = Math:::max(width, lantern:::renderer:::MeasureText(lantern:::core:::DebugGroup(path), scale).x);
+                    lineCount += 1;
+                }
+                value: string! = values->DisplayAt(index);
+                width = Math:::max(width, nameColumn + lantern:::renderer:::MeasureText(value, scale).x);
+                delete value;
+                lineCount += 1;
+            }
+            height: f32 = f32(lineCount) * lineHeight;
+            overlay->Rect(topLeft, topLeft + Vec2 { x: width + padding * 2.0f, y: height + padding * 2.0f }, background);
+            cursor~ Vec2 = topLeft + Vec2 { x: padding, y: padding };
+            for index~ usize = 0; index < values->Length(); index++ {
+                path: string = values->PathAt(index);
+                group: string = lantern:::core:::DebugGroup(path);
+                if StartsGroup(values, index) {
+                    overlay->Text(group, cursor, scale, groupColor);
+                    cursor.y += lineHeight;
+                }
+                overlay->Text(lantern:::core:::DebugName(path), cursor + Vec2 { x: glyph, y: 0.0f }, scale, nameColor);
+                color~ lantern:::core:::Color = valueColor;
+                if group == ERROR_GROUP {
+                    color = errorColor;
+                }
+                value: string! = values->DisplayAt(index);
+                overlay->Text(value, cursor + Vec2 { x: nameColumn, y: 0.0f }, scale, color);
+                delete value;
+                cursor.y += lineHeight;
+            }
+        }
+    }
+
+    StartsGroup :: (values: lantern:::core:::DebugValues*, index: usize) -> bool {
+        if index == 0 {
+            return true;
+        }
+        return lantern:::core:::DebugGroup(values->PathAt(index)) != lantern:::core:::DebugGroup(values->PathAt(index - 1));
+    }
+}

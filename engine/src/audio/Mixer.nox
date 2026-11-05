@@ -1,0 +1,236 @@
+lantern:::audio :: namespace {
+    MAX_VOICES: usize : 32;
+
+    SoundTag :: struct { }
+
+    SoundSlot :: struct { }
+
+    Volumes :: struct {
+        master~ f32 = 0.8f;
+        music~ f32 = 0.5f;
+        effects~ f32 = 0.9f;
+    }
+
+    Voice :: struct {
+        sound~ lantern:::core:::Handle<SoundTag> = lantern:::core:::Handle<SoundTag> { };
+        frame~ usize = 0;
+        volume~ f32 = 1.0f;
+    }
+
+    HandleText :: (sound: lantern:::core:::Handle<SoundTag>) -> string! {
+        return `Handle(${sound.index}v${sound.generation})`;
+    }
+
+    SoftClip :: (sample: f32) -> f32 {
+        clamped: f32 = Math:::clamp(sample, -1.5f, 1.5f);
+        return clamped - clamped * clamped * clamped / 6.75f;
+    }
+
+    Mixer :: class {
+    public:
+        sampleRate~ u32 = 0;
+        slots~ lantern:::core:::Pool<SoundSlot>*!;
+        sounds~ Array<SoundData*!>! = [];
+        voices~ Array<Voice>! = [];
+        music~ Voice? = null;
+        volumes~ Volumes = Volumes { };
+        framesMixed~ u64 = 0;
+
+        Mixer~: (rate: u32) {
+            sampleRate = rate;
+            slots = new lantern:::core:::Pool<SoundSlot>();
+        }
+
+        !Mixer~: () {
+            delete slots;
+            sounds.freeAll();
+            delete voices;
+        }
+
+        SampleRate :: () -> u32 {
+            return sampleRate;
+        }
+
+        AddSound~: (sound: SoundData*) -> lantern:::core:::Handle<SoundTag> {
+            handle: lantern:::core:::Handle<SoundSlot> = slots->Insert(SoundSlot { });
+            slot: usize = usize(handle.index);
+            resampled := sound->Resampled(sampleRate);
+            if slot < sounds.length() {
+                replaced := sounds.remove(slot);
+                delete replaced;
+                sounds.insert(slot, resampled!);
+            } else {
+                sounds.push(resampled!);
+            }
+            return lantern:::core:::CastHandle<SoundSlot, SoundTag>(handle);
+        }
+
+        Contains :: (sound: lantern:::core:::Handle<SoundTag>) -> bool {
+            return slots->Contains(lantern:::core:::CastHandle<SoundTag, SoundSlot>(sound));
+        }
+
+        RemoveSound~: (sound: lantern:::core:::Handle<SoundTag>) -> void {
+            kept~ Array<Voice>! = [];
+            for voice in voices {
+                if !(voice.sound == sound) {
+                    kept.push(voice);
+                }
+            }
+            delete voices;
+            voices = kept!;
+            if playing := music {
+                if playing.sound == sound {
+                    music = null;
+                }
+            }
+            if !Contains(sound) {
+                return;
+            }
+            slots->Remove(lantern:::core:::CastHandle<SoundTag, SoundSlot>(sound));
+            slot: usize = usize(sound.index);
+            removed := sounds.remove(slot);
+            delete removed;
+            sounds.insert(slot, new SoundData(0));
+        }
+
+        Play~: (sound: lantern:::core:::Handle<SoundTag>, volume: f32) -> void {
+            if !Contains(sound) {
+                name: string! = HandleText(sound);
+                message: string! = `play: unknown sound ${name}`;
+                lantern:::core:::LogWarn("audio", message);
+                delete message;
+                delete name;
+                return;
+            }
+            if voices.length() >= MAX_VOICES {
+                voices.remove(0);
+            }
+            voices.push(Voice { sound: sound, frame: 0, volume: volume });
+        }
+
+        PlayMusic~: (sound: lantern:::core:::Handle<SoundTag>) -> void {
+            if playing := music {
+                if playing.sound == sound {
+                    return;
+                }
+            }
+            music = Voice { sound: sound, frame: 0, volume: 1.0f };
+        }
+
+        StopMusic~: () -> void {
+            music = null;
+        }
+
+        ActiveVoiceCount :: () -> usize {
+            if music != null {
+                return voices.length() + 1;
+            }
+            return voices.length();
+        }
+
+        FramesMixed :: () -> u64 {
+            return framesMixed;
+        }
+
+        Mix~: (frames: usize) -> Array<f32>! {
+            output~ Array<f32>! = [];
+            for index~ usize = 0; index < frames * 2; index++ {
+                output.push(0.0f);
+            }
+            effectsGain: f32 = volumes.master * volumes.effects;
+            musicGain: f32 = volumes.master * volumes.music;
+            kept~ Array<Voice>! = [];
+            for voice in voices {
+                if Contains(voice.sound) {
+                    sound: SoundData* = sounds[usize(voice.sound.index)];
+                    frameCount: usize = sound->FrameCount();
+                    available~ usize = 0;
+                    if frameCount > voice.frame {
+                        available = frameCount - voice.frame;
+                    }
+                    count~ usize = available;
+                    if frames < count {
+                        count = frames;
+                    }
+                    gain: f32 = effectsGain * voice.volume;
+                    for frame~ usize = 0; frame < count; frame++ {
+                        source: usize = (voice.frame + frame) * 2;
+                        output[frame * 2] = output[frame * 2] + sound->samples[source] * gain;
+                        output[frame * 2 + 1] = output[frame * 2 + 1] + sound->samples[source + 1] * gain;
+                    }
+                    advanced: Voice = Voice { sound: voice.sound, frame: voice.frame + count, volume: voice.volume };
+                    if advanced.frame < frameCount {
+                        kept.push(advanced);
+                    }
+                }
+            }
+            delete voices;
+            voices = kept!;
+            if playing := music {
+                if Contains(playing.sound) {
+                    sound: SoundData* = sounds[usize(playing.sound.index)];
+                    frameCount: usize = sound->FrameCount();
+                    if frameCount > 0 {
+                        musicFrame~ usize = playing.frame;
+                        for frame~ usize = 0; frame < frames; frame++ {
+                            source: usize = musicFrame * 2;
+                            output[frame * 2] = output[frame * 2] + sound->samples[source] * musicGain;
+                            output[frame * 2 + 1] = output[frame * 2 + 1] + sound->samples[source + 1] * musicGain;
+                            musicFrame = (musicFrame + 1) % frameCount;
+                        }
+                        music = Voice { sound: playing.sound, frame: musicFrame, volume: playing.volume };
+                    }
+                }
+            }
+            for index~ usize = 0; index < output.length(); index++ {
+                output[index] = SoftClip(output[index]);
+            }
+            framesMixed += u64(frames);
+            return output!;
+        }
+    }
+
+    SoundBank :: class {
+    public:
+        names~ Array<string!>! = [];
+        handles~ Array<lantern:::core:::Handle<SoundTag>>! = [];
+
+        SoundBank~: () { }
+
+        !SoundBank~: () {
+            names.freeAll();
+            delete handles;
+        }
+
+        IndexOf :: (name: string) -> usize? {
+            for index~ usize = 0; index < names.length(); index++ {
+                if names[index] == name {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        Insert~: (name: string, sound: lantern:::core:::Handle<SoundTag>) -> void {
+            if index := IndexOf(name) {
+                handles[index] = sound;
+                return;
+            }
+            names.push(`${name}`);
+            handles.push(sound);
+        }
+
+        Get :: (name: string) -> lantern:::core:::Handle<SoundTag>? {
+            guard index := IndexOf(name) return null;
+            return handles[index];
+        }
+
+        Length :: () -> usize {
+            return names.length();
+        }
+
+        NameAt :: (index: usize) -> string {
+            return names[index];
+        }
+    }
+}

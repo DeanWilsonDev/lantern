@@ -6,8 +6,9 @@ tracked on the board's `engine-on-nox` epic (`docs/kanban/engine-on-nox`), one f
 
 So far it has the scaffold (milestone L0): a Nox project, its C dependencies through Mist, the SDL3 and Nyx bindings,
 the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each. It also has
-the core module (milestone L1), the window and frame loop (milestone L2) and the renderer, with PNG and glTF loading and
-the SDL GPU backend (milestone L3), described under "Layout".
+the core module (milestone L1), the window and frame loop (milestone L2), the renderer, with PNG and glTF loading and
+the SDL GPU backend (milestone L3), collision and the world file (milestone L4), and the entity world, audio and debug
+drawing (milestone L5), described under "Layout".
 
 ## What you need
 
@@ -78,10 +79,18 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   (`DebugValues`), `Logging.nox` (the stderr logger, filtered by `LANTERN_LOG`), `Text.nox` (padding and fixed
   decimals), `Json.nox` (`lantern:::json`: a JSON document, its parser and a writer that lays text out as serde_json
   does, until the Nox library has JSON), `Files.nox` and `LibM.nox` (the C functions they call).
-- `src/engine/` is the frame loop from the Rust `engine` crate: `InputRouter.nox` turns platform events into each
-  frame's action snapshot and latches presses and releases until a fixed step takes them, and `FrameLoop.nox` runs
-  events, the fixed steps, the frame update and the render for a `Game`, pausing the simulation while the window is
-  minimised.
+- `src/engine/` is the Rust `engine` crate: `InputRouter.nox` turns platform events into each frame's action snapshot
+  and latches presses and releases until a fixed step takes them, `FrameLoop.nox` runs events, the fixed steps, the
+  frame update and the render for a `Game`, pausing the simulation while the window is minimised, `World.nox` holds the
+  entities (`World`: names, scenes, `Transform`s, the parent and child hierarchy, interpolation between fixed steps and
+  `MeshRenderer`s; `ComponentStore<T>` for a game's own data; `ExtractDraws`, which turns visible mesh renderers into
+  draws), and `Audio.nox` is the `AudioSystem`, which plays named sounds and tops the device queue up to 60 ms each
+  frame.
+- `src/audio/` is the Rust `audio` crate: `Wav.nox` (`SoundData`, 16-bit PCM WAV decoding and encoding, linear
+  resampling) and `Mixer.nox` (`Mixer`: effect voices, one looping music track, volumes and the soft clip;
+  `SoundBank`, sounds by name).
+- `src/debug/` is the Rust `debug` crate: `DebugDraw.nox` (capsules, spheres, triangle edges and arrows as debug lines)
+  and `Hud.nox` (`DebugHud`, the grouped panel of `DebugValues`).
 - `src/sdl/` is the Rust `sdl-facade` crate: `SdlContext` (initialises SDL and shuts it down when deleted),
   `SdlWindow`, `SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
   `SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `SdlAudioOutput` (an `AudioSink` on

@@ -1,0 +1,510 @@
+lantern:::engine :: namespace {
+    EntityTag :: struct { }
+
+    SceneId :: struct {
+        value~ u32 = 0;
+
+        operator == :: (other: SceneId) -> bool {
+            return value == other.value;
+        }
+    }
+
+    PersistentScene :: () -> SceneId {
+        return SceneId { value: 0 };
+    }
+
+    Transform :: struct {
+        translation~ Vec3 = Vec3 { };
+        rotation~ Quaternion = Quaternion { };
+        scale~ Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+
+        static Identity :: () -> Transform {
+            return Transform { };
+        }
+
+        static FromTranslation :: (translation: Vec3) -> Transform {
+            return Transform { translation: translation };
+        }
+
+        static FromMatrix :: (matrix: Mat4) -> Transform {
+            parts: lantern:::core:::MatrixParts = lantern:::core:::DecomposeMatrix(matrix);
+            return Transform { translation: parts.translation, rotation: parts.rotation, scale: parts.scale };
+        }
+
+        WithRotation :: (newRotation: Quaternion) -> Transform {
+            return Transform { translation: translation, rotation: newRotation, scale: scale };
+        }
+
+        WithScale :: (newScale: Vec3) -> Transform {
+            return Transform { translation: translation, rotation: rotation, scale: newScale };
+        }
+
+        Matrix :: () -> Mat4 {
+            return lantern:::core:::MatrixFromScaleRotationTranslation(scale, rotation, translation);
+        }
+
+        Lerp :: (other: Transform, amount: f32) -> Transform {
+            return Transform {
+                translation: lantern:::core:::Lerp3(translation, other.translation, amount),
+                rotation: lantern:::core:::QuaternionSlerp(rotation, other.rotation, amount),
+                scale: lantern:::core:::Lerp3(scale, other.scale, amount)
+            };
+        }
+    }
+
+    MeshRenderer :: struct {
+        mesh~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
+        color~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f, a: 1.0f };
+        visible~ bool = true;
+
+        static Create :: (mesh: lantern:::core:::Handle<lantern:::renderer:::MeshTag>, texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?, color: lantern:::core:::Color) -> MeshRenderer {
+            return MeshRenderer { mesh: mesh, texture: texture, color: color, visible: true };
+        }
+    }
+
+    EntityRecord :: struct {
+        scene~ SceneId = SceneId { };
+        local~ Transform = Transform { };
+        meshRenderer~ MeshRenderer? = null;
+        parent~ lantern:::core:::Handle<EntityTag>? = null;
+        firstChild~ lantern:::core:::Handle<EntityTag>? = null;
+        lastChild~ lantern:::core:::Handle<EntityTag>? = null;
+        previousSibling~ lantern:::core:::Handle<EntityTag>? = null;
+        nextSibling~ lantern:::core:::Handle<EntityTag>? = null;
+        world~ Mat4 = Mat4 { };
+        previousWorld~ Mat4 = Mat4 { };
+
+        WorldMatrix :: () -> Mat4 {
+            return world;
+        }
+
+        WorldPosition :: () -> Vec3 {
+            return lantern:::core:::MatrixColumn3(world, 3);
+        }
+
+        InterpolatedWorld :: (alpha: f32) -> Mat4 {
+            if alpha >= 1.0f || previousWorld == world {
+                return world;
+            }
+            return Transform:::FromMatrix(previousWorld).Lerp(Transform:::FromMatrix(world), alpha).Matrix();
+        }
+    }
+
+    ParentChange :: enum {
+        Done,
+        UnknownEntity,
+        WouldCreateCycle,
+    }
+
+    World :: class {
+    public:
+        records~ lantern:::core:::Pool<EntityRecord>*!;
+        names~ Array<string!>! = [];
+        updateOrder~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+        hierarchyDirty~ bool = false;
+
+        World~: () {
+            records = new lantern:::core:::Pool<EntityRecord>();
+        }
+
+        !World~: () {
+            delete records;
+            names.freeAll();
+            delete updateOrder;
+        }
+
+        Spawn~: (name: string, scene: SceneId, local: Transform) -> lantern:::core:::Handle<EntityTag> {
+            matrix: Mat4 = local.Matrix();
+            handle: lantern:::core:::Handle<EntityRecord> = records->Insert(EntityRecord { scene: scene, local: local, world: matrix, previousWorld: matrix });
+            slot: usize = usize(handle.index);
+            owned: string! = `${name}`;
+            if slot < names.length() {
+                replaced: string! = names.remove(slot);
+                delete replaced;
+                names.insert(slot, owned!);
+            } else {
+                names.push(owned!);
+            }
+            hierarchyDirty = true;
+            return EntityHandle(handle);
+        }
+
+        SpawnMesh~: (name: string, scene: SceneId, local: Transform, renderer: MeshRenderer) -> lantern:::core:::Handle<EntityTag> {
+            id: lantern:::core:::Handle<EntityTag> = Spawn(name, scene, local);
+            if record ~= records->BorrowMutable(RecordHandle(id)) {
+                record->meshRenderer = renderer;
+            }
+            return id;
+        }
+
+        Contains :: (id: lantern:::core:::Handle<EntityTag>) -> bool {
+            return records->Contains(RecordHandle(id));
+        }
+
+        Get :: (id: lantern:::core:::Handle<EntityTag>) -> EntityRecord? {
+            return records->Get(RecordHandle(id));
+        }
+
+        Borrow :: (id: lantern:::core:::Handle<EntityTag>) -> EntityRecord*? {
+            return records->Borrow(RecordHandle(id));
+        }
+
+        BorrowMutable~: (id: lantern:::core:::Handle<EntityTag>) -> EntityRecord~*? {
+            return records->BorrowMutable(RecordHandle(id));
+        }
+
+        Name :: (id: lantern:::core:::Handle<EntityTag>) -> string? {
+            if !Contains(id) {
+                return null;
+            }
+            return names[usize(id.index)];
+        }
+
+        Length :: () -> usize {
+            return records->Length();
+        }
+
+        IsEmpty :: () -> bool {
+            return records->IsEmpty();
+        }
+
+        Ids :: () -> Array<lantern:::core:::Handle<EntityTag>>! {
+            ids~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+            handles: Array<lantern:::core:::Handle<EntityRecord>>! = records->LiveHandles();
+            for handle in handles {
+                ids.push(EntityHandle(handle));
+            }
+            delete handles;
+            return ids!;
+        }
+
+        FindByName :: (name: string) -> lantern:::core:::Handle<EntityTag>? {
+            found~ lantern:::core:::Handle<EntityTag>? = null;
+            ids: Array<lantern:::core:::Handle<EntityTag>>! = Ids();
+            for id in ids {
+                if found == null && names[usize(id.index)] == name {
+                    found = id;
+                }
+            }
+            delete ids;
+            return found;
+        }
+
+        Parent :: (id: lantern:::core:::Handle<EntityTag>) -> lantern:::core:::Handle<EntityTag>? {
+            guard record := Get(id) return null;
+            return record.parent;
+        }
+
+        Children :: (id: lantern:::core:::Handle<EntityTag>) -> Array<lantern:::core:::Handle<EntityTag>>! {
+            children~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+            guard record := Get(id) return children!;
+            current~ lantern:::core:::Handle<EntityTag>? = record.firstChild;
+            while current != null {
+                child: lantern:::core:::Handle<EntityTag> = current ?? id;
+                children.push(child);
+                current = null;
+                if childRecord := Get(child) {
+                    current = childRecord.nextSibling;
+                }
+            }
+            return children!;
+        }
+
+        Teleport~: (id: lantern:::core:::Handle<EntityTag>, translation: Vec3) -> void {
+            if record ~= BorrowMutable(id) {
+                record->local.translation = translation;
+            }
+            UpdateWorldTransforms();
+            pending~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+            pending.push(id);
+            while current := pending.pop() {
+                if record ~= BorrowMutable(current) {
+                    record->previousWorld = record->world;
+                }
+                children: Array<lantern:::core:::Handle<EntityTag>>! = Children(current);
+                for child in children {
+                    pending.push(child);
+                }
+                delete children;
+            }
+            delete pending;
+        }
+
+        SetParent~: (child: lantern:::core:::Handle<EntityTag>, parent: lantern:::core:::Handle<EntityTag>?) -> ParentChange {
+            if !Contains(child) {
+                return ParentChange:::UnknownEntity;
+            }
+            if newParent := parent {
+                if !Contains(newParent) {
+                    return ParentChange:::UnknownEntity;
+                }
+                ancestor~ lantern:::core:::Handle<EntityTag>? = newParent;
+                while ancestor != null {
+                    current: lantern:::core:::Handle<EntityTag> = ancestor ?? newParent;
+                    if current == child {
+                        return ParentChange:::WouldCreateCycle;
+                    }
+                    ancestor = Parent(current);
+                }
+            }
+            Unlink(child);
+            if newParent := parent {
+                Append(newParent, child);
+            }
+            hierarchyDirty = true;
+            return ParentChange:::Done;
+        }
+
+        Despawn~: (id: lantern:::core:::Handle<EntityTag>) -> usize {
+            if !Contains(id) {
+                return 0;
+            }
+            Unlink(id);
+            removed~ usize = 0;
+            pending~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+            pending.push(id);
+            while current := pending.pop() {
+                children: Array<lantern:::core:::Handle<EntityTag>>! = Children(current);
+                if records->Remove(RecordHandle(current)) != null {
+                    for child in children {
+                        pending.push(child);
+                    }
+                    removed += 1;
+                }
+                delete children;
+            }
+            delete pending;
+            hierarchyDirty = true;
+            return removed;
+        }
+
+        DespawnScene~: (scene: SceneId) -> usize {
+            doomed~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+            ids: Array<lantern:::core:::Handle<EntityTag>>! = Ids();
+            for id in ids {
+                if record := Get(id) {
+                    if record.scene == scene {
+                        doomed.push(id);
+                    }
+                }
+            }
+            delete ids;
+            removed~ usize = 0;
+            for id in doomed {
+                removed += Despawn(id);
+            }
+            delete doomed;
+            return removed;
+        }
+
+        StorePreviousTransforms~: () -> void {
+            handles: Array<lantern:::core:::Handle<EntityRecord>>! = records->LiveHandles();
+            for handle in handles {
+                if record ~= records->BorrowMutable(handle) {
+                    record->previousWorld = record->world;
+                }
+            }
+            delete handles;
+        }
+
+        UpdateWorldTransforms~: () -> void {
+            if hierarchyDirty {
+                RebuildUpdateOrder();
+            }
+            for index~ usize = 0; index < updateOrder.length(); index++ {
+                id: lantern:::core:::Handle<EntityTag> = updateOrder[index];
+                parentWorld~ Mat4 = Mat4 { };
+                if parent := Parent(id) {
+                    if parentRecord := Get(parent) {
+                        parentWorld = parentRecord.world;
+                    }
+                }
+                if record ~= BorrowMutable(id) {
+                    record->world = parentWorld * record->local.Matrix();
+                }
+            }
+        }
+
+        RebuildUpdateOrder~: () -> void {
+            updateOrder.clear();
+            ids: Array<lantern:::core:::Handle<EntityTag>>! = Ids();
+            stack~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+            for index~ usize = ids.length(); index > 0; index-- {
+                if Parent(ids[index - 1]) == null {
+                    stack.push(ids[index - 1]);
+                }
+            }
+            delete ids;
+            while id := stack.pop() {
+                updateOrder.push(id);
+                children: Array<lantern:::core:::Handle<EntityTag>>! = Children(id);
+                for index~ usize = children.length(); index > 0; index-- {
+                    stack.push(children[index - 1]);
+                }
+                delete children;
+            }
+            delete stack;
+            hierarchyDirty = false;
+        }
+
+        Unlink~: (child: lantern:::core:::Handle<EntityTag>) -> void {
+            guard record := Get(child) return;
+            guard parent := record.parent return;
+            if previous := record.previousSibling {
+                if previousRecord ~= BorrowMutable(previous) {
+                    previousRecord->nextSibling = record.nextSibling;
+                }
+            } else if parentRecord ~= BorrowMutable(parent) {
+                parentRecord->firstChild = record.nextSibling;
+            }
+            if next := record.nextSibling {
+                if nextRecord ~= BorrowMutable(next) {
+                    nextRecord->previousSibling = record.previousSibling;
+                }
+            } else if parentRecord ~= BorrowMutable(parent) {
+                parentRecord->lastChild = record.previousSibling;
+            }
+            if childRecord ~= BorrowMutable(child) {
+                childRecord->parent = null;
+                childRecord->previousSibling = null;
+                childRecord->nextSibling = null;
+            }
+        }
+
+        Append~: (parent: lantern:::core:::Handle<EntityTag>, child: lantern:::core:::Handle<EntityTag>) -> void {
+            guard parentRecord := Get(parent) return;
+            previousLast: lantern:::core:::Handle<EntityTag>? = parentRecord.lastChild;
+            if last := previousLast {
+                if lastRecord ~= BorrowMutable(last) {
+                    lastRecord->nextSibling = child;
+                }
+            }
+            if parentMutable ~= BorrowMutable(parent) {
+                if previousLast == null {
+                    parentMutable->firstChild = child;
+                }
+                parentMutable->lastChild = child;
+            }
+            if childRecord ~= BorrowMutable(child) {
+                childRecord->parent = parent;
+                childRecord->previousSibling = previousLast;
+                childRecord->nextSibling = null;
+            }
+        }
+    }
+
+    RecordHandle :: (id: lantern:::core:::Handle<EntityTag>) -> lantern:::core:::Handle<EntityRecord> {
+        return lantern:::core:::CastHandle<EntityTag, EntityRecord>(id);
+    }
+
+    EntityHandle :: (handle: lantern:::core:::Handle<EntityRecord>) -> lantern:::core:::Handle<EntityTag> {
+        return lantern:::core:::CastHandle<EntityRecord, EntityTag>(handle);
+    }
+
+    ComponentStore<T> :: class {
+    public:
+        ids~ Array<lantern:::core:::Handle<EntityTag>?>! = [];
+        values~ Array<T?>! = [];
+
+        ComponentStore~: () { }
+
+        !ComponentStore~: () {
+            delete ids;
+            delete values;
+        }
+
+        Insert~: (id: lantern:::core:::Handle<EntityTag>, value: T) -> void {
+            slot: usize = usize(id.index);
+            while ids.length() <= slot {
+                ids.push(null);
+                values.push(null);
+            }
+            ids[slot] = id;
+            values[slot] = value;
+        }
+
+        Holds :: (id: lantern:::core:::Handle<EntityTag>) -> bool {
+            slot: usize = usize(id.index);
+            if slot >= ids.length() {
+                return false;
+            }
+            if stored := ids[slot] {
+                return stored == id;
+            }
+            return false;
+        }
+
+        Get :: (id: lantern:::core:::Handle<EntityTag>) -> T? {
+            if !Holds(id) {
+                return null;
+            }
+            return values[usize(id.index)];
+        }
+
+        Remove~: (id: lantern:::core:::Handle<EntityTag>) -> T? {
+            if !Holds(id) {
+                return null;
+            }
+            slot: usize = usize(id.index);
+            removed: T? = values[slot];
+            ids[slot] = null;
+            values[slot] = null;
+            return removed;
+        }
+
+        Ids :: () -> Array<lantern:::core:::Handle<EntityTag>>! {
+            stored~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+            for slot~ usize = 0; slot < ids.length(); slot++ {
+                if id := ids[slot] {
+                    stored.push(id);
+                }
+            }
+            return stored!;
+        }
+
+        RetainAlive~: (world: World*) -> void {
+            for slot~ usize = 0; slot < ids.length(); slot++ {
+                if id := ids[slot] {
+                    if !world->Contains(id) {
+                        ids[slot] = null;
+                        values[slot] = null;
+                    }
+                }
+            }
+        }
+
+        Clear~: () -> void {
+            ids.clear();
+            values.clear();
+        }
+
+        Length :: () -> usize {
+            count~ usize = 0;
+            for slot~ usize = 0; slot < ids.length(); slot++ {
+                if ids[slot] != null {
+                    count += 1;
+                }
+            }
+            return count;
+        }
+
+        IsEmpty :: () -> bool {
+            return Length() == 0;
+        }
+    }
+
+    ExtractDraws :: (world: World*, alpha: f32, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
+        ids: Array<lantern:::core:::Handle<EntityTag>>! = world->Ids();
+        for id in ids {
+            if record := world->Get(id) {
+                if renderer := record.meshRenderer {
+                    if renderer.visible {
+                        renderWorld->Draw(renderer.mesh, renderer.texture, record.InterpolatedWorld(alpha), renderer.color);
+                    }
+                }
+            }
+        }
+        delete ids;
+    }
+}
