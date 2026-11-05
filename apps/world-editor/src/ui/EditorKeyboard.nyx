@@ -1,0 +1,89 @@
+EditorCommands :: import EditorCommands;
+EditorDocument :: import EditorDocument;
+EditorOverlays :: import EditorOverlays;
+EditorSelection :: import EditorSelection;
+
+EditorKeyboard :: class {
+public:
+    static SHIFT_BIT :: 1;
+    static SHORTCUT_BIT :: 2;
+    static ALT_BIT :: 4;
+
+    commands~ EditorCommands;
+    overlays~ EditorOverlays;
+    document~ EditorDocument;
+    selection~ EditorSelection;
+    shiftHeld~ bool = false;
+    shortcutHeld~ bool = false;
+
+    EditorKeyboard~: (commands~ EditorCommands, overlays~ EditorOverlays, document~ EditorDocument,
+                      selection~ EditorSelection) {
+        this.commands = commands;
+        this.overlays = overlays;
+        this.document = document;
+        this.selection = selection;
+    }
+
+    KeyDown~: (key: string) -> void {
+        when key {
+            "Shift" -> this.SetShift(true),
+            ("Control" || "Meta") -> this.SetShortcut(true),
+            "Escape" -> this.Escape(),
+            "Shortcut+n" -> this.commands.RunCommand("new"),
+            "Shortcut+o" -> this.commands.RunCommand("open"),
+            "Shortcut+s" -> this.commands.RunCommand("save"),
+            "Shortcut+Shift+s" -> this.commands.RunCommand("saveAs"),
+            "Shortcut+q" -> this.commands.RunCommand("quit"),
+            "Shortcut+p" -> this.commands.RunCommand(this.document.toolbar.playing ? "stop" : "play"),
+            "Shortcut+Shift+p" -> this.commands.RunCommand("commandPalette"),
+            "Shortcut+," -> this.commands.RunCommand("settings"),
+            "Shortcut+l" -> this.commands.RunCommand("lock"),
+            "Shortcut+Shift+l" -> this.commands.RunCommand("unlock"),
+            "Shortcut+i" -> this.commands.RunCommand("invertSelection"),
+            default -> this.Forward(key, true)
+        }
+    }
+
+    KeyUp~: (key: string) -> void {
+        when key {
+            "Shift" -> this.SetShift(false),
+            ("Control" || "Meta") -> this.SetShortcut(false),
+            default -> this.Forward(key, false)
+        }
+    }
+
+    Escape~: () -> void {
+        guard !this.overlays.Escape() return;
+        editorKey("Escape", true, 0);
+    }
+
+    SetShift~: (held: bool) -> void {
+        this.shiftHeld = held;
+        this.selection.additive = this.shiftHeld || this.shortcutHeld;
+    }
+
+    SetShortcut~: (held: bool) -> void {
+        this.shortcutHeld = held;
+        this.selection.additive = this.shiftHeld || this.shortcutHeld;
+    }
+
+    Forward~: (qualified: string, down: bool) -> void {
+        guard !this.overlays.BlocksViewportKeys() return;
+        modifierBits~ i32 = 0;
+        name~ string = qualified;
+        if name.startsWith("Shortcut+") {
+            modifierBits += SHORTCUT_BIT;
+            name = name.substring(9, name.length() - 9);
+        }
+        if name.startsWith("Alt+") {
+            modifierBits += ALT_BIT;
+            name = name.substring(4, name.length() - 4);
+        }
+        if name.startsWith("Shift+") {
+            modifierBits += SHIFT_BIT;
+            name = name.substring(6, name.length() - 6);
+        }
+        guard name != "" return;
+        editorKey(name, down, modifierBits);
+    }
+}

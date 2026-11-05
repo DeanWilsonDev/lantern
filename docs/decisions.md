@@ -401,6 +401,8 @@ the UI, with no widget code per view.
 
 ## D-032 Editor UI state lives in one Nyx `Application`
 
+Superseded by D-055.
+
 `EditorApplication.nyx` holds every piece of UI state as `@signal` fields (open menu, context
 menu, tooltip, panels, filters, dialogs) and the mirrored editor state (outline rows, inspector
 groups, toolbar state, status). `OnUpdate` polls `editorRevision()` and refreshes the mirrors
@@ -824,3 +826,39 @@ Dragging a row in the outliner now does something: Penumbra gained a drag sessio
 - **C++ Penumbra only.** The Nox Penumbra port isn't changed; it's replaced as a later, separate pass.
 
 Card: `world-editor/follow-ups-after-the-first-full-pass/reorder-siblings-by-drag-and-drop-in-the-outliner`.
+
+## D-055 EditorApplication only sets up the application; behaviour lives in services and components
+
+Supersedes D-032. Dean (2026-11-05): `EditorApplication` is the application layer, and component logic in it
+gives it more than one responsibility.
+
+- **EditorApplication** sets the window title and size, loads the font for the DPI scale, mounts `App.chaos`,
+  calls `TickChaos` each frame and saves preferences on shutdown. Nothing else.
+- **Services.** `Editor.nyx` builds one of each and wires them together: `EditorDocument` (polls
+  `editorRevision()` and holds what the panels mirror: toolbar, status, history, log, recent files, inspector
+  groups, the window title), `EditorCommands` (every command, the save-first confirm and the file dialogs),
+  `EditorOverlays` (menus, context menu, palette, settings, help, confirm, and what Escape closes),
+  `EditorKeyboard` (shortcuts, modifiers, forwarding keys to the viewport), `EditorSelection` (click-to-select
+  with modifiers, the hovered entity, dropping a template on the viewport) and `EditorLayout` (the bottom panel).
+  Their state is `@signal` fields, so a slot that reads one re-renders when it changes.
+- **How components reach them.** `App.chaos` declares `@provide editor~ Editor = new Editor();` and its
+  `OnTick` local calls `editor.Tick`. Every component that needs a service reads `@context editor~ Editor;`,
+  Chaos's required context: it takes App's `Editor`, and Chaos reports CHA0620 if a component renders where
+  nothing provides one. An earlier version gave each `@context` a default (`= new Editor()`), which isn't
+  harmless: a default is evaluated on every render before the provided value replaces it, so every component
+  render built a whole `Editor` (about 25 host calls). That needed Nyx to let a decorator assign a deferred
+  local (nyx-scripting-language #4) and Chaos's required `@context` (chaos-ui-framework #4). `OutlinerRow` and
+  `ConsolePanel` read their panel's `OutlinerState` and `ConsoleFilters` the same way.
+  Measured with penumbra-bridge's `nox/tools/measure-editor.sh` (headless, 600 frames, a change every 30):
+  host function calls were 9,484 / 36,844 on nox-proto at 29 / 200 entities, 31,665 / 150,168 with the
+  defaults, and 9,690 / 38,418 with the required context; a frame after a change took 28 / 101 ms, 34 / 126 ms
+  and 29 / 86 ms (means, one run each, noisy).
+- **Panel state stays in the panel**, or in a small object it provides to its rows: `OutlinerState`
+  (filter, collapsed rows, the drag and its drop target), `ConsoleFilters` (provided by `BottomPanel`, so the
+  filters survive switching tabs), the inspector's collapsed groups and new-property name, the asset preview,
+  the palette query and the settings tab. The settings dialog now opens on its first tab each time.
+- **The window.** Services call penumbra-bridge's `penumbra:::` functions (`mouseX`, `windowWidth`,
+  `setWindowTitle`, `requestQuit`, the file dialogs) instead of `Application` methods, so nothing but the
+  application holds the application. The C++ host and the C API the Nox editor uses both register them.
+
+Card: `world-editor/follow-ups-after-the-first-full-pass/components-own-their-state-not-editorapplication`.

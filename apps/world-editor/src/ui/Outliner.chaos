@@ -1,8 +1,18 @@
-EditorUi :: import EditorUi;
+Editor :: import Editor;
+EditorModel :: import EditorModel;
 OutlineRowItem :: import OutlineRowItem;
 OutlinerRow :: import OutlinerRow;
+OutlinerState :: import OutlinerState;
+
+OutlinerUi :: namespace {
+    Rows :: (revision: i64, outliner: OutlinerState) -> Array<OutlineRowItem> {
+        return revision >= 0 ? EditorModel:::OutlineRows(outliner.filter, outliner.collapsed) : [];
+    }
+}
 
 Outliner :: () -> Penumbra:::Component {
+    @context editor~ Editor;
+    @provide outliner~ OutlinerState = new OutlinerState();
     return (
         <frame class="outliner">
             <frame class="panel-header">
@@ -10,24 +20,24 @@ Outliner :: () -> Penumbra:::Component {
                 <text class="panel-title">World</text>
                 <frame class="toolbar-spacer" />
                 <slot>
-                    !{<text class="panel-count">{EditorUi:::App().Status().entities}</text>}
+                    !{<text class="panel-count">{editor.document.status.entities}</text>}
                 </slot>
             </frame>
             <frame class="search-row">
                 <icon class="search-icon" icon="search" size={12.0f} />
-                <input ref="outline-search" class="search-input" text={EditorUi:::App().OutlineFilter()}
+                <input ref="outline-search" class="search-input" text={outliner.filter}
                        preferredWidth={160.0f}
-                       onTextChange={(text: string) -> EditorUi:::App().SetOutlineFilter(text)} />
+                       onTextChange={(text: string) -> outliner.SetFilter(text)} />
             </frame>
             <scroll ref="outliner-scroll" class="outliner-scroll" wheelStep={60.0f}>
                 <frame ref="outliner-rows" class="outliner-rows"
-                       onDrop={(payload: string) -> EditorUi:::App().DropOnEntity(payload, 0)}>
+                       onDrop={(payload: string) -> outliner.DropOnEntity(payload, 0)}>
                     <slot>
-                        !{EditorUi:::App().OutlineRows().map((item: OutlineRowItem) ->
+                        !{OutlinerUi:::Rows(editor.document.revision, outliner).map((item: OutlineRowItem) ->
                             <OutlinerRow key={item.key} item={item} />)}
                     </slot>
-                    <frame class="outliner-drop-tail" onRelease={() -> EditorUi:::App().RunCommand("deselect")}
-                           onDrop={(payload: string) -> EditorUi:::App().DropBeforeEntity(payload, 0)} />
+                    <frame class="outliner-drop-tail" onRelease={() -> editor.commands.RunCommand("deselect")}
+                           onDrop={(payload: string) -> outliner.DropBeforeEntity(payload, 0)} />
                 </frame>
             </scroll>
         </frame>

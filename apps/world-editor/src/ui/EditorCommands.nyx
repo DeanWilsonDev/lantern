@@ -1,0 +1,184 @@
+EditorDocument :: import EditorDocument;
+EditorLayout :: import EditorLayout;
+EditorModel :: import EditorModel;
+EditorOverlays :: import EditorOverlays;
+
+EditorCommands :: class {
+public:
+    static SAVE_AS_THEN :: "saveAsThen:";
+
+    document~ EditorDocument;
+    overlays~ EditorOverlays;
+    layout~ EditorLayout;
+    pendingDialog~ string = "";
+
+    EditorCommands~: (document~ EditorDocument, overlays~ EditorOverlays, layout~ EditorLayout) {
+        this.document = document;
+        this.overlays = overlays;
+        this.layout = layout;
+    }
+
+    RunCommand~: (command: string) -> void {
+        this.overlays.CloseAll();
+        when command {
+            "new" -> this.WhenSaved(command, () -> { editorNewWorld("untitled"); }),
+            "open" -> this.WhenSaved(command, () -> { this.ShowDialog("open"); }),
+            "save" -> this.Save(),
+            "saveAs" -> this.ShowDialog("saveAs"),
+            "quit" -> this.WhenSaved(command, () -> { this.Quit(); }),
+            "play" -> { editorPlay(); },
+            "stop" -> { editorStopPlay(); },
+            "settings" -> this.overlays.OpenSettings(),
+            "commandPalette" -> this.overlays.OpenPalette(),
+            "undo" -> { editorUndo(); },
+            "redo" -> { editorRedo(); },
+            "duplicate" -> { editorDuplicateSelection(); },
+            "delete" -> { editorDeleteSelection(); },
+            "toggleSnap" -> { editorSetSnap(!editorSnap()); },
+            "toggleSpace" -> { editorSetSpace(editorSpace() == "world" ? "local" : "world"); },
+            "togglePivot" -> { editorSetPivotMode(editorPivotMode() == "primary" ? "center" : "primary"); },
+            "selectAll" -> { editorSelectAll(); },
+            "invertSelection" -> { editorInvertSelection(); },
+            "selectChildren" -> { editorSelectChildren(); },
+            "deselect" -> { editorClearSelection(); },
+            "hide" -> { editorHideSelection(); },
+            "showEntity" -> { editorSetHidden(this.overlays.contextEntity, false); },
+            "unhideAll" -> { editorUnhideAll(); },
+            "lock" -> { editorLockSelection(true); },
+            "unlock" -> { editorLockSelection(false); },
+            "unparent" -> { editorSetParent(this.overlays.contextEntity, EditorModel:::ROOT_ENTITY); },
+            "frameSelection" -> { editorFrameSelection(); },
+            "frameAll" -> { editorFrameAll(); },
+            "toggleGrid" -> ToggleViewOption("grid"),
+            "toggleWireframe" -> ToggleViewOption("wireframe"),
+            "toggleColliders" -> ToggleViewOption("colliders"),
+            "toggleMarkers" -> ToggleViewOption("markers"),
+            "toggleLevelBounds" -> ToggleViewOption("level_bounds"),
+            "toggleShowHidden" -> ToggleViewOption("hidden"),
+            "toggleStats" -> ToggleViewOption("stats"),
+            "toggleOrtho" -> { editorSetOrthographic(!editorIsOrthographic()); },
+            "alignCameraToSelection" -> { editorAlignCameraToSelection(); },
+            "alignSelectionToCamera" -> { editorAlignSelectionToCamera(); },
+            "group" -> { editorGroupSelection(); },
+            "snapToGround" -> { editorSnapSelectionToGround(); },
+            "revertToTemplate" -> { editorRevertToTemplate(); },
+            "applyToTemplate" -> { editorApplyToTemplate(); },
+            default -> this.RunPrefixedCommand(command)
+        }
+        this.document.Refresh(false);
+    }
+
+    RunPrefixedCommand~: (command: string) -> void {
+        colon := command.indexOf(":", 0);
+        guard colon > 0 return;
+        prefix := command.substring(0, colon);
+        argument := command.substring(colon + 1, command.length() - colon - 1);
+        when prefix {
+            "camera" -> { editorCameraPreset(argument); },
+            "duplicateAlong" -> { editorDuplicateAlong(argument); },
+            "mirror" -> { editorMirrorSelection(argument); },
+            "align" -> { editorAlignSelection(argument); },
+            "distribute" -> { editorDistributeSelection(argument); },
+            "panel" -> this.layout.ShowBottomPanel(argument),
+            "help" -> this.overlays.ShowHelp(argument),
+            "tool" -> { editorSetTool(argument); },
+            "openRecent" -> this.OpenRecent(EditorModel:::HexDigit(argument, 0)),
+            "bookmarkSet" -> { editorSetBookmark(EditorModel:::HexDigit(argument, 0)); },
+            "bookmarkGo" -> { editorGoToBookmark(EditorModel:::HexDigit(argument, 0)); },
+            (other) -> {}
+        }
+    }
+
+    ConfirmSave~: () -> void {
+        command := this.overlays.confirmCommand;
+        this.overlays.ClearConfirmCommand();
+        if editorDocumentPath() == "" {
+            this.pendingDialog = SAVE_AS_THEN + command;
+            penumbra:::showSaveFileDialog("World files", "json", WorldsDirectory());
+            return;
+        }
+        guard editorSave() return;
+        this.RunCommand(command);
+    }
+
+    ConfirmDiscard~: () -> void {
+        command := this.overlays.confirmCommand;
+        this.overlays.ClearConfirmCommand();
+        when command {
+            "new" -> { editorNewWorld("untitled"); },
+            "open" -> this.ShowDialog("open"),
+            "quit" -> this.Quit(),
+            default -> this.RunPrefixedCommand(command)
+        }
+        this.document.Refresh(false);
+    }
+
+    ConfirmCancel~: () -> void {
+        this.overlays.ClearConfirmCommand();
+    }
+
+    PollFileDialog~: () -> void {
+        guard this.pendingDialog != "" return;
+        guard penumbra:::fileDialogFinished() return;
+        kind := this.pendingDialog;
+        this.pendingDialog = "";
+        path := penumbra:::takeFileDialogResult();
+        guard path != "" return;
+        when kind {
+            "open" -> { editorOpen(path); },
+            "saveAs" -> { editorSaveAs(path); },
+            default -> {
+                if kind.startsWith(SAVE_AS_THEN) && editorSaveAs(path) {
+                    this.RunCommand(kind.substring(SAVE_AS_THEN.length(), kind.length() - SAVE_AS_THEN.length()));
+                }
+            }
+        }
+    }
+
+    WhenSaved~: (command: string, action: () -> void) -> void {
+        if editorIsDirty() {
+            this.overlays.AskToSave(command);
+            return;
+        }
+        action();
+    }
+
+    Save~: () -> void {
+        if editorDocumentPath() == "" {
+            this.ShowDialog("saveAs");
+            return;
+        }
+        editorSave();
+    }
+
+    ShowDialog~: (kind: string) -> void {
+        guard this.pendingDialog == "" return;
+        this.pendingDialog = kind;
+        start := editorDocumentPath() == "" ? WorldsDirectory() : editorDocumentPath();
+        if kind == "open" {
+            penumbra:::showOpenFileDialog("World files", "json", start);
+        } else {
+            penumbra:::showSaveFileDialog("World files", "json", start);
+        }
+    }
+
+    OpenRecent~: (index: i32) -> void {
+        recentFiles := this.document.recentFiles;
+        guard index < recentFiles.length() return;
+        path := recentFiles[index];
+        this.WhenSaved(`openRecent:${index}`, () -> { editorOpen(path); });
+    }
+
+    Quit~: () -> void {
+        editorSavePreferences();
+        penumbra:::requestQuit();
+    }
+
+    ToggleViewOption :: (name: string) -> void {
+        editorSetViewOption(name, editorViewOption(name) == "true" ? "false" : "true");
+    }
+
+    WorldsDirectory :: () -> string {
+        return editorAssetsDirectory() + "/worlds";
+    }
+}

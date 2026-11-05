@@ -1,0 +1,84 @@
+EditorModel :: import EditorModel;
+HistoryItem :: import HistoryItem;
+InspectorGroupItem :: import InspectorGroupItem;
+LogItem :: import LogItem;
+StatusInfo :: import StatusInfo;
+ToolbarState :: import ToolbarState;
+
+EditorDocument :: class {
+public:
+    static STATUS_REFRESH_SECONDS :: 0.5f;
+
+    @signal revision~ i64 = 0;
+    @signal toolbar~ ToolbarState = EditorModel:::CurrentToolbar();
+    @signal status~ StatusInfo = EditorModel:::Status();
+    @signal history~ Array<HistoryItem> = [];
+    @signal log~ Array<LogItem> = [];
+    @signal recentFiles~ Array<string> = [];
+    @signal inspectorTitle~ string = "";
+    @signal inspectorGroups~ Array<InspectorGroupItem> = [];
+
+    seenRevision~ i64 = -1;
+    revisionFromTyping~ i64 = -1;
+    inspectorVersion~ i32 = 0;
+    inspectorRefillPending~ bool = false;
+    statusTimer~ f32 = 0.0f;
+
+    Tick~: (deltaSeconds: f32) -> void {
+        current := editorRevision();
+        if current != this.seenRevision {
+            this.seenRevision = current;
+            this.Refresh(current != this.revisionFromTyping);
+        } else if this.inspectorRefillPending {
+            this.inspectorRefillPending = false;
+            this.inspectorGroups = EditorModel:::InspectorGroups(this.inspectorVersion, {});
+        }
+        this.statusTimer += deltaSeconds;
+        if this.statusTimer >= STATUS_REFRESH_SECONDS || this.status.playing != editorIsPlaying() {
+            this.statusTimer = 0.0f;
+            this.status = EditorModel:::Status();
+            if this.toolbar.playing != editorIsPlaying() {
+                this.toolbar = EditorModel:::CurrentToolbar();
+            }
+        }
+    }
+
+    Refresh~: (rebuildInspector: bool) -> void {
+        this.revision += 1;
+        this.toolbar = EditorModel:::CurrentToolbar();
+        this.status = EditorModel:::Status();
+        this.inspectorTitle = EditorModel:::InspectorTitle();
+        this.history = EditorModel:::History();
+        this.log = EditorModel:::Log(true, true, true);
+        this.recentFiles = ReadRecentFiles();
+        if rebuildInspector {
+            this.inspectorVersion += 1;
+            this.inspectorGroups = [];
+            this.inspectorRefillPending = true;
+        }
+        penumbra:::setWindowTitle(editorTitle());
+    }
+
+    EditField~: (field: string, text: string) -> void {
+        if editorSelectionCount() > 1 {
+            editorSetSelectionField(field, text);
+        } else {
+            editorSetField(editorPrimarySelection(), field, text);
+        }
+        this.revisionFromTyping = editorRevision();
+    }
+
+    ClearRecentFiles~: () -> void {
+        editorSetPreference("recent_files", "");
+        this.recentFiles = [];
+    }
+
+    ReadRecentFiles :: () -> Array<string> {
+        files~ Array<string> = [];
+        count := editorRecentFileCount();
+        for index~ i32 = 0; index < count; index++ {
+            files.add(editorRecentFile(index));
+        }
+        return files;
+    }
+}

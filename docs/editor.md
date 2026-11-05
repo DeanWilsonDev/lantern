@@ -17,7 +17,7 @@ apps/world-editor (C++26, CMake)                      crates/ (Rust)
 │   menus, toolbar, outliner, inspector,   │          │   EditorBackend                  │
 │   assets, console, history, settings,    │          │   ├── EditorSession ─────────────┼──► lantern-editor-core
 │   palette, dialogs, status bar           │          │   ├── GpuRenderer (off-screen) ──┼──► lantern-sdl-gpu
-│   EditorApplication (Nyx Application)    │          │   ├── preview, thumbnails, play  │
+│   Editor services via @provide/@context  │          │   ├── preview, thumbnails, play  │
 │        │ calls editor*() host functions  │  C API   │   └── ffi.rs                     │
 │ src/EditorHost.cpp ──────────────────────┼─────────►│   include/lantern_editor.h       │
 │ src/native/EditorViewportRenderers.cpp ──┼─────────►│                                  │
@@ -49,9 +49,12 @@ apps/world-editor (C++26, CMake)                      crates/ (Rust)
   backend, loads the UI through `ChaosApplicationHost`, registers the viewport renderers and
   runs. `EditorHost.cpp` registers one Nyx host function per C API call (`editorRevision()`,
   `editorSelect(id, additive)` and so on). The panels are Chaos components styled by Cosmos,
-  one component per file. `EditorApplication.nyx` holds the UI state as signals, polls
-  `editorRevision()` each frame and refreshes what it mirrors when the revision changes
-  (`docs/decisions.md` D-031 to D-040).
+  one component per file. `EditorApplication.nyx` only sets up the application. `App.chaos`
+  provides an `Editor` whose services hold the shared UI state as signals: `EditorDocument` polls
+  `editorRevision()` each frame and refreshes what it mirrors when the revision changes, and
+  `EditorCommands`, `EditorOverlays`, `EditorKeyboard`, `EditorSelection` and `EditorLayout` do the
+  rest. Components read it with `@context` and keep their own state (`docs/decisions.md` D-031 to D-040,
+  D-055).
 
 ### What the editor knows about the game
 
