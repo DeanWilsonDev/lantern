@@ -757,3 +757,30 @@ and `play.rs`), and `engine/editor-backend/` ports its C API (`ffi.rs` and `ffi_
   `-DLANTERN_EDITOR_BACKEND=rust` links the Rust backend instead, for comparison.
 
 Story: `engine-on-nox/l8-editor/port-editor-backend-behind-lantern-editor-h-as-a-nox-static-library`.
+
+## D-052 The view cube is drawn by the Nox editor into the viewport's overlay
+
+The world editor's viewport shows a cube in its top-right corner that turns with the camera.
+Clicking a face applies the camera preset that puts the camera on that face's side.
+
+- **In the backend, not the shell.** `engine/src/editor/ViewCube.nox` lays the cube out and hit
+  tests it from the orbit camera and the viewport size alone. `BuildViewport` draws it into the
+  render world's 2D overlay, and the session handles hover and clicks. So `apps/world-editor` and
+  `lantern_editor.h` don't change, and the cube shows in the off-screen frame like everything else.
+  The Rust backend, kept only for comparison, has no cube.
+- **Rotation only.** Each face's corners are projected with the camera's right and up vectors,
+  without perspective, so the cube keeps its size whatever the zoom. A face is drawn when it points
+  at the camera. The visible faces of a cube never overlap in this projection, so the hit test takes
+  the first visible face that contains the point.
+- **Faces are named after their presets.** +Z is front, -Z back, +X right, -X left, +Y top and
+  -Y bottom.
+- **The left and right presets swap sides.** The front view puts the camera on +Z with +X on the
+  screen's right, so the right view now looks from +X and the left view from -X, as Blender, Maya
+  and Unity do. Before, as in the Rust editor, "left" looked from +X, which the cube made plain: in
+  the default view its right-hand face read LEFT.
+- **Labels** use the font atlas, which `ViewportResources` now provides as `FontTexture`. A label is
+  shown only on a face turned well towards the camera, so it stays readable.
+- **Input.** A left click on a face applies its preset and starts no drag or selection. Hovering
+  the cube highlights the face and hovers nothing behind it.
+
+Card: `world-editor/follow-ups-after-the-first-full-pass/clickable-view-cube-in-the-viewport-corner`.

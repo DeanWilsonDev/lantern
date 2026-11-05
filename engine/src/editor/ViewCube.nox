@@ -1,0 +1,171 @@
+lantern:::editor :: namespace {
+    VIEW_CUBE_PIXELS: f32 : 96.0f;
+    VIEW_CUBE_MARGIN_PIXELS: f32 : 12.0f;
+    VIEW_CUBE_FACE_COUNT: usize : 6;
+    VIEW_CUBE_LABEL_SCALE: f32 : 1.0f;
+    VIEW_CUBE_LABEL_MIN_FACING: f32 : 0.45f;
+    VIEW_CUBE_VISIBLE_MIN_FACING: f32 : 0.01f;
+    VIEW_CUBE_BORDER_INSET: f32 : 0.88f;
+
+    ViewCubeFaceNormal :: (face: usize) -> Vec3 {
+        return when face {
+            0 -> Vec3 { x: 0.0f, y: 0.0f, z: 1.0f },
+            1 -> Vec3 { x: 0.0f, y: 0.0f, z: -1.0f },
+            2 -> Vec3 { x: 1.0f, y: 0.0f, z: 0.0f },
+            3 -> Vec3 { x: -1.0f, y: 0.0f, z: 0.0f },
+            4 -> Vec3 { x: 0.0f, y: 1.0f, z: 0.0f },
+            default -> Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }
+        };
+    }
+
+    ViewCubeFacePreset :: (face: usize) -> string {
+        return when face {
+            0 -> "front",
+            1 -> "back",
+            2 -> "right",
+            3 -> "left",
+            4 -> "top",
+            default -> "bottom"
+        };
+    }
+
+    ViewCubeFaceLabel :: (face: usize) -> string {
+        return when face {
+            0 -> "FRONT",
+            1 -> "BACK",
+            2 -> "RIGHT",
+            3 -> "LEFT",
+            4 -> "TOP",
+            default -> "BOTTOM"
+        };
+    }
+
+    ViewCubeFaceTangent :: (face: usize) -> Vec3 {
+        normal: Vec3 = ViewCubeFaceNormal(face);
+        if Math:::abs(normal.y) > 0.5f {
+            return Vec3 { x: 1.0f, y: 0.0f, z: 0.0f };
+        }
+        return Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+    }
+
+    ViewCubeFaceCorner :: (face: usize, corner: usize) -> Vec3 {
+        normal: Vec3 = ViewCubeFaceNormal(face);
+        tangent: Vec3 = ViewCubeFaceTangent(face);
+        bitangent: Vec3 = normal.cross(tangent);
+        tangentSign: f32 = when (corner == 0 || corner == 3) { true -> -1.0f, false -> 1.0f };
+        bitangentSign: f32 = when (corner < 2) { true -> -1.0f, false -> 1.0f };
+        return normal + tangent * tangentSign + bitangent * bitangentSign;
+    }
+
+    ViewCubeCenter :: (viewportSize: Vec2) -> Vec2 {
+        half: f32 = VIEW_CUBE_PIXELS * 0.5f;
+        return Vec2 { x: viewportSize.x - VIEW_CUBE_MARGIN_PIXELS - half, y: VIEW_CUBE_MARGIN_PIXELS + half };
+    }
+
+    ViewCubeProject :: (camera: OrbitCamera, viewportSize: Vec2, point: Vec3) -> Vec2 {
+        pixelsPerUnit: f32 = VIEW_CUBE_PIXELS * 0.5f / Math:::sqrt(3.0f);
+        center: Vec2 = ViewCubeCenter(viewportSize);
+        return Vec2 { x: center.x + point.dot(camera.Right()) * pixelsPerUnit, y: center.y - point.dot(camera.Up()) * pixelsPerUnit };
+    }
+
+    ViewCubeFacing :: (camera: OrbitCamera, face: usize) -> f32 {
+        return -ViewCubeFaceNormal(face).dot(camera.Forward());
+    }
+
+    ViewCubeFaceVisible :: (camera: OrbitCamera, face: usize) -> bool {
+        return ViewCubeFacing(camera, face) > VIEW_CUBE_VISIBLE_MIN_FACING;
+    }
+
+    ViewCubeScreenCorner :: (camera: OrbitCamera, viewportSize: Vec2, face: usize, corner: usize) -> Vec2 {
+        return ViewCubeProject(camera, viewportSize, ViewCubeFaceCorner(face, corner));
+    }
+
+    EdgeSide :: (start: Vec2, end: Vec2, point: Vec2) -> f32 {
+        return (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x);
+    }
+
+    ViewCubeFaceContains :: (camera: OrbitCamera, viewportSize: Vec2, face: usize, point: Vec2) -> bool {
+        positiveCount~ u32 = 0;
+        negativeCount~ u32 = 0;
+        for corner~ usize = 0; corner < 4; corner += 1 {
+            start: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, corner);
+            end: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, (corner + 1) % 4);
+            side: f32 = EdgeSide(start, end, point);
+            if side > 0.0f {
+                positiveCount += 1;
+            } else if side < 0.0f {
+                negativeCount += 1;
+            }
+        }
+        return positiveCount == 0 || negativeCount == 0;
+    }
+
+    ViewCubeHit :: (camera: OrbitCamera, viewportSize: Vec2, point: Vec2) -> usize? {
+        center: Vec2 = ViewCubeCenter(viewportSize);
+        half: f32 = VIEW_CUBE_PIXELS * 0.5f;
+        if Math:::abs(point.x - center.x) > half || Math:::abs(point.y - center.y) > half {
+            return null;
+        }
+        for face~ usize = 0; face < VIEW_CUBE_FACE_COUNT; face += 1 {
+            if ViewCubeFaceVisible(camera, face) && ViewCubeFaceContains(camera, viewportSize, face, point) {
+                return face;
+            }
+        }
+        return null;
+    }
+
+    ViewCubeFaceColor :: (camera: OrbitCamera, face: usize, hovered: bool) -> lantern:::core:::Color {
+        if hovered {
+            return SelectionColor();
+        }
+        shade: f32 = 0.45f + 0.4f * Math:::clamp(ViewCubeFacing(camera, face), 0.0f, 1.0f);
+        return lantern:::core:::Color:::Rgb(shade * 0.82f, shade * 0.86f, shade);
+    }
+
+    ViewCubeBorderColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.12f, 0.13f, 0.16f);
+    }
+
+    ViewCubeLabelColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.1f, 0.11f, 0.14f);
+    }
+
+    InsetToward :: (point: Vec2, center: Vec2, fraction: f32) -> Vec2 {
+        return center + (point - center) * fraction;
+    }
+
+    DrawViewCubeFace :: (overlay: lantern:::renderer:::Overlay~*, camera: OrbitCamera, viewportSize: Vec2, face: usize, hovered: bool) -> void {
+        first: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, 0);
+        second: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, 1);
+        third: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, 2);
+        fourth: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, 3);
+        border: lantern:::core:::Color = ViewCubeBorderColor();
+        overlay->Triangle(first, second, third, border, border, border);
+        overlay->Triangle(first, third, fourth, border, border, border);
+        faceCenter: Vec2 = ViewCubeProject(camera, viewportSize, ViewCubeFaceNormal(face));
+        fill: lantern:::core:::Color = ViewCubeFaceColor(camera, face, hovered);
+        innerFirst: Vec2 = InsetToward(first, faceCenter, VIEW_CUBE_BORDER_INSET);
+        innerSecond: Vec2 = InsetToward(second, faceCenter, VIEW_CUBE_BORDER_INSET);
+        innerThird: Vec2 = InsetToward(third, faceCenter, VIEW_CUBE_BORDER_INSET);
+        innerFourth: Vec2 = InsetToward(fourth, faceCenter, VIEW_CUBE_BORDER_INSET);
+        overlay->Triangle(innerFirst, innerSecond, innerThird, fill, fill, fill);
+        overlay->Triangle(innerFirst, innerThird, innerFourth, fill, fill, fill);
+        if ViewCubeFacing(camera, face) >= VIEW_CUBE_LABEL_MIN_FACING {
+            label: string = ViewCubeFaceLabel(face);
+            labelSize: Vec2 = lantern:::renderer:::MeasureText(label, VIEW_CUBE_LABEL_SCALE);
+            overlay->Text(label, faceCenter - labelSize * 0.5f, VIEW_CUBE_LABEL_SCALE, ViewCubeLabelColor());
+        }
+    }
+
+    DrawViewCube :: (overlay: lantern:::renderer:::Overlay~*, camera: OrbitCamera, viewportSize: Vec2, hoveredFace: usize?) -> void {
+        for face~ usize = 0; face < VIEW_CUBE_FACE_COUNT; face += 1 {
+            if ViewCubeFaceVisible(camera, face) {
+                hovered~ bool = false;
+                if hoveredIndex := hoveredFace {
+                    hovered = hoveredIndex == face;
+                }
+                DrawViewCubeFace(overlay, camera, viewportSize, face, hovered);
+            }
+        }
+    }
+}
