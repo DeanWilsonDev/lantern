@@ -161,7 +161,10 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   one step, dirty tracking and saving), `Palette.nox` (`Palette`: the game's `assets/editor/palette.json`, its Add menu
   `EntityTemplate`s, `MarkerStyle`s and materials, or `Palette:::Fallback`), `Preferences.nox` (`EditorPreferences`, a
   sorted map of strings saved as JSON in the user's config directory), `Camera.nox` (`OrbitCamera`, `Ray` and
-  `ViewportProjection`) and `SceneGeometry.nox` (each entity's world-space triangles and bounds, picking and placement).
+  `ViewportProjection`), `SceneGeometry.nox` (each entity's world-space triangles and bounds, picking and placement),
+  `Gizmo.nox` (the move, rotate and scale handles: hit tests, drags along an axis, a plane or a ring, drawing, snapping),
+  `Inspector.nox` (an entity's fields as text, and `ApplyField`, which parses and checks typed values) and `Viewport.nox`
+  (what the viewport draws with: outlines, the grid, markers, arrows and the rubber band).
 - `src/stub/` is the stub game `main` runs when it's given no game directory: it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the

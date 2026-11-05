@@ -1,0 +1,95 @@
+lantern :: import lantern;
+
+Near3 :: (left: Vec3, right: Vec3, tolerance: f32) -> bool {
+    return Math:::abs(left.x - right.x) <= tolerance && Math:::abs(left.y - right.y) <= tolerance && Math:::abs(left.z - right.z) <= tolerance;
+}
+
+Projection :: () -> lantern:::editor:::ViewportProjection {
+    camera~ lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    camera.target = Vec3 { };
+    camera.distance = 10.0f;
+    return lantern:::editor:::ViewportProjection:::Create(camera.RenderCamera(), Vec2 { x: 800.0f, y: 600.0f });
+}
+
+Frame :: (tool: lantern:::editor:::GizmoTool) -> lantern:::editor:::GizmoFrame {
+    return lantern:::editor:::GizmoFrame:::Create(tool, lantern:::editor:::GizmoSpace:::World, Vec3 { }, Quaternion { }, Projection());
+}
+
+Hits :: (hit: lantern:::editor:::Handle?, expected: lantern:::editor:::Handle) -> bool {
+    return lantern:::editor:::SameOptionalHandle(hit, expected);
+}
+
+PixelOf :: (projection: lantern:::editor:::ViewportProjection, point: Vec3) -> Vec2 {
+    projected: Vec2? = projection.Project(point);
+    assert(projected != null, "the point is in front of the camera");
+    return projected ?? Vec2 { };
+}
+
+GrabbingTheXArrow :: () -> void {
+    projection := Projection();
+    frame := Frame(lantern:::editor:::GizmoTool:::Translate);
+    onArrow: Vec2 = PixelOf(projection, Vec3 { x: frame.size * 0.8f, y: 0.0f, z: 0.0f });
+    assert(Hits(frame.HitTest(lantern:::editor:::GizmoTool:::Translate, projection, onArrow), lantern:::editor:::Handle:::OnAxis(lantern:::editor:::Axis:::X)), "the x arrow is grabbed");
+    assert(frame.HitTest(lantern:::editor:::GizmoTool:::Translate, projection, Vec2 { x: 5.0f, y: 5.0f }) == null, "nothing is grabbed far away");
+}
+
+GrabbingTheXzPlaneAndThePivot :: () -> void {
+    projection := Projection();
+    frame := Frame(lantern:::editor:::GizmoTool:::Translate);
+    middle: f32 = (lantern:::editor:::PLANE_HANDLE_FROM + lantern:::editor:::PLANE_HANDLE_TO) * 0.5f * frame.size;
+    onPlane: Vec2 = PixelOf(projection, Vec3 { x: middle, y: 0.0f, z: middle });
+    assert(Hits(frame.HitTest(lantern:::editor:::GizmoTool:::Translate, projection, onPlane), lantern:::editor:::Handle:::InPlane(lantern:::editor:::Axis:::Y)), "the xz square is grabbed");
+    onPivot: Vec2 = PixelOf(projection, Vec3 { });
+    assert(Hits(frame.HitTest(lantern:::editor:::GizmoTool:::Translate, projection, onPivot), lantern:::editor:::Handle:::Uniform()), "the pivot is the uniform handle");
+    assert(frame.HitTest(lantern:::editor:::GizmoTool:::Rotate, projection, onPivot) == null, "the rotate tool has no uniform handle");
+}
+
+LocalSpaceFollowsTheOrientation :: () -> void {
+    turned: Quaternion = lantern:::core:::QuaternionFromRotationY(90.0f * (Math:::PI / 180.0f));
+    local := lantern:::editor:::GizmoFrame:::Create(lantern:::editor:::GizmoTool:::Translate, lantern:::editor:::GizmoSpace:::Local, Vec3 { }, turned, Projection());
+    assert(Near3(local.AxisVector(lantern:::editor:::Axis:::X), Vec3 { x: 0.0f, y: 0.0f, z: -1.0f }, 0.00001f), "a local frame turns with the entity");
+    world := lantern:::editor:::GizmoFrame:::Create(lantern:::editor:::GizmoTool:::Translate, lantern:::editor:::GizmoSpace:::World, Vec3 { }, turned, Projection());
+    assert(Near3(world.AxisVector(lantern:::editor:::Axis:::X), Vec3 { x: 1.0f, y: 0.0f, z: 0.0f }, 0.0f), "a world frame doesn't");
+    scale := lantern:::editor:::GizmoFrame:::Create(lantern:::editor:::GizmoTool:::Scale, lantern:::editor:::GizmoSpace:::World, Vec3 { }, turned, Projection());
+    assert(Near3(scale.AxisVector(lantern:::editor:::Axis:::X), Vec3 { x: 0.0f, y: 0.0f, z: -1.0f }, 0.00001f), "scaling is always local");
+}
+
+AxisParameterFollowsTheCursor :: () -> void {
+    projection := Projection();
+    frame := Frame(lantern:::editor:::GizmoTool:::Translate);
+    pixel: Vec2 = PixelOf(projection, Vec3 { x: 2.0f, y: 0.0f, z: 0.0f });
+    parameter: f32? = frame.AxisParameter(lantern:::editor:::Axis:::X, projection.RayThrough(pixel));
+    assert(parameter != null && Math:::abs((parameter ?? 0.0f) - 2.0f) < 0.001f, "the axis parameter is where the cursor is along the axis");
+    point: Vec3? = frame.PlanePoint(lantern:::editor:::Handle:::InPlane(lantern:::editor:::Axis:::Y), projection.RayThrough(pixel));
+    assert(point != null && Near3(point ?? Vec3 { }, Vec3 { x: 2.0f, y: 0.0f, z: 0.0f }, 0.001f), "the plane point is under the cursor");
+}
+
+RingAnglesTurnAQuarter :: () -> void {
+    projection := Projection();
+    frame := Frame(lantern:::editor:::GizmoTool:::Rotate);
+    up := Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+    tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(up);
+    bitangent: Vec3 = up.cross(tangent);
+    start: f32? = frame.RingAngle(lantern:::editor:::Axis:::Y, projection.RayThrough(PixelOf(projection, tangent * 2.0f)));
+    end: f32? = frame.RingAngle(lantern:::editor:::Axis:::Y, projection.RayThrough(PixelOf(projection, bitangent * 2.0f)));
+    assert(start != null && end != null, "both points are on the ring's plane");
+    assert(Math:::abs(((end ?? 0.0f) - (start ?? 0.0f)) - Math:::PI * 0.5f) < 0.001f, "a quarter of the ring is a quarter turn");
+}
+
+EulerRoundTrip :: () -> void {
+    rotation: Quaternion = lantern:::core:::QuaternionFromEulerYxz(90.0f * (Math:::PI / 180.0f), 15.0f * (Math:::PI / 180.0f), 0.0f);
+    degrees: Vec3 = lantern:::editor:::EulerDegrees(rotation);
+    assert(degrees.x == 15.0f && degrees.y == 90.0f && degrees.z == 0.0f, "euler angles come back as written");
+    assert(lantern:::editor:::Snap(1.13f, 0.25f) == 1.25f, "snapping rounds to the nearest step");
+}
+
+main :: () -> i32 {
+    GrabbingTheXArrow();
+    GrabbingTheXzPlaneAndThePivot();
+    LocalSpaceFollowsTheOrientation();
+    AxisParameterFollowsTheCursor();
+    RingAnglesTurnAQuarter();
+    EulerRoundTrip();
+    print("gizmo handles hit, drag and turn");
+    return 0;
+}

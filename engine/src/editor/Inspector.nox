@@ -1,0 +1,575 @@
+lantern:::editor :: namespace {
+    FieldKind :: enum {
+        Text,
+        Number,
+        Boolean,
+        Color,
+        Vector,
+        Choice,
+        ReadOnly
+    }
+
+    FieldKindName :: (kind: FieldKind) -> string {
+        return when kind {
+            FieldKind:::Text -> "text",
+            FieldKind:::Number -> "number",
+            FieldKind:::Boolean -> "bool",
+            FieldKind:::Color -> "color",
+            FieldKind:::Vector -> "vector",
+            FieldKind:::Choice -> "choice",
+            FieldKind:::ReadOnly -> "readonly"
+        };
+    }
+
+    InspectorField :: class {
+    public:
+        key~ string!;
+        label~ string!;
+        group~ string!;
+        value~ string!;
+        kind~ FieldKind = FieldKind:::Text;
+        choices~ Array<string!>! = [];
+        mixed~ bool = false;
+
+        InspectorField~: (fieldKey: string, fieldLabel: string, fieldGroup: string, fieldValue: string, fieldKind: FieldKind) {
+            key = `${fieldKey}`;
+            label = `${fieldLabel}`;
+            group = `${fieldGroup}`;
+            value = `${fieldValue}`;
+            kind = fieldKind;
+        }
+
+        !InspectorField~: () {
+            delete key;
+            delete label;
+            delete group;
+            delete value;
+            choices.freeAll();
+        }
+
+        AddChoice~: (choice: string) -> void {
+            choices.push(`${choice}`);
+        }
+
+        AddChoiceUnlessPresent~: (choice: string) -> void {
+            if choice.length() == 0 {
+                return;
+            }
+            for existing in choices {
+                if existing == choice {
+                    return;
+                }
+            }
+            choices.push(`${choice}`);
+        }
+    }
+
+    FieldsForSelection :: (primary: lantern:::world:::WorldEntity*, others: Array<lantern:::world:::WorldEntity*>, world: lantern:::world:::WorldFile*, palette: Palette*) -> Array<InspectorField*!>! {
+        fields~ Array<InspectorField*!>! = FieldsFor(primary, world, palette);
+        for other in others {
+            otherFields~ Array<InspectorField*!>! = FieldsFor(other, world, palette);
+            for field in fields {
+                agrees~ bool = false;
+                for candidate in otherFields {
+                    if candidate->key == field->key && candidate->value == field->value {
+                        agrees = true;
+                    }
+                }
+                if !agrees {
+                    field->mixed = true;
+                }
+            }
+            otherFields.freeAll();
+        }
+        return fields!;
+    }
+
+    FormatNumber :: (value: f32) -> string! {
+        rounded: f32 = Math:::round(value * 10000.0f) / 10000.0f;
+        if rounded == 0.0f {
+            return "0".copy();
+        }
+        if rounded == Math:::floor(rounded) && Math:::abs(rounded) < 10000000.0f {
+            return `${i64(rounded)}`;
+        }
+        return lantern:::json:::PlainDecimal(`${rounded}`);
+    }
+
+    FormatVector :: (value: Vec3) -> string! {
+        x: string! = FormatNumber(value.x);
+        y: string! = FormatNumber(value.y);
+        z: string! = FormatNumber(value.z);
+        joined: string! = `${x}, ${y}, ${z}`;
+        delete x;
+        delete y;
+        delete z;
+        return joined!;
+    }
+
+    FormatProperty :: (entity: lantern:::world:::WorldEntity*, index: usize) -> string! {
+        value: lantern:::world:::PropertyValue = entity->propertyValues[index];
+        return when value.kind {
+            lantern:::world:::PropertyKind:::Boolean -> `${value.boolean}`,
+            lantern:::world:::PropertyKind:::Number -> FormatNumber(value.number),
+            lantern:::world:::PropertyKind:::Text -> `${entity->propertyTexts[index]}`,
+            lantern:::world:::PropertyKind:::Vector -> FormatVector(value.vector)
+        };
+    }
+
+    IsAsciiDigit :: (byte: u8) -> bool {
+        return byte >= u8(48) && byte <= u8(57);
+    }
+
+    IsNonFiniteWord :: (word: string) -> bool {
+        lowered: string! = word.toLower();
+        nonFinite: bool = lowered == "inf" || lowered == "infinity" || lowered == "nan";
+        delete lowered;
+        return nonFinite;
+    }
+
+    LooksLikeNumber :: (text: string) -> bool {
+        index~ usize = 0;
+        if text.length() > 0 && (text.byteAt(0) == u8(43) || text.byteAt(0) == u8(45)) {
+            index = 1;
+        }
+        if IsNonFiniteWord(text.substring(index, text.length() - index)) {
+            return true;
+        }
+        digitCount~ usize = 0;
+        while index < text.length() && IsAsciiDigit(text.byteAt(index)) {
+            index += 1;
+            digitCount += 1;
+        }
+        if index < text.length() && text.byteAt(index) == u8(46) {
+            index += 1;
+            while index < text.length() && IsAsciiDigit(text.byteAt(index)) {
+                index += 1;
+                digitCount += 1;
+            }
+        }
+        if digitCount == 0 {
+            return false;
+        }
+        if index < text.length() && (text.byteAt(index) == u8(101) || text.byteAt(index) == u8(69)) {
+            index += 1;
+            if index < text.length() && (text.byteAt(index) == u8(43) || text.byteAt(index) == u8(45)) {
+                index += 1;
+            }
+            exponentDigits~ usize = 0;
+            while index < text.length() && IsAsciiDigit(text.byteAt(index)) {
+                index += 1;
+                exponentDigits += 1;
+            }
+            if exponentDigits == 0 {
+                return false;
+            }
+        }
+        return index == text.length();
+    }
+
+    ParsedNumber :: (text: string) -> f32? {
+        if !LooksLikeNumber(text) {
+            return null;
+        }
+        owned: string! = `${text}`;
+        value~ f64 = 0.0f;
+        unsafe {
+            value = lantern:::cnumbers:::strtod(owned, null);
+        }
+        delete owned;
+        return f32(value);
+    }
+
+    ParseNumber :: (text: string) -> Result<f32, string!> {
+        trimmed: string = text.trim();
+        parsed: f32? = ParsedNumber(trimmed);
+        guard value := parsed return Result<f32, string!>:::Err(`'${trimmed}' is not a number`);
+        if !lantern:::core:::IsFinite(value) {
+            return Result<f32, string!>:::Err(`'${trimmed}' is not a finite number`);
+        }
+        return Result<f32, string!>:::Ok(value);
+    }
+
+    FiniteNumber :: (text: string) -> f32? {
+        parsed: f32? = ParsedNumber(text);
+        guard value := parsed return null;
+        if !lantern:::core:::IsFinite(value) {
+            return null;
+        }
+        return value;
+    }
+
+    ParsedProperty :: struct {
+        value~ lantern:::world:::PropertyValue = lantern:::world:::PropertyValue { };
+        isText~ bool = false;
+    }
+
+    ParseProperty :: (text: string) -> ParsedProperty {
+        trimmed: string = text.trim();
+        if trimmed == "true" {
+            return ParsedProperty { value: lantern:::world:::PropertyValue:::Boolean(true) };
+        }
+        if trimmed == "false" {
+            return ParsedProperty { value: lantern:::world:::PropertyValue:::Boolean(false) };
+        }
+        if number := FiniteNumber(trimmed) {
+            return ParsedProperty { value: lantern:::world:::PropertyValue:::Number(number) };
+        }
+        start~ usize = 0;
+        end~ usize = trimmed.length();
+        while start < end && trimmed.byteAt(start) == u8(91) {
+            start += 1;
+        }
+        while end > start && trimmed.byteAt(end - 1) == u8(93) {
+            end -= 1;
+        }
+        inner: string = trimmed.substring(start, end - start);
+        parts: Array<string>! = inner.split(",");
+        if parts.length() == 3 {
+            numbers~ Array<f32>! = [];
+            for part in parts {
+                if number := FiniteNumber(part.trim()) {
+                    numbers.push(number);
+                }
+            }
+            if numbers.length() == 3 {
+                vector := Vec3 { x: numbers[0], y: numbers[1], z: numbers[2] };
+                delete numbers;
+                delete parts;
+                return ParsedProperty { value: lantern:::world:::PropertyValue:::Vector(vector) };
+            }
+            delete numbers;
+        }
+        delete parts;
+        return ParsedProperty { value: lantern:::world:::PropertyValue:::Text(), isText: true };
+    }
+
+    ShapeName :: (shape: lantern:::world:::Shape?) -> string {
+        guard present := shape return "none";
+        if present.kind == lantern:::world:::ShapeKind:::Box {
+            return "box";
+        }
+        return "ramp";
+    }
+
+    ColliderName :: (collider: lantern:::world:::ColliderKind?) -> string {
+        guard present := collider return "none";
+        return lantern:::world:::ColliderText(present);
+    }
+
+    AxisComponent :: (vector: Vec3, index: usize) -> f32 {
+        if index == 0 {
+            return vector.x;
+        }
+        if index == 1 {
+            return vector.y;
+        }
+        return vector.z;
+    }
+
+    WithComponent :: (vector: Vec3, index: usize, value: f32) -> Vec3 {
+        changed~ Vec3 = vector;
+        if index == 0 {
+            changed.x = value;
+        } else if index == 1 {
+            changed.y = value;
+        } else {
+            changed.z = value;
+        }
+        return changed;
+    }
+
+    AxisSuffixIndex :: (suffix: string) -> usize? {
+        if suffix == "x" {
+            return 0;
+        }
+        if suffix == "y" {
+            return 1;
+        }
+        if suffix == "z" {
+            return 2;
+        }
+        return null;
+    }
+
+    AxisSuffix :: (index: usize) -> string {
+        if index == 0 {
+            return "x";
+        }
+        if index == 1 {
+            return "y";
+        }
+        return "z";
+    }
+
+    NumberField :: (key: string, label: string, group: string, value: f32) -> InspectorField*! {
+        text: string! = FormatNumber(value);
+        field := new InspectorField(key, label, group, text, FieldKind:::Number);
+        delete text;
+        return field!;
+    }
+
+    FieldsFor :: (entity: lantern:::world:::WorldEntity*, world: lantern:::world:::WorldFile*, palette: Palette*) -> Array<InspectorField*!>! {
+        fields~ Array<InspectorField*!>! = [];
+        fields.push(new InspectorField("name", "Name", "Entity", entity->name, FieldKind:::Text));
+        kindField := new InspectorField("kind", "Kind", "Entity", entity->kind, FieldKind:::Choice);
+        kinds~ Array<string!>! = palette->Kinds();
+        for kind in kinds {
+            kindField->AddChoice(kind);
+        }
+        kinds.freeAll();
+        kindField->AddChoiceUnlessPresent(entity->kind);
+        fields.push(kindField!);
+        parentName~ string! = "none".copy();
+        if parent := entity->parent {
+            if parentIndex := world->IndexOf(parent) {
+                delete parentName;
+                parentName = `${world->entities[parentIndex]->name}`;
+            }
+        }
+        fields.push(new InspectorField("parent", "Parent", "Entity", parentName, FieldKind:::ReadOnly));
+        delete parentName;
+        idText: string! = `${entity->id}`;
+        fields.push(new InspectorField("id", "Id", "Entity", idText, FieldKind:::ReadOnly));
+        delete idText;
+        for groupIndex~ usize = 0; groupIndex < 3; groupIndex++ {
+            groupKey~ string = "position";
+            groupLabel~ string = "Position";
+            values~ Vec3 = entity->transform.position;
+            if groupIndex == 1 {
+                groupKey = "rotation";
+                groupLabel = "Rotation";
+                values = entity->transform.rotationDegrees;
+            } else if groupIndex == 2 {
+                groupKey = "scale";
+                groupLabel = "Scale";
+                values = entity->transform.scale;
+            }
+            for axisIndex~ usize = 0; axisIndex < 3; axisIndex++ {
+                key: string! = `${groupKey}.${AxisSuffix(axisIndex)}`;
+                label: string! = `${groupLabel} ${AxisUpperName(AxisAt(axisIndex))}`;
+                fields.push(NumberField(key, label, "Transform", AxisComponent(values, axisIndex)));
+                delete key;
+                delete label;
+            }
+        }
+        shapeField := new InspectorField("shape", "Shape", "Shape", ShapeName(entity->shape), FieldKind:::Choice);
+        shapeField->AddChoice("none");
+        shapeField->AddChoice("box");
+        shapeField->AddChoice("ramp");
+        fields.push(shapeField!);
+        if shape := entity->shape {
+            if shape.kind == lantern:::world:::ShapeKind:::Box {
+                for axisIndex~ usize = 0; axisIndex < 3; axisIndex++ {
+                    key: string! = `size.${AxisSuffix(axisIndex)}`;
+                    label: string! = `Size ${AxisUpperName(AxisAt(axisIndex))}`;
+                    fields.push(NumberField(key, label, "Shape", AxisComponent(shape.halfExtents, axisIndex) * 2.0f));
+                    delete key;
+                    delete label;
+                }
+            } else {
+                fields.push(NumberField("width", "Width", "Shape", shape.width));
+                fields.push(NumberField("height", "Height", "Shape", shape.height));
+                fields.push(NumberField("length", "Length", "Shape", shape.length));
+            }
+            material~ string = "";
+            if own := entity->material {
+                material = own;
+            }
+            shownMaterial: string = when (material.length() == 0) {
+                true -> "none",
+                false -> material
+            };
+            materialField := new InspectorField("material", "Material", "Look", shownMaterial, FieldKind:::Choice);
+            materialField->AddChoice("none");
+            for name in palette->materials {
+                materialField->AddChoice(name);
+            }
+            materialField->AddChoiceUnlessPresent(material);
+            fields.push(materialField!);
+            tint~ string = "";
+            if own := entity->tint {
+                tint = own;
+            }
+            fields.push(new InspectorField("tint", "Tint", "Look", tint, FieldKind:::Color));
+            colliderField := new InspectorField("collider", "Collider", "Collision", ColliderName(entity->collider), FieldKind:::Choice);
+            colliderField->AddChoice("none");
+            colliderField->AddChoice("static");
+            colliderField->AddChoice("kinematic");
+            fields.push(colliderField!);
+        }
+        for index~ usize = 0; index < entity->propertyKeys.length(); index++ {
+            propertyKey: string = entity->propertyKeys[index];
+            kind: FieldKind = when entity->propertyValues[index].kind {
+                lantern:::world:::PropertyKind:::Boolean -> FieldKind:::Boolean,
+                lantern:::world:::PropertyKind:::Number -> FieldKind:::Number,
+                lantern:::world:::PropertyKind:::Vector -> FieldKind:::Vector,
+                lantern:::world:::PropertyKind:::Text -> FieldKind:::Text
+            };
+            key: string! = `property:${propertyKey}`;
+            text: string! = FormatProperty(entity, index);
+            fields.push(new InspectorField(key, propertyKey, "Properties", text, kind));
+            delete key;
+            delete text;
+        }
+        return fields!;
+    }
+
+    Refused :: (edited: lantern:::world:::WorldEntity*!, message: string!) -> Result<lantern:::world:::WorldEntity*!, string!> {
+        delete edited;
+        return Result<lantern:::world:::WorldEntity*!, string!>:::Err(message!);
+    }
+
+    ApplyField :: (entity: lantern:::world:::WorldEntity*, field: string, text: string) -> Result<lantern:::world:::WorldEntity*!, string!> {
+        edited := entity->Copy();
+        trimmed: string = text.trim();
+        if field.startsWith("property:") {
+            property: string = field.substring(9, field.length() - 9);
+            if property.trim().length() == 0 {
+                return Refused(edited!, "a property needs a name".copy());
+            }
+            if trimmed.length() == 0 {
+                edited->RemoveProperty(property);
+            } else {
+                parsed: ParsedProperty = ParseProperty(text);
+                edited->SetProperty(property, parsed.value, when parsed.isText { true -> text, false -> "" });
+            }
+            return Result<lantern:::world:::WorldEntity*!, string!>:::Ok(edited!);
+        }
+        dotFound: usize? = field.indexOf(".", 0);
+        if dot := dotFound {
+            group: string = field.substring(0, dot);
+            suffix: string = field.substring(dot + 1, field.length() - dot - 1);
+            indexFound: usize? = AxisSuffixIndex(suffix);
+            guard axisIndex := indexFound return Refused(edited!, `unknown field '${field}'`);
+            value~ f32 = 0.0f;
+            when ParseNumber(text) {
+                Result:::Ok(number) -> {
+                    value = number;
+                },
+                Result:::Err(message) -> {
+                    return Refused(edited!, message!);
+                }
+            }
+            if group == "position" {
+                edited->transform.position = WithComponent(edited->transform.position, axisIndex, value);
+            } else if group == "rotation" {
+                edited->transform.rotationDegrees = WithComponent(edited->transform.rotationDegrees, axisIndex, value);
+            } else if group == "scale" {
+                if Math:::abs(value) < 0.0001f {
+                    return Refused(edited!, "scale cannot be zero".copy());
+                }
+                edited->transform.scale = WithComponent(edited->transform.scale, axisIndex, value);
+            } else if group == "size" {
+                guard shape := edited->shape return Refused(edited!, "only a box has a size".copy());
+                if shape.kind != lantern:::world:::ShapeKind:::Box {
+                    return Refused(edited!, "only a box has a size".copy());
+                }
+                if value <= 0.0f {
+                    return Refused(edited!, "size must be positive".copy());
+                }
+                edited->shape = lantern:::world:::Shape:::Box(WithComponent(shape.halfExtents, axisIndex, value * 0.5f));
+            } else {
+                return Refused(edited!, `unknown field '${field}'`);
+            }
+            return Result<lantern:::world:::WorldEntity*!, string!>:::Ok(edited!);
+        }
+        if field == "name" {
+            if trimmed.length() == 0 {
+                return Refused(edited!, "a name cannot be empty".copy());
+            }
+            edited->SetName(trimmed);
+        } else if field == "kind" {
+            if trimmed.length() == 0 {
+                return Refused(edited!, "a kind cannot be empty".copy());
+            }
+            edited->SetKind(trimmed);
+        } else if field == "shape" {
+            if trimmed == "none" {
+                edited->shape = null;
+            } else if trimmed == "box" {
+                if ShapeName(entity->shape) != "box" {
+                    edited->shape = lantern:::world:::Shape:::Box(lantern:::core:::Splat3(0.5f));
+                }
+            } else if trimmed == "ramp" {
+                if ShapeName(entity->shape) != "ramp" {
+                    edited->shape = lantern:::world:::Shape:::Ramp(2.0f, 1.0f, 3.0f);
+                }
+            } else {
+                return Refused(edited!, `unknown shape '${trimmed}'`);
+            }
+            if edited->shape == null {
+                edited->ClearMaterial();
+                edited->ClearTint();
+                edited->collider = null;
+            } else if entity->shape == null {
+                edited->collider = lantern:::world:::ColliderKind:::Static;
+            }
+        } else if field == "width" || field == "height" || field == "length" {
+            value~ f32 = 0.0f;
+            when ParseNumber(text) {
+                Result:::Ok(number) -> {
+                    value = number;
+                },
+                Result:::Err(message) -> {
+                    return Refused(edited!, message!);
+                }
+            }
+            if value <= 0.0f {
+                return Refused(edited!, `${field} must be positive`);
+            }
+            guard shape := edited->shape return Refused(edited!, "only a ramp has a width, height and length".copy());
+            if shape.kind != lantern:::world:::ShapeKind:::Ramp {
+                return Refused(edited!, "only a ramp has a width, height and length".copy());
+            }
+            changed~ lantern:::world:::Shape = shape;
+            if field == "width" {
+                changed.width = value;
+            } else if field == "height" {
+                changed.height = value;
+            } else {
+                changed.length = value;
+            }
+            edited->shape = changed;
+        } else if field == "material" {
+            if trimmed.length() == 0 || trimmed == "none" {
+                edited->ClearMaterial();
+            } else {
+                edited->SetMaterial(trimmed);
+            }
+        } else if field == "tint" {
+            if trimmed.length() == 0 {
+                edited->ClearTint();
+            } else {
+                upper: string! = trimmed.toUpper();
+                normalised~ string! = `${upper}`;
+                if !trimmed.startsWith("#") {
+                    delete normalised;
+                    normalised = `#${upper}`;
+                }
+                delete upper;
+                if lantern:::world:::ParseHexColor(normalised) == null {
+                    delete normalised;
+                    return Refused(edited!, `'${trimmed}' is not a colour; use #RRGGBB`);
+                }
+                edited->SetTint(normalised);
+                delete normalised;
+            }
+        } else if field == "collider" {
+            if trimmed == "none" {
+                edited->collider = null;
+            } else if trimmed == "static" {
+                edited->collider = lantern:::world:::ColliderKind:::Static;
+            } else if trimmed == "kinematic" {
+                edited->collider = lantern:::world:::ColliderKind:::Kinematic;
+            } else {
+                return Refused(edited!, `unknown collider '${trimmed}'`);
+            }
+        } else if field == "parent" || field == "id" {
+            return Refused(edited!, `${field} cannot be edited here`);
+        } else {
+            return Refused(edited!, `unknown field '${field}'`);
+        }
+        return Result<lantern:::world:::WorldEntity*!, string!>:::Ok(edited!);
+    }
+}

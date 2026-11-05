@@ -1,0 +1,177 @@
+lantern:::editor :: namespace {
+    GRID_HALF_EXTENT: i32 : 30;
+    GRID_MAJOR_EVERY: i32 : 5;
+    PLANE_MARKER_HALF_EXTENT: f32 : 40.0f;
+
+    ViewportResources :: interface {
+        ShapeMesh~ (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
+        MaterialTexture~ (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? : 0;
+        MarkerMeshHandle~ (mesh: MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
+    }
+
+    SelectionColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(1.0f, 0.78f, 0.2f);
+    }
+
+    HoverOutlineColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.85f, 0.9f, 1.0f);
+    }
+
+    GridMinorColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.25f, 0.28f, 0.34f);
+    }
+
+    GridMajorColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.38f, 0.42f, 0.5f);
+    }
+
+    VectorPropertyColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.3f, 0.9f, 1.0f);
+    }
+
+    EditorSkyColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.2f, 0.23f, 0.29f);
+    }
+
+    HiddenOutlineColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.45f, 0.45f, 0.5f);
+    }
+
+    WireframeColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.7f, 0.75f, 0.85f);
+    }
+
+    StaticColliderColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.3f, 0.9f, 0.4f);
+    }
+
+    KinematicColliderColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.95f, 0.6f, 0.2f);
+    }
+
+    LevelBoundsColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.9f, 0.5f, 0.9f);
+    }
+
+    RubberBandColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.55f, 0.75f, 1.0f);
+    }
+
+    MarkerLocalMatrix :: (mesh: MarkerMesh) -> Mat4 {
+        if mesh == MarkerMesh:::Capsule {
+            return Mat4:::translation(Vec3 { x: 0.0f, y: 0.9f, z: 0.0f });
+        }
+        return Mat4 { };
+    }
+
+    MarkerLocalBounds :: (mesh: MarkerMesh) -> lantern:::core:::Aabb {
+        return when mesh {
+            MarkerMesh:::Capsule -> lantern:::core:::Aabb:::Create(Vec3 { x: -0.35f, y: 0.0f, z: -0.35f }, Vec3 { x: 0.35f, y: 1.8f, z: 0.35f }),
+            MarkerMesh:::Gem -> lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { }, Vec3 { x: 0.3f, y: 0.4f, z: 0.3f }),
+            MarkerMesh:::Sphere -> lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { }, lantern:::core:::Splat3(0.3f)),
+            MarkerMesh:::Cube -> lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { }, lantern:::core:::Splat3(0.3f)),
+            MarkerMesh:::Plane -> lantern:::core:::Aabb:::Create(Vec3 { x: -1.0f, y: 0.0f, z: -1.0f }, Vec3 { x: 1.0f, y: 0.0f, z: 1.0f })
+        };
+    }
+
+    ShapeLocalBounds :: (shape: lantern:::world:::Shape) -> lantern:::core:::Aabb {
+        if shape.kind == lantern:::world:::ShapeKind:::Box {
+            return lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { }, shape.halfExtents);
+        }
+        return lantern:::core:::Aabb:::Create(
+            Vec3 { x: -shape.width * 0.5f, y: 0.0f, z: -shape.length * 0.5f },
+            Vec3 { x: shape.width * 0.5f, y: shape.height, z: shape.length * 0.5f });
+    }
+
+    OrientedCorner :: (bounds: lantern:::core:::Aabb, matrix: Mat4, index: u32) -> Vec3 {
+        corner := Vec3 {
+            x: when ((index & 1) == 0) { true -> bounds.min.x, false -> bounds.max.x },
+            y: when ((index & 2) == 0) { true -> bounds.min.y, false -> bounds.max.y },
+            z: when ((index & 4) == 0) { true -> bounds.min.z, false -> bounds.max.z }
+        };
+        return matrix.transformPoint(corner);
+    }
+
+    OrientedBoxLines :: (renderWorld: lantern:::renderer:::RenderWorld~*, bounds: lantern:::core:::Aabb, matrix: Mat4, color: lantern:::core:::Color) -> void {
+        edgeStarts: u32[12] = [0, 2, 4, 6, 0, 1, 4, 5, 0, 1, 2, 3];
+        edgeEnds: u32[12] = [1, 3, 5, 7, 2, 3, 6, 7, 4, 5, 6, 7];
+        for edge~ usize = 0; edge < 12; edge += 1 {
+            renderWorld->Line(OrientedCorner(bounds, matrix, edgeStarts[edge]), OrientedCorner(bounds, matrix, edgeEnds[edge]), color);
+        }
+    }
+
+    DrawGrid :: (renderWorld: lantern:::renderer:::RenderWorld~*, center: Vec3, requestedSpacing: f32) -> void {
+        spacing: f32 = Math:::max(requestedSpacing, 0.01f);
+        majorEvery: f32 = f32(GRID_MAJOR_EVERY) * spacing;
+        extent: f32 = f32(GRID_HALF_EXTENT) * spacing;
+        centerX: f32 = Math:::round(center.x / majorEvery) * majorEvery;
+        centerZ: f32 = Math:::round(center.z / majorEvery) * majorEvery;
+        for offset~ i32 = -GRID_HALF_EXTENT; offset <= GRID_HALF_EXTENT; offset++ {
+            color~ lantern:::core:::Color = GridMinorColor();
+            if offset % GRID_MAJOR_EVERY == 0 {
+                color = GridMajorColor();
+            }
+            x: f32 = centerX + f32(offset) * spacing;
+            z: f32 = centerZ + f32(offset) * spacing;
+            if Math:::abs(x) > 0.0001f {
+                renderWorld->Line(Vec3 { x: x, y: 0.0f, z: centerZ - extent }, Vec3 { x: x, y: 0.0f, z: centerZ + extent }, color);
+            }
+            if Math:::abs(z) > 0.0001f {
+                renderWorld->Line(Vec3 { x: centerX - extent, y: 0.0f, z: z }, Vec3 { x: centerX + extent, y: 0.0f, z: z }, color);
+            }
+        }
+        axisExtent: f32 = 1000.0f;
+        renderWorld->Line(Vec3 { x: -axisExtent, y: 0.0f, z: 0.0f }, Vec3 { x: axisExtent, y: 0.0f, z: 0.0f }, AxisColor(Axis:::X));
+        renderWorld->Line(Vec3 { x: 0.0f, y: 0.0f, z: -axisExtent }, Vec3 { x: 0.0f, y: 0.0f, z: axisExtent }, AxisColor(Axis:::Z));
+    }
+
+    PlaneMarkerCorner :: (index: usize, height: f32) -> Vec3 {
+        extent: f32 = PLANE_MARKER_HALF_EXTENT;
+        if index == 0 {
+            return Vec3 { x: -extent, y: height, z: -extent };
+        }
+        if index == 1 {
+            return Vec3 { x: extent, y: height, z: -extent };
+        }
+        if index == 2 {
+            return Vec3 { x: extent, y: height, z: extent };
+        }
+        return Vec3 { x: -extent, y: height, z: extent };
+    }
+
+    DrawPlaneMarker :: (renderWorld: lantern:::renderer:::RenderWorld~*, height: f32, color: lantern:::core:::Color) -> void {
+        for index~ usize = 0; index < 4; index++ {
+            renderWorld->Line(PlaneMarkerCorner(index, height), PlaneMarkerCorner((index + 1) % 4, height), color);
+        }
+        renderWorld->Line(PlaneMarkerCorner(0, height), PlaneMarkerCorner(2, height), color);
+        renderWorld->Line(PlaneMarkerCorner(1, height), PlaneMarkerCorner(3, height), color);
+    }
+
+    DrawArrow :: (renderWorld: lantern:::renderer:::RenderWorld~*, start: Vec3, end: Vec3, color: lantern:::core:::Color) -> void {
+        renderWorld->Line(start, end, color);
+        direction: Vec3 = lantern:::core:::NormalizeOr3(end - start, Vec3 { });
+        if direction.x == 0.0f && direction.y == 0.0f && direction.z == 0.0f {
+            return;
+        }
+        side: Vec3 = lantern:::core:::AnyOrthonormalVector3(direction);
+        other: Vec3 = direction.cross(side);
+        head: f32 = Math:::min((end - start).length() * 0.15f, 0.4f);
+        back: Vec3 = end - direction * head;
+        renderWorld->Line(end, back + side * head * 0.4f, color);
+        renderWorld->Line(end, back - side * head * 0.4f, color);
+        renderWorld->Line(end, back + other * head * 0.4f, color);
+        renderWorld->Line(end, back - other * head * 0.4f, color);
+    }
+
+    DrawRubberBand :: (renderWorld: lantern:::renderer:::RenderWorld~*, projection: ViewportProjection, firstCorner: Vec2, secondCorner: Vec2) -> void {
+        depth: f32 = projection.camera.nearPlane * 4.0f;
+        pointA: Vec3 = projection.RayThrough(firstCorner).At(depth);
+        pointB: Vec3 = projection.RayThrough(Vec2 { x: secondCorner.x, y: firstCorner.y }).At(depth);
+        pointC: Vec3 = projection.RayThrough(secondCorner).At(depth);
+        pointD: Vec3 = projection.RayThrough(Vec2 { x: firstCorner.x, y: secondCorner.y }).At(depth);
+        renderWorld->Line(pointA, pointB, RubberBandColor());
+        renderWorld->Line(pointB, pointC, RubberBandColor());
+        renderWorld->Line(pointC, pointD, RubberBandColor());
+        renderWorld->Line(pointD, pointA, RubberBandColor());
+    }
+}
