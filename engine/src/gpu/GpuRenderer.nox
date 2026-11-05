@@ -1,0 +1,744 @@
+Sdl :: import Sdl;
+
+lantern:::copyreadback :: foreign "c" {
+    memcpy :: (destination: Array<u8~>, source: raw u8*, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    GpuOptions :: struct {
+        debug~ bool = false;
+        vsync~ bool = true;
+
+        static FromEnvironment :: () -> GpuOptions {
+            return GpuOptions { debug: EnvironmentFlag("LANTERN_GPU_DEBUG", false), vsync: EnvironmentFlag("LANTERN_VSYNC", true) };
+        }
+    }
+
+    EnvironmentFlag :: (name: string, fallback: bool) -> bool {
+        valueText: string!? = environmentVariable(name);
+        defer delete valueText;
+        if text := valueText {
+            if text == "0" || text == "false" {
+                return false;
+            }
+            if text == "1" || text == "true" {
+                return true;
+            }
+        }
+        return fallback;
+    }
+
+    FrameReport :: struct {
+        presented~ bool = false;
+        drawsSubmitted~ u32 = 0;
+        drawsCulled~ u32 = 0;
+        triangles~ u64 = 0;
+        lineCount~ u32 = 0;
+    }
+
+    VisibleDraw :: struct {
+        textureKey~ u32 = 0;
+        meshIndex~ u32 = 0;
+        drawIndex~ usize = 0;
+
+        ComesBefore :: (other: VisibleDraw) -> bool {
+            if textureKey != other.textureKey {
+                return textureKey < other.textureKey;
+            }
+            if meshIndex != other.meshIndex {
+                return meshIndex < other.meshIndex;
+            }
+            return drawIndex < other.drawIndex;
+        }
+    }
+
+    SortedVisibleDraws :: (draws: Array<VisibleDraw>) -> Array<VisibleDraw>! {
+        sorted~ Array<VisibleDraw>! = [];
+        for draw in draws {
+            sorted.push(draw);
+            position~ usize = sorted.length() - 1;
+            while position > 0 && draw.ComesBefore(sorted[position - 1]) {
+                sorted[position] = sorted[position - 1];
+                position -= 1;
+            }
+            sorted[position] = draw;
+        }
+        return sorted!;
+    }
+
+    MatrixAndVectorUniforms :: struct {
+        matrix~ f32[16] = filled<f32, 16>(0.0f);
+        vector~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    LightUniforms :: struct {
+        directionToLight~ f32[4] = filled<f32, 4>(0.0f);
+        lightColor~ f32[4] = filled<f32, 4>(0.0f);
+        ambientColor~ f32[4] = filled<f32, 4>(0.0f);
+        fogColor~ f32[4] = filled<f32, 4>(0.0f);
+        fogAndOutput~ f32[4] = filled<f32, 4>(0.0f);
+        cameraPosition~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    ObjectUniforms :: struct {
+        model~ f32[16] = filled<f32, 16>(0.0f);
+        normalMatrix~ f32[16] = filled<f32, 16>(0.0f);
+    }
+
+    VectorUniforms :: struct {
+        values~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    NormalMatrix4 :: (transform: Mat4) -> f32[16] {
+        normal: lantern:::core:::NormalMatrix = lantern:::core:::NormalMatrix:::FromTransform(transform);
+        return [
+            normal.xAxis.x, normal.xAxis.y, normal.xAxis.z, 0.0f,
+            normal.yAxis.x, normal.yAxis.y, normal.yAxis.z, 0.0f,
+            normal.zAxis.x, normal.zAxis.y, normal.zAxis.z, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        ];
+    }
+
+    EncodeSrgbChannel :: (linear: f32) -> f32 {
+        clamped: f32 = Math:::clamp(linear, 0.0f, 1.0f);
+        if clamped <= 0.0031308f {
+            return clamped * 12.92f;
+        }
+        return 1.055f * Math:::pow(clamped, 1.0f / 2.4f) - 0.055f;
+    }
+
+    EncodeSrgb :: (color: lantern:::core:::Color) -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgba(EncodeSrgbChannel(color.r), EncodeSrgbChannel(color.g), EncodeSrgbChannel(color.b), color.a);
+    }
+
+    IsBgra :: (format: Sdl:::SDL_GPUTextureFormat) -> bool {
+        return format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM || format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
+    }
+
+    ChooseDepthFormat :: (device: raw Sdl:::SDL_GPUDevice~*) -> Sdl:::SDL_GPUTextureFormat {
+        candidates: Sdl:::SDL_GPUTextureFormat[3] = [Sdl:::SDL_GPU_TEXTUREFORMAT_D32_FLOAT, Sdl:::SDL_GPU_TEXTUREFORMAT_D24_UNORM, Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM];
+        for format in candidates {
+            supported~ bool = false;
+            unsafe {
+                supported = Sdl:::SDL_GPUTextureSupportsFormat(device, format, Sdl:::SDL_GPU_TEXTURETYPE_2D, Sdl:::SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+            }
+            if supported {
+                return format;
+            }
+        }
+        return Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM;
+    }
+
+    ConfigureSwapchain :: (device: raw Sdl:::SDL_GPUDevice~*, window: raw Sdl:::SDL_Window~*, vsync: bool) -> bool {
+        unsafe {
+            srgb: bool = Sdl:::SDL_WindowSupportsGPUSwapchainComposition(device, window, Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR);
+            composition~ Sdl:::SDL_GPUSwapchainComposition = Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+            if srgb {
+                composition = Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+            }
+            presentMode~ Sdl:::SDL_GPUPresentMode = Sdl:::SDL_GPU_PRESENTMODE_VSYNC;
+            if !vsync {
+                if Sdl:::SDL_WindowSupportsGPUPresentMode(device, window, Sdl:::SDL_GPU_PRESENTMODE_MAILBOX) {
+                    presentMode = Sdl:::SDL_GPU_PRESENTMODE_MAILBOX;
+                } else if Sdl:::SDL_WindowSupportsGPUPresentMode(device, window, Sdl:::SDL_GPU_PRESENTMODE_IMMEDIATE) {
+                    presentMode = Sdl:::SDL_GPU_PRESENTMODE_IMMEDIATE;
+                }
+            }
+            if !Sdl:::SDL_SetGPUSwapchainParameters(device, window, composition, presentMode) {
+                failure: string! = SdlFailure("SDL_SetGPUSwapchainParameters");
+                lantern:::core:::LogWarn("renderer", failure);
+                delete failure;
+                return true;
+            }
+            return !srgb;
+        }
+    }
+
+    PushVertexUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
+        unsafe {
+            Sdl:::SDL_PushGPUVertexUniformData(commandBuffer, slot, bytes, byteCount);
+        }
+    }
+
+    PushFragmentUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
+        unsafe {
+            Sdl:::SDL_PushGPUFragmentUniformData(commandBuffer, slot, bytes, byteCount);
+        }
+    }
+
+    GpuRenderer :: class {
+    public:
+        device~ raw Sdl:::SDL_GPUDevice~* = null;
+        window~ raw Sdl:::SDL_Window~* = null;
+        windowClaimed~ bool = false;
+        pipelines~ Pipelines = Pipelines { };
+        samplers~ Samplers = Samplers { };
+        meshes~ lantern:::core:::Pool<GpuMesh>*!;
+        textures~ lantern:::core:::Pool<GpuTexture>*!;
+        whiteTexture~ GpuTexture = GpuTexture { };
+        lineBuffer~ DynamicBuffer = DynamicBuffer { };
+        overlayBuffer~ DynamicBuffer = DynamicBuffer { };
+        depthTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        depthWidth~ u32 = 0;
+        depthHeight~ u32 = 0;
+        colorFormat~ Sdl:::SDL_GPUTextureFormat = 0;
+        depthFormat~ Sdl:::SDL_GPUTextureFormat = 0;
+        encodeSrgbInShader~ bool = false;
+        debug~ bool = false;
+        driverName~ string!;
+
+        GpuRenderer~: () {
+            driverName = "" + "";
+            meshes = new lantern:::core:::Pool<GpuMesh>();
+            textures = new lantern:::core:::Pool<GpuTexture>();
+            lineBuffer.usage = Sdl:::SDL_GPU_BUFFERUSAGE_VERTEX;
+            overlayBuffer.usage = Sdl:::SDL_GPU_BUFFERUSAGE_VERTEX;
+        }
+
+        !GpuRenderer~: () {
+            ReleaseDevice();
+            delete meshes;
+            delete textures;
+            delete driverName;
+        }
+
+        static Create :: (window: raw Sdl:::SDL_Window~*, options: GpuOptions) -> Result<GpuRenderer*!, string!> {
+            renderer := new GpuRenderer();
+            renderer->debug = options.debug;
+            renderer->window = window;
+            driverText: string!? = environmentVariable("LANTERN_GPU_DRIVER");
+            defer delete driverText;
+            driverName~ string? = null;
+            if text := driverText {
+                if text.length() > 0 {
+                    driverName = text;
+                }
+            }
+            formats: Sdl:::SDL_GPUShaderFormat = Sdl:::SDL_GPU_SHADERFORMAT_SPIRV | Sdl:::SDL_GPU_SHADERFORMAT_MSL;
+            unsafe {
+                renderer->device = Sdl:::SDL_CreateGPUDevice(formats, options.debug, driverName);
+            }
+            if renderer->device == null {
+                failure: string! = SdlFailure("SDL_CreateGPUDevice");
+                delete renderer;
+                return Result<GpuRenderer*!, string!>:::Err(failure!);
+            }
+            unsafe {
+                delete renderer->driverName;
+                renderer->driverName = copyCString(Sdl:::SDL_GetGPUDeviceDriver(renderer->device));
+            }
+            shaderFormat: ShaderFormat = ChooseShaderFormat(renderer->device);
+            claimed~ bool = false;
+            unsafe {
+                claimed = Sdl:::SDL_ClaimWindowForGPUDevice(renderer->device, window);
+            }
+            if !claimed {
+                failure: string! = SdlFailure("SDL_ClaimWindowForGPUDevice");
+                delete renderer;
+                return Result<GpuRenderer*!, string!>:::Err(failure!);
+            }
+            renderer->windowClaimed = true;
+            renderer->encodeSrgbInShader = ConfigureSwapchain(renderer->device, window, options.vsync);
+            unsafe {
+                renderer->colorFormat = Sdl:::SDL_GetGPUSwapchainTextureFormat(renderer->device, window);
+            }
+            renderer->depthFormat = ChooseDepthFormat(renderer->device);
+            return GpuRenderer:::Finish(renderer!, shaderFormat);
+        }
+
+        static Finish :: (renderer: GpuRenderer*!, shaderFormat: ShaderFormat) -> Result<GpuRenderer*!, string!> {
+            debugName~ string = "off";
+            if renderer->debug {
+                debugName = "on";
+            }
+            outputName~ string = "hardware sRGB";
+            if renderer->encodeSrgbInShader {
+                outputName = "shader-encoded sRGB";
+            }
+            message: string! = `GPU driver: ${renderer->driverName} (${ShaderFormatName(shaderFormat)} shaders), debug ${debugName}, swapchain format ${renderer->colorFormat}, depth format ${renderer->depthFormat}, ${outputName} output`;
+            lantern:::core:::LogInfo("renderer", message);
+            delete message;
+            when CreatePipelines(renderer->device, shaderFormat, renderer->colorFormat, renderer->depthFormat) {
+                Result:::Ok(created) -> {
+                    renderer->pipelines = created;
+                },
+                Result:::Err(failure) -> {
+                    delete renderer;
+                    return Result<GpuRenderer*!, string!>:::Err(failure!);
+                }
+            }
+            if created := Samplers:::Create(renderer->device) {
+                renderer->samplers = created;
+            } else {
+                failure: string! = SdlFailure("SDL_CreateGPUSampler");
+                delete renderer;
+                return Result<GpuRenderer*!, string!>:::Err(failure!);
+            }
+            white := lantern:::renderer:::TextureData:::Solid(lantern:::core:::Color:::White());
+            defer delete white;
+            when UploadTexture(renderer->device, renderer->samplers, white) {
+                Result:::Ok(uploaded) -> {
+                    renderer->whiteTexture = uploaded;
+                },
+                Result:::Err(failure) -> {
+                    delete renderer;
+                    return Result<GpuRenderer*!, string!>:::Err(failure!);
+                }
+            }
+            return Result<GpuRenderer*!, string!>:::Ok(renderer!);
+        }
+
+        ReleaseDevice~: () -> void {
+            if device == null {
+                return;
+            }
+            videoInitialised~ bool = false;
+            unsafe {
+                videoInitialised = Sdl:::SDL_WasInit(Sdl:::SDL_INIT_VIDEO) != 0;
+            }
+            if !videoInitialised {
+                lantern:::core:::LogWarn("renderer", "SDL video was shut down before the GPU device; the device is not destroyed");
+                device = null;
+                return;
+            }
+            unsafe {
+                Sdl:::SDL_WaitForGPUIdle(device);
+            }
+            liveMeshes: Array<GpuMesh>! = meshes->Drain();
+            for mesh in liveMeshes {
+                mesh.Release(device);
+            }
+            delete liveMeshes;
+            liveTextures: Array<GpuTexture>! = textures->Drain();
+            for texture in liveTextures {
+                texture.Release(device);
+            }
+            delete liveTextures;
+            whiteTexture.Release(device);
+            lineBuffer.Release(device);
+            overlayBuffer.Release(device);
+            unsafe {
+                if depthTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, depthTexture);
+                }
+            }
+            samplers.Release(device);
+            pipelines.Release(device);
+            unsafe {
+                if windowClaimed {
+                    Sdl:::SDL_ReleaseWindowFromGPUDevice(device, window);
+                }
+                Sdl:::SDL_DestroyGPUDevice(device);
+            }
+            device = null;
+            lantern:::core:::LogInfo("renderer", "GPU device destroyed");
+        }
+
+        DriverName :: () -> string {
+            return driverName;
+        }
+
+        DebugEnabled :: () -> bool {
+            return debug;
+        }
+
+        MeshCount :: () -> usize {
+            return meshes->Length();
+        }
+
+        TextureCount :: () -> usize {
+            return textures->Length();
+        }
+
+        CreateMesh~: (mesh: lantern:::renderer:::MeshData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!> {
+            problem: string!? = mesh->Validate();
+            if invalid := problem {
+                text: string! = `${invalid}`;
+                delete problem;
+                return Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!>:::Err(text!);
+            }
+            when UploadMesh(device, mesh) {
+                Result:::Ok(uploaded) -> {
+                    handle: lantern:::core:::Handle<GpuMesh> = meshes->Insert(uploaded);
+                    return Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!>:::Ok(lantern:::core:::CastHandle<GpuMesh, lantern:::renderer:::MeshTag>(handle));
+                },
+                Result:::Err(failure) -> {
+                    return Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        RemoveMesh~: (handle: lantern:::core:::Handle<lantern:::renderer:::MeshTag>) -> void {
+            if removed := meshes->Remove(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(handle)) {
+                removed.Release(device);
+            }
+        }
+
+        CreateTexture~: (texture: lantern:::renderer:::TextureData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, string!> {
+            when UploadTexture(device, samplers, texture) {
+                Result:::Ok(uploaded) -> {
+                    handle: lantern:::core:::Handle<GpuTexture> = textures->Insert(uploaded);
+                    return Result<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, string!>:::Ok(lantern:::core:::CastHandle<GpuTexture, lantern:::renderer:::TextureTag>(handle));
+                },
+                Result:::Err(failure) -> {
+                    return Result<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        RemoveTexture~: (handle: lantern:::core:::Handle<lantern:::renderer:::TextureTag>) -> void {
+            if removed := textures->Remove(lantern:::core:::CastHandle<lantern:::renderer:::TextureTag, GpuTexture>(handle)) {
+                removed.Release(device);
+            }
+        }
+
+        TextureOrWhite :: (handle: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?) -> GpuTexture {
+            if wanted := handle {
+                if found := textures->Get(lantern:::core:::CastHandle<lantern:::renderer:::TextureTag, GpuTexture>(wanted)) {
+                    return found;
+                }
+            }
+            return whiteTexture;
+        }
+
+        Render~: (world: lantern:::renderer:::RenderWorld*) -> Result<FrameReport, string!> {
+            commandBuffer~ raw Sdl:::SDL_GPUCommandBuffer~* = null;
+            unsafe {
+                commandBuffer = Sdl:::SDL_AcquireGPUCommandBuffer(device);
+            }
+            if commandBuffer == null {
+                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_AcquireGPUCommandBuffer"));
+            }
+            uploadProblem: string!? = UploadDynamicGeometry(commandBuffer, world);
+            if problem := uploadProblem {
+                text: string! = `${problem}`;
+                delete uploadProblem;
+                unsafe {
+                    Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
+                }
+                return Result<FrameReport, string!>:::Err(text!);
+            }
+            swapchainTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+            width~ u32 = 0;
+            height~ u32 = 0;
+            acquired~ bool = false;
+            unsafe {
+                acquired = Sdl:::SDL_WaitAndAcquireGPUSwapchainTexture(commandBuffer, window, swapchainTexture, width, height);
+            }
+            if !acquired {
+                failure: string! = SdlFailure("SDL_WaitAndAcquireGPUSwapchainTexture");
+                unsafe {
+                    Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
+                }
+                return Result<FrameReport, string!>:::Err(failure!);
+            }
+            report~ FrameReport = FrameReport { };
+            if swapchainTexture == null {
+                unsafe {
+                    Sdl:::SDL_SubmitGPUCommandBuffer(commandBuffer);
+                }
+                return Result<FrameReport, string!>:::Ok(report);
+            }
+            depthProblem: string!? = EnsureDepthTarget(width, height);
+            if problem := depthProblem {
+                text: string! = `${problem}`;
+                delete depthProblem;
+                unsafe {
+                    Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
+                }
+                return Result<FrameReport, string!>:::Err(text!);
+            }
+            report = RecordFrame(commandBuffer, swapchainTexture, depthTexture, width, height, world);
+            submitted~ bool = false;
+            unsafe {
+                submitted = Sdl:::SDL_SubmitGPUCommandBuffer(commandBuffer);
+            }
+            if !submitted {
+                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_SubmitGPUCommandBuffer"));
+            }
+            report.presented = true;
+            return Result<FrameReport, string!>:::Ok(report);
+        }
+
+        Capture~: (world: lantern:::renderer:::RenderWorld*, width: u32, height: u32) -> Result<lantern:::renderer:::TextureData*!, string!> {
+            color: raw Sdl:::SDL_GPUTexture~* = CreateRenderTexture(device, colorFormat, width, height, false);
+            depth: raw Sdl:::SDL_GPUTexture~* = CreateRenderTexture(device, depthFormat, width, height, true);
+            byteCount: u32 = width * height * 4;
+            download: raw Sdl:::SDL_GPUTransferBuffer~* = CreateTransferBuffer(device, byteCount, false);
+            if color == null || depth == null || download == null {
+                failure: string! = SdlFailure("creating the capture target");
+                ReleaseCaptureTarget(color, depth, download);
+                return Result<lantern:::renderer:::TextureData*!, string!>:::Err(failure!);
+            }
+            commandBuffer~ raw Sdl:::SDL_GPUCommandBuffer~* = null;
+            unsafe {
+                commandBuffer = Sdl:::SDL_AcquireGPUCommandBuffer(device);
+            }
+            if commandBuffer == null {
+                failure: string! = SdlFailure("SDL_AcquireGPUCommandBuffer");
+                ReleaseCaptureTarget(color, depth, download);
+                return Result<lantern:::renderer:::TextureData*!, string!>:::Err(failure!);
+            }
+            uploadProblem: string!? = UploadDynamicGeometry(commandBuffer, world);
+            if problem := uploadProblem {
+                text: string! = `${problem}`;
+                delete uploadProblem;
+                unsafe {
+                    Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
+                }
+                ReleaseCaptureTarget(color, depth, download);
+                return Result<lantern:::renderer:::TextureData*!, string!>:::Err(text!);
+            }
+            RecordFrame(commandBuffer, color, depth, width, height, world);
+            fence~ raw Sdl:::SDL_GPUFence~* = null;
+            unsafe {
+                source := Sdl:::SDL_GPUTextureRegion { texture: color, w: width, h: height, d: 1 };
+                destination := Sdl:::SDL_GPUTextureTransferInfo { transfer_buffer: download };
+                copyPass := Sdl:::SDL_BeginGPUCopyPass(commandBuffer);
+                Sdl:::SDL_DownloadFromGPUTexture(copyPass, source, destination);
+                Sdl:::SDL_EndGPUCopyPass(copyPass);
+                fence = Sdl:::SDL_SubmitGPUCommandBufferAndAcquireFence(commandBuffer);
+            }
+            if fence == null {
+                failure: string! = SdlFailure("SDL_SubmitGPUCommandBufferAndAcquireFence");
+                ReleaseCaptureTarget(color, depth, download);
+                return Result<lantern:::renderer:::TextureData*!, string!>:::Err(failure!);
+            }
+            captured := new lantern:::renderer:::TextureData(width, height, lantern:::renderer:::TextureFilter:::Nearest, lantern:::renderer:::TextureWrap:::Clamp);
+            for byteIndex~ u32 = 0; byteIndex < byteCount; byteIndex += 1 {
+                captured->rgba8.push(0);
+            }
+            mapped~ raw u8~* = null;
+            unsafe {
+                Sdl:::SDL_WaitForGPUFences(device, true, fence, 1);
+                Sdl:::SDL_ReleaseGPUFence(device, fence);
+                mapped = Sdl:::SDL_MapGPUTransferBuffer(device, download, false);
+                if mapped != null {
+                    lantern:::copyreadback:::memcpy(captured->rgba8.borrow().mutable(), mapped, usize(byteCount));
+                    Sdl:::SDL_UnmapGPUTransferBuffer(device, download);
+                }
+            }
+            if mapped == null {
+                failure: string! = SdlFailure("SDL_MapGPUTransferBuffer");
+                delete captured;
+                ReleaseCaptureTarget(color, depth, download);
+                return Result<lantern:::renderer:::TextureData*!, string!>:::Err(failure!);
+            }
+            ReleaseCaptureTarget(color, depth, download);
+            if IsBgra(colorFormat) {
+                for pixelOffset~ usize = 0; pixelOffset < usize(byteCount); pixelOffset += 4 {
+                    blue: u8 = captured->rgba8[pixelOffset];
+                    captured->rgba8[pixelOffset] = captured->rgba8[pixelOffset + 2];
+                    captured->rgba8[pixelOffset + 2] = blue;
+                }
+            }
+            return Result<lantern:::renderer:::TextureData*!, string!>:::Ok(captured!);
+        }
+
+        ReleaseCaptureTarget :: (color: raw Sdl:::SDL_GPUTexture~*, depth: raw Sdl:::SDL_GPUTexture~*, download: raw Sdl:::SDL_GPUTransferBuffer~*) -> void {
+            unsafe {
+                if download != null {
+                    Sdl:::SDL_ReleaseGPUTransferBuffer(device, download);
+                }
+                if color != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, color);
+                }
+                if depth != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, depth);
+                }
+            }
+        }
+
+        UploadDynamicGeometry~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, world: lantern:::renderer:::RenderWorld*) -> string!? {
+            lineByteCount: u32 = u32(world->lines.length()) * lantern:::renderer:::LINE_VERTEX_STRIDE;
+            overlayByteCount: u32 = u32(world->overlay->vertices.length()) * lantern:::renderer:::OVERLAY_VERTEX_STRIDE;
+            if lineByteCount == 0 && overlayByteCount == 0 {
+                return null;
+            }
+            lineProblem: string!? = lineBuffer.Reserve(device, lineByteCount);
+            if problem := lineProblem {
+                text: string! = `${problem}`;
+                delete lineProblem;
+                return text!;
+            }
+            overlayProblem: string!? = overlayBuffer.Reserve(device, overlayByteCount);
+            if problem := overlayProblem {
+                text: string! = `${problem}`;
+                delete overlayProblem;
+                return text!;
+            }
+            unsafe {
+                copyPass := Sdl:::SDL_BeginGPUCopyPass(commandBuffer);
+                if lineByteCount > 0 {
+                    mapped: raw u8~* = lineBuffer.Map(device);
+                    if mapped != null {
+                        lantern:::copylines:::memcpy(mapped, world->lines, usize(lineByteCount));
+                        lineBuffer.FinishUpload(device, copyPass, lineByteCount);
+                    }
+                }
+                if overlayByteCount > 0 {
+                    mapped: raw u8~* = overlayBuffer.Map(device);
+                    if mapped != null {
+                        lantern:::copyoverlay:::memcpy(mapped, world->overlay->vertices, usize(overlayByteCount));
+                        overlayBuffer.FinishUpload(device, copyPass, overlayByteCount);
+                    }
+                }
+                Sdl:::SDL_EndGPUCopyPass(copyPass);
+            }
+            return null;
+        }
+
+        EnsureDepthTarget~: (width: u32, height: u32) -> string!? {
+            if depthTexture != null && depthWidth == width && depthHeight == height {
+                return null;
+            }
+            unsafe {
+                if depthTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, depthTexture);
+                }
+            }
+            depthTexture = CreateRenderTexture(device, depthFormat, width, height, true);
+            if depthTexture == null {
+                return SdlFailure("SDL_CreateGPUTexture");
+            }
+            depthWidth = width;
+            depthHeight = height;
+            message: string! = `depth buffer recreated at ${width}x${height}`;
+            lantern:::core:::LogDebug("renderer", message);
+            delete message;
+            return null;
+        }
+
+        CollectVisibleDraws :: (world: lantern:::renderer:::RenderWorld*, frustum: Frustum, report: FrameReport~*) -> Array<VisibleDraw>! {
+            visible~ Array<VisibleDraw>! = [];
+            for drawIndex~ usize = 0; drawIndex < world->draws.length(); drawIndex++ {
+                draw: lantern:::renderer:::DrawItem = world->draws[drawIndex];
+                if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
+                    if !frustum.Intersects(mesh.bounds.Transformed(draw.transform)) {
+                        report->drawsCulled += 1;
+                        continue;
+                    }
+                    textureKey~ u32 = 4294967295;
+                    if texture := draw.texture {
+                        textureKey = texture.Index();
+                    }
+                    visible.push(VisibleDraw { textureKey: textureKey, meshIndex: draw.mesh.Index(), drawIndex: drawIndex });
+                } else {
+                    message: string! = `draw item ${drawIndex} uses a released mesh`;
+                    lantern:::core:::LogWarn("renderer", message);
+                    delete message;
+                }
+            }
+            sorted: Array<VisibleDraw>! = SortedVisibleDraws(visible);
+            delete visible;
+            return sorted!;
+        }
+
+        RecordFrame~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, colorTexture: raw Sdl:::SDL_GPUTexture~*, depthTarget: raw Sdl:::SDL_GPUTexture~*, width: u32, height: u32, world: lantern:::renderer:::RenderWorld*) -> FrameReport {
+            report~ FrameReport = FrameReport { };
+            clear~ lantern:::core:::Color = world->clearColor;
+            encodeFlag~ f32 = 0.0f;
+            if encodeSrgbInShader {
+                clear = EncodeSrgb(world->clearColor);
+                encodeFlag = 1.0f;
+            }
+            safeHeight~ u32 = height;
+            if safeHeight < 1 {
+                safeHeight = 1;
+            }
+            aspect: f32 = f32(width) / f32(safeHeight);
+            viewProjection: Mat4 = world->camera.ViewProjection(aspect);
+            cameraPosition: Vec3 = world->camera.position;
+            frustum: Frustum = Frustum:::FromViewProjection(viewProjection);
+            visibleDraws: Array<VisibleDraw>! = CollectVisibleDraws(world, frustum, report);
+            defer delete visibleDraws;
+
+            frameUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f] };
+            directionToLight: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - world->light.direction, lantern:::core:::WorldUp());
+            lightUniforms := LightUniforms {
+                directionToLight: [directionToLight.x, directionToLight.y, directionToLight.z, 0.0f],
+                lightColor: world->light.color.ToArray(),
+                ambientColor: world->light.ambient.ToArray(),
+                fogColor: world->clearColor.ToArray(),
+                fogAndOutput: [world->fogStart, world->fogEnd, 0.0f, encodeFlag],
+                cameraPosition: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f]
+            };
+            unsafe {
+                colorTarget := Sdl:::SDL_GPUColorTargetInfo {
+                    texture: colorTexture,
+                    clear_color: Sdl:::SDL_FColor { r: clear.r, g: clear.g, b: clear.b, a: 1.0f },
+                    load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
+                    store_op: Sdl:::SDL_GPU_STOREOP_STORE
+                };
+                depthTargetInfo := Sdl:::SDL_GPUDepthStencilTargetInfo {
+                    texture: depthTarget,
+                    clear_depth: 1.0f,
+                    load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
+                    store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE,
+                    stencil_load_op: Sdl:::SDL_GPU_LOADOP_DONT_CARE,
+                    stencil_store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE,
+                    cycle: true
+                };
+                pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, depthTargetInfo);
+                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lit);
+                PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(frameUniforms), 80);
+                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 96);
+                boundMesh~ u32 = 4294967295;
+                boundTexture~ u32 = 4294967295;
+                textureBound~ bool = false;
+                for visible in visibleDraws {
+                    draw: lantern:::renderer:::DrawItem = world->draws[visible.drawIndex];
+                    if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
+                        if visible.meshIndex != boundMesh {
+                            vertexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.vertexBuffer, offset: 0 };
+                            indexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.indexBuffer, offset: 0 };
+                            Sdl:::SDL_BindGPUVertexBuffers(pass, 0, vertexBinding, 1);
+                            Sdl:::SDL_BindGPUIndexBuffer(pass, indexBinding, Sdl:::SDL_GPU_INDEXELEMENTSIZE_32BIT);
+                            boundMesh = visible.meshIndex;
+                        }
+                        if !textureBound || boundTexture != visible.textureKey {
+                            texture: GpuTexture = TextureOrWhite(draw.texture);
+                            samplerBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: texture.texture, sampler: texture.sampler };
+                            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, samplerBinding, 1);
+                            boundTexture = visible.textureKey;
+                            textureBound = true;
+                        }
+                        objectUniforms := ObjectUniforms { model: draw.transform.elements, normalMatrix: NormalMatrix4(draw.transform) };
+                        colorUniforms := VectorUniforms { values: draw.color.ToArray() };
+                        PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 128);
+                        PushFragmentUniforms(commandBuffer, 1, reinterpret<u8>(colorUniforms), 16);
+                        Sdl:::SDL_DrawGPUIndexedPrimitives(pass, mesh.indexCount, 1, 0, 0, 0);
+                        report.drawsSubmitted += 1;
+                        report.triangles += u64(mesh.indexCount / 3);
+                    }
+                }
+                lineVertexCount: u32 = u32(world->lines.length());
+                if lineVertexCount > 0 {
+                    Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lines);
+                    lineUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [0.0f, 0.0f, 0.0f, encodeFlag] };
+                    PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(lineUniforms), 80);
+                    lineBinding := Sdl:::SDL_GPUBufferBinding { buffer: lineBuffer.buffer, offset: 0 };
+                    Sdl:::SDL_BindGPUVertexBuffers(pass, 0, lineBinding, 1);
+                    Sdl:::SDL_DrawGPUPrimitives(pass, lineVertexCount, 1, 0, 0);
+                    report.lineCount = lineVertexCount / 2;
+                }
+                overlayVertexCount: u32 = u32(world->overlay->vertices.length());
+                if overlayVertexCount > 0 {
+                    atlas: GpuTexture = TextureOrWhite(world->overlayTexture);
+                    Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.overlay);
+                    screenUniforms := VectorUniforms { values: [f32(width), f32(height), 0.0f, encodeFlag] };
+                    PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(screenUniforms), 16);
+                    atlasBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: atlas.texture, sampler: atlas.sampler };
+                    Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, atlasBinding, 1);
+                    overlayBinding := Sdl:::SDL_GPUBufferBinding { buffer: overlayBuffer.buffer, offset: 0 };
+                    Sdl:::SDL_BindGPUVertexBuffers(pass, 0, overlayBinding, 1);
+                    Sdl:::SDL_DrawGPUPrimitives(pass, overlayVertexCount, 1, 0, 0);
+                }
+                Sdl:::SDL_EndGPURenderPass(pass);
+            }
+            return report;
+        }
+    }
+}

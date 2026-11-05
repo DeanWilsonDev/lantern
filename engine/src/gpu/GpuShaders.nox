@@ -1,0 +1,128 @@
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    ShaderFormat :: enum {
+        Spirv,
+        Msl
+    }
+
+    ShaderStageKind :: enum {
+        Vertex,
+        Fragment
+    }
+
+    ShaderDescription :: struct {
+        name~ string = "";
+        stage~ ShaderStageKind = ShaderStageKind:::Vertex;
+        samplerCount~ u32 = 0;
+        uniformBufferCount~ u32 = 0;
+    }
+
+    ChooseShaderFormat :: (device: raw Sdl:::SDL_GPUDevice~*) -> ShaderFormat {
+        supported~ u32 = 0;
+        unsafe {
+            supported = Sdl:::SDL_GetGPUShaderFormats(device);
+        }
+        if (supported & Sdl:::SDL_GPU_SHADERFORMAT_SPIRV) == Sdl:::SDL_GPU_SHADERFORMAT_SPIRV {
+            return ShaderFormat:::Spirv;
+        }
+        return ShaderFormat:::Msl;
+    }
+
+    ShaderFormatName :: (format: ShaderFormat) -> string {
+        if format == ShaderFormat:::Spirv {
+            return "SPIR-V";
+        }
+        return "MSL";
+    }
+
+    CompiledShaderDirectory :: () -> string! {
+        overrideText: string!? = environmentVariable("LANTERN_SHADER_DIRECTORY");
+        if text := overrideText {
+            if text.length() > 0 {
+                directory: string! = `${text}/`;
+                delete overrideText;
+                return directory!;
+            }
+        }
+        delete overrideText;
+        basePath~ string! = "" + "";
+        unsafe {
+            delete basePath;
+            basePath = copyCString(Sdl:::SDL_GetBasePath());
+        }
+        directory: string! = `${basePath}../shaders/compiled/`;
+        delete basePath;
+        return directory!;
+    }
+
+    CompiledShaderPath :: (shader: ShaderDescription, format: ShaderFormat) -> string! {
+        directory: string! = CompiledShaderDirectory();
+        extension~ string = "spv";
+        if format == ShaderFormat:::Msl {
+            extension = "msl";
+        }
+        stageName~ string = "vert";
+        if shader.stage == ShaderStageKind:::Fragment {
+            stageName = "frag";
+        }
+        path: string! = `${directory}${shader.name}.${stageName}.${extension}`;
+        delete directory;
+        return path!;
+    }
+
+    CreateShader :: (device: raw Sdl:::SDL_GPUDevice~*, shader: ShaderDescription, format: ShaderFormat) -> Result<raw Sdl:::SDL_GPUShader~*, string!> {
+        path: string! = CompiledShaderPath(shader, format);
+        sdlFormat~ Sdl:::SDL_GPUShaderFormat = Sdl:::SDL_GPU_SHADERFORMAT_SPIRV;
+        entryPoint~ raw u8* = cStringLiteral("main");
+        if format == ShaderFormat:::Msl {
+            sdlFormat = Sdl:::SDL_GPU_SHADERFORMAT_MSL;
+            entryPoint = cStringLiteral("main0");
+        }
+        sdlStage~ Sdl:::SDL_GPUShaderStage = Sdl:::SDL_GPU_SHADERSTAGE_VERTEX;
+        if shader.stage == ShaderStageKind:::Fragment {
+            sdlStage = Sdl:::SDL_GPU_SHADERSTAGE_FRAGMENT;
+        }
+        codeSize~ usize = 0;
+        created~ raw Sdl:::SDL_GPUShader~* = null;
+        unsafe {
+            code := Sdl:::SDL_LoadFile(path, codeSize);
+            if code == null {
+                context: string! = `SDL_LoadFile(${path})`;
+                failure: string! = SdlFailure(context);
+                delete context;
+                delete path;
+                return Result<raw Sdl:::SDL_GPUShader~*, string!>:::Err(failure!);
+            }
+            info := Sdl:::SDL_GPUShaderCreateInfo {
+                code_size: codeSize,
+                code: code,
+                entrypoint: entryPoint,
+                format: sdlFormat,
+                stage: sdlStage,
+                num_samplers: shader.samplerCount,
+                num_uniform_buffers: shader.uniformBufferCount
+            };
+            created = Sdl:::SDL_CreateGPUShader(device, info);
+            Sdl:::SDL_free(code);
+        }
+        delete path;
+        if created == null {
+            context: string! = `SDL_CreateGPUShader(${shader.name})`;
+            failure: string! = SdlFailure(context);
+            delete context;
+            return Result<raw Sdl:::SDL_GPUShader~*, string!>:::Err(failure!);
+        }
+        return Result<raw Sdl:::SDL_GPUShader~*, string!>:::Ok(created);
+    }
+
+    ReleaseShader :: (device: raw Sdl:::SDL_GPUDevice~*, shader: raw Sdl:::SDL_GPUShader~*) -> void {
+        unsafe {
+            if shader != null {
+                Sdl:::SDL_ReleaseGPUShader(device, shader);
+            }
+        }
+    }
+}

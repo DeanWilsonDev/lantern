@@ -1,0 +1,67 @@
+lantern:::gpu :: namespace {
+    MatrixRow :: (matrix: Mat4, row: usize) -> Vec4 {
+        return Vec4 { x: matrix.elements[row], y: matrix.elements[4 + row], z: matrix.elements[8 + row], w: matrix.elements[12 + row] };
+    }
+
+    NormalizedPlane :: (plane: Vec4) -> Vec4 {
+        length: f32 = Math:::max(Vec3 { x: plane.x, y: plane.y, z: plane.z }.length(), 0.000001f);
+        return Vec4 { x: plane.x / length, y: plane.y / length, z: plane.z / length, w: plane.w / length };
+    }
+
+    Frustum :: struct {
+        planes~ Vec4[6] = filled<Vec4, 6>(Vec4 { });
+
+        static FromViewProjection :: (matrix: Mat4) -> Frustum {
+            row0: Vec4 = MatrixRow(matrix, 0);
+            row1: Vec4 = MatrixRow(matrix, 1);
+            row2: Vec4 = MatrixRow(matrix, 2);
+            row3: Vec4 = MatrixRow(matrix, 3);
+            return Frustum {
+                planes: [
+                    NormalizedPlane(row3 + row0),
+                    NormalizedPlane(row3 - row0),
+                    NormalizedPlane(row3 + row1),
+                    NormalizedPlane(row3 - row1),
+                    NormalizedPlane(row2),
+                    NormalizedPlane(row3 - row2)
+                ]
+            };
+        }
+
+        Intersects :: (bounds: lantern:::core:::Aabb) -> bool {
+            for plane in planes {
+                farthest~ Vec3 = bounds.min;
+                if plane.x >= 0.0f {
+                    farthest.x = bounds.max.x;
+                }
+                if plane.y >= 0.0f {
+                    farthest.y = bounds.max.y;
+                }
+                if plane.z >= 0.0f {
+                    farthest.z = bounds.max.z;
+                }
+                normal: Vec3 = Vec3 { x: plane.x, y: plane.y, z: plane.z };
+                if normal.dot(farthest) + plane.w < 0.0f {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    MipLevelCount :: (width: u32, height: u32) -> u32 {
+        remaining~ u32 = width;
+        if height > remaining {
+            remaining = height;
+        }
+        if remaining < 1 {
+            remaining = 1;
+        }
+        levels~ u32 = 0;
+        while remaining > 0 {
+            levels += 1;
+            remaining = remaining >> 1;
+        }
+        return levels;
+    }
+}

@@ -1,0 +1,404 @@
+Sdl :: import Sdl;
+
+lantern:::copyvertices :: foreign "c" {
+    memcpy :: (destination: raw u8~*, source: Array<lantern:::renderer:::Vertex>, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::copyindices :: foreign "c" {
+    memcpy :: (destination: raw u8~*, source: Array<u32>, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::copylines :: foreign "c" {
+    memcpy :: (destination: raw u8~*, source: Array<lantern:::renderer:::LineVertex>, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::copyoverlay :: foreign "c" {
+    memcpy :: (destination: raw u8~*, source: Array<lantern:::renderer:::OverlayVertex>, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::copytexels :: foreign "c" {
+    memcpy :: (destination: raw u8~*, source: Array<u8>, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    SdlFailure :: (context: string) -> string! {
+        detail~ string! = "" + "";
+        unsafe {
+            delete detail;
+            detail = copyCString(Sdl:::SDL_GetError());
+        }
+        message: string! = `${context}: ${detail}`;
+        delete detail;
+        return message!;
+    }
+
+    GpuMesh :: struct {
+        vertexBuffer~ raw Sdl:::SDL_GPUBuffer~* = null;
+        indexBuffer~ raw Sdl:::SDL_GPUBuffer~* = null;
+        indexCount~ u32 = 0;
+        bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb { };
+
+        Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if vertexBuffer != null {
+                    Sdl:::SDL_ReleaseGPUBuffer(device, vertexBuffer);
+                }
+                if indexBuffer != null {
+                    Sdl:::SDL_ReleaseGPUBuffer(device, indexBuffer);
+                }
+            }
+        }
+    }
+
+    GpuTexture :: struct {
+        texture~ raw Sdl:::SDL_GPUTexture~* = null;
+        sampler~ raw Sdl:::SDL_GPUSampler~* = null;
+
+        Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if texture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, texture);
+                }
+            }
+        }
+    }
+
+    CreateSampler :: (device: raw Sdl:::SDL_GPUDevice~*, filter: lantern:::renderer:::TextureFilter, wrap: lantern:::renderer:::TextureWrap) -> raw Sdl:::SDL_GPUSampler~* {
+        linear: bool = filter == lantern:::renderer:::TextureFilter:::Linear;
+        sdlFilter~ Sdl:::SDL_GPUFilter = Sdl:::SDL_GPU_FILTER_NEAREST;
+        mipmapMode~ Sdl:::SDL_GPUSamplerMipmapMode = Sdl:::SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+        if linear {
+            sdlFilter = Sdl:::SDL_GPU_FILTER_LINEAR;
+            mipmapMode = Sdl:::SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+        }
+        addressMode~ Sdl:::SDL_GPUSamplerAddressMode = Sdl:::SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        if wrap == lantern:::renderer:::TextureWrap:::Repeat {
+            addressMode = Sdl:::SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+        }
+        unsafe {
+            info := Sdl:::SDL_GPUSamplerCreateInfo {
+                min_filter: sdlFilter,
+                mag_filter: sdlFilter,
+                mipmap_mode: mipmapMode,
+                address_mode_u: addressMode,
+                address_mode_v: addressMode,
+                address_mode_w: addressMode,
+                max_lod: 1000.0f,
+                max_anisotropy: 4.0f,
+                enable_anisotropy: linear
+            };
+            return Sdl:::SDL_CreateGPUSampler(device, info);
+        }
+    }
+
+    Samplers :: struct {
+        linearRepeat~ raw Sdl:::SDL_GPUSampler~* = null;
+        linearClamp~ raw Sdl:::SDL_GPUSampler~* = null;
+        nearestRepeat~ raw Sdl:::SDL_GPUSampler~* = null;
+        nearestClamp~ raw Sdl:::SDL_GPUSampler~* = null;
+
+        static Create :: (device: raw Sdl:::SDL_GPUDevice~*) -> Samplers? {
+            samplers := Samplers {
+                linearRepeat: CreateSampler(device, lantern:::renderer:::TextureFilter:::Linear, lantern:::renderer:::TextureWrap:::Repeat),
+                linearClamp: CreateSampler(device, lantern:::renderer:::TextureFilter:::Linear, lantern:::renderer:::TextureWrap:::Clamp),
+                nearestRepeat: CreateSampler(device, lantern:::renderer:::TextureFilter:::Nearest, lantern:::renderer:::TextureWrap:::Repeat),
+                nearestClamp: CreateSampler(device, lantern:::renderer:::TextureFilter:::Nearest, lantern:::renderer:::TextureWrap:::Clamp)
+            };
+            if samplers.linearRepeat == null || samplers.linearClamp == null || samplers.nearestRepeat == null || samplers.nearestClamp == null {
+                samplers.Release(device);
+                return null;
+            }
+            return samplers;
+        }
+
+        ForTexture :: (texture: lantern:::renderer:::TextureData*) -> raw Sdl:::SDL_GPUSampler~* {
+            if texture->filter == lantern:::renderer:::TextureFilter:::Linear {
+                if texture->wrap == lantern:::renderer:::TextureWrap:::Repeat {
+                    return linearRepeat;
+                }
+                return linearClamp;
+            }
+            if texture->wrap == lantern:::renderer:::TextureWrap:::Repeat {
+                return nearestRepeat;
+            }
+            return nearestClamp;
+        }
+
+        Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if linearRepeat != null {
+                    Sdl:::SDL_ReleaseGPUSampler(device, linearRepeat);
+                }
+                if linearClamp != null {
+                    Sdl:::SDL_ReleaseGPUSampler(device, linearClamp);
+                }
+                if nearestRepeat != null {
+                    Sdl:::SDL_ReleaseGPUSampler(device, nearestRepeat);
+                }
+                if nearestClamp != null {
+                    Sdl:::SDL_ReleaseGPUSampler(device, nearestClamp);
+                }
+            }
+        }
+    }
+
+    CreateBuffer :: (device: raw Sdl:::SDL_GPUDevice~*, usage: Sdl:::SDL_GPUBufferUsageFlags, size: u32) -> raw Sdl:::SDL_GPUBuffer~* {
+        unsafe {
+            info := Sdl:::SDL_GPUBufferCreateInfo { usage: usage, size: size };
+            return Sdl:::SDL_CreateGPUBuffer(device, info);
+        }
+    }
+
+    CreateTransferBuffer :: (device: raw Sdl:::SDL_GPUDevice~*, size: u32, upload: bool) -> raw Sdl:::SDL_GPUTransferBuffer~* {
+        usage~ Sdl:::SDL_GPUTransferBufferUsage = Sdl:::SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+        if upload {
+            usage = Sdl:::SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        }
+        unsafe {
+            info := Sdl:::SDL_GPUTransferBufferCreateInfo { usage: usage, size: size };
+            return Sdl:::SDL_CreateGPUTransferBuffer(device, info);
+        }
+    }
+
+    CreateRenderTexture :: (device: raw Sdl:::SDL_GPUDevice~*, format: Sdl:::SDL_GPUTextureFormat, width: u32, height: u32, depth: bool) -> raw Sdl:::SDL_GPUTexture~* {
+        usage~ Sdl:::SDL_GPUTextureUsageFlags = Sdl:::SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        if depth {
+            usage = Sdl:::SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+        }
+        targetWidth~ u32 = width;
+        targetHeight~ u32 = height;
+        if targetWidth < 1 {
+            targetWidth = 1;
+        }
+        if targetHeight < 1 {
+            targetHeight = 1;
+        }
+        unsafe {
+            info := Sdl:::SDL_GPUTextureCreateInfo {
+                type: Sdl:::SDL_GPU_TEXTURETYPE_2D,
+                format: format,
+                usage: usage,
+                width: targetWidth,
+                height: targetHeight,
+                layer_count_or_depth: 1,
+                num_levels: 1,
+                sample_count: Sdl:::SDL_GPU_SAMPLECOUNT_1
+            };
+            return Sdl:::SDL_CreateGPUTexture(device, info);
+        }
+    }
+
+    SubmitUpload :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, device: raw Sdl:::SDL_GPUDevice~*, transfer: raw Sdl:::SDL_GPUTransferBuffer~*) -> bool {
+        unsafe {
+            submitted: bool = Sdl:::SDL_SubmitGPUCommandBuffer(commandBuffer);
+            Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+            return submitted;
+        }
+    }
+
+    UploadMesh :: (device: raw Sdl:::SDL_GPUDevice~*, mesh: lantern:::renderer:::MeshData*) -> Result<GpuMesh, string!> {
+        vertexByteCount: u32 = u32(mesh->VertexByteLength());
+        indexByteCount: u32 = u32(mesh->IndexByteLength());
+        gpuMesh~ GpuMesh = GpuMesh {
+            vertexBuffer: CreateBuffer(device, Sdl:::SDL_GPU_BUFFERUSAGE_VERTEX, vertexByteCount),
+            indexBuffer: CreateBuffer(device, Sdl:::SDL_GPU_BUFFERUSAGE_INDEX, indexByteCount),
+            indexCount: u32(mesh->indices.length()),
+            bounds: mesh->Bounds()
+        };
+        if gpuMesh.vertexBuffer == null || gpuMesh.indexBuffer == null {
+            failure: string! = SdlFailure("SDL_CreateGPUBuffer");
+            gpuMesh.Release(device);
+            return Result<GpuMesh, string!>:::Err(failure!);
+        }
+        transfer: raw Sdl:::SDL_GPUTransferBuffer~* = CreateTransferBuffer(device, vertexByteCount + indexByteCount, true);
+        if transfer == null {
+            failure: string! = SdlFailure("SDL_CreateGPUTransferBuffer");
+            gpuMesh.Release(device);
+            return Result<GpuMesh, string!>:::Err(failure!);
+        }
+        unsafe {
+            mapped: raw u8~* = Sdl:::SDL_MapGPUTransferBuffer(device, transfer, false);
+            if mapped == null {
+                failure: string! = SdlFailure("SDL_MapGPUTransferBuffer");
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+                gpuMesh.Release(device);
+                return Result<GpuMesh, string!>:::Err(failure!);
+            }
+            lantern:::copyvertices:::memcpy(mapped, mesh->vertices, usize(vertexByteCount));
+            Sdl:::SDL_UnmapGPUTransferBuffer(device, transfer);
+        }
+        indexTransfer: raw Sdl:::SDL_GPUTransferBuffer~* = CreateTransferBuffer(device, indexByteCount, true);
+        if indexTransfer == null {
+            failure: string! = SdlFailure("SDL_CreateGPUTransferBuffer");
+            unsafe {
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+            }
+            gpuMesh.Release(device);
+            return Result<GpuMesh, string!>:::Err(failure!);
+        }
+        unsafe {
+            mapped: raw u8~* = Sdl:::SDL_MapGPUTransferBuffer(device, indexTransfer, false);
+            if mapped == null {
+                failure: string! = SdlFailure("SDL_MapGPUTransferBuffer");
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, indexTransfer);
+                gpuMesh.Release(device);
+                return Result<GpuMesh, string!>:::Err(failure!);
+            }
+            lantern:::copyindices:::memcpy(mapped, mesh->indices, usize(indexByteCount));
+            Sdl:::SDL_UnmapGPUTransferBuffer(device, indexTransfer);
+            commandBuffer := Sdl:::SDL_AcquireGPUCommandBuffer(device);
+            if commandBuffer == null {
+                failure: string! = SdlFailure("SDL_AcquireGPUCommandBuffer");
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, indexTransfer);
+                gpuMesh.Release(device);
+                return Result<GpuMesh, string!>:::Err(failure!);
+            }
+            copyPass := Sdl:::SDL_BeginGPUCopyPass(commandBuffer);
+            vertexSource := Sdl:::SDL_GPUTransferBufferLocation { transfer_buffer: transfer, offset: 0 };
+            vertexDestination := Sdl:::SDL_GPUBufferRegion { buffer: gpuMesh.vertexBuffer, offset: 0, size: vertexByteCount };
+            Sdl:::SDL_UploadToGPUBuffer(copyPass, vertexSource, vertexDestination, false);
+            indexSource := Sdl:::SDL_GPUTransferBufferLocation { transfer_buffer: indexTransfer, offset: 0 };
+            indexDestination := Sdl:::SDL_GPUBufferRegion { buffer: gpuMesh.indexBuffer, offset: 0, size: indexByteCount };
+            Sdl:::SDL_UploadToGPUBuffer(copyPass, indexSource, indexDestination, false);
+            Sdl:::SDL_EndGPUCopyPass(copyPass);
+            Sdl:::SDL_ReleaseGPUTransferBuffer(device, indexTransfer);
+            if !SubmitUpload(commandBuffer, device, transfer) {
+                failure: string! = SdlFailure("SDL_SubmitGPUCommandBuffer");
+                gpuMesh.Release(device);
+                return Result<GpuMesh, string!>:::Err(failure!);
+            }
+        }
+        return Result<GpuMesh, string!>:::Ok(gpuMesh);
+    }
+
+    UploadTexture :: (device: raw Sdl:::SDL_GPUDevice~*, samplers: Samplers, texture: lantern:::renderer:::TextureData*) -> Result<GpuTexture, string!> {
+        if texture->width == 0 || texture->height == 0 || texture->rgba8.length() != usize(texture->width * texture->height * 4) {
+            message: string! = `texture data is ${texture->rgba8.length()} bytes for ${texture->width}x${texture->height}`;
+            return Result<GpuTexture, string!>:::Err(message!);
+        }
+        withMipmaps: bool = texture->filter == lantern:::renderer:::TextureFilter:::Linear && (texture->width > 1 || texture->height > 1);
+        levels~ u32 = 1;
+        usage~ Sdl:::SDL_GPUTextureUsageFlags = Sdl:::SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        if withMipmaps {
+            levels = MipLevelCount(texture->width, texture->height);
+            usage = usage | Sdl:::SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        }
+        byteCount: u32 = u32(texture->rgba8.length());
+        result~ GpuTexture = GpuTexture { sampler: samplers.ForTexture(texture) };
+        unsafe {
+            info := Sdl:::SDL_GPUTextureCreateInfo {
+                type: Sdl:::SDL_GPU_TEXTURETYPE_2D,
+                format: Sdl:::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB,
+                usage: usage,
+                width: texture->width,
+                height: texture->height,
+                layer_count_or_depth: 1,
+                num_levels: levels,
+                sample_count: Sdl:::SDL_GPU_SAMPLECOUNT_1
+            };
+            result.texture = Sdl:::SDL_CreateGPUTexture(device, info);
+        }
+        if result.texture == null {
+            return Result<GpuTexture, string!>:::Err(SdlFailure("SDL_CreateGPUTexture"));
+        }
+        transfer: raw Sdl:::SDL_GPUTransferBuffer~* = CreateTransferBuffer(device, byteCount, true);
+        if transfer == null {
+            failure: string! = SdlFailure("SDL_CreateGPUTransferBuffer");
+            result.Release(device);
+            return Result<GpuTexture, string!>:::Err(failure!);
+        }
+        unsafe {
+            mapped: raw u8~* = Sdl:::SDL_MapGPUTransferBuffer(device, transfer, false);
+            if mapped == null {
+                failure: string! = SdlFailure("SDL_MapGPUTransferBuffer");
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+                result.Release(device);
+                return Result<GpuTexture, string!>:::Err(failure!);
+            }
+            lantern:::copytexels:::memcpy(mapped, texture->rgba8, usize(byteCount));
+            Sdl:::SDL_UnmapGPUTransferBuffer(device, transfer);
+            commandBuffer := Sdl:::SDL_AcquireGPUCommandBuffer(device);
+            if commandBuffer == null {
+                failure: string! = SdlFailure("SDL_AcquireGPUCommandBuffer");
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+                result.Release(device);
+                return Result<GpuTexture, string!>:::Err(failure!);
+            }
+            copyPass := Sdl:::SDL_BeginGPUCopyPass(commandBuffer);
+            source := Sdl:::SDL_GPUTextureTransferInfo { transfer_buffer: transfer };
+            destination := Sdl:::SDL_GPUTextureRegion { texture: result.texture, w: texture->width, h: texture->height, d: 1 };
+            Sdl:::SDL_UploadToGPUTexture(copyPass, source, destination, false);
+            Sdl:::SDL_EndGPUCopyPass(copyPass);
+            if withMipmaps {
+                Sdl:::SDL_GenerateMipmapsForGPUTexture(commandBuffer, result.texture);
+            }
+            if !SubmitUpload(commandBuffer, device, transfer) {
+                failure: string! = SdlFailure("SDL_SubmitGPUCommandBuffer");
+                result.Release(device);
+                return Result<GpuTexture, string!>:::Err(failure!);
+            }
+        }
+        return Result<GpuTexture, string!>:::Ok(result);
+    }
+
+    DynamicBuffer :: struct {
+        usage~ Sdl:::SDL_GPUBufferUsageFlags = 0;
+        buffer~ raw Sdl:::SDL_GPUBuffer~* = null;
+        transfer~ raw Sdl:::SDL_GPUTransferBuffer~* = null;
+        capacity~ u32 = 0;
+
+        Reserve~: (device: raw Sdl:::SDL_GPUDevice~*, size: u32) -> string!? {
+            if size <= capacity {
+                return null;
+            }
+            Release(device);
+            newCapacity~ u32 = 4096;
+            while newCapacity < size {
+                newCapacity = newCapacity * 2;
+            }
+            buffer = CreateBuffer(device, usage, newCapacity);
+            if buffer == null {
+                return SdlFailure("SDL_CreateGPUBuffer");
+            }
+            transfer = CreateTransferBuffer(device, newCapacity, true);
+            if transfer == null {
+                return SdlFailure("SDL_CreateGPUTransferBuffer");
+            }
+            capacity = newCapacity;
+            return null;
+        }
+
+        Map :: (device: raw Sdl:::SDL_GPUDevice~*) -> raw u8~* {
+            unsafe {
+                return Sdl:::SDL_MapGPUTransferBuffer(device, transfer, true);
+            }
+        }
+
+        FinishUpload :: (device: raw Sdl:::SDL_GPUDevice~*, copyPass: raw Sdl:::SDL_GPUCopyPass~*, byteCount: u32) -> void {
+            unsafe {
+                Sdl:::SDL_UnmapGPUTransferBuffer(device, transfer);
+                source := Sdl:::SDL_GPUTransferBufferLocation { transfer_buffer: transfer, offset: 0 };
+                destination := Sdl:::SDL_GPUBufferRegion { buffer: buffer, offset: 0, size: byteCount };
+                Sdl:::SDL_UploadToGPUBuffer(copyPass, source, destination, true);
+            }
+        }
+
+        Release~: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if buffer != null {
+                    Sdl:::SDL_ReleaseGPUBuffer(device, buffer);
+                }
+                if transfer != null {
+                    Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+                }
+            }
+            buffer = null;
+            transfer = null;
+            capacity = 0;
+        }
+    }
+}

@@ -1,0 +1,228 @@
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    VertexAttributeLayout :: struct {
+        format~ Sdl:::SDL_GPUVertexElementFormat = 0;
+        offset~ u32 = 0;
+    }
+
+    PipelineDescription :: struct {
+        vertex~ ShaderDescription = ShaderDescription { };
+        fragment~ ShaderDescription = ShaderDescription { };
+        stride~ u32 = 0;
+        attributes~ VertexAttributeLayout[4] = filled<VertexAttributeLayout, 4>(VertexAttributeLayout { });
+        attributeCount~ u32 = 0;
+        primitive~ Sdl:::SDL_GPUPrimitiveType = 0;
+        cullBackFaces~ bool = false;
+        depthTest~ bool = false;
+        depthWrite~ bool = false;
+        alphaBlend~ bool = false;
+    }
+
+    Pipelines :: struct {
+        lit~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        lines~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        overlay~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+
+        Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if lit != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, lit);
+                }
+                if lines != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, lines);
+                }
+                if overlay != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, overlay);
+                }
+            }
+        }
+    }
+
+    LitPipelineDescription :: () -> PipelineDescription {
+        return PipelineDescription {
+            vertex: ShaderDescription { name: "lit", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 2 },
+            fragment: ShaderDescription { name: "lit", stage: ShaderStageKind:::Fragment, samplerCount: 1, uniformBufferCount: 2 },
+            stride: lantern:::renderer:::VERTEX_STRIDE,
+            attributes: [
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offset: 0 },
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offset: 12 },
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offset: 24 },
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offset: 32 }
+            ],
+            attributeCount: 4,
+            primitive: Sdl:::SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            cullBackFaces: true,
+            depthTest: true,
+            depthWrite: true,
+            alphaBlend: false
+        };
+    }
+
+    LinesPipelineDescription :: () -> PipelineDescription {
+        return PipelineDescription {
+            vertex: ShaderDescription { name: "lines", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 1 },
+            fragment: ShaderDescription { name: "lines", stage: ShaderStageKind:::Fragment, samplerCount: 0, uniformBufferCount: 0 },
+            stride: lantern:::renderer:::LINE_VERTEX_STRIDE,
+            attributes: [
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offset: 0 },
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offset: 12 },
+                VertexAttributeLayout { },
+                VertexAttributeLayout { }
+            ],
+            attributeCount: 2,
+            primitive: Sdl:::SDL_GPU_PRIMITIVETYPE_LINELIST,
+            cullBackFaces: false,
+            depthTest: true,
+            depthWrite: false,
+            alphaBlend: true
+        };
+    }
+
+    OverlayPipelineDescription :: () -> PipelineDescription {
+        return PipelineDescription {
+            vertex: ShaderDescription { name: "overlay", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 1 },
+            fragment: ShaderDescription { name: "overlay", stage: ShaderStageKind:::Fragment, samplerCount: 1, uniformBufferCount: 0 },
+            stride: lantern:::renderer:::OVERLAY_VERTEX_STRIDE,
+            attributes: [
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offset: 0 },
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offset: 8 },
+                VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offset: 16 },
+                VertexAttributeLayout { }
+            ],
+            attributeCount: 3,
+            primitive: Sdl:::SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            cullBackFaces: false,
+            depthTest: false,
+            depthWrite: false,
+            alphaBlend: true
+        };
+    }
+
+    BlendState :: (alphaBlend: bool) -> Sdl:::SDL_GPUColorTargetBlendState {
+        if !alphaBlend {
+            return Sdl:::SDL_GPUColorTargetBlendState { };
+        }
+        return Sdl:::SDL_GPUColorTargetBlendState {
+            src_color_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+            dst_color_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            color_blend_op: Sdl:::SDL_GPU_BLENDOP_ADD,
+            src_alpha_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_ONE,
+            dst_alpha_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+            alpha_blend_op: Sdl:::SDL_GPU_BLENDOP_ADD,
+            enable_blend: true
+        };
+    }
+
+    CreatePipeline :: (device: raw Sdl:::SDL_GPUDevice~*, format: ShaderFormat, colorFormat: Sdl:::SDL_GPUTextureFormat, depthFormat: Sdl:::SDL_GPUTextureFormat, description: PipelineDescription) -> Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!> {
+        vertexShader~ raw Sdl:::SDL_GPUShader~* = null;
+        when CreateShader(device, description.vertex, format) {
+            Result:::Ok(shader) -> {
+                vertexShader = shader;
+            },
+            Result:::Err(message) -> {
+                return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Err(message!);
+            }
+        }
+        fragmentShader~ raw Sdl:::SDL_GPUShader~* = null;
+        when CreateShader(device, description.fragment, format) {
+            Result:::Ok(shader) -> {
+                fragmentShader = shader;
+            },
+            Result:::Err(message) -> {
+                ReleaseShader(device, vertexShader);
+                return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Err(message!);
+            }
+        }
+        attributes~ Sdl:::SDL_GPUVertexAttribute[4] = filled<Sdl:::SDL_GPUVertexAttribute, 4>(Sdl:::SDL_GPUVertexAttribute { });
+        attributeCount: u32 = description.attributeCount;
+        for location~ u32 = 0; location < attributeCount; location++ {
+            layout: VertexAttributeLayout = description.attributes[usize(location)];
+            attributes[usize(location)] = Sdl:::SDL_GPUVertexAttribute { location: location, buffer_slot: 0, format: layout.format, offset: layout.offset };
+        }
+        cullMode~ Sdl:::SDL_GPUCullMode = Sdl:::SDL_GPU_CULLMODE_NONE;
+        if description.cullBackFaces {
+            cullMode = Sdl:::SDL_GPU_CULLMODE_BACK;
+        }
+        pipeline~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        unsafe {
+            bufferDescription := Sdl:::SDL_GPUVertexBufferDescription {
+                slot: 0,
+                pitch: description.stride,
+                input_rate: Sdl:::SDL_GPU_VERTEXINPUTRATE_VERTEX
+            };
+            colorTarget := Sdl:::SDL_GPUColorTargetDescription { format: colorFormat, blend_state: BlendState(description.alphaBlend) };
+            firstAttribute: Sdl:::SDL_GPUVertexAttribute* = reinterpret<Sdl:::SDL_GPUVertexAttribute>(attributes);
+            info := Sdl:::SDL_GPUGraphicsPipelineCreateInfo {
+                vertex_shader: vertexShader,
+                fragment_shader: fragmentShader,
+                vertex_input_state: Sdl:::SDL_GPUVertexInputState {
+                    vertex_buffer_descriptions: bufferDescription,
+                    num_vertex_buffers: 1,
+                    vertex_attributes: firstAttribute,
+                    num_vertex_attributes: attributeCount
+                },
+                primitive_type: description.primitive,
+                rasterizer_state: Sdl:::SDL_GPURasterizerState {
+                    fill_mode: Sdl:::SDL_GPU_FILLMODE_FILL,
+                    cull_mode: cullMode,
+                    front_face: Sdl:::SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE
+                },
+                depth_stencil_state: Sdl:::SDL_GPUDepthStencilState {
+                    compare_op: Sdl:::SDL_GPU_COMPAREOP_LESS,
+                    enable_depth_test: description.depthTest,
+                    enable_depth_write: description.depthWrite
+                },
+                target_info: Sdl:::SDL_GPUGraphicsPipelineTargetInfo {
+                    color_target_descriptions: colorTarget,
+                    num_color_targets: 1,
+                    depth_stencil_format: depthFormat,
+                    has_depth_stencil_target: true
+                }
+            };
+            pipeline = Sdl:::SDL_CreateGPUGraphicsPipeline(device, info);
+        }
+        ReleaseShader(device, vertexShader);
+        ReleaseShader(device, fragmentShader);
+        if pipeline == null {
+            context: string! = `SDL_CreateGPUGraphicsPipeline(${description.vertex.name})`;
+            failure: string! = SdlFailure(context);
+            delete context;
+            return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Err(failure!);
+        }
+        return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Ok(pipeline);
+    }
+
+    CreatePipelines :: (device: raw Sdl:::SDL_GPUDevice~*, format: ShaderFormat, colorFormat: Sdl:::SDL_GPUTextureFormat, depthFormat: Sdl:::SDL_GPUTextureFormat) -> Result<Pipelines, string!> {
+        pipelines~ Pipelines = Pipelines { };
+        when CreatePipeline(device, format, colorFormat, depthFormat, LitPipelineDescription()) {
+            Result:::Ok(pipeline) -> {
+                pipelines.lit = pipeline;
+            },
+            Result:::Err(message) -> {
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, colorFormat, depthFormat, LinesPipelineDescription()) {
+            Result:::Ok(pipeline) -> {
+                pipelines.lines = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, colorFormat, depthFormat, OverlayPipelineDescription()) {
+            Result:::Ok(pipeline) -> {
+                pipelines.overlay = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        return Result<Pipelines, string!>:::Ok(pipelines);
+    }
+}

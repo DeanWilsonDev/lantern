@@ -6,8 +6,8 @@ tracked on the board's `engine-on-nox` epic (`docs/kanban/engine-on-nox`), one f
 
 So far it has the scaffold (milestone L0): a Nox project, its C dependencies through Mist, the SDL3 and Nyx bindings,
 the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each. It also has
-the core module (milestone L1), the window and frame loop (milestone L2) and the backend-neutral half of the renderer
-with PNG and glTF loading (the first two parts of milestone L3), described under "Layout".
+the core module (milestone L1), the window and frame loop (milestone L2) and the renderer, with PNG and glTF loading and
+the SDL GPU backend (milestone L3), described under "Layout".
 
 ## What you need
 
@@ -45,12 +45,18 @@ LIBRARY_PATH=generated/mist:/opt/homebrew/lib nox run
 
 On Arch, leave `/opt/homebrew/lib` out of `LIBRARY_PATH`. `nox run` builds `build/lantern` and runs it. It prints the
 SDL version, the size of `assets/textures/ground.png` and the number of meshes in `assets/models/gem.glb`, read through
-stb_image and cgltf, then opens a window and runs a stub game in the frame loop until you press Escape or close the
+stb_image and cgltf, then opens a window and draws a lit scene through SDL GPU (a textured ground, the gem spinning, a
+cube with debug lines, and overlay text) from a stub game in the frame loop, until you press Escape or close the
 window. It logs window events to standard error and prints a summary of frames, fixed steps and renders when it stops.
-Run it from this directory, since the asset paths are relative to it.
+Run it from this directory, since the asset paths are relative to it. The compiled shaders load at run time from
+`../shaders/compiled/` beside the executable, which is `shaders/compiled/` for `build/lantern`.
 
 - `LANTERN_LOG` sets the log level (`error`, `warn`, `info`, `debug`, `trace` or `off`; `info` by default).
 - `LANTERN_MAX_FRAMES=N` stops after N frames.
+- `LANTERN_CAPTURE_PATH=out.png` saves the last frame as a PNG when it stops.
+- `LANTERN_GPU_DEBUG=1` turns on SDL GPU's debug mode, `LANTERN_GPU_DRIVER` picks a driver (`vulkan`, `metal`), and
+  `LANTERN_VSYNC=0` turns vertical sync off.
+- `LANTERN_SHADER_DIRECTORY` loads the compiled shaders from another directory.
 - `LANTERN_WINDOW_SCRIPT=1` resizes the window to 800x450 on frame 5, minimises it on frame 15, restores it on frame 30
   and asks to quit on frame 45.
 
@@ -86,8 +92,12 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `Png.nox`), `GltfLoader.nox` (a `.glb` or `.gltf` flattened into one `MeshData` through cgltf) and the bitmap font: `FontData.nox` holds the glyphs of
   Daniel Hepper's public-domain `font8x8_basic`, and `Text.nox` bakes them into the 128x48 atlas and lays text out into
   the overlay.
-- `src/stub/` is the stub game `main` runs until the engine can draw: it quits on Escape and counts what the loop
-  calls, and `WindowScript` drives the window for the check below.
+- `src/gpu/` is the Rust `sdl-gpu` crate: `GpuRenderer` owns the device, the swapchain, the three pipelines
+  (`GpuPipelines.nox`, from the shaders `GpuShaders.nox` loads) and every mesh and texture (`GpuResources.nox`), and
+  draws a `RenderWorld` to the window (`Render`) or to memory (`Capture`), culling draws against the camera's
+  `Frustum`.
+- `src/stub/` is the stub game `main` runs until the game host can: it quits on Escape, counts what the loop calls and
+  draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
   `PlatformBackend` and `AudioSink` interfaces a backend implements.
 - `tests/<module>/<test>/` is one test program each: a `main.nox`, a `nox.json` naming the engine sources it needs,
@@ -103,7 +113,11 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
 runs `nox test` over every suite under `tests/`, and passes its arguments through (`--backend c`, for one). It needs a
 `nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
 It points `LIBRARY_PATH` at `generated/mist`, which the renderer and asset tests link cgltf and stb_image from, so
-run `./tools/install-dependencies.sh` first. The `tests/sdl` programs link SDL3 and read `generated/sdl.nox`, so run `./tools/bind-sdl.sh` first.
+run `./tools/install-dependencies.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
+`generated/sdl.nox`, so run `./tools/bind-sdl.sh` first. Two of the `tests/gpu` programs render with a real GPU device
+and skip (logging why) when there isn't one; set `LANTERN_REQUIRE_GPU=1` to make that a failure. On Linux with no
+display, the script uses SDL's offscreen video driver, which renders with a software Vulkan driver such as lavapipe
+(Ubuntu's `mesa-vulkan-drivers`).
 
 ```sh
 ./tools/check-window.sh

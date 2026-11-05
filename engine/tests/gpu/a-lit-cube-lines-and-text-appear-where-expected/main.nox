@@ -1,0 +1,92 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    rig := lantern:::gputest:::Setup();
+    guard rig return lantern:::gputest:::PrintSkipped("a lit cube, lines and text appear where expected");
+    defer delete rig;
+    renderer: lantern:::gpu:::GpuRenderer~* = rig->renderer;
+    cubeData := lantern:::renderer:::Cube(1.0f);
+    defer delete cubeData;
+    atlasData := lantern:::renderer:::FontAtlas();
+    defer delete atlasData;
+    cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    when renderer->CreateMesh(cubeData) {
+        Result:::Ok(handle) -> {
+            cube = handle;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    atlas~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
+    when renderer->CreateTexture(atlasData) {
+        Result:::Ok(handle) -> {
+            atlas = handle;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    world := new lantern:::renderer:::RenderWorld();
+    defer delete world;
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 0.0f, z: 3.0f }, Vec3 { });
+    world->clearColor = lantern:::core:::Color:::Rgb(0.0f, 0.0f, 1.0f);
+    world->overlayTexture = atlas;
+    world->Draw(cube, null, Mat4 { }, lantern:::core:::Color:::Rgb(1.0f, 0.0f, 0.0f));
+    world->Draw(cube, null, Mat4:::translation(Vec3 { x: 0.0f, y: 0.0f, z: 10.0f }), lantern:::core:::Color:::White());
+    world->Line(Vec3 { x: -5.0f, y: -0.9f, z: 0.0f }, Vec3 { x: 5.0f, y: -0.9f, z: 0.0f }, lantern:::core:::Color:::Green());
+    world->overlay->Rect(Vec2 { }, Vec2 { x: 16.0f, y: 16.0f }, lantern:::core:::Color:::White());
+    world->overlay->Text("Hi", Vec2 { x: 20.0f, y: 0.0f }, 2.0f, lantern:::core:::Color:::Yellow());
+
+    when renderer->Capture(world, 128, 128) {
+        Result:::Ok(image) -> {
+            capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+            if path := capturePath {
+                bytes: Array<u8>! = image->ToPngBytes();
+                assert(lantern:::core:::WriteBytes(path, bytes), "the capture is written");
+                delete bytes;
+            }
+            delete capturePath;
+            center: u8[4] = lantern:::gputest:::Pixel(image, 64, 64);
+            if !(center[0] > 60 && center[1] < 40 && center[2] < 40) {
+                print(`the centre is ${center[0]} ${center[1]} ${center[2]}`);
+            }
+            assert(center[0] > 60 && center[1] < 40 && center[2] < 40, "the cube's lit front face is red");
+            corner: u8[4] = lantern:::gputest:::Pixel(image, 127, 127);
+            assert(corner[2] > 200 && corner[0] < 30, "the clear colour fills the corner");
+            overlayPixel: u8[4] = lantern:::gputest:::Pixel(image, 4, 4);
+            assert(overlayPixel[0] == 255 && overlayPixel[1] == 255 && overlayPixel[2] == 255, "the overlay rectangle is white");
+            greenRow~ bool = false;
+            for y~ u32 = 80; y < 128; y++ {
+                linePixel: u8[4] = lantern:::gputest:::Pixel(image, 10, y);
+                if linePixel[1] > 200 && linePixel[2] < 200 {
+                    greenRow = true;
+                }
+            }
+            assert(greenRow, "the debug line crosses the bottom of the view");
+            delete image;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    when renderer->Render(world) {
+        Result:::Ok(frame) -> {
+            assert(frame.drawsCulled == 1, "the cube behind the camera is culled");
+            assert(frame.drawsSubmitted == 1, "one cube is drawn");
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    print("a lit cube, lines and text appear where expected");
+    return 0;
+}
