@@ -1,0 +1,170 @@
+NyxC :: import NyxC;
+
+lantern:::testing :: namespace {
+    EMPTY_APPLICATION: string : "Game :: class : Application {\npublic:\n    Run :: () -> void { }\n}\n";
+
+    ReportError :: (error: lantern:::nyx:::NyxError*!) -> void {
+        text: string! = error->Text();
+        print(`unexpected Nyx error: ${text}`);
+        delete text;
+        delete error;
+    }
+
+    ProgramOrFail :: (result: Result<lantern:::nyx:::Program*!, lantern:::nyx:::NyxError*!>, runtime: lantern:::nyx:::Runtime*) -> lantern:::nyx:::Program*! {
+        when result! {
+            Result:::Ok(program) -> {
+                return program!;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                rendered: string! = TextOrFail(runtime->RenderDiagnostics());
+                print(rendered);
+                delete rendered;
+                assert(false, "the script mounts");
+                return new lantern:::nyx:::Program(null, null);
+            }
+        }
+    }
+
+    Mount :: (runtime: lantern:::nyx:::Runtime~*, functions: string) -> lantern:::nyx:::Program*! {
+        source~ string! = "";
+        source += functions;
+        source += "\n";
+        source += EMPTY_APPLICATION;
+        mounted := runtime->MountSource(source, "test.nyx", "Game");
+        program := ProgramOrFail(mounted!, runtime);
+        delete source;
+        return program!;
+    }
+
+    ValueOrFail :: (result: Result<lantern:::nyx:::Value*!, lantern:::nyx:::NyxError*!>) -> lantern:::nyx:::Value*! {
+        when result! {
+            Result:::Ok(value) -> {
+                return value!;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the call returns a value");
+                return new lantern:::nyx:::Value(null, null);
+            }
+        }
+    }
+
+    ErrorOrFail :: (result: Result<lantern:::nyx:::Value*!, lantern:::nyx:::NyxError*!>) -> lantern:::nyx:::NyxError*! {
+        when result! {
+            Result:::Ok(value) -> {
+                delete value;
+                assert(false, "the call fails");
+                return new lantern:::nyx:::NyxError(0, "");
+            },
+            Result:::Err(error) -> {
+                return error!;
+            }
+        }
+    }
+
+    TextOrFail :: (result: Result<string!, lantern:::nyx:::NyxError*!>) -> string! {
+        when result! {
+            Result:::Ok(text) -> {
+                return text!;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the value is a string");
+                return "";
+            }
+        }
+    }
+
+    I32OrFail :: (result: Result<i32, lantern:::nyx:::NyxError*!>) -> i32 {
+        when result! {
+            Result:::Ok(number) -> {
+                return number;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the value is an i32");
+                return 0;
+            }
+        }
+    }
+
+    F32OrFail :: (result: Result<f32, lantern:::nyx:::NyxError*!>) -> f32 {
+        when result! {
+            Result:::Ok(number) -> {
+                return number;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the value is an f32");
+                return 0.0f;
+            }
+        }
+    }
+
+    BoolOrFail :: (result: Result<bool, lantern:::nyx:::NyxError*!>) -> bool {
+        when result! {
+            Result:::Ok(number) -> {
+                return number;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the value is a bool");
+                return false;
+            }
+        }
+    }
+
+    I64OrFail :: (result: Result<i64, lantern:::nyx:::NyxError*!>) -> i64 {
+        when result! {
+            Result:::Ok(number) -> {
+                return number;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the value is an i64");
+                return 0;
+            }
+        }
+    }
+
+    F64OrFail :: (result: Result<f64, lantern:::nyx:::NyxError*!>) -> f64 {
+        when result! {
+            Result:::Ok(number) -> {
+                return number;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the value is an f64");
+                return 0.0f;
+            }
+        }
+    }
+
+    UsizeOrFail :: (result: Result<usize, lantern:::nyx:::NyxError*!>) -> usize {
+        when result! {
+            Result:::Ok(number) -> {
+                return number;
+            },
+            Result:::Err(error) -> {
+                ReportError(error!);
+                assert(false, "the value is a usize");
+                return 0;
+            }
+        }
+    }
+
+    CallI32 :: (program: lantern:::nyx:::Program*, name: string, arguments: Array<lantern:::nyx:::Value*>) -> i32 {
+        result := ValueOrFail(program->CallFunction(name, arguments));
+        number: i32 = I32OrFail(result->I32());
+        delete result;
+        return number;
+    }
+
+    StatusOf :: (failed: lantern:::nyx:::NyxError*!?) -> NyxC:::nyx_status {
+        guard failed return 0;
+        status: NyxC:::nyx_status = failed->status;
+        delete failed;
+        return status;
+    }
+}

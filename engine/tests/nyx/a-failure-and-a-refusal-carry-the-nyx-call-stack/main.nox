@@ -1,0 +1,46 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    failed := runtime->RegisterFunction("RefuseNow", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
+        context->Refuse("the engine refused");
+    });
+    failedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(failed!);
+    assert(failedStatus == NyxC:::NYX_OK, "RefuseNow registers");
+    mounted := runtime->MountSource("Game :: class : Application {\npublic:\n    Run :: () -> void { }\n    Step :: () -> i32 {\n        return Check() + 1;\n    }\n    Check :: () -> i32 {\n        throw Error:::Unknown(\"broken\");\n    }\n    Refuse :: () -> void {\n        RefuseNow();\n    }\n}\n", "stack.nyx", "Game");
+    program := lantern:::testing:::ProgramOrFail(mounted!, runtime);
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    quiet := new lantern:::testing:::QuietOutput();
+    failure := lantern:::testing:::ErrorOrFail(program->CallApplicationMethod("Step", noArguments));
+    delete quiet;
+    assert(failure->status == NyxC:::NYX_ERROR_FAILURE, "a throw is a failure");
+    assert(failure->stack.length() == 2, "two frames");
+    assert(failure->stack[0]->function == "Game.Check", "Check is innermost");
+    assert(failure->stack[1]->function == "Game.Step", "Step called it");
+    if location := failure->Location() {
+        assert(location->path == "stack.nyx", "the frame names the file");
+        assert(location->line == 8, "the throw is on line 8");
+        assert(location->column == 9, "at column 9");
+    } else {
+        assert(false, "a failure has a location");
+    }
+    text: string! = failure->Text();
+    assert(text.endsWith("at Game.Check (stack.nyx:8:9)"), "the text ends with the location");
+    delete text;
+    delete failure;
+    refusal := lantern:::testing:::ErrorOrFail(program->CallApplicationMethod("Refuse", noArguments));
+    delete noArguments;
+    assert(refusal->status == NyxC:::NYX_ERROR_RUNTIME, "a refusal is a runtime error");
+    if location := refusal->Location() {
+        assert(location->function == "Game.Refuse", "the refusal is in Refuse");
+        assert(location->line == 11, "on line 11");
+    } else {
+        assert(false, "a refusal has a location");
+    }
+    delete refusal;
+    delete program;
+    delete runtime;
+    print("a failure and a refusal carry the Nyx call stack");
+    return 0;
+}

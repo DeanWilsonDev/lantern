@@ -1,0 +1,23 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    fuelFailed := runtime->RegisterFunction("Fuel", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void {
+        context->Fail("Error::Unknown", "out of fuel");
+    });
+    fuelFailedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(fuelFailed!);
+    assert(fuelFailedStatus == NyxC:::NYX_OK, "Fuel registers");
+    program := lantern:::testing:::Mount(runtime, "Gauge :: () -> string {\n    left := Fuel();\n    return when left {\n        amount: i32 -> \"fuelled\",\n        problem: Error -> \"empty\"\n    };\n}");
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    gauge := lantern:::testing:::ValueOrFail(program->CallFunction("Gauge", noArguments));
+    delete noArguments;
+    text: string! = lantern:::testing:::TextOrFail(gauge->Text());
+    assert(text == "empty", "Nyx matches the failure");
+    delete text;
+    delete gauge;
+    delete program;
+    delete runtime;
+    print("a failure can be matched inside Nyx");
+    return 0;
+}

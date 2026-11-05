@@ -1,0 +1,121 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+Vector3 :: struct {
+    x~ f32 = 0.0f;
+    y~ f32 = 0.0f;
+    z~ f32 = 0.0f;
+}
+
+BytesOf :: (vector: raw Vector3~*) -> raw u8~* {
+    unsafe {
+        viewed := reinterpret<raw u8~*>(vector);
+        return viewed^*;
+    }
+}
+
+VectorAt :: (bytes: raw u8~*) -> Vector3 {
+    unsafe {
+        viewed := reinterpret<raw Vector3~*>(bytes);
+        pointer: raw Vector3~* = viewed^*;
+        return pointer^*;
+    }
+}
+
+DeclareVectorType :: (name: string, defaults: Vector3) -> lantern:::nyx:::HostType*! {
+    vectors := new lantern:::nyx:::HostType(name);
+    unsafe {
+        defaultValue~ Vector3 = defaults;
+        defaultPointer: raw Vector3~* = defaultValue;
+        vectors->ValueLayout(12, 4, BytesOf(defaultPointer));
+    }
+    vectors->Field("x", NyxC:::NYX_KIND_F32, 0, 4);
+    vectors->Field("y", NyxC:::NYX_KIND_F32, 4, 4);
+    vectors->Field("z", NyxC:::NYX_KIND_F32, 8, 4);
+    return vectors!;
+}
+
+ReturnVector :: (context: lantern:::nyx:::CallContext~*, vector: Vector3) -> void {
+    unsafe {
+        result~ Vector3 = vector;
+        pointer: raw Vector3~* = result;
+        context->ReturnOwnBytes(BytesOf(pointer));
+    }
+}
+
+VectorOf :: (vectors: raw lantern:::nyx:::HostType~*, value: lantern:::nyx:::Value*) -> Vector3 {
+    unsafe {
+        return VectorAt(vectors->BytesOf(value));
+    }
+}
+
+WrapVector :: (vectors: raw lantern:::nyx:::HostType~*, vector: Vector3) -> lantern:::nyx:::Value*! {
+    unsafe {
+        wrapped~ Vector3 = vector;
+        pointer: raw Vector3~* = wrapped;
+        return lantern:::testing:::ValueOrFail(vectors->WrapBytes(BytesOf(pointer)));
+    }
+}
+
+SameVector :: (left: Vector3, right: Vector3) -> bool {
+    return left.x == right.x && left.y == right.y && left.z == right.z;
+}
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    vectors := DeclareVectorType("Vec3", Vector3 { });
+    vectorsPointer~ raw lantern:::nyx:::HostType~* = null;
+    unsafe {
+        vectorsPointer = vectors;
+    }
+    unsafe {
+        vectors->Operator("+", "(other: Vec3) -> Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [vectorsPointer] {
+            unsafe {
+                left: Vector3 = VectorAt(context->ReceiverBytes());
+                right: Vector3 = VectorAt(context->HostBytes(0, vectorsPointer));
+                ReturnVector(context, Vector3 { x: left.x + right.x, y: left.y + right.y, z: left.z + right.z });
+            }
+        });
+    }
+    vectors->Operator("*", "(scale: f32) -> Vec3", new (context: lantern:::nyx:::CallContext~*) -> void {
+        scale: f32 = context->F32(0);
+        unsafe {
+            vector: Vector3 = VectorAt(context->ReceiverBytes());
+            ReturnVector(context, Vector3 { x: vector.x * scale, y: vector.y * scale, z: vector.z * scale });
+        }
+    });
+    vectors->Operator("-", "() -> Vec3", new (context: lantern:::nyx:::CallContext~*) -> void {
+        unsafe {
+            vector: Vector3 = VectorAt(context->ReceiverBytes());
+            ReturnVector(context, Vector3 { x: -vector.x, y: -vector.y, z: -vector.z });
+        }
+    });
+    failed := runtime->RegisterType(vectors!);
+    failedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(failed!);
+    assert(failedStatus == NyxC:::NYX_OK, "Vec3 registers");
+    mounted := runtime->MountSource("Game :: class : Application {\npublic:\n    Run :: () -> void { }\n    Step :: (at: Vec3) -> Vec3 { velocity := Vec3 { y: -2.0f }; return -(at + velocity * 0.5f); }\n}\n", "operators.nyx", "Game");
+    program := lantern:::testing:::ProgramOrFail(mounted!, runtime);
+    at := WrapVector(vectorsPointer, Vector3 { x: 1.0f, y: 2.0f, z: 3.0f });
+    stepArguments: Array<lantern:::nyx:::Value*>! = [at];
+    stepped := lantern:::testing:::ValueOrFail(program->CallApplicationMethod("Step", stepArguments));
+    delete stepArguments;
+    assert(SameVector(VectorOf(vectorsPointer, stepped), Vector3 { x: -1.0f, y: -1.0f, z: -3.0f }), "the operators run in Nyx's order");
+    delete stepped;
+    delete at;
+    delete program;
+    vector4 := DeclareVectorType("Vec4", Vector3 { });
+    vector4->Operator("%", "(other: Vec4) -> Vec4", new (context: lantern:::nyx:::CallContext~*) -> void {
+        context->ReturnNull();
+    });
+    refused := runtime->RegisterType(vector4!);
+    refusedMessage~ string! = "";
+    if error := refused {
+        refusedMessage += error->message;
+    }
+    delete refused;
+    assert(refusedMessage == "'Vec4' can't declare the operator '%': a host type declares '+', '-', '*' or '/'", "the C API names the operators it takes");
+    delete refusedMessage;
+    delete runtime;
+    print("a value type declares operators");
+    return 0;
+}

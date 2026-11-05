@@ -8,7 +8,8 @@ So far it has the scaffold (milestone L0): a Nox project, its C dependencies thr
 the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each. It also has
 the core module (milestone L1), the window and frame loop (milestone L2), the renderer, with PNG and glTF loading and
 the SDL GPU backend (milestone L3), collision and the world file (milestone L4), and the entity world, audio and debug
-drawing (milestone L5), described under "Layout".
+drawing (milestone L5), and the first half of the game host (milestone L6): the Nox wrapper over Nyx's C API,
+described under "Layout".
 
 ## What you need
 
@@ -40,6 +41,7 @@ From this directory:
 ```sh
 ./tools/bind-sdl.sh
 ./tools/bind-nyx.sh
+./tools/build-nyx.sh
 ./tools/install-dependencies.sh
 LIBRARY_PATH=generated/mist:/opt/homebrew/lib nox run
 ```
@@ -65,6 +67,9 @@ Run it from this directory, since the asset paths are relative to it. The compil
   `/opt/homebrew/include`, `/usr/local/include` and `/usr/include`; pass another include directory as its argument.
 - `bind-nyx.sh` does the same for `include/nyx/nyx.h` and writes `generated/nyx.nox`, which links `libnyx-capi`.
   The game host (milestone L6) is the first code that calls it.
+- `build-nyx.sh` builds `libnyx-capi` from the same checkout into `generated/nyx-build/` (Release, nothing else) and
+  links it into `generated/nyx/`. A program that links it needs that directory in `LIBRARY_PATH` to build and in
+  `LD_LIBRARY_PATH` (`DYLD_LIBRARY_PATH` on macOS) to start, since Nox doesn't record a run-time search path yet.
 - `install-dependencies.sh` runs `mist install`, which fetches cgltf and stb_image at the commits in `mist.lock` and
   builds each into a static library with its Nox binding, then links those into `generated/mist/`. It's a stand-in
   until `mist resolve` tells `nox build` where Mist's builds are.
@@ -91,6 +96,15 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `SoundBank`, sounds by name).
 - `src/debug/` is the Rust `debug` crate: `DebugDraw.nox` (capsules, spheres, triangle edges and arrows as debug lines)
   and `Hud.nox` (`DebugHud`, the grouped panel of `DebugValues`).
+- `src/nyx/` is the Rust `nyx` crate, `lantern:::nyx`, over `generated/nyx.nox`: `Runtime` (mounting, diagnostics, the
+  host surface, making values, registering host functions and types), `Program` (calling functions and methods,
+  asking for hooks), `Value` (a retained `nyx_value`, read as `Result`s), `Errors.nox` (`NyxError` with its status,
+  message, failure value and Nyx call stack; `Diagnostic`), `Host.nox` (`CallContext`, what a host callback reads its
+  arguments from and returns through, and `HostCall`, one registered callback) and `HostType.nox` (object types,
+  whose instances are `HostObject`s the type keeps by slot, and value types laid out as C structs). Every callback is
+  one trampoline that finds its `HostCall` from the C userdata pointer. Delete values and programs before their
+  runtime: each one counts itself in the runtime's `RuntimeLedger`, and deleting a runtime while any is alive stops
+  the program with a message naming what's left.
 - `src/sdl/` is the Rust `sdl-facade` crate: `SdlContext` (initialises SDL and shuts it down when deleted),
   `SdlWindow`, `SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
   `SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `SdlAudioOutput` (an `AudioSink` on
@@ -135,7 +149,8 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
 runs `nox test` over every suite under `tests/`, and passes its arguments through (`--backend c`, for one). It needs a
 `nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
 It points `LIBRARY_PATH` at `generated/mist`, which the renderer and asset tests link cgltf and stb_image from, so
-run `./tools/install-dependencies.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
+run `./tools/install-dependencies.sh` first. It also puts `generated/nyx` on `LIBRARY_PATH`, `LD_LIBRARY_PATH` and
+`DYLD_LIBRARY_PATH` for the `tests/nyx` programs, so run `./tools/bind-nyx.sh` and `./tools/build-nyx.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
 `generated/sdl.nox`, so run `./tools/bind-sdl.sh` first. Two of the `tests/gpu` programs render with a real GPU device
 and skip (logging why) when there isn't one; set `LANTERN_REQUIRE_GPU=1` to make that a failure. On Linux with no
 display, the script uses SDL's offscreen video driver, which renders with a software Vulkan driver such as lavapipe

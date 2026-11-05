@@ -1,0 +1,44 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+DropCount :: class {
+public:
+    drops~ i32 = 0;
+
+    DropCount~: () { }
+}
+
+Witness :: class {
+public:
+    count~ raw DropCount~* = null;
+
+    Witness~: (dropCount: raw DropCount~*) {
+        count = dropCount;
+    }
+
+    !Witness~: () {
+        unsafe {
+            count->drops += 1;
+        }
+    }
+}
+
+main :: () -> i32 {
+    count := new DropCount();
+    runtime := new lantern:::nyx:::Runtime();
+    unsafe {
+        counter: raw DropCount~* = count;
+        witness := new Witness(counter);
+        failed := runtime->RegisterFunction("Ping", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [witness!] {
+            context->ReturnNull();
+        });
+        failedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(failed!);
+        assert(failedStatus == NyxC:::NYX_OK, "Ping registers");
+    }
+    assert(count->drops == 0, "the runtime keeps the closure");
+    assert(runtime->functions.length() == 1, "the runtime holds one closure");
+    delete runtime;
+    delete count;
+    print("closures are dropped when the runtime goes");
+    return 0;
+}

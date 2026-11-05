@@ -1,0 +1,47 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+LineLog :: class {
+public:
+    lines~ Array<string!>! = [];
+
+    LineLog~: () { }
+
+    !LineLog~: () {
+        lines.freeAll();
+    }
+}
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    log := new LineLog();
+    unsafe {
+        sink: raw LineLog~* = log;
+        logFailed := runtime->RegisterFunction("Log", "(line: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [sink] {
+            line: string! = context->Text(0);
+            unsafe {
+                sink->lines.push(line!);
+            }
+        });
+        logFailedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(logFailed!);
+        assert(logFailedStatus == NyxC:::NYX_OK, "Log registers");
+    }
+    scaleFailed := runtime->RegisterFunction("Scale", "(value: i32, factor: i32) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void {
+        value: i32 = context->I32(0);
+        factor: i32 = context->I32(1);
+        context->ReturnI32(value * factor);
+    });
+    scaleFailedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(scaleFailed!);
+    assert(scaleFailedStatus == NyxC:::NYX_OK, "Scale registers");
+    program := lantern:::testing:::Mount(runtime, "Run :: () -> i32 { Log(\"scaling\"); return Scale(6, 7); }");
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    assert(lantern:::testing:::CallI32(program, "Run", noArguments) == 42, "Nyx calls both host functions");
+    delete noArguments;
+    assert(log->lines.length() == 1, "one line is logged");
+    assert(log->lines[0] == "scaling", "the line is Nyx's text");
+    delete program;
+    delete runtime;
+    delete log;
+    print("host function is called from Nyx");
+    return 0;
+}

@@ -1,0 +1,31 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    mounted := runtime->MountSource("Broken :: () -> i32 { return missing; }\n", "broken.nyx", "Game");
+    when mounted! {
+        Result:::Ok(program) -> {
+            delete program;
+            assert(false, "the script is refused");
+        },
+        Result:::Err(error) -> {
+            assert(error->status == NyxC:::NYX_ERROR_REFUSED, "the status is refused");
+            delete error;
+        }
+    }
+    diagnostics~ Array<lantern:::nyx:::Diagnostic*!>! = runtime->Diagnostics();
+    assert(diagnostics.length() > 0, "there are diagnostics");
+    first: lantern:::nyx:::Diagnostic* = diagnostics[0];
+    assert(first->severity == lantern:::nyx:::Severity:::Error, "the first is an error");
+    assert(first->code.startsWith("NYX"), "its code is a Nyx code");
+    assert(first->path == "broken.nyx", "it names the file");
+    assert(first->startLine == 1, "it starts on line 1");
+    rendered: string! = lantern:::testing:::TextOrFail(runtime->RenderDiagnostics());
+    assert(rendered.contains(first->code), "the rendering shows the code");
+    delete rendered;
+    diagnostics.freeAll();
+    delete runtime;
+    print("a refused script reports its diagnostics");
+    return 0;
+}

@@ -1,0 +1,27 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    mounted := runtime->MountSource("BaseGame :: class : Application {\npublic:\n    Run :: () -> void { }\n    OnRender :: () -> void { }\n}\nGame :: class : BaseGame {\npublic:\n    OnFixedUpdate~: (dt: f32) -> void { }\n}\n", "hooks.nyx", "Game");
+    program := lantern:::testing:::ProgramOrFail(mounted!, runtime);
+    assert(lantern:::testing:::BoolOrFail(program->DefinesMethod("OnFixedUpdate")), "the game defines OnFixedUpdate");
+    assert(lantern:::testing:::BoolOrFail(program->DefinesMethod("OnRender")), "its base defines OnRender");
+    assert(!lantern:::testing:::BoolOrFail(program->DefinesMethod("OnStart")), "nothing defines OnStart");
+    text := runtime->MakeString("not a game");
+    asked := program->DefinesMethodOn(text, "OnRender");
+    when asked! {
+        Result:::Ok(defined) -> {
+            assert(false, "a string has no hooks to ask about");
+        },
+        Result:::Err(error) -> {
+            assert(error->status == NyxC:::NYX_ERROR_INVALID_ARGUMENT, "the status is an invalid argument");
+            delete error;
+        }
+    }
+    delete text;
+    delete program;
+    delete runtime;
+    print("asks whether the application defines a hook");
+    return 0;
+}

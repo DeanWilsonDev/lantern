@@ -1,0 +1,171 @@
+NyxC :: import NyxC;
+
+lantern:::nyx :: namespace {
+    StatusName :: (status: NyxC:::nyx_status) -> string! {
+        unsafe {
+            return copyCString(NyxC:::nyx_status_name(status));
+        }
+    }
+
+    StackFrame :: class {
+    public:
+        function~ string! = "";
+        path~ string! = "";
+        line~ i32 = 0;
+        column~ i32 = 0;
+
+        StackFrame~: (raw: NyxC:::nyx_stack_frame) {
+            delete function;
+            function = ReadText(raw.function);
+            delete path;
+            path = ReadText(raw.path);
+            line = raw.line;
+            column = raw.column;
+        }
+
+        !StackFrame~: () {
+            delete function;
+            delete path;
+        }
+
+        Text :: () -> string! {
+            return `${function} (${path}:${line}:${column})`;
+        }
+    }
+
+    NyxError :: class {
+    public:
+        status~ NyxC:::nyx_status = 0;
+        message~ string! = "";
+        failure~ Value*!? = null;
+        stack~ Array<StackFrame*!>! = [];
+
+        NyxError~: (errorStatus: NyxC:::nyx_status, errorMessage: string) {
+            status = errorStatus;
+            message += errorMessage;
+        }
+
+        !NyxError~: () {
+            delete message;
+            delete failure;
+            stack.freeAll();
+        }
+
+        TakeStack~: (frames: Array<StackFrame*!>!) -> void {
+            stack.freeAll();
+            stack = frames!;
+        }
+
+        IsFailure :: () -> bool {
+            return status == NyxC:::NYX_ERROR_FAILURE;
+        }
+
+        Location :: () -> StackFrame*? {
+            if stack.length() == 0 {
+                return null;
+            }
+            return stack[0];
+        }
+
+        Text :: () -> string! {
+            name: string! = StatusName(status);
+            text~ string! = `${name}: ${message}`;
+            delete name;
+            if frame := Location() {
+                where: string! = frame->Text();
+                text += ` at ${where}`;
+                delete where;
+            }
+            return text!;
+        }
+    }
+
+    LastErrorStack :: (runtime: raw NyxC:::nyx_runtime~*) -> Array<StackFrame*!>! {
+        frames~ Array<StackFrame*!>! = [];
+        unsafe {
+            count: usize = NyxC:::nyx_runtime_last_error_frame_count(runtime);
+            for index~ usize = 0; index < count; index++ {
+                frame~ NyxC:::nyx_stack_frame = NyxC:::nyx_stack_frame { };
+                if NyxC:::nyx_runtime_last_error_frame(runtime, index, frame) == NyxC:::NYX_OK {
+                    frames.push(new StackFrame(frame));
+                }
+            }
+        }
+        return frames!;
+    }
+
+    LastErrorMessage :: (runtime: raw NyxC:::nyx_runtime~*) -> string! {
+        message~ NyxC:::nyx_str = NyxC:::nyx_str { };
+        unsafe {
+            NyxC:::nyx_runtime_last_error(runtime, message);
+        }
+        return ReadText(message);
+    }
+
+    CheckStatus :: (runtime: raw NyxC:::nyx_runtime~*, status: NyxC:::nyx_status) -> NyxError*!? {
+        if status == NyxC:::NYX_OK {
+            return null;
+        }
+        message: string! = LastErrorMessage(runtime);
+        error := new NyxError(status, message);
+        delete message;
+        error->TakeStack(LastErrorStack(runtime));
+        return error!;
+    }
+
+    Severity :: enum {
+        Error,
+        Warning,
+        Note,
+        Help
+    }
+
+    SeverityFromRaw :: (raw: NyxC:::nyx_severity) -> Severity {
+        if raw == NyxC:::NYX_SEVERITY_WARNING {
+            return Severity:::Warning;
+        }
+        if raw == NyxC:::NYX_SEVERITY_NOTE {
+            return Severity:::Note;
+        }
+        if raw == NyxC:::NYX_SEVERITY_HELP {
+            return Severity:::Help;
+        }
+        return Severity:::Error;
+    }
+
+    Diagnostic :: class {
+    public:
+        severity~ Severity = Severity:::Error;
+        code~ string! = "";
+        message~ string! = "";
+        path~ string! = "";
+        startLine~ i32 = 0;
+        startColumn~ i32 = 0;
+        endLine~ i32 = 0;
+        endColumn~ i32 = 0;
+        startOffset~ u32 = 0;
+        endOffset~ u32 = 0;
+
+        Diagnostic~: (raw: NyxC:::nyx_diagnostic) {
+            severity = SeverityFromRaw(raw.severity);
+            delete code;
+            code = ReadText(raw.code);
+            delete message;
+            message = ReadText(raw.message);
+            delete path;
+            path = ReadText(raw.path);
+            startLine = raw.start_line;
+            startColumn = raw.start_column;
+            endLine = raw.end_line;
+            endColumn = raw.end_column;
+            startOffset = raw.start_offset;
+            endOffset = raw.end_offset;
+        }
+
+        !Diagnostic~: () {
+            delete code;
+            delete message;
+            delete path;
+        }
+    }
+}

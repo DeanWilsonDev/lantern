@@ -1,0 +1,319 @@
+NyxC :: import NyxC;
+
+lantern:::nyx :: namespace {
+    CapiVersion :: () -> i32 {
+        unsafe {
+            return NyxC:::nyx_capi_version();
+        }
+    }
+
+    HEADER_VERSION: i32 : 4;
+
+    RuntimeLedger :: class {
+    public:
+        handle~ raw NyxC:::nyx_runtime~* = null;
+        liveValues~ usize = 0;
+        livePrograms~ usize = 0;
+
+        RuntimeLedger~: (runtimeHandle: raw NyxC:::nyx_runtime~*) {
+            handle = runtimeHandle;
+        }
+
+        IsEmpty :: () -> bool {
+            return liveValues == 0 && livePrograms == 0;
+        }
+
+        Remaining :: () -> string! {
+            return `${liveValues} values and ${livePrograms} programs`;
+        }
+    }
+
+    Runtime :: class {
+    public:
+        handle~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ RuntimeLedger*!;
+        ledgerPointer~ raw RuntimeLedger~* = null;
+        functions~ Array<HostCall*!>! = [];
+        types~ Array<HostType*!>! = [];
+
+        Runtime~: () {
+            unsafe {
+                NyxC:::nyx_runtime_create(handle);
+            }
+            ledger = new RuntimeLedger(handle);
+            unsafe {
+                ledgerPointer = ledger;
+            }
+        }
+
+        !Runtime~: () {
+            if !ledger->IsEmpty() {
+                remaining: string! = ledger->Remaining();
+                message: string! = `a Nyx runtime was deleted while ${remaining} from it were still alive; delete them before the runtime\n`;
+                delete remaining;
+                unsafe {
+                    lantern:::nyxoutput:::write(2, message, message.length());
+                }
+                delete message;
+                panic("a Nyx runtime was deleted before its values and programs");
+            }
+            unsafe {
+                NyxC:::nyx_runtime_destroy(handle);
+            }
+            if !CallbacksReleased() {
+                panic("Nyx still holds a host function or type after its runtime was destroyed");
+            }
+            functions.freeAll();
+            types.freeAll();
+            delete ledger;
+        }
+
+        CallbacksReleased :: () -> bool {
+            for function in functions {
+                if !function->released {
+                    return false;
+                }
+            }
+            for hostType in types {
+                if !hostType->released {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        IsUsable :: () -> bool {
+            return handle != null;
+        }
+
+        Check :: (status: NyxC:::nyx_status) -> NyxError*!? {
+            return CheckStatus(handle, status);
+        }
+
+        AddImportSearchPath~: (path: string) -> NyxError*!? {
+            text := new CText(path);
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_runtime_add_import_search_path(handle, text->Str());
+            }
+            delete text;
+            return Check(status);
+        }
+
+        MountSource~: (source: string, name: string, applicationClass: string) -> Result<Program*!, NyxError*!> {
+            sourceText := new CText(source);
+            nameText := new CText(name);
+            classText := new CText(applicationClass);
+            mounted~ raw NyxC:::nyx_program~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_runtime_mount_source(handle, sourceText->Str(), nameText->Str(), classText->Str(), mounted);
+            }
+            delete sourceText;
+            delete nameText;
+            delete classText;
+            failed := Check(status);
+            guard failed return Result<Program*!, NyxError*!>:::Ok(new Program(mounted, ledgerPointer));
+            return Result<Program*!, NyxError*!>:::Err(failed!);
+        }
+
+        MountFile~: (path: string, applicationClass: string) -> Result<Program*!, NyxError*!> {
+            pathText := new CText(path);
+            classText := new CText(applicationClass);
+            mounted~ raw NyxC:::nyx_program~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_runtime_mount_file(handle, pathText->Str(), classText->Str(), mounted);
+            }
+            delete pathText;
+            delete classText;
+            failed := Check(status);
+            guard failed return Result<Program*!, NyxError*!>:::Ok(new Program(mounted, ledgerPointer));
+            return Result<Program*!, NyxError*!>:::Err(failed!);
+        }
+
+        Diagnostics :: () -> Array<Diagnostic*!>! {
+            diagnostics~ Array<Diagnostic*!>! = [];
+            unsafe {
+                count: usize = NyxC:::nyx_runtime_diagnostic_count(handle);
+                for index~ usize = 0; index < count; index++ {
+                    raw~ NyxC:::nyx_diagnostic = NyxC:::nyx_diagnostic { };
+                    if NyxC:::nyx_runtime_diagnostic(handle, index, raw) == NyxC:::NYX_OK {
+                        diagnostics.push(new Diagnostic(raw));
+                    }
+                }
+            }
+            return diagnostics!;
+        }
+
+        TextValue :: (status: NyxC:::nyx_status, made: raw NyxC:::nyx_value~*) -> Result<string!, NyxError*!> {
+            failed := Check(status);
+            if failed == null {
+                if made == null {
+                    return Result<string!, NyxError*!>:::Ok("");
+                }
+                text := new Value(made, ledgerPointer);
+                read := text->Text();
+                when read! {
+                    Result:::Ok(contents) -> {
+                        delete text;
+                        return Result<string!, NyxError*!>:::Ok(contents!);
+                    },
+                    Result:::Err(error) -> {
+                        delete text;
+                        return Result<string!, NyxError*!>:::Err(error!);
+                    }
+                }
+            }
+            guard failed return Result<string!, NyxError*!>:::Ok("");
+            return Result<string!, NyxError*!>:::Err(failed!);
+        }
+
+        RenderDiagnostics :: () -> Result<string!, NyxError*!> {
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_runtime_render_diagnostics(handle, made);
+            }
+            return TextValue(status, made);
+        }
+
+        WriteHostSurface :: () -> Result<string!, NyxError*!> {
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_runtime_write_host_surface(handle, made);
+            }
+            return TextValue(status, made);
+        }
+
+        RemoveStandardNamespace~: (standardNamespace: string) -> NyxError*!? {
+            text := new CText(standardNamespace);
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_runtime_remove_standard_namespace(handle, text->Str());
+            }
+            delete text;
+            return Check(status);
+        }
+
+        Adopt :: (made: raw NyxC:::nyx_value~*) -> Value*! {
+            return new Value(made, ledgerPointer);
+        }
+
+        MakeNull :: () -> Value*! {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_null(handle, made);
+            }
+            return Adopt(made);
+        }
+
+        MakeBool :: (value: bool) -> Value*! {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_bool(handle, value, made);
+            }
+            return Adopt(made);
+        }
+
+        MakeI32 :: (value: i32) -> Value*! {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_i32(handle, value, made);
+            }
+            return Adopt(made);
+        }
+
+        MakeI64 :: (value: i64) -> Value*! {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_i64(handle, value, made);
+            }
+            return Adopt(made);
+        }
+
+        MakeF32 :: (value: f32) -> Value*! {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_f32(handle, value, made);
+            }
+            return Adopt(made);
+        }
+
+        MakeF64 :: (value: f64) -> Value*! {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_f64(handle, value, made);
+            }
+            return Adopt(made);
+        }
+
+        MakeString :: (value: string) -> Value*! {
+            text := new CText(value);
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_string(handle, text->Str(), made);
+            }
+            delete text;
+            return Adopt(made);
+        }
+
+        MakeError :: (variant: string, message: string) -> Result<Value*!, NyxError*!> {
+            variantText := new CText(variant);
+            messageText := new CText(message);
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_new_error(handle, variantText->Str(), messageText->Str(), made);
+            }
+            delete variantText;
+            delete messageText;
+            failed := Check(status);
+            guard failed return Result<Value*!, NyxError*!>:::Ok(Adopt(made));
+            return Result<Value*!, NyxError*!>:::Err(failed!);
+        }
+
+        MakeArray :: (items: Array<Value*>) -> Result<Value*!, NyxError*!> {
+            if !AllBelongTo(handle, items) {
+                return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
+            }
+            handles: Array<raw NyxC:::nyx_value~*>! = HandlesOf(items);
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = lantern:::nyxcalls:::nyx_value_new_array(handle, handles, handles.length(), made);
+            }
+            delete handles;
+            failed := Check(status);
+            guard failed return Result<Value*!, NyxError*!>:::Ok(Adopt(made));
+            return Result<Value*!, NyxError*!>:::Err(failed!);
+        }
+
+        RegisterFunction~: (name: string, signature: string, body: ((context: CallContext~*) -> void)!) -> NyxError*!? {
+            entry := new HostCall(HostCallKind:::Function, name, signature, body!);
+            entry->ledger = ledgerPointer;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_runtime_register_function(handle, entry->nameText->Str(), entry->signatureText->Str(), HostCallTrampoline, entry->Userdata(), FreeHostCallTrampoline);
+            }
+            failed := Check(status);
+            if failed == null {
+                functions.push(entry!);
+                return null;
+            }
+            delete entry;
+            return failed!;
+        }
+
+        RegisterType~: (hostType: HostType*!) -> NyxError*!? {
+            failed := hostType->Register(ledgerPointer);
+            if failed == null {
+                types.push(hostType!);
+                return null;
+            }
+            delete hostType;
+            return failed!;
+        }
+    }
+}

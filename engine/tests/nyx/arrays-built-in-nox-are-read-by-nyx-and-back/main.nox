@@ -1,0 +1,48 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    program := lantern:::testing:::Mount(runtime, "Total :: (items: Array<i32>) -> i32 { return items.reduce((total, item) -> total + item, 0); }\nDoubled :: (items: Array<i32>) -> Array<i32> { return items.map((item) -> item * 2); }");
+    one := runtime->MakeI32(1);
+    two := runtime->MakeI32(2);
+    three := runtime->MakeI32(3);
+    four := runtime->MakeI32(4);
+    items: Array<lantern:::nyx:::Value*>! = [one, two, three, four];
+    array := lantern:::testing:::ValueOrFail(runtime->MakeArray(items));
+    delete items;
+    assert(array->Kind() == lantern:::nyx:::ValueKind:::Array, "the value is an array");
+    totalArguments: Array<lantern:::nyx:::Value*>! = [array];
+    assert(lantern:::testing:::CallI32(program, "Total", totalArguments) == 10, "Nyx adds the items");
+    doubled := lantern:::testing:::ValueOrFail(program->CallFunction("Doubled", totalArguments));
+    delete totalArguments;
+    length: usize = lantern:::testing:::UsizeOrFail(doubled->ArrayLength());
+    assert(length == 4, "four items come back");
+    expected: i32[4] = [2, 4, 6, 8];
+    for index~ usize = 0; index < length; index++ {
+        item := lantern:::testing:::ValueOrFail(doubled->ArrayGet(index));
+        assert(lantern:::testing:::I32OrFail(item->I32()) == expected[index], "each item is doubled");
+        delete item;
+    }
+    outside := doubled->ArrayGet(9);
+    when outside! {
+        Result:::Ok(item) -> {
+            delete item;
+            assert(false, "index 9 is out of range");
+        },
+        Result:::Err(error) -> {
+            assert(error->status == NyxC:::NYX_ERROR_OUT_OF_RANGE, "the status is out of range");
+            delete error;
+        }
+    }
+    delete doubled;
+    delete array;
+    delete one;
+    delete two;
+    delete three;
+    delete four;
+    delete program;
+    delete runtime;
+    print("arrays built in Nox are read by Nyx and back");
+    return 0;
+}

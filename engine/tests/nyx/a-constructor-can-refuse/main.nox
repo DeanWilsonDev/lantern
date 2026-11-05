@@ -1,0 +1,24 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    counterType := new lantern:::nyx:::HostType("Counter");
+    counterType->Constructor("(start: i32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
+        context->Refuse("counters are disabled");
+    });
+    registered := runtime->RegisterType(counterType!);
+    registeredStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(registered!);
+    assert(registeredStatus == NyxC:::NYX_OK, "Counter registers");
+    program := lantern:::testing:::Mount(runtime, "Make :: () -> i32 { counter := new Counter(1); return 0; }");
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    error := lantern:::testing:::ErrorOrFail(program->CallFunction("Make", noArguments));
+    delete noArguments;
+    assert(error->status == NyxC:::NYX_ERROR_RUNTIME, "a refusal is a runtime error");
+    assert(error->message.contains("counters are disabled"), "it carries the constructor's message");
+    delete error;
+    delete program;
+    delete runtime;
+    print("a constructor can refuse");
+    return 0;
+}

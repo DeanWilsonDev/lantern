@@ -1,0 +1,190 @@
+NyxC :: import NyxC;
+
+lantern:::nyxcalls :: foreign "nyx-capi" {
+    nyx_value_new_array :: (runtime: raw NyxC:::nyx_runtime~*, items: Array<raw NyxC:::nyx_value~*>, count: usize, out_value: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status;
+    nyx_program_call_function :: (program: raw NyxC:::nyx_program~*, qualified_name: NyxC:::nyx_str, args: Array<raw NyxC:::nyx_value~*>, count: usize, out_result: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status;
+    nyx_program_call_method :: (program: raw NyxC:::nyx_program~*, receiver: raw NyxC:::nyx_value~*, method: NyxC:::nyx_str, args: Array<raw NyxC:::nyx_value~*>, count: usize, out_result: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status;
+}
+
+lantern:::nyx :: namespace {
+    ForeignValueError :: () -> NyxError*! {
+        return new NyxError(NyxC:::NYX_ERROR_INVALID_ARGUMENT, "a value from another runtime can't be passed to this one");
+    }
+
+    AllBelongTo :: (runtime: raw NyxC:::nyx_runtime~*, values: Array<Value*>) -> bool {
+        for value in values {
+            if value->runtime != runtime {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    HandlesOf :: (values: Array<Value*>) -> Array<raw NyxC:::nyx_value~*>! {
+        handles~ Array<raw NyxC:::nyx_value~*>! = [];
+        for value in values {
+            handles.push(value->handle);
+        }
+        return handles!;
+    }
+
+    Program :: class {
+    public:
+        handle~ raw NyxC:::nyx_program~* = null;
+        runtime~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ raw RuntimeLedger~* = null;
+
+        Program~: (programHandle: raw NyxC:::nyx_program~*, owningLedger: raw RuntimeLedger~*) {
+            handle = programHandle;
+            ledger = owningLedger;
+            if owningLedger != null {
+                unsafe {
+                    runtime = owningLedger->handle;
+                    owningLedger->livePrograms += 1;
+                }
+            }
+        }
+
+        !Program~: () {
+            unsafe {
+                NyxC:::nyx_program_release(handle);
+            }
+            if ledger != null {
+                unsafe {
+                    ledger->livePrograms -= 1;
+                }
+            }
+        }
+
+        Application :: () -> Result<Value*!, NyxError*!> {
+            instance~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_program_application(handle, instance);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(instance, ledger));
+            return Result<Value*!, NyxError*!>:::Err(failed!);
+        }
+
+        CallFunction :: (qualifiedName: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
+            if !AllBelongTo(runtime, arguments) {
+                return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
+            }
+            handles: Array<raw NyxC:::nyx_value~*>! = HandlesOf(arguments);
+            name := new CText(qualifiedName);
+            result~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = lantern:::nyxcalls:::nyx_program_call_function(handle, name->Str(), handles, handles.length(), result);
+            }
+            delete name;
+            delete handles;
+            return FinishCall(status, result);
+        }
+
+        CallApplicationMethod :: (method: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
+            return CallMethodOn(null, method, arguments);
+        }
+
+        CallMethod :: (receiver: Value*, method: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
+            if receiver->runtime != runtime {
+                return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
+            }
+            return CallMethodOn(receiver->handle, method, arguments);
+        }
+
+        DefinesMethod :: (method: string) -> Result<bool, NyxError*!> {
+            return DefinesMethodOnHandle(null, method);
+        }
+
+        DefinesMethodOn :: (receiver: Value*, method: string) -> Result<bool, NyxError*!> {
+            if receiver->runtime != runtime {
+                return Result<bool, NyxError*!>:::Err(ForeignValueError());
+            }
+            return DefinesMethodOnHandle(receiver->handle, method);
+        }
+
+        DefinesMethodOnHandle :: (receiver: raw NyxC:::nyx_value~*, method: string) -> Result<bool, NyxError*!> {
+            name := new CText(method);
+            defined~ bool = false;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_program_defines_method(handle, receiver, name->Str(), defined);
+            }
+            delete name;
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<bool, NyxError*!>:::Ok(defined);
+            return Result<bool, NyxError*!>:::Err(failed!);
+        }
+
+        CallMethodOn :: (receiver: raw NyxC:::nyx_value~*, method: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
+            if !AllBelongTo(runtime, arguments) {
+                return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
+            }
+            handles: Array<raw NyxC:::nyx_value~*>! = HandlesOf(arguments);
+            name := new CText(method);
+            result~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = lantern:::nyxcalls:::nyx_program_call_method(handle, receiver, name->Str(), handles, handles.length(), result);
+            }
+            delete name;
+            delete handles;
+            return FinishCall(status, result);
+        }
+
+        FinishCall :: (status: NyxC:::nyx_status, result: raw NyxC:::nyx_value~*) -> Result<Value*!, NyxError*!> {
+            if status == NyxC:::NYX_ERROR_FAILURE {
+                message~ string! = "";
+                message += "the call failed";
+                error := new NyxError(status, "");
+                if result != null {
+                    failure := new Value(result, ledger);
+                    variant: string! = TextOr(failure->ErrorVariant(), "an error");
+                    text: string! = TextOr(failure->ErrorMessage(), "");
+                    delete message;
+                    message = `${variant}: ${text}`;
+                    delete variant;
+                    delete text;
+                    error->TakeStack(failure->ErrorStack());
+                    error->failure = failure!;
+                }
+                error->message += message;
+                delete message;
+                return Result<Value*!, NyxError*!>:::Err(error!);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<Value*!, NyxError*!>:::Ok(AdoptOrNull(ledger, result));
+            if result != null {
+                unsafe {
+                    NyxC:::nyx_value_release(result);
+                }
+            }
+            return Result<Value*!, NyxError*!>:::Err(failed!);
+        }
+    }
+
+    TextOr :: (read: Result<string!, NyxError*!>, fallback: string) -> string! {
+        when read! {
+            Result:::Ok(text) -> {
+                return text!;
+            },
+            Result:::Err(error) -> {
+                delete error;
+                return `${fallback}`;
+            }
+        }
+    }
+
+    AdoptOrNull :: (ledger: raw RuntimeLedger~*, handle: raw NyxC:::nyx_value~*) -> Value*! {
+        if handle != null {
+            return new Value(handle, ledger);
+        }
+        made~ raw NyxC:::nyx_value~* = null;
+        unsafe {
+            NyxC:::nyx_value_new_null(ledger->handle, made);
+        }
+        return new Value(made, ledger);
+    }
+}

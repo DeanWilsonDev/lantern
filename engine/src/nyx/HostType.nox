@@ -1,0 +1,370 @@
+NyxC :: import NyxC;
+
+lantern:::nyxdefaults :: foreign "c" {
+    memset :: (destination: Array<u8~>, value: i32, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::nyxfields :: foreign "c" {
+    memset :: (destination: Array<NyxC:::nyx_host_field~>, value: i32, byteCount: usize) -> raw NyxC:::nyx_host_field~*;
+}
+
+lantern:::nyxmethods :: foreign "c" {
+    memset :: (destination: Array<NyxC:::nyx_host_method~>, value: i32, byteCount: usize) -> raw NyxC:::nyx_host_method~*;
+}
+
+lantern:::nyxoperators :: foreign "c" {
+    memset :: (destination: Array<NyxC:::nyx_host_operator~>, value: i32, byteCount: usize) -> raw NyxC:::nyx_host_operator~*;
+}
+
+lantern:::nyx :: namespace {
+    ObjectIdToInstance :: (objectId: u64) -> raw u8~* {
+        unsafe {
+            viewed := reinterpret<raw u8~*>(objectId);
+            return viewed^*;
+        }
+    }
+
+    InstanceToObjectId :: (instance: raw u8~*) -> u64 {
+        unsafe {
+            viewed := reinterpret<u64>(instance);
+            return viewed^*;
+        }
+    }
+
+    HostField :: class {
+    public:
+        nameText~ CText*!;
+        kind~ NyxC:::nyx_kind = 0;
+        offset~ usize = 0;
+
+        HostField~: (fieldName: string, fieldKind: NyxC:::nyx_kind, fieldOffset: usize) {
+            nameText = new CText(fieldName);
+            kind = fieldKind;
+            offset = fieldOffset;
+        }
+
+        !HostField~: () {
+            delete nameText;
+        }
+    }
+
+    HostType :: class {
+    public:
+        name~ string! = "";
+        nameText~ CText*!;
+        handle~ raw NyxC:::nyx_host_type~* = null;
+        runtime~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ raw RuntimeLedger~* = null;
+        isValueType~ bool = false;
+        valueSize~ usize = 0;
+        valueAlignment~ usize = 0;
+        defaults~ Array<u8>! = [];
+        fields~ Array<HostField*!>! = [];
+        methods~ Array<HostCall*!>! = [];
+        staticMethods~ Array<HostCall*!>! = [];
+        operators~ Array<HostCall*!>! = [];
+        constructors~ Array<HostCall*!>! = [];
+        objects~ Array<HostObject*!>! = [];
+        freeSlots~ Array<usize>! = [];
+        liveObjectCount~ usize = 0;
+        released~ bool = false;
+        layoutError~ string! = "";
+        userdata~ raw u8~* = null;
+
+        HostType~: (typeName: string) {
+            name += typeName;
+            nameText = new CText(typeName);
+            unsafe {
+                self: raw HostType~* = this;
+                viewed := reinterpret<raw u8~*>(self);
+                userdata = viewed^*;
+            }
+        }
+
+        !HostType~: () {
+            delete name;
+            delete nameText;
+            delete defaults;
+            fields.freeAll();
+            methods.freeAll();
+            staticMethods.freeAll();
+            operators.freeAll();
+            constructors.freeAll();
+            objects.freeAll();
+            delete freeSlots;
+            delete layoutError;
+        }
+
+        ValueLayout~: (size: usize, alignment: usize, defaultBytes: raw u8*) -> void {
+            isValueType = true;
+            valueSize = size;
+            valueAlignment = alignment;
+            for index~ usize = 0; index < size; index++ {
+                defaults.push(0);
+            }
+            unsafe {
+                lantern:::nyxbytes:::memcpy(defaults.borrow().mutable(), defaultBytes, size);
+            }
+        }
+
+        Field~: (fieldName: string, kind: NyxC:::nyx_kind, offset: usize, width: usize) -> void {
+            if !isValueType {
+                if layoutError.length() == 0 {
+                    layoutError += `'${name}.${fieldName}': only a value type has fields`;
+                }
+                return;
+            }
+            if offset + width > valueSize {
+                if layoutError.length() == 0 {
+                    layoutError += `'${name}.${fieldName}' doesn't project to a field inside the value`;
+                }
+                return;
+            }
+            fields.push(new HostField(fieldName, kind, offset));
+        }
+
+        Add~: (kind: HostCallKind, callName: string, signature: string, receiverMutable: bool, body: ((context: CallContext~*) -> void)!) -> void {
+            entry := new HostCall(kind, callName, signature, body!);
+            entry->receiverMutable = receiverMutable;
+            unsafe {
+                entry->hostType = this;
+            }
+            when kind {
+                HostCallKind:::Method -> methods.push(entry!),
+                HostCallKind:::StaticMethod -> staticMethods.push(entry!),
+                HostCallKind:::Operator -> operators.push(entry!),
+                default -> constructors.push(entry!)
+            }
+        }
+
+        Method~: (callName: string, signature: string, receiverMutable: bool, body: ((context: CallContext~*) -> void)!) -> void {
+            Add(HostCallKind:::Method, callName, signature, receiverMutable, body!);
+        }
+
+        StaticMethod~: (callName: string, signature: string, body: ((context: CallContext~*) -> void)!) -> void {
+            Add(HostCallKind:::StaticMethod, callName, signature, false, body!);
+        }
+
+        Operator~: (symbol: string, signature: string, body: ((context: CallContext~*) -> void)!) -> void {
+            Add(HostCallKind:::Operator, symbol, signature, false, body!);
+        }
+
+        Constructor~: (signature: string, body: ((context: CallContext~*) -> void)!) -> void {
+            Add(HostCallKind:::Constructor, "constructor", signature, false, body!);
+        }
+
+        Userdata :: () -> raw u8~* {
+            return userdata;
+        }
+
+        MethodRecords :: (statics: bool) -> Array<NyxC:::nyx_host_method>! {
+            records~ Array<NyxC:::nyx_host_method>! = [];
+            calls~ Array<HostCall*>! = [];
+            for entry in methods {
+                if !statics {
+                    calls.push(entry);
+                }
+            }
+            for entry in staticMethods {
+                if statics {
+                    calls.push(entry);
+                }
+            }
+            for entry in calls {
+                receiver~ NyxC:::nyx_receiver = NyxC:::NYX_RECEIVER_IMMUTABLE;
+                if entry->receiverMutable || entry->kind == HostCallKind:::StaticMethod {
+                    receiver = NyxC:::NYX_RECEIVER_MUTABLE;
+                }
+                unsafe {
+                    records.push(NyxC:::nyx_host_method {
+                        name: entry->nameText->Str(),
+                        signature: entry->signatureText->Str(),
+                        function: HostCallTrampoline,
+                        receiver: receiver,
+                        userdata: entry->Userdata()
+                    });
+                }
+            }
+            delete calls;
+            return records!;
+        }
+
+        Register~: (owningLedger: raw RuntimeLedger~*) -> NyxError*!? {
+            ledger = owningLedger;
+            unsafe {
+                runtime = owningLedger->handle;
+            }
+            if layoutError.length() > 0 {
+                return new NyxError(NyxC:::NYX_ERROR_INVALID_ARGUMENT, layoutError);
+            }
+            fieldRecords~ Array<NyxC:::nyx_host_field>! = [];
+            for field in fields {
+                fieldRecords.push(NyxC:::nyx_host_field { name: field->nameText->Str(), kind: field->kind, offset: field->offset });
+            }
+            methodRecords~ Array<NyxC:::nyx_host_method>! = MethodRecords(false);
+            staticRecords~ Array<NyxC:::nyx_host_method>! = MethodRecords(true);
+            operatorRecords~ Array<NyxC:::nyx_host_operator>! = [];
+            for entry in operators {
+                unsafe {
+                    operatorRecords.push(NyxC:::nyx_host_operator {
+                        symbol: entry->nameText->Str(),
+                        signature: entry->signatureText->Str(),
+                        function: HostCallTrampoline,
+                        userdata: entry->Userdata()
+                    });
+                }
+            }
+            constructorRecord~ NyxC:::nyx_host_constructor = NyxC:::nyx_host_constructor { };
+            layout~ NyxC:::nyx_host_value_layout = NyxC:::nyx_host_value_layout { };
+            table~ NyxC:::nyx_host_type_table = NyxC:::nyx_host_type_table { };
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                if constructors.length() > 0 {
+                    entry: HostCall* = constructors[0];
+                    constructorRecord = NyxC:::nyx_host_constructor {
+                        signature: entry->signatureText->Str(),
+                        function: HostCallTrampoline,
+                        userdata: entry->Userdata()
+                    };
+                    table.constructor = constructorRecord;
+                }
+                if methodRecords.length() > 0 {
+                    table.methods = lantern:::nyxmethods:::memset(methodRecords.borrow().mutable(), 0, 0);
+                    table.method_count = methodRecords.length();
+                }
+                if staticRecords.length() > 0 {
+                    table.static_methods = lantern:::nyxmethods:::memset(staticRecords.borrow().mutable(), 0, 0);
+                    table.static_method_count = staticRecords.length();
+                }
+                if operatorRecords.length() > 0 {
+                    table.operators = lantern:::nyxoperators:::memset(operatorRecords.borrow().mutable(), 0, 0);
+                    table.operator_count = operatorRecords.length();
+                }
+                if isValueType {
+                    layout.size = valueSize;
+                    layout.alignment = valueAlignment;
+                    if fieldRecords.length() > 0 {
+                        layout.fields = lantern:::nyxfields:::memset(fieldRecords.borrow().mutable(), 0, 0);
+                        layout.field_count = fieldRecords.length();
+                    }
+                    layout.defaults = lantern:::nyxdefaults:::memset(defaults.borrow().mutable(), 0, 0);
+                    table.value_layout = layout;
+                } else {
+                    table.release_instance = ReleaseInstanceTrampoline;
+                }
+                status = NyxC:::nyx_runtime_register_type(runtime, nameText->Str(), table, Userdata(), FreeHostTypeTrampoline, handle);
+            }
+            delete fieldRecords;
+            delete methodRecords;
+            delete staticRecords;
+            delete operatorRecords;
+            return CheckStatus(runtime, status);
+        }
+
+        WrapHandle~: (object: HostObject*!, outValue: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status {
+            slot~ usize = objects.length();
+            if freed := freeSlots.pop() {
+                slot = freed;
+                releasedObject := objects.remove(slot);
+                delete releasedObject;
+                objects.insert(slot, object!);
+            } else {
+                objects.push(object!);
+            }
+            liveObjectCount += 1;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_new_host_object(handle, ObjectIdToInstance(u64(slot) + 1), outValue);
+            }
+            if status != NyxC:::NYX_OK {
+                ReleaseSlot(slot);
+            }
+            return status;
+        }
+
+        Wrap~: (object: HostObject*!) -> Result<Value*!, NyxError*!> {
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = WrapHandle(object!, made);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(made, ledger));
+            return Result<Value*!, NyxError*!>:::Err(failed!);
+        }
+
+        WrapBytes :: (bytes: raw u8~*) -> Result<Value*!, NyxError*!> {
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_new_host_object(handle, bytes, made);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(made, ledger));
+            return Result<Value*!, NyxError*!>:::Err(failed!);
+        }
+
+        InstanceOf :: (value: Value*) -> Result<u64, NyxError*!> {
+            if value->runtime != runtime {
+                return Result<u64, NyxError*!>:::Err(new NyxError(NyxC:::NYX_ERROR_INVALID_ARGUMENT, "the value belongs to another runtime"));
+            }
+            instance~ raw u8~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_host_object(value->handle, handle, instance);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<u64, NyxError*!>:::Ok(InstanceToObjectId(instance));
+            return Result<u64, NyxError*!>:::Err(failed!);
+        }
+
+        BytesOf :: (value: Value*) -> raw u8~* {
+            instance~ raw u8~* = null;
+            if value->runtime != runtime {
+                return instance;
+            }
+            unsafe {
+                NyxC:::nyx_value_get_host_object(value->handle, handle, instance);
+            }
+            return instance;
+        }
+
+        ObjectAt~: (instance: raw u8~*) -> HostObject~*? {
+            objectId: u64 = InstanceToObjectId(instance);
+            if objectId == 0 || objectId > u64(objects.length()) {
+                return null;
+            }
+            return objects[usize(objectId - 1)];
+        }
+
+        ObjectOf~: (value: Value*) -> HostObject~*? {
+            instance: raw u8~* = BytesOf(value);
+            if instance == null {
+                return null;
+            }
+            return ObjectAt(instance);
+        }
+
+        ReleaseSlot~: (slot: usize) -> void {
+            releasedObject := objects.remove(slot);
+            delete releasedObject;
+            objects.insert(slot, new ReleasedHostObject());
+            freeSlots.push(slot);
+            liveObjectCount -= 1;
+        }
+
+        Release~: (instance: raw u8~*) -> void {
+            objectId: u64 = InstanceToObjectId(instance);
+            if objectId == 0 || objectId > u64(objects.length()) {
+                return;
+            }
+            slot: usize = usize(objectId - 1);
+            for freeSlot in freeSlots {
+                if freeSlot == slot {
+                    return;
+                }
+            }
+            ReleaseSlot(usize(objectId - 1));
+        }
+    }
+}
