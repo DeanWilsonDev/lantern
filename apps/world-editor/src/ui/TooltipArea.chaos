@@ -1,0 +1,50 @@
+TooltipAreaProps :: data {
+    text: string;
+    placement: string = "below";
+    children: Array<Penumbra:::Component> = [];
+}
+
+TooltipAreaUi :: namespace {
+    DelaySeconds :: () -> f32 { return 0.45f; }
+
+    BubbleClass :: (props: TooltipAreaProps) -> string {
+        return props.placement == "inside" ? "tooltip-inside" : "tooltip";
+    }
+}
+
+TooltipArea :: (props: TooltipAreaProps) -> Penumbra:::Component {
+    @signal hovering~ bool = false;
+    @signal hoverSeconds~ f32 = 0.0f;
+    @signal shown~ bool = false;
+
+    StartHover := () -> void {
+        guard !hovering return;
+        hovering = true;
+        hoverSeconds = 0.0f;
+    };
+
+    EndHover := () -> void {
+        hovering = false;
+        shown = false;
+    };
+
+    OnTick := (deltaSeconds: f32) -> {
+        guard hovering && !shown && props.text != "" return;
+        hoverSeconds = hoverSeconds + deltaSeconds;
+        guard hoverSeconds >= TooltipAreaUi:::DelaySeconds() return;
+        shown = true;
+    };
+
+    return (
+        <frame class="tooltip-area" onHover={() -> StartHover()} onHoverEnd={() -> EndHover()}>
+            <slot>!{props.children}</slot>
+            <slot>
+                !{shown
+                    ? <frame class={TooltipAreaUi:::BubbleClass(props)}>
+                          <text class="tooltip-text">{props.text}</text>
+                      </frame>
+                    : <frame class="nothing" />}
+            </slot>
+        </frame>
+    );
+}
