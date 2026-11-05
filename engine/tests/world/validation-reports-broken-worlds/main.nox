@@ -1,0 +1,39 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    world := new lantern:::world:::WorldFile("broken");
+    defer delete world;
+    first := lantern:::world:::Marker(1, "a", 2, Vec3 { });
+    first->shape = lantern:::world:::Shape:::Ramp(1.0f, 0.0f, 1.0f);
+    world->Add(first!);
+    second := lantern:::world:::Marker(2, "b", 1, Vec3 { });
+    second->SetTint("red");
+    world->Add(second!);
+    world->Add(lantern:::world:::Marker(2, "c", 9, Vec3 { }));
+    problems~ Array<string!>! = world->Validate();
+    joined~ string! = "" + "";
+    for problem in problems {
+        joined += problem;
+        joined += "\n";
+    }
+    problems.freeAll();
+    assert(joined.contains("used more than once"), "a repeated id is reported");
+    assert(joined.contains("own ancestor"), "a parent cycle is reported");
+    assert(joined.contains("missing parent #9"), "a missing parent is reported");
+    assert(joined.contains("non-positive size"), "a flat ramp is reported");
+    assert(joined.contains("expected \"#RRGGBB\""), "a bad tint is reported");
+    delete joined;
+    text: string! = world->ToJson();
+    when lantern:::world:::FromJson(text, "broken.world.json") {
+        Result:::Ok(loaded) -> {
+            delete loaded;
+            assert(false, "a broken world doesn't load");
+        },
+        Result:::Err(message) -> {
+            delete message;
+        }
+    }
+    delete text;
+    print("validation reports broken worlds");
+    return 0;
+}

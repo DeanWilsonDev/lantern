@@ -1,0 +1,35 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    world := lantern:::world:::LoadOrExit("../assets/worlds/course.world.json");
+    defer delete world;
+    pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(world);
+    assert(pieces.length() == world->entities.length(), "one piece per entity");
+    floorIndex~ usize? = null;
+    gemIndex~ usize? = null;
+    for index~ usize = 0; index < pieces.length(); index++ {
+        entity: lantern:::world:::WorldEntity* = world->entities[pieces[index]->entityIndex];
+        if floorIndex == null && entity->name == "start_floor" {
+            floorIndex = index;
+        }
+        if gemIndex == null && entity->kind == lantern:::world:::GemKind() {
+            gemIndex = index;
+        }
+    }
+    guard floorAt := floorIndex return 1;
+    guard gemAt := gemIndex return 1;
+    triangles: Array<lantern:::physics:::Triangle>! = pieces[floorAt]->WorldTriangles();
+    assert(triangles.length() == 12, "the floor box has twelve triangles");
+    top~ f32 = -lantern:::core:::INFINITY;
+    for triangle in triangles {
+        top = Math:::max(top, Math:::max(triangle.a.y, Math:::max(triangle.b.y, triangle.c.y)));
+    }
+    assert(Math:::abs(top) < 0.00001f, "the floor's top face is at y 0");
+    delete triangles;
+    gemTriangles: Array<lantern:::physics:::Triangle>! = pieces[gemAt]->WorldTriangles();
+    assert(!pieces[gemAt]->HasMesh() && gemTriangles.length() == 0, "a gem is a marker with no mesh or collision");
+    delete gemTriangles;
+    pieces.freeAll();
+    print("pieces match shapes and collide where drawn");
+    return 0;
+}

@@ -1,0 +1,48 @@
+lantern :: import lantern;
+
+WriteParsed :: (source: string) -> string! {
+    when lantern:::json:::Parse(source) {
+        Result:::Ok(document) -> {
+            written: string! = document->Write(document->root);
+            delete document;
+            return written!;
+        },
+        Result:::Err(message) -> {
+            failure: string! = `error: ${message}`;
+            delete message;
+            return failure!;
+        }
+    }
+}
+
+WritesAs :: (source: string, expected: string) -> bool {
+    written: string! = WriteParsed(source);
+    matches: bool = written == expected;
+    if !matches {
+        print(written);
+    }
+    delete written;
+    return matches;
+}
+
+IsError :: (source: string) -> bool {
+    written: string! = WriteParsed(source);
+    failed: bool = written.startsWith("error: ") && written.contains(" at line ");
+    delete written;
+    return failed;
+}
+
+main :: () -> i32 {
+    assert(WritesAs("{\"text\": \"q\\\" s\\\\ n\\n t\\t \\u00e9 \\ud83d\\ude00 \\u0001\"}", "{\n  \"text\": \"q\\\" s\\\\ n\\n t\\t é 😀 \\u0001\"\n}"), "escapes decode and encode back");
+    assert(WritesAs("[1, -2.5, 1e3, 0.1, -0, 12345678.5]", "[1, -2.5, 1000, 0.1, 0, 12345678]"), "numbers are written through f32");
+    assert(WritesAs("{\"flag\": true, \"none\": null, \"empty\": [], \"nested\": {}}", "{\n  \"flag\": true,\n  \"none\": null,\n  \"empty\": [],\n  \"nested\": {}\n}"), "literals and empty containers");
+    assert(WritesAs("[[1, 2], {\"a\": false}]", "[\n  [1, 2],\n  {\n    \"a\": false\n  }\n]"), "nested lists break across lines unless all numbers");
+    assert(IsError("{\"a\": 1"), "an unclosed object is an error");
+    assert(IsError("[1,]"), "a trailing comma is an error");
+    assert(IsError("\"open"), "an unclosed string is an error");
+    assert(IsError("01"), "a leading zero is an error");
+    assert(IsError("[1] 2"), "trailing text is an error");
+    assert(IsError("{1: 2}"), "keys must be strings");
+    print("json reads escapes numbers and reports errors");
+    return 0;
+}

@@ -14,7 +14,7 @@ the SDL GPU backend (milestone L3), described under "Layout".
 - `nox` on `PATH`, from [nox-systems-language](https://github.com/fearlessgamedev/nox-systems-language) on `proto`:
   `cmake -B build -G Ninja && cmake --build build && cmake --install build --component nox --prefix ~/.local`.
 - `mist` on `PATH`, from [mist-package-manager](https://github.com/fearlessgamedev/mist-package-manager):
-  `cmake -B build -G Ninja && cmake --build build && cmake --install build --component mist --prefix ~/.local`.
+  `git submodule update --init --recursive && cmake -B build -G Ninja && cmake --build build && cmake --install build --component mist --prefix ~/.local`.
 - SDL3 3.2 or later.
 - A checkout of [nyx-scripting-language](https://github.com/fearlessgamedev/nyx-scripting-language) on `proto` beside
   this repository (`../nyx-scripting-language`), or `NYX_SOURCE_DIR` naming one, for the Nyx binding.
@@ -76,7 +76,8 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   over `VectorMath.nox`, `Handle.nox` (`Handle<T>` and `Pool<T>`), `Time.nox` (`FixedStepClock`, `FrameStats`),
   `Input.nox` (keys, buttons, actions, bindings, `InputSnapshot`, the radial dead zone), `Color.nox`, `Debug.nox`
   (`DebugValues`), `Logging.nox` (the stderr logger, filtered by `LANTERN_LOG`), `Text.nox` (padding and fixed
-  decimals) and `LibM.nox` (the libm functions they call).
+  decimals), `Json.nox` (`lantern:::json`: a JSON document, its parser and a writer that lays text out as serde_json
+  does, until the Nox library has JSON), `Files.nox` and `LibM.nox` (the C functions they call).
 - `src/engine/` is the frame loop from the Rust `engine` crate: `InputRouter.nox` turns platform events into each
   frame's action snapshot and latches presses and releases until a fixed step takes them, and `FrameLoop.nox` runs
   events, the fixed steps, the frame update and the render for a `Game`, pausing the simulation while the window is
@@ -100,6 +101,9 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   and triangles), `World.nox` (`CollisionWorld`: static triangles in a uniform grid, kinematic bodies, capsule casts,
   contacts and raycasts) and `Controller.nox` (`CharacterController`: walking, jumping with coyote time and a jump
   buffer, sliding along walls, stepping up stairs, snapping to the ground and riding moving platforms).
+- `src/world/` is the Rust `world-format` crate: `WorldFile.nox` (`WorldFile` and `WorldEntity`, loading, validation
+  and atomic saving of `.world.json` files) and `WorldPieces.nox` (`BuildPieces`: each entity's world matrix, mesh and
+  collision triangles).
 - `src/stub/` is the stub game `main` runs until the game host can: it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
@@ -107,6 +111,11 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
 - `tests/<module>/<test>/` is one test program each: a `main.nox`, a `nox.json` naming the engine sources it needs,
   and an `expected.txt` with the exit code and output it must produce. They're the Rust tests, one program per test. Code a suite's
   tests share is in `tests/support/<suite>/`.
+- `tests/world/the-course-matches-the-rust-trace-at-every-display-rate/` runs the jump course the way the Rust
+  `course_traversal` test does and compares every fixed step's position, velocity and grounded flag with the Rust run's
+  `rust-<hz>hz.trace`, which match bit for bit. Set `LANTERN_TRACE_DIRECTORY` to write the Nox traces there too, and
+  regenerate the Rust ones with `LANTERN_TRACE_DIRECTORY=$PWD/engine/tests/world/the-course-matches-the-rust-trace-at-every-display-rate cargo test -p lantern-game-host --test course_traversal`
+  from the repository root.
 
 ## Testing
 

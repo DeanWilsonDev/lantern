@@ -1,0 +1,287 @@
+lantern:::courserun :: namespace {
+    COURSE_PATH: string : "../assets/worlds/course.world.json";
+    LEG_COUNT: usize : 6;
+    LEG_MOVING_PLATFORM: usize : 4;
+    LEG_GOAL: usize : 5;
+
+    Leg :: struct {
+        target~ Vec3 = Vec3 { };
+        jumpFrom~ Vec3? = null;
+    }
+
+    LegAt :: (index: usize) -> Leg {
+        return when index {
+            0 -> Leg { target: Vec3 { x: 0.0f, y: 0.0f, z: -7.4f } },
+            1 -> Leg { target: Vec3 { x: 0.0f, y: 0.5f, z: -11.0f }, jumpFrom: Vec3 { x: 0.0f, y: 0.0f, z: -7.4f } },
+            2 -> Leg { target: Vec3 { x: 2.5f, y: 1.2f, z: -14.5f }, jumpFrom: Vec3 { x: 0.5f, y: 0.5f, z: -11.6f } },
+            3 -> Leg { target: Vec3 { x: 0.0f, y: 2.0f, z: -18.0f }, jumpFrom: Vec3 { x: 2.0f, y: 1.2f, z: -15.2f } },
+            4 -> Leg { target: Vec3 { x: 0.0f, y: 2.0f, z: -21.0f }, jumpFrom: Vec3 { x: 0.0f, y: 2.0f, z: -18.6f } },
+            default -> Leg { target: Vec3 { x: 0.0f, y: 2.0f, z: -31.0f }, jumpFrom: Vec3 { x: 0.0f, y: 2.0f, z: -21.0f } },
+        };
+    }
+
+    LegName :: (index: usize) -> string {
+        return when index {
+            0 -> "edge",
+            1 -> "pillar 1",
+            2 -> "pillar 2",
+            3 -> "pillar 3",
+            4 -> "moving platform",
+            default -> "goal",
+        };
+    }
+
+    PlatformReady :: (legIndex: usize, platformZ: f32) -> bool {
+        if legIndex == LEG_MOVING_PLATFORM {
+            return platformZ > -21.4f;
+        }
+        if legIndex == LEG_GOAL {
+            return platformZ < -26.6f;
+        }
+        return true;
+    }
+
+    TraceLine :: (step: u64, controller: lantern:::physics:::CharacterController) -> string! {
+        grounded~ u32 = 0;
+        if controller.grounded {
+            grounded = 1;
+        }
+        feet: Vec3 = controller.feetPosition;
+        velocity: Vec3 = controller.velocity;
+        line~ string! = `${step} ${feet.x} ${feet.y} ${feet.z} ${velocity.x} ${velocity.y} ${velocity.z} ${grounded}`;
+        line += "\n";
+        return line!;
+    }
+
+    CourseResult :: class {
+    public:
+        problem~ string!? = null;
+        trace~ string! = "";
+        feet~ Vec3 = Vec3 { };
+        simulationSeconds~ f32 = 0.0f;
+
+        CourseResult~: () { }
+
+        !CourseResult~: () {
+            delete problem;
+            delete trace;
+        }
+
+        Succeeded :: () -> bool {
+            return problem == null;
+        }
+    }
+
+    Course :: struct {
+        start~ Vec3 = Vec3 { };
+        travel~ Vec3 = Vec3 { };
+        periodSeconds~ f32 = 1.0f;
+
+        PositionAt :: (timeSeconds: f32) -> Vec3 {
+            phase: f32 = timeSeconds / periodSeconds * (Math:::PI * 2.0f);
+            return start + travel * (0.5f - 0.5f * Math:::cos(phase));
+        }
+    }
+
+    Fail :: (result: CourseResult~*, message: string!) -> void {
+        delete result->problem;
+        result->problem = message!;
+    }
+
+    RunCourse :: (displayHz: f64, recordTrace: bool) -> CourseResult*! {
+        result := new CourseResult();
+        loaded: lantern:::world:::WorldFile*!? = LoadCourse(result);
+        guard worldFile := loaded return result!;
+        collision := new lantern:::physics:::CollisionWorld();
+        defer delete collision;
+        platform~ lantern:::core:::Handle<lantern:::physics:::KinematicBody>? = null;
+        pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(worldFile);
+        for piece in pieces {
+            if collider := piece->collider {
+                if collider == lantern:::world:::ColliderKind:::Static {
+                    triangles: Array<lantern:::physics:::Triangle>! = piece->WorldTriangles();
+                    collision->AddStaticTriangles(triangles);
+                    delete triangles;
+                } else {
+                    triangles: Array<lantern:::physics:::Triangle>! = piece->LocalTriangles();
+                    platform = collision->AddBody(triangles, piece->worldMatrix);
+                    delete triangles;
+                }
+            }
+        }
+        pieces.freeAll();
+        platformIndex: usize? = worldFile->FirstOfKind(lantern:::world:::MovingPlatformKind());
+        course~ Course = Course { };
+        if index := platformIndex {
+            entity: lantern:::world:::WorldEntity* = worldFile->entities[index];
+            course.start = entity->transform.position;
+            course.travel = entity->VectorProperty("travel") ?? Vec3 { };
+            course.periodSeconds = entity->NumberProperty("period_seconds") ?? 1.0f;
+        }
+        delete loaded;
+        guard platformHandle := platform return FailWith(result!, "the course has no moving platform");
+        guard platformIndex return FailWith(result!, "the course has no moving_platform entity");
+
+        controller~ lantern:::physics:::CharacterController = lantern:::physics:::CharacterController:::Create(lantern:::physics:::ControllerSettings { }, Vec3 { x: 0.0f, y: 0.0f, z: -6.0f });
+        simulationSeconds~ f32 = 0.0f;
+        clock~ lantern:::core:::FixedStepClock = lantern:::core:::FixedStepClock:::Create(f64(lantern:::core:::FIXED_STEP_SECONDS), lantern:::core:::MAX_STEPS_PER_FRAME);
+        legIndex~ usize = 0;
+        jumpedThisLeg~ bool = false;
+        stepNumber~ u64 = 0;
+        frameLimit: u64 = u64(60.0f * displayHz);
+        for frame~ u64 = 0; frame < frameLimit; frame++ {
+            feet: Vec3 = controller.feetPosition;
+            if legIndex >= LEG_COUNT {
+                result->feet = feet;
+                result->simulationSeconds = simulationSeconds;
+                onGoal: bool = feet.z >= -33.5f && feet.z <= -28.5f && Math:::abs(feet.y - 2.0f) < 0.05f;
+                if !onGoal {
+                    Fail(result, `finished off the goal at ${feet.x}, ${feet.y}, ${feet.z}`);
+                }
+                return result!;
+            }
+            leg: Leg = LegAt(legIndex);
+            if feet.y < -5.0f {
+                Fail(result, `fell during '${LegName(legIndex)}' at ${displayHz} Hz (${feet.x}, ${feet.y}, ${feet.z})`);
+                return result!;
+            }
+            toTarget: Vec2 = Vec2 { x: leg.target.x - feet.x, y: leg.target.z - feet.z };
+            arrived~ bool = controller.grounded && lantern:::core:::Vec2Length(toTarget) < 0.6f && Math:::abs(feet.y - leg.target.y) < 0.15f;
+            if !arrived && legIndex == LEG_MOVING_PLATFORM && controller.grounded {
+                if ground := controller.groundCollider {
+                    arrived = ground == lantern:::physics:::ColliderId:::Body(platformHandle);
+                }
+            }
+            if arrived {
+                legIndex += 1;
+                jumpedThisLeg = false;
+                continue;
+            }
+            platformZ: f32 = course.PositionAt(simulationSeconds).z;
+            platformReady: bool = PlatformReady(legIndex, platformZ);
+            atJumpSpot~ bool = false;
+            if spot := leg.jumpFrom {
+                atJumpSpot = lantern:::core:::Vec2Length(Vec2 { x: spot.x - feet.x, y: spot.z - feet.z }) < 0.35f;
+            }
+            stick~ Vec2 = lantern:::core:::NormalizeOrZero2(toTarget);
+            if spot := leg.jumpFrom {
+                if !jumpedThisLeg {
+                    toSpot: Vec2 = Vec2 { x: spot.x - feet.x, y: spot.z - feet.z };
+                    if atJumpSpot {
+                        if !platformReady {
+                            stick = Vec2 { };
+                        }
+                    } else {
+                        stick = lantern:::core:::NormalizeOrZero2(toSpot);
+                    }
+                }
+            }
+            if legIndex == LEG_GOAL && !jumpedThisLeg && !platformReady {
+                stick = Vec2 { };
+            }
+            jumpNow: bool = !jumpedThisLeg && controller.grounded && platformReady && (atJumpSpot || legIndex == LEG_GOAL);
+            moveDirection: Vec3 = Vec3 { x: stick.x, y: 0.0f, z: stick.y };
+            plan := clock.Advance(1.0f / displayHz);
+            for step~ u32 = 0; step < plan.stepCount; step++ {
+                input := lantern:::physics:::ControllerInput { moveDirection: moveDirection, jumpPressed: jumpNow && step == 0, jumpHeld: true };
+                collision->BeginStep();
+                simulationSeconds += lantern:::core:::FIXED_STEP_SECONDS;
+                collision->SetBodyTransform(platformHandle, Mat4:::translation(course.PositionAt(simulationSeconds)));
+                controller.Step(collision, input, lantern:::core:::FIXED_STEP_SECONDS);
+                stepNumber += 1;
+                if recordTrace {
+                    line: string! = TraceLine(stepNumber, controller);
+                    result->trace += line;
+                    delete line;
+                }
+            }
+            jumpedThisLeg = jumpedThisLeg || (jumpNow && plan.stepCount > 0);
+        }
+        result->feet = controller.feetPosition;
+        result->simulationSeconds = simulationSeconds;
+        if legIndex < LEG_COUNT {
+            feet: Vec3 = controller.feetPosition;
+            Fail(result, `timed out during '${LegName(legIndex)}' at ${displayHz} Hz (${feet.x}, ${feet.y}, ${feet.z})`);
+        }
+        return result!;
+    }
+
+    FailWith :: (result: CourseResult*!, message: string) -> CourseResult*! {
+        Fail(result, `${message}`);
+        return result!;
+    }
+
+    TraceDifference :: struct {
+        expectedSteps~ usize = 0;
+        actualSteps~ usize = 0;
+        largestPositionDifference~ f64 = 0.0f;
+        largestVelocityDifference~ f64 = 0.0f;
+        groundedMismatches~ usize = 0;
+        largestPositionStep~ usize = 0;
+    }
+
+    FieldValue :: (field: string) -> f64 {
+        text: string! = `${field}`;
+        value~ f64 = 0.0f;
+        unsafe {
+            value = lantern:::cnumbers:::strtod(text, null);
+        }
+        delete text;
+        return value;
+    }
+
+    CompareTraces :: (expected: string, actual: string) -> TraceDifference {
+        difference~ TraceDifference = TraceDifference { };
+        expectedLines: Array<string>! = expected.trim().split("\n");
+        actualLines: Array<string>! = actual.trim().split("\n");
+        difference.expectedSteps = expectedLines.length();
+        difference.actualSteps = actualLines.length();
+        shared~ usize = expectedLines.length();
+        if actualLines.length() < shared {
+            shared = actualLines.length();
+        }
+        for index~ usize = 0; index < shared; index++ {
+            expectedFields: Array<string>! = expectedLines[index].split(" ");
+            actualFields: Array<string>! = actualLines[index].split(" ");
+            if expectedFields.length() == 8 && actualFields.length() == 8 {
+                for field~ usize = 1; field < 7; field++ {
+                    signedGap: f64 = f64(f32(FieldValue(expectedFields[field]))) - f64(f32(FieldValue(actualFields[field])));
+                    gap~ f64 = signedGap;
+                    if signedGap < 0.0f {
+                        gap = -signedGap;
+                    }
+                    if field < 4 {
+                        if gap > difference.largestPositionDifference {
+                            difference.largestPositionDifference = gap;
+                            difference.largestPositionStep = index + 1;
+                        }
+                    } else if gap > difference.largestVelocityDifference {
+                        difference.largestVelocityDifference = gap;
+                    }
+                }
+                if expectedFields[7] != actualFields[7] {
+                    difference.groundedMismatches += 1;
+                }
+            } else {
+                difference.groundedMismatches += 1;
+            }
+            delete expectedFields;
+            delete actualFields;
+        }
+        delete expectedLines;
+        delete actualLines;
+        return difference;
+    }
+
+    LoadCourse :: (result: CourseResult~*) -> lantern:::world:::WorldFile*!? {
+        when lantern:::world:::Load(COURSE_PATH) {
+            Result:::Ok(world) -> {
+                return world!;
+            },
+            Result:::Err(message) -> {
+                Fail(result, message!);
+                return null;
+            }
+        }
+    }
+}

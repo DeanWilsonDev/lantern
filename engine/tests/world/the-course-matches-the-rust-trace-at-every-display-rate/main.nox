@@ -1,0 +1,53 @@
+lantern :: import lantern;
+
+TRACE_DIRECTORY: string : "tests/world/the-course-matches-the-rust-trace-at-every-display-rate";
+POSITION_TOLERANCE: f64 : 0.0f;
+VELOCITY_TOLERANCE: f64 : 0.0f;
+
+WriteNoxTrace :: (displayHz: u32, trace: string) -> void {
+    directory: string!? = environmentVariable("LANTERN_TRACE_DIRECTORY");
+    if text := directory {
+        path: string! = `${text}/nox-${displayHz}hz.trace`;
+        when writeTextFile(path, trace) {
+            Result:::Ok(written) -> { },
+            Result:::Err(error) -> {
+                print(error.message());
+                delete error;
+            }
+        }
+        delete path;
+    }
+    delete directory;
+}
+
+MatchesRust :: (displayHz: u32) -> bool {
+    result := lantern:::courserun:::RunCourse(f64(displayHz), true);
+    WriteNoxTrace(displayHz, result->trace);
+    rustPath: string! = `${TRACE_DIRECTORY}/rust-${displayHz}hz.trace`;
+    loaded: string!? = tryReadTextFile(rustPath);
+    delete rustPath;
+    matches~ bool = false;
+    if rustTrace := loaded {
+        difference := lantern:::courserun:::CompareTraces(rustTrace, result->trace);
+        matches = difference.expectedSteps == difference.actualSteps && difference.groundedMismatches == 0 && difference.largestPositionDifference <= POSITION_TOLERANCE && difference.largestVelocityDifference <= VELOCITY_TOLERANCE;
+        if !matches {
+            print(`${displayHz} Hz: ${difference.actualSteps} steps against Rust's ${difference.expectedSteps}, ${difference.groundedMismatches} grounded mismatches, position off by up to ${difference.largestPositionDifference} at step ${difference.largestPositionStep}, velocity by up to ${difference.largestVelocityDifference}`);
+        }
+    } else {
+        print(`${displayHz} Hz: no Rust trace`);
+    }
+    delete loaded;
+    delete result;
+    return matches;
+}
+
+main :: () -> i32 {
+    rates: u32[4] = [30, 60, 144, 240];
+    allMatch~ bool = true;
+    for displayHz in rates {
+        allMatch = MatchesRust(displayHz) && allMatch;
+    }
+    assert(allMatch, "every fixed step matches the Rust engine's within the tolerance");
+    print("the course matches the rust trace at every display rate");
+    return 0;
+}

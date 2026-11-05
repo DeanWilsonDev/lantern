@@ -121,14 +121,28 @@ fn course() -> Vec<Leg> {
     ]
 }
 
-/// Runs the course at `display_hz`. Returns the name of the last leg completed.
+/// Runs the course at `display_hz`. With `LANTERN_TRACE_DIRECTORY` set, also writes
+/// `rust-<hz>hz.trace` there: one line per fixed step with the step number, the feet position,
+/// the velocity and whether the player is grounded. The Nox engine's port of this test compares
+/// its own run against these files.
 fn run_course(display_hz: f64) -> Result<(), String> {
+    let mut trace = std::env::var_os("LANTERN_TRACE_DIRECTORY").map(|_| String::new());
+    let outcome = run_course_traced(display_hz, &mut trace);
+    if let (Some(directory), Some(text)) = (std::env::var_os("LANTERN_TRACE_DIRECTORY"), trace) {
+        let path = PathBuf::from(directory).join(format!("rust-{display_hz}hz.trace"));
+        std::fs::write(&path, text).expect("the trace file");
+    }
+    outcome
+}
+
+fn run_course_traced(display_hz: f64, trace: &mut Option<String>) -> Result<(), String> {
     let mut run = CourseRun::new();
     let mut clock = FixedStepClock::new(f64::from(FIXED_STEP_SECONDS), MAX_STEPS_PER_FRAME);
     let legs = course();
     let mut leg_index = 0;
     let mut jumped_this_leg = false;
     let frame_limit = (60.0 * display_hz) as usize;
+    let mut step_number: u64 = 0;
     for _ in 0..frame_limit {
         let Some(leg) = legs.get(leg_index) else {
             let feet = run.controller.feet_position;
@@ -183,6 +197,24 @@ fn run_course(display_hz: f64) -> Result<(), String> {
         for step in 0..plan.step_count {
             let input = ControllerInput { move_direction, jump_pressed: jump_now && step == 0, jump_held: true };
             run.fixed_step(&input);
+            step_number += 1;
+            if let Some(text) = trace.as_mut() {
+                let controller = &run.controller;
+                let feet = controller.feet_position;
+                let velocity = controller.velocity;
+                use std::fmt::Write as _;
+                let _ = writeln!(
+                    text,
+                    "{step_number} {} {} {} {} {} {} {}",
+                    feet.x,
+                    feet.y,
+                    feet.z,
+                    velocity.x,
+                    velocity.y,
+                    velocity.z,
+                    u8::from(controller.grounded)
+                );
+            }
         }
         jumped_this_leg |= jump_now && plan.step_count > 0;
     }

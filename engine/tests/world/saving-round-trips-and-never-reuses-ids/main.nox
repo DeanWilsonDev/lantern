@@ -1,0 +1,40 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    world := new lantern:::world:::WorldFile("round trip");
+    defer delete world;
+    entity := lantern:::world:::Marker(4, "a", null, Vec3 { x: 0.1f, y: 0.2f, z: 0.3f });
+    entity->SetBooleanProperty("flag", true);
+    entity->SetTextProperty("label", "hi");
+    world->Add(entity!);
+    assert(world->NextEntityKey() == 5, "the next key is one past the largest");
+    when createDirectories("build") {
+        Result:::Ok(created) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    path: string = "build/lantern-world-round-trip.world.json";
+    failure: string!? = world->Save(path);
+    if text := failure {
+        print(text);
+    }
+    assert(failure == null, "the world saves");
+    delete failure;
+    saved: string! = world->ToJson();
+    reloaded := lantern:::world:::LoadOrExit(path);
+    reloadedText: string! = reloaded->ToJson();
+    assert(reloadedText == saved, "loading the saved file gives back the same world");
+    delete reloadedText;
+    delete reloaded;
+    assert(saved.contains("[0.1, 0.2, 0.3]"), "floats are written shortest");
+    delete saved;
+    when removeFile(path) {
+        Result:::Ok(removed) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    print("saving round trips and never reuses ids");
+    return 0;
+}
