@@ -1,0 +1,375 @@
+WidgetBase :: import WidgetBase;
+Point :: import Point;
+Rect :: import Rect;
+Color :: import Color;
+InputState :: import InputState;
+LayoutContext :: import LayoutContext;
+StackingTracker :: import StackingTracker;
+OverlayHost :: import OverlayHost;
+IClipboard :: import IClipboard;
+IIconBackend :: import IIconBackend;
+IImageBackend :: import IImageBackend;
+ViewportRenderer :: import penumbra:::bridge:::viewports:::ViewportRenderer;
+StandardIconBackend :: import StandardIconBackend;
+SdlWindow :: import SdlWindow;
+SdlClipboard :: import SdlClipboard;
+SdlFonts :: import SdlFonts;
+SdlRenderer :: import SdlRenderer;
+SdlImages :: import SdlImages;
+BridgeC :: import BridgeC;
+BridgeHost :: import penumbra:::bridge:::BridgeHost;
+WindowRequests :: import penumbra:::bridge:::WindowRequests;
+Runtime :: import lantern:::nyx:::Runtime;
+NyxError :: import lantern:::nyx:::NyxError;
+CallContext :: import lantern:::nyx:::CallContext;
+Api :: import lantern:::editorapi;
+Editor :: import lantern:::editorapi:::Editor;
+EditorFunctions :: import lantern:::worldeditor:::editorfunctions;
+HostFunctions :: import lantern:::worldeditor:::hostfunctions;
+Paths :: import lantern:::worldeditor:::paths;
+FileDialog :: import lantern:::worldeditor:::filedialogs:::FileDialog;
+LevelRenderer :: import lantern:::worldeditor:::viewports:::LevelRenderer;
+PreviewRenderer :: import lantern:::worldeditor:::viewports:::PreviewRenderer;
+ThumbnailRenderer :: import lantern:::worldeditor:::viewports:::ThumbnailRenderer;
+
+lantern:::worldeditor:::cenvironment :: foreign "c" {
+    setenv :: (name: string, value: string, overwrite: i32) -> i32;
+}
+
+lantern:::worldeditor :: namespace {
+    APPLICATION_FILE: string : "EditorApplication.nyx";
+    APPLICATION_CLASS: string : "EditorApplication";
+    HOST_SURFACE_APPLICATION_SOURCE: string : "EditorHostSurfaceApplication :: class : Application {\n}\n";
+    WINDOW_LOGICAL_WIDTH: i32 : 1680;
+    WINDOW_LOGICAL_HEIGHT: i32 : 980;
+    ICON_STROKE_LOGICAL: f32 : 1.5f;
+    FONT_SIZE_LOGICAL: f32 : 12.0f;
+
+    UseBuiltShaderDirectory :: () -> void {
+        unsafe {
+            lantern:::worldeditor:::cenvironment:::setenv("LANTERN_SHADER_DIRECTORY", Paths:::SHADER_DIRECTORY, 0);
+        }
+    }
+
+    PrintFailure :: (failure: NyxError*!?) -> void {
+        if found := failure {
+            print(`${found->message}`);
+        }
+        delete failure;
+    }
+
+    EditorRenderers :: class {
+    public:
+        level~ LevelRenderer*!;
+        preview~ PreviewRenderer*!;
+        thumbnails~ Array<ThumbnailRenderer*!>! = [];
+
+        EditorRenderers~: (editor: raw Editor~*) {
+            this->level = new LevelRenderer(editor);
+            this->preview = new PreviewRenderer(editor);
+            unsafe {
+                borrowed: Editor~* = editor;
+                templateCount: u32 = Api:::TemplateCount(borrowed);
+                for index~ u32 = 0; index < templateCount; index++ {
+                    templateId: string! = Api:::Template(borrowed, index, Api:::TEMPLATE_ID);
+                    this->thumbnails.push(new ThumbnailRenderer(editor, templateId));
+                    delete templateId;
+                }
+            }
+        }
+
+        !EditorRenderers~: () {
+            this->thumbnails.freeAll();
+            delete this->preview;
+            delete this->level;
+        }
+
+        RegisterWith~: (host: BridgeHost~*) -> void {
+            unsafe {
+                levelPointer: raw ViewportRenderer~* = this->level;
+                host->RegisterViewportRenderer("level", levelPointer);
+                previewPointer: raw ViewportRenderer~* = this->preview;
+                host->RegisterViewportRenderer("preview", previewPointer);
+            }
+            for index~ usize = 0; index < this->thumbnails.length(); index++ {
+                name: string! = `thumbnail:${this->thumbnails[index]->templateId}`;
+                unsafe {
+                    thumbnailPointer: raw ViewportRenderer~* = this->thumbnails[index];
+                    host->RegisterViewportRenderer(name, thumbnailPointer);
+                }
+                delete name;
+            }
+        }
+    }
+
+    RegisterPreviewFunctions :: (runtime: Runtime~*, preview: raw PreviewRenderer~*) -> NyxError*!? {
+        failure~ NyxError*!? = runtime->RegisterFunction("editorSetPreviewTemplate", "(templateId: string) -> void", new (context: CallContext~*) -> void [preview] {
+            templateId: string! = context->Text(0);
+            unsafe {
+                chosen: PreviewRenderer~* = preview;
+                chosen->SetTemplate(templateId);
+            }
+            delete templateId;
+            context->ReturnNull();
+        });
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorPreviewTemplate", "() -> string", new (context: CallContext~*) -> void [preview] {
+            unsafe {
+                chosen: PreviewRenderer~* = preview;
+                context->ReturnText(chosen->templateId);
+            }
+        }));
+        return failure!;
+    }
+
+    RegisterHostFunctions :: (runtime: Runtime~*, editor: raw Editor~*, renderers: EditorRenderers~*) -> bool {
+        failure~ NyxError*!? = EditorFunctions:::RegisterEditorFunctions(runtime, editor);
+        unsafe {
+            previewPointer: raw PreviewRenderer~* = renderers->preview;
+            failure = HostFunctions:::FirstFailure(failure!, RegisterPreviewFunctions(runtime, previewPointer));
+        }
+        if failure != null {
+            print("registering the editor's host functions failed:");
+            PrintFailure(failure!);
+            return false;
+        }
+        return true;
+    }
+
+    PrintMessages :: (host: BridgeHost~*) -> void {
+        messages~ Array<string!>! = host->TakeMessages();
+        for message in messages {
+            print(`${message}`);
+        }
+        messages.freeAll();
+    }
+
+    WriteHostSurface :: (outputPath: string) -> i32 {
+        UseBuiltShaderDirectory();
+        editor~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, "");
+        defer delete editor;
+        runtime := new Runtime();
+        defer delete runtime;
+        editorPointer~ raw Editor~* = null;
+        unsafe {
+            editorPointer = editor;
+        }
+        renderers := new EditorRenderers(editorPointer);
+        defer delete renderers;
+        guard RegisterHostFunctions(runtime, editorPointer, renderers) == true return 1;
+        fonts := new SdlFonts(Paths:::FONT_PATH);
+        defer delete fonts;
+        host := new BridgeHost(runtime->handle, Paths:::UI_DIRECTORY, fonts);
+        defer delete host;
+        guard host->IsUsable() == true return 1;
+        when runtime->WriteHostSurface() {
+            Result:::Ok(manifest) -> {
+                defer delete manifest;
+                return WriteText(outputPath, manifest);
+            },
+            Result:::Err(failure) -> {
+                print("writing the editor's host surface failed:");
+                PrintFailure(failure!);
+                return 1;
+            }
+        }
+    }
+
+    WriteText :: (outputPath: string, contents: string) -> i32 {
+        when writeTextFile(outputPath, contents) {
+            Result:::Ok(written) -> {
+                return 0;
+            },
+            Result:::Err(failure) -> {
+                print(`can't write ${outputPath}: ${failure.message()}`);
+                delete failure;
+                return 1;
+            }
+        }
+    }
+
+    ApplyWindowRequests :: (window: SdlWindow~*, host: BridgeHost~*, fileDialog: FileDialog~*) -> void {
+        requests: WindowRequests*! = host->TakeWindowRequests();
+        if requests->hasTitle {
+            window->SetTitle(requests->title);
+        }
+        if requests->hasSize {
+            window->SetLogicalSize(i32(requests->width), i32(requests->height));
+        }
+        if requests->hasTextInput {
+            window->SetTextInputActive(requests->textInputActive);
+        }
+        if requests->hasFileDialog {
+            if !fileDialog->Show(requests) {
+                host->FinishFileDialog(null);
+            }
+        }
+        delete requests;
+    }
+
+    WindowState :: (size: Point, dpiScaleFactor: f32, input: InputState, rootConsumedInput: bool) -> BridgeC:::penumbra_bridge_window_state {
+        return BridgeC:::penumbra_bridge_window_state {
+            logical_width: size.x,
+            logical_height: size.y,
+            dpi_scale: dpiScaleFactor,
+            mouse_x: input.mousePosition.x,
+            mouse_y: input.mousePosition.y,
+            primary_button_down: input.mouseButtonDown[0],
+            secondary_button_down: input.mouseButtonDown[2],
+            secondary_button_pressed_this_frame: input.mouseButtonPressedThisFrame[2],
+            root_consumed_input_this_frame: rootConsumedInput
+        };
+    }
+
+    RunEditor :: (worldPath: string) -> i32 {
+        UseBuiltShaderDirectory();
+        editor~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, worldPath);
+        defer delete editor;
+        runtime := new Runtime();
+        defer delete runtime;
+        editorPointer~ raw Editor~* = null;
+        unsafe {
+            editorPointer = editor;
+        }
+        status~ i32 = 0;
+        {
+            renderers := new EditorRenderers(editorPointer);
+            defer delete renderers;
+            guard RegisterHostFunctions(runtime, editorPointer, renderers) == true return 1;
+            status = RunWindow(runtime, renderers);
+        }
+        return status;
+    }
+
+    RunWindow :: (runtime: Runtime~*, renderers: EditorRenderers~*) -> i32 {
+        window := new SdlWindow();
+        defer delete window;
+        guard window->Open("Lantern World Editor", WINDOW_LOGICAL_WIDTH, WINDOW_LOGICAL_HEIGHT) == true return 1;
+        fonts := new SdlFonts(Paths:::FONT_PATH);
+        defer delete fonts;
+        unsafe {
+            fonts->cache->renderer = window->renderer;
+        }
+        fonts->dpiScaleFactor = window->DpiScaleFactor();
+        guard fonts->IsReady() == true return 1;
+        renderer := new SdlRenderer(window->renderer, fonts->cache, window->DpiScaleFactor());
+        defer delete renderer;
+        clipboard := new SdlClipboard();
+        defer delete clipboard;
+        icons := new StandardIconBackend(ICON_STROKE_LOGICAL, Color { red: 220, green: 220, blue: 228, alpha: 255 });
+        defer delete icons;
+        rendererPointer~ raw SdlRenderer~* = null;
+        unsafe {
+            rendererPointer = renderer;
+        }
+        images := new SdlImages(rendererPointer);
+        defer delete images;
+        overlays := new OverlayHost();
+        defer delete overlays;
+        layout := new LayoutContext();
+        defer delete layout;
+        stacking := new StackingTracker();
+        defer delete stacking;
+        clearColor: Color = Color { red: 18, green: 18, blue: 22, alpha: 255 };
+        fileDialog := new FileDialog();
+        defer delete fileDialog;
+
+        host := new BridgeHost(runtime->handle, Paths:::UI_DIRECTORY, fonts);
+        defer delete host;
+        guard host->IsUsable() == true return 1;
+        host->SetDefaultFontSize(FONT_SIZE_LOGICAL);
+        unsafe {
+            overlayPointer: raw OverlayHost~* = overlays;
+            host->SetOverlayHost(overlayPointer);
+            clipboardPointer: raw IClipboard~* = clipboard;
+            host->SetClipboard(clipboardPointer);
+            iconPointer: raw IIconBackend~* = icons;
+            host->SetIconBackend(iconPointer);
+            imagePointer: raw IImageBackend~* = images;
+            host->SetImageBackend(imagePointer);
+        }
+        renderers->RegisterWith(host);
+
+        startingSize: Point = window->LogicalSize();
+        startingDpiScaleFactor: f32 = window->DpiScaleFactor();
+        input~ InputState = window->FrameInput();
+        host->SetWindowState(WindowState(startingSize, startingDpiScaleFactor, input, false));
+        loaded: bool = host->Load(APPLICATION_FILE, APPLICATION_CLASS);
+        started: bool = loaded && host->Start();
+        PrintMessages(host);
+        if !started {
+            print("the editor UI failed to load");
+            return 1;
+        }
+        ApplyWindowRequests(window, host, fileDialog);
+
+        frameLimit: u64 = FrameLimit();
+        frameCount~ u64 = 0;
+        rootConsumedInput~ bool = false;
+        while !host->quitRequested {
+            guard window->PumpEvents() == true break;
+            dpiScaleFactor: f32 = window->DpiScaleFactor();
+            viewport: Point = window->LogicalSize();
+            fileDialog->FinishIfClosed(host);
+            ApplyWindowRequests(window, host, fileDialog);
+            input = window->FrameInput();
+            renderer->SetDpiScaleFactor(dpiScaleFactor);
+            fonts->dpiScaleFactor = dpiScaleFactor;
+            host->SetWindowState(WindowState(viewport, dpiScaleFactor, input, rootConsumedInput));
+            host->Update(input.deltaTimeSeconds);
+            PrintMessages(host);
+
+            layout->viewportLogical = viewport;
+            stacking->keys->viewportLogical = viewport;
+            root: raw WidgetBase~* = host->Root();
+            rootConsumedInput = false;
+            unsafe {
+                if root != null {
+                    layout->BeginPass();
+                    root->Measure(viewport, layout);
+                    root->Arrange(Rect { x: 0.0f, y: 0.0f, width: viewport.x, height: viewport.y }, layout);
+                    overlays->Measure(viewport, layout);
+                    overlays->Arrange(Rect { x: 0.0f, y: 0.0f, width: viewport.x, height: viewport.y }, layout);
+                    layout->EndPass();
+                    overlayConsumed: bool = overlays->UpdateInteractionState(input, stacking);
+                    rootConsumedInput = root->UpdateInteractionState(input, stacking) || overlayConsumed;
+                }
+            }
+            renderer->BeginFrame(clearColor);
+            unsafe {
+                if root != null {
+                    root->Draw(renderer, stacking);
+                    overlays->Draw(renderer, stacking);
+                }
+            }
+            renderer->EndFrameAndPresent();
+            frameCount = frameCount + 1;
+            if frameLimit > 0 && frameCount >= frameLimit {
+                break;
+            }
+        }
+        host->Shutdown();
+        PrintMessages(host);
+        return 0;
+    }
+
+    FrameLimit :: () -> u64 {
+        limitText: string!? = environmentVariable("LANTERN_MAX_FRAMES");
+        defer delete limitText;
+        if text := limitText {
+            if limit := lantern:::core:::ParseUnsigned(text) {
+                return limit;
+            }
+        }
+        return 0;
+    }
+}
+
+main :: (arguments: Array<string>) -> i32 {
+    if arguments.length() == 3 && arguments[1] == "--host-surface" {
+        return lantern:::worldeditor:::WriteHostSurface(arguments[2]);
+    }
+    if arguments.length() > 1 {
+        return lantern:::worldeditor:::RunEditor(arguments[1]);
+    }
+    return lantern:::worldeditor:::RunEditor("");
+}

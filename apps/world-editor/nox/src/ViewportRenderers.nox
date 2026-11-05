@@ -1,0 +1,208 @@
+Api :: import lantern:::editorapi;
+Editor :: import lantern:::editorapi:::Editor;
+Modifiers :: import Modifiers;
+ViewportFrame :: import penumbra:::bridge:::viewports:::ViewportFrame;
+ViewportRenderer :: import penumbra:::bridge:::viewports:::ViewportRenderer;
+
+lantern:::worldeditor:::viewports :: namespace {
+    PREVIEW_TURNS_PER_SECOND_RADIANS: f32 : 0.6f;
+    FULL_TURN_RADIANS: f32 : 6.2831855f;
+
+    ModifierBits :: (modifiers: Modifiers) -> u32 {
+        bits~ u32 = 0;
+        if modifiers.shift {
+            bits = bits | lantern:::editor:::MODIFIER_SHIFT;
+        }
+        if modifiers.shortcut {
+            bits = bits | lantern:::editor:::MODIFIER_COMMAND;
+        }
+        if modifiers.alt {
+            bits = bits | lantern:::editor:::MODIFIER_ALT;
+        }
+        return bits;
+    }
+
+    SizeFrame :: (frame: ViewportFrame~*, width: u32, height: u32) -> void {
+        frame->widthPhysical = width;
+        frame->heightPhysical = height;
+        byteCount: usize = usize(width) * usize(height) * 4;
+        while frame->rgbaPixels.length() > byteCount {
+            frame->rgbaPixels.pop();
+        }
+        while frame->rgbaPixels.length() < byteCount {
+            frame->rgbaPixels.push(0);
+        }
+    }
+
+    LevelRenderer :: class {
+        implements:
+            ViewportRenderer;
+    public:
+        LevelRenderer~: (editor: raw Editor~*) : editor(editor) {
+        }
+
+        Render~: (widthPhysical: u32, heightPhysical: u32, frame: ViewportFrame~*) -> bool {
+            unsafe {
+                editor: Editor~* = this->editor;
+                guard Api:::Render(editor, widthPhysical, heightPhysical) == true return false;
+                SizeFrame(frame, Api:::PixelWidth(editor), Api:::PixelHeight(editor));
+                return Api:::CopyPixels(editor, frame->rgbaPixels);
+            }
+        }
+
+        PointerMoved~: (xPhysical: f32, yPhysical: f32) -> void {
+            unsafe {
+                editor: Editor~* = this->editor;
+                Api:::PointerMove(editor, xPhysical, yPhysical);
+            }
+        }
+
+        PointerButton~: (button: usize, down: bool, modifiers: Modifiers) -> void {
+            unsafe {
+                editor: Editor~* = this->editor;
+                Api:::PointerButton(editor, u32(button), down, ModifierBits(modifiers));
+            }
+        }
+
+        Wheel~: (notches: f32, notchesX: f32) -> void {
+            unsafe {
+                editor: Editor~* = this->editor;
+                Api:::Wheel(editor, notches);
+            }
+        }
+
+        Key~: (keyName: string, down: bool, modifiers: Modifiers) -> bool {
+            unsafe {
+                editor: Editor~* = this->editor;
+                return Api:::Key(editor, keyName, down, ModifierBits(modifiers));
+            }
+        }
+
+        HoverChanged~: (pointerIsOver: bool) -> void {
+            guard pointerIsOver == false return;
+            unsafe {
+                editor: Editor~* = this->editor;
+                Api:::ReleaseKeys(editor);
+            }
+        }
+
+        Tick~: (deltaSeconds: f32) -> void {
+            unsafe {
+                editor: Editor~* = this->editor;
+                Api:::Update(editor, deltaSeconds);
+            }
+        }
+
+    private:
+        editor~ raw Editor~* = null;
+    }
+
+    PreviewRenderer :: class {
+        implements:
+            ViewportRenderer;
+    public:
+        templateId~ string! = "";
+
+        PreviewRenderer~: (editor: raw Editor~*) : editor(editor) {
+        }
+
+        !PreviewRenderer~: () {
+            delete this->templateId;
+        }
+
+        SetTemplate~: (chosen: string) -> void {
+            copied: string! = chosen.copy();
+            delete this->templateId;
+            this->templateId = copied!;
+        }
+
+        Render~: (widthPhysical: u32, heightPhysical: u32, frame: ViewportFrame~*) -> bool {
+            guard this->templateId.length() > 0 return false;
+            unsafe {
+                editor: Editor~* = this->editor;
+                guard Api:::RenderPreview(editor, this->templateId, widthPhysical, heightPhysical, this->spinRadians) == true return false;
+                SizeFrame(frame, Api:::PreviewWidth(editor), Api:::PreviewHeight(editor));
+                return Api:::CopyPreviewPixels(editor, frame->rgbaPixels);
+            }
+        }
+
+        PointerMoved~: (xPhysical: f32, yPhysical: f32) -> void {
+        }
+
+        PointerButton~: (button: usize, down: bool, modifiers: Modifiers) -> void {
+        }
+
+        Wheel~: (notches: f32, notchesX: f32) -> void {
+        }
+
+        Key~: (keyName: string, down: bool, modifiers: Modifiers) -> bool {
+            return false;
+        }
+
+        HoverChanged~: (pointerIsOver: bool) -> void {
+        }
+
+        Tick~: (deltaSeconds: f32) -> void {
+            this->spinRadians = this->spinRadians + deltaSeconds * PREVIEW_TURNS_PER_SECOND_RADIANS;
+            while this->spinRadians >= FULL_TURN_RADIANS {
+                this->spinRadians = this->spinRadians - FULL_TURN_RADIANS;
+            }
+        }
+
+    private:
+        editor~ raw Editor~* = null;
+        spinRadians~ f32 = 0.0f;
+    }
+
+    ThumbnailRenderer :: class {
+        implements:
+            ViewportRenderer;
+    public:
+        templateId~ string! = "";
+
+        ThumbnailRenderer~: (editor: raw Editor~*, templateId: string) : editor(editor) {
+            this->templateId += templateId;
+        }
+
+        !ThumbnailRenderer~: () {
+            delete this->templateId;
+        }
+
+        Render~: (widthPhysical: u32, heightPhysical: u32, frame: ViewportFrame~*) -> bool {
+            size~ u32 = widthPhysical;
+            if heightPhysical < size {
+                size = heightPhysical;
+            }
+            guard size > 0 return false;
+            unsafe {
+                editor: Editor~* = this->editor;
+                actualSize: u32 = Api:::Thumbnail(editor, this->templateId, size);
+                guard actualSize > 0 return false;
+                SizeFrame(frame, actualSize, actualSize);
+                return Api:::CopyThumbnailPixels(editor, this->templateId, frame->rgbaPixels);
+            }
+        }
+
+        PointerMoved~: (xPhysical: f32, yPhysical: f32) -> void {
+        }
+
+        PointerButton~: (button: usize, down: bool, modifiers: Modifiers) -> void {
+        }
+
+        Wheel~: (notches: f32, notchesX: f32) -> void {
+        }
+
+        Key~: (keyName: string, down: bool, modifiers: Modifiers) -> bool {
+            return false;
+        }
+
+        HoverChanged~: (pointerIsOver: bool) -> void {
+        }
+
+        Tick~: (deltaSeconds: f32) -> void {
+        }
+
+    private:
+        editor~ raw Editor~* = null;
+    }
+}
