@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.30)
 project(lantern_world_editor LANGUAGES C CXX)
 
 # Lantern's world editor. The front end is Penumbra, Chaos, Cosmos and Nyx (src/ui), the same
-# stack as Pharos; the editing logic and the 3D viewport are Rust (crates/editor-backend),
-# linked as a static library through its C API (crates/editor-backend/include/lantern_editor.h).
+# stack as Pharos; the editing logic and the 3D viewport are Nox (engine/editor-backend),
+# linked as a static library through its C API (engine/editor-backend/include/lantern_editor.h).
 # See docs/editor.md.
 
 if((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14)

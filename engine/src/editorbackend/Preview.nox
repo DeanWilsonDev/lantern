@@ -1,0 +1,99 @@
+lantern:::editorbackend :: namespace {
+    PreviewSkyColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.13f, 0.15f, 0.2f);
+    }
+
+    PreviewGridColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.28f, 0.31f, 0.38f);
+    }
+
+    PreviewOutlineColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(0.6f, 0.65f, 0.75f);
+    }
+
+    TemplateBounds :: (template: lantern:::editor:::EntityTemplate*, palette: lantern:::editor:::Palette*) -> lantern:::core:::Aabb {
+        bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb { };
+        if shape := template->prototype->shape {
+            bounds = lantern:::editor:::ShapeLocalBounds(shape);
+        } else {
+            style := palette->MarkerStyleFor(template->Kind());
+            bounds = lantern:::editor:::MarkerLocalBounds(style->mesh);
+            delete style;
+        }
+        if bounds.IsEmpty() {
+            return lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { }, lantern:::core:::Splat3(0.5f));
+        }
+        return bounds;
+    }
+
+    BuildTemplatePreview :: (template: lantern:::editor:::EntityTemplate*, palette: lantern:::editor:::Palette*, resources: lantern:::editor:::ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*, spin: f32) -> void {
+        renderWorld->Clear();
+        renderWorld->clearColor = PreviewSkyColor();
+        renderWorld->fogStart = 1000.0f;
+        renderWorld->fogEnd = 2000.0f;
+        bounds: lantern:::core:::Aabb = TemplateBounds(template, palette);
+        radius: f32 = Math:::max(bounds.HalfExtents().length(), 0.3f);
+        center: Vec3 = bounds.Center();
+        orbitDirection: Vec3 = Vec3 { x: Math:::sin(spin + 0.7f), y: 0.65f, z: Math:::cos(spin + 0.7f) };
+        orbit: Vec3 = lantern:::core:::NormalizeOr3(orbitDirection, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+        camera~ lantern:::renderer:::Camera = lantern:::renderer:::Camera:::LookAt(center + orbit * (radius * 2.6f), center);
+        camera.verticalFieldOfViewRadians = 45.0f * (Math:::PI / 180.0f);
+        camera.nearPlane = 0.05f;
+        camera.farPlane = 200.0f;
+        renderWorld->camera = camera;
+        floorHeight: f32 = bounds.min.y - 0.01f;
+        step: f32 = Math:::max(radius * 0.5f, 0.25f);
+        for index~ i32 = -4; index <= 4; index++ {
+            offset: f32 = f32(index) * step;
+            renderWorld->Line(Vec3 { x: center.x + offset, y: floorHeight, z: center.z - 4.0f * step }, Vec3 { x: center.x + offset, y: floorHeight, z: center.z + 4.0f * step }, PreviewGridColor());
+            renderWorld->Line(Vec3 { x: center.x - 4.0f * step, y: floorHeight, z: center.z + offset }, Vec3 { x: center.x + 4.0f * step, y: floorHeight, z: center.z + offset }, PreviewGridColor());
+        }
+        if shape := template->prototype->shape {
+            if mesh := resources->ShapeMesh(shape) {
+                materialName~ string? = null;
+                if material := template->prototype->material {
+                    materialName = material;
+                }
+                texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = resources->MaterialTexture(materialName);
+                tint~ lantern:::core:::Color = lantern:::core:::Color:::White();
+                if tintText := template->prototype->tint {
+                    tint = lantern:::world:::ParseHexColor(tintText) ?? lantern:::core:::Color:::White();
+                }
+                renderWorld->Draw(mesh, texture, Mat4 { }, tint);
+            }
+            lantern:::editor:::OrientedBoxLines(renderWorld, bounds, Mat4 { }, PreviewOutlineColor());
+            return;
+        }
+        style := palette->MarkerStyleFor(template->Kind());
+        color: lantern:::core:::Color = lantern:::world:::ParseHexColor(style->color) ?? lantern:::core:::Color:::White();
+        marker: lantern:::editor:::MarkerMesh = style->mesh;
+        delete style;
+        if marker == lantern:::editor:::MarkerMesh:::Plane {
+            corners: Vec3[4] = [Vec3 { x: -1.0f, y: 0.0f, z: -1.0f }, Vec3 { x: 1.0f, y: 0.0f, z: -1.0f }, Vec3 { x: 1.0f, y: 0.0f, z: 1.0f }, Vec3 { x: -1.0f, y: 0.0f, z: 1.0f }];
+            for index~ usize = 0; index < 4; index++ {
+                renderWorld->Line(corners[index], corners[(index + 1) % 4], color);
+            }
+            return;
+        }
+        if mesh := resources->MarkerMeshHandle(marker) {
+            renderWorld->Draw(mesh, null, lantern:::editor:::MarkerLocalMatrix(marker), color);
+        }
+    }
+
+    Thumbnail :: class {
+    public:
+        templateId~ string!;
+        pixels~ Array<u8>! = [];
+        size~ u32 = 0;
+        paletteRevision~ u64 = 0;
+
+        Thumbnail~: (id: string) {
+            templateId = `${id}`;
+        }
+
+        !Thumbnail~: () {
+            delete templateId;
+            delete pixels;
+        }
+    }
+}

@@ -188,6 +188,13 @@ lantern:::gpu :: namespace {
         encodeSrgbInShader~ bool = false;
         debug~ bool = false;
         driverName~ string!;
+        ownsVideoSubsystem~ bool = false;
+        offscreenColor~ raw Sdl:::SDL_GPUTexture~* = null;
+        offscreenDepth~ raw Sdl:::SDL_GPUTexture~* = null;
+        offscreenDownload~ raw Sdl:::SDL_GPUTransferBuffer~* = null;
+        offscreenWidth~ u32 = 0;
+        offscreenHeight~ u32 = 0;
+        offscreenPixels~ Array<u8>! = [];
 
         GpuRenderer~: () {
             driverName = "" + "";
@@ -202,6 +209,57 @@ lantern:::gpu :: namespace {
             delete meshes;
             delete textures;
             delete driverName;
+            delete offscreenPixels;
+        }
+
+        static CreateOffscreen :: (options: GpuOptions) -> Result<GpuRenderer*!, string!> {
+            videoStarted~ bool = false;
+            unsafe {
+                videoStarted = Sdl:::SDL_InitSubSystem(Sdl:::SDL_INIT_VIDEO);
+            }
+            if !videoStarted {
+                return Result<GpuRenderer*!, string!>:::Err(SdlFailure("SDL_InitSubSystem(VIDEO)"));
+            }
+            renderer := new GpuRenderer();
+            renderer->debug = options.debug;
+            renderer->ownsVideoSubsystem = true;
+            driverText: string!? = environmentVariable("LANTERN_GPU_DRIVER");
+            defer delete driverText;
+            driverName~ string? = null;
+            if text := driverText {
+                if text.length() > 0 {
+                    driverName = text;
+                }
+            }
+            formats: Sdl:::SDL_GPUShaderFormat = Sdl:::SDL_GPU_SHADERFORMAT_SPIRV | Sdl:::SDL_GPU_SHADERFORMAT_MSL;
+            unsafe {
+                renderer->device = Sdl:::SDL_CreateGPUDevice(formats, options.debug, driverName);
+            }
+            if renderer->device == null {
+                failure: string! = SdlFailure("SDL_CreateGPUDevice");
+                delete renderer;
+                unsafe {
+                    Sdl:::SDL_QuitSubSystem(Sdl:::SDL_INIT_VIDEO);
+                }
+                return Result<GpuRenderer*!, string!>:::Err(failure!);
+            }
+            unsafe {
+                delete renderer->driverName;
+                renderer->driverName = copyCString(Sdl:::SDL_GetGPUDeviceDriver(renderer->device));
+            }
+            shaderFormat: ShaderFormat = ChooseShaderFormat(renderer->device);
+            srgbSupported~ bool = false;
+            unsafe {
+                srgbSupported = Sdl:::SDL_GPUTextureSupportsFormat(renderer->device, Sdl:::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB, Sdl:::SDL_GPU_TEXTURETYPE_2D, Sdl:::SDL_GPU_TEXTUREUSAGE_COLOR_TARGET);
+            }
+            if srgbSupported {
+                renderer->colorFormat = Sdl:::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB;
+            } else {
+                renderer->colorFormat = Sdl:::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            }
+            renderer->encodeSrgbInShader = !srgbSupported;
+            renderer->depthFormat = ChooseDepthFormat(renderer->device);
+            return GpuRenderer:::Finish(renderer!, shaderFormat);
         }
 
         static Create :: (window: raw Sdl:::SDL_Window~*, options: GpuOptions) -> Result<GpuRenderer*!, string!> {
@@ -257,7 +315,11 @@ lantern:::gpu :: namespace {
             if renderer->encodeSrgbInShader {
                 outputName = "shader-encoded sRGB";
             }
-            message: string! = `GPU driver: ${renderer->driverName} (${ShaderFormatName(shaderFormat)} shaders), debug ${debugName}, swapchain format ${renderer->colorFormat}, depth format ${renderer->depthFormat}, ${outputName} output`;
+            targetName~ string = "swapchain";
+            if renderer->ownsVideoSubsystem {
+                targetName = "off-screen colour";
+            }
+            message: string! = `GPU driver: ${renderer->driverName} (${ShaderFormatName(shaderFormat)} shaders), debug ${debugName}, ${targetName} format ${renderer->colorFormat}, depth format ${renderer->depthFormat}, ${outputName} output`;
             lantern:::core:::LogInfo("renderer", message);
             delete message;
             when CreatePipelines(renderer->device, shaderFormat, renderer->colorFormat, renderer->depthFormat) {
@@ -326,6 +388,7 @@ lantern:::gpu :: namespace {
             }
             samplers.Release(device);
             pipelines.Release(device);
+            ReleaseOffscreenTarget();
             unsafe {
                 if windowClaimed {
                     Sdl:::SDL_ReleaseWindowFromGPUDevice(device, window);
@@ -334,6 +397,12 @@ lantern:::gpu :: namespace {
             }
             device = null;
             lantern:::core:::LogInfo("renderer", "GPU device destroyed");
+            if ownsVideoSubsystem {
+                unsafe {
+                    Sdl:::SDL_QuitSubSystem(Sdl:::SDL_INIT_VIDEO);
+                }
+                ownsVideoSubsystem = false;
+            }
         }
 
         DriverName :: () -> string {
@@ -535,6 +604,115 @@ lantern:::gpu :: namespace {
                 }
             }
             return Result<lantern:::renderer:::TextureData*!, string!>:::Ok(captured!);
+        }
+
+        TakeOffscreenPixels~: () -> Array<u8>! {
+            taken: Array<u8>! = offscreenPixels!;
+            offscreenPixels = [];
+            return taken!;
+        }
+
+        ReleaseOffscreenTarget~: () -> void {
+            ReleaseCaptureTarget(offscreenColor, offscreenDepth, offscreenDownload);
+            offscreenColor = null;
+            offscreenDepth = null;
+            offscreenDownload = null;
+            offscreenWidth = 0;
+            offscreenHeight = 0;
+        }
+
+        EnsureOffscreenTarget~: (width: u32, height: u32) -> string!? {
+            if offscreenColor != null && offscreenWidth == width && offscreenHeight == height {
+                return null;
+            }
+            if offscreenColor != null {
+                unsafe {
+                    Sdl:::SDL_WaitForGPUIdle(device);
+                }
+                ReleaseOffscreenTarget();
+            }
+            color: raw Sdl:::SDL_GPUTexture~* = CreateRenderTexture(device, colorFormat, width, height, false);
+            depth: raw Sdl:::SDL_GPUTexture~* = CreateRenderTexture(device, depthFormat, width, height, true);
+            download: raw Sdl:::SDL_GPUTransferBuffer~* = CreateTransferBuffer(device, width * height * 4, false);
+            if color == null || depth == null || download == null {
+                failure: string! = SdlFailure("creating the off-screen target");
+                ReleaseCaptureTarget(color, depth, download);
+                return failure!;
+            }
+            offscreenColor = color;
+            offscreenDepth = depth;
+            offscreenDownload = download;
+            offscreenWidth = width;
+            offscreenHeight = height;
+            return null;
+        }
+
+        RenderOffscreen~: (world: lantern:::renderer:::RenderWorld*, requestedWidth: u32, requestedHeight: u32) -> Result<FrameReport, string!> {
+            width: u32 = when (requestedWidth == 0) { true -> 1, false -> requestedWidth };
+            height: u32 = when (requestedHeight == 0) { true -> 1, false -> requestedHeight };
+            targetProblem: string!? = EnsureOffscreenTarget(width, height);
+            if problem := targetProblem {
+                text: string! = `${problem}`;
+                delete targetProblem;
+                return Result<FrameReport, string!>:::Err(text!);
+            }
+            byteCount: u32 = width * height * 4;
+            commandBuffer~ raw Sdl:::SDL_GPUCommandBuffer~* = null;
+            unsafe {
+                commandBuffer = Sdl:::SDL_AcquireGPUCommandBuffer(device);
+            }
+            if commandBuffer == null {
+                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_AcquireGPUCommandBuffer"));
+            }
+            uploadProblem: string!? = UploadDynamicGeometry(commandBuffer, world);
+            if problem := uploadProblem {
+                text: string! = `${problem}`;
+                delete uploadProblem;
+                unsafe {
+                    Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
+                }
+                return Result<FrameReport, string!>:::Err(text!);
+            }
+            report: FrameReport = RecordFrame(commandBuffer, offscreenColor, offscreenDepth, width, height, world);
+            fence~ raw Sdl:::SDL_GPUFence~* = null;
+            unsafe {
+                source := Sdl:::SDL_GPUTextureRegion { texture: offscreenColor, w: width, h: height, d: 1 };
+                destination := Sdl:::SDL_GPUTextureTransferInfo { transfer_buffer: offscreenDownload };
+                copyPass := Sdl:::SDL_BeginGPUCopyPass(commandBuffer);
+                Sdl:::SDL_DownloadFromGPUTexture(copyPass, source, destination);
+                Sdl:::SDL_EndGPUCopyPass(copyPass);
+                fence = Sdl:::SDL_SubmitGPUCommandBufferAndAcquireFence(commandBuffer);
+            }
+            if fence == null {
+                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_SubmitGPUCommandBufferAndAcquireFence"));
+            }
+            while offscreenPixels.length() < usize(byteCount) {
+                offscreenPixels.push(0);
+            }
+            while offscreenPixels.length() > usize(byteCount) {
+                offscreenPixels.pop();
+            }
+            mapped~ raw u8~* = null;
+            unsafe {
+                Sdl:::SDL_WaitForGPUFences(device, true, fence, 1);
+                Sdl:::SDL_ReleaseGPUFence(device, fence);
+                mapped = Sdl:::SDL_MapGPUTransferBuffer(device, offscreenDownload, false);
+                if mapped != null {
+                    lantern:::copyreadback:::memcpy(offscreenPixels.borrow().mutable(), mapped, usize(byteCount));
+                    Sdl:::SDL_UnmapGPUTransferBuffer(device, offscreenDownload);
+                }
+            }
+            if mapped == null {
+                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_MapGPUTransferBuffer"));
+            }
+            if IsBgra(colorFormat) {
+                for pixelOffset~ usize = 0; pixelOffset < usize(byteCount); pixelOffset += 4 {
+                    blue: u8 = offscreenPixels[pixelOffset];
+                    offscreenPixels[pixelOffset] = offscreenPixels[pixelOffset + 2];
+                    offscreenPixels[pixelOffset + 2] = blue;
+                }
+            }
+            return Result<FrameReport, string!>:::Ok(report);
         }
 
         ReleaseCaptureTarget :: (color: raw Sdl:::SDL_GPUTexture~*, depth: raw Sdl:::SDL_GPUTexture~*, download: raw Sdl:::SDL_GPUTransferBuffer~*) -> void {

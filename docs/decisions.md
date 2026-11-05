@@ -711,3 +711,42 @@ gains `BuildViewport`, the half of `viewport.rs` that reads the session.
   under valgrind with no leaks.
 
 Story: `engine-on-nox/l8-editor/port-editor-core-s-session-and-its-tests`.
+
+## D-051 The Nox editor backend is a static library behind the same C header
+
+`engine/src/editorbackend/` ports `crates/editor-backend` (`lib.rs`, `resources.rs`, `preview.rs`
+and `play.rs`), and `engine/editor-backend/` ports its C API (`ffi.rs` and `ffi_tools.rs`).
+
+- **The C header is unchanged.** `engine/editor-backend/include/lantern_editor.h` is the Rust
+  crate's header, so `apps/world-editor` needs no change beyond which library it links. Nox exports
+  each function from `lantern:::editorapi` (`EditorApi.nox`) as `nox_lantern__editorapi__<Name>`,
+  and a small C file (`shim/lantern_editor.c`) implements the header over them. It keeps the last
+  returned string NUL-terminated until the next call, and copies pixels into buffers it owns,
+  because Nox hands strings over as pointer and length and its arrays can't be lent to C past a
+  call. `nox build --static-library` writes the library and its header from
+  `engine/editor-backend/nox.json`, which names only the engine directories the editor needs.
+- **Rendering off-screen.** `GpuRenderer:::CreateOffscreen` opens the GPU device without a window
+  (it initialises SDL's video subsystem itself and quits it when the renderer is destroyed), and
+  `RenderOffscreen` draws a `RenderWorld` into a colour target of the requested size, kept per
+  size, and reads it back as RGBA rows, top row first.
+- **Ownership.** The backend's GPU resources, play session and render worlds are owned by the
+  backend. A method that needs two of them at once (the session and the render world, say) moves
+  one out of its field while it works and puts it back, as the session does with its drag (D-050),
+  because the borrow checker counts every field reached through `this` as one borrow.
+- **Shaders.** The game finds its shaders beside its executable. The editor's executable lives
+  in a CMake build directory, so the C layer sets `LANTERN_SHADER_DIRECTORY` to
+  `engine/shaders/compiled/` when the variable isn't set already.
+- **Play in editor** runs the Nox game runner, chosen as before (`LANTERN_RUNNER`, then `lantern`
+  beside the editor, then `engine/build/lantern` in the workspace), as
+  `lantern games/platformer` with `LANTERN_LEVEL` and `LANTERN_ASSETS` set, through SDL's process
+  API.
+- **Errors.** Rust caught panics at the C boundary and showed them in the status line. A Nox trap
+  ends the process, so the C header's rule now says only that errors show in
+  `lantern_editor_status`.
+- **Tests.** `engine/editor-backend/tests/lantern_editor_test.c` ports `backend.rs`'s three
+  tests through the C API, plus previews and thumbnails, and passes with a real GPU (lavapipe).
+  `engine/tests/editorbackend/` ports the preview and workspace tests, and
+  `engine/tests/gpu/an-off-screen-renderer-draws-without-a-window` covers the off-screen renderer.
+  `-DLANTERN_EDITOR_BACKEND=rust` links the Rust backend instead, for comparison.
+
+Story: `engine-on-nox/l8-editor/port-editor-backend-behind-lantern-editor-h-as-a-nox-static-library`.
