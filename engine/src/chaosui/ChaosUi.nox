@@ -1,0 +1,336 @@
+ChaosUiC :: import ChaosUiC;
+NyxC :: import NyxC;
+
+lantern:::chaosuicalls :: foreign "lantern-native" {
+    lantern_chaos_ui_create :: (runtime: raw NyxC:::nyx_runtime~*, project_root: string, ui_directory: string, out_ui: raw ChaosUiC:::lantern_chaos_ui~*~*) -> u32;
+    lantern_chaos_ui_mount :: (ui: raw ChaosUiC:::lantern_chaos_ui~*, file: string, component: string, args: Array<raw NyxC:::nyx_value~*>, count: usize, out_mount: u32~*) -> u32;
+    lantern_chaos_ui_snapshot :: (ui: raw ChaosUiC:::lantern_chaos_ui~*, out_nodes: raw ChaosUiC:::lantern_chaos_ui_node*~*, out_count: usize~*) -> u32;
+    lantern_chaos_ui_snapshot_node :: (ui: raw ChaosUiC:::lantern_chaos_ui~*, index: usize, out_node: ChaosUiC:::lantern_chaos_ui_node~*) -> u32;
+    lantern_chaos_ui_diagnostic :: (ui: raw ChaosUiC:::lantern_chaos_ui~*, index: usize, out_text: raw u8*~*, out_length: usize~*) -> u32;
+}
+
+chaosUiRunning~ bool = false;
+
+lantern:::chaosui :: namespace {
+    Pointer :: struct {
+        position~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
+        pressed~ bool = false;
+        released~ bool = false;
+        held~ bool = false;
+    }
+
+    Navigation :: struct {
+        previous~ bool = false;
+        next~ bool = false;
+        confirm~ bool = false;
+        pointer~ Pointer? = null;
+    }
+
+    NodeEvent :: struct {
+        node~ u64 = 0;
+        event~ i32 = 0;
+    }
+
+    ButtonRect :: struct {
+        node~ u64 = 0;
+        rect~ Rect = Rect { };
+    }
+
+    ChaosUi :: class {
+    public:
+        handle~ raw ChaosUiC:::lantern_chaos_ui~* = null;
+        nodes~ Array<UiNode>! = [];
+        focused~ u64? = null;
+        pressed~ bool = false;
+        reportedMessages~ usize = 0;
+        rects~ Array<Rect>! = [];
+        lastPointer~ Vec2? = null;
+        pointerTarget~ u64? = null;
+
+        ChaosUi~: (made: raw ChaosUiC:::lantern_chaos_ui~*) {
+            handle = made;
+        }
+
+        !ChaosUi~: () {
+            nodes.freeAll();
+            delete rects;
+            unsafe {
+                ChaosUiC:::lantern_chaos_ui_destroy(handle);
+                chaosUiRunning = false;
+            }
+        }
+
+        static Create :: (runtime: lantern:::nyx:::Runtime*, projectRoot: string, uiDirectory: string) -> Result<ChaosUi*!, string!> {
+            unsafe {
+                if chaosUiRunning {
+                    return Result<ChaosUi*!, string!>:::Err(OwnedUiText("this process already has a Chaos UI; Chaos allows one at a time"));
+                }
+                made~ raw ChaosUiC:::lantern_chaos_ui~* = null;
+                status: u32 = lantern:::chaosuicalls:::lantern_chaos_ui_create(runtime->handle, projectRoot, uiDirectory, made);
+                if status != ChaosUiC:::LANTERN_CHAOS_UI_OK || made == null {
+                    return Result<ChaosUi*!, string!>:::Err(OwnedUiText("Chaos couldn't start on the game's Nyx runtime"));
+                }
+                chaosUiRunning = true;
+                return Result<ChaosUi*!, string!>:::Ok(new ChaosUi(made));
+            }
+        }
+
+        Mount~: (file: string, component: string, arguments: Array<lantern:::nyx:::Value*>) -> Result<u32, string!> {
+            handles~ Array<raw NyxC:::nyx_value~*>! = [];
+            for argument in arguments {
+                handles.push(argument->handle);
+            }
+            mount~ u32 = 0;
+            status~ u32 = 0;
+            unsafe {
+                status = lantern:::chaosuicalls:::lantern_chaos_ui_mount(handle, file, component, handles, handles.length(), mount);
+            }
+            delete handles;
+            if status != ChaosUiC:::LANTERN_CHAOS_UI_OK {
+                messages~ Array<string!>! = MessagesSince(reportedMessages);
+                failure~ string! = `mounting ${component} from ${file} failed`;
+                for message in messages {
+                    failure += "\n";
+                    failure += message;
+                }
+                messages.freeAll();
+                return Result<u32, string!>:::Err(failure!);
+            }
+            return Result<u32, string!>:::Ok(mount);
+        }
+
+        Unmount~: (mount: u32) -> bool {
+            unsafe {
+                return ChaosUiC:::lantern_chaos_ui_unmount(handle, mount) == ChaosUiC:::LANTERN_CHAOS_UI_OK;
+            }
+        }
+
+        Focus~: (button: u64, events: Array<NodeEvent>!~*) -> void {
+            if current := focused {
+                if current == button {
+                    return;
+                }
+            }
+            focused = button;
+            events->push(NodeEvent { node: button, event: i32(ChaosUiC:::LANTERN_CHAOS_UI_FOCUS) });
+        }
+
+        ButtonAt :: (point: Vec2) -> u64? {
+            if rects.length() != nodes.length() {
+                return null;
+            }
+            index~ usize = nodes.length();
+            while index > 0 {
+                index -= 1;
+                if nodes[index].focusable && rects[index].Contains(point) {
+                    return nodes[index].id;
+                }
+            }
+            return null;
+        }
+
+        FollowPointer~: (pointer: Pointer, events: Array<NodeEvent>!~*) -> void {
+            underPointer: u64? = ButtonAt(pointer.position);
+            moved~ bool = true;
+            if last := lastPointer {
+                moved = last.x != pointer.position.x || last.y != pointer.position.y;
+            }
+            lastPointer = pointer.position;
+            if button := underPointer {
+                if moved || pointer.pressed {
+                    Focus(button, events);
+                }
+            }
+            if pointer.pressed {
+                pointerTarget = underPointer;
+                if button := underPointer {
+                    events->push(NodeEvent { node: button, event: i32(ChaosUiC:::LANTERN_CHAOS_UI_PRESS) });
+                }
+            }
+            guard target := pointerTarget return;
+            sameButton~ bool = false;
+            if button := underPointer {
+                sameButton = button == target;
+            }
+            if pointer.released {
+                pointerTarget = null;
+                if sameButton {
+                    events->push(NodeEvent { node: target, event: i32(ChaosUiC:::LANTERN_CHAOS_UI_RELEASE) });
+                }
+            } else if sameButton {
+                pressed = true;
+            }
+        }
+
+        Navigate~: (navigation: Navigation) -> void {
+            pressed = false;
+            buttons~ Array<u64>! = [];
+            defer delete buttons;
+            for node in nodes {
+                if node.focusable {
+                    buttons.push(node.id);
+                }
+            }
+            if buttons.length() == 0 {
+                focused = null;
+                pointerTarget = null;
+                lastPointer = null;
+                if pointer := navigation.pointer {
+                    lastPointer = pointer.position;
+                }
+                return;
+            }
+            events~ Array<NodeEvent>! = [];
+            defer delete events;
+            focusedPosition~ usize? = null;
+            if current := focused {
+                for position~ usize = 0; position < buttons.length(); position++ {
+                    if buttons[position] == current {
+                        focusedPosition = position;
+                    }
+                }
+            }
+            if focusedPosition == null {
+                focused = buttons[0];
+                focusedPosition = 0;
+            }
+            if navigation.previous != navigation.next {
+                position: usize = focusedPosition ?? 0;
+                chosen~ usize = (position + buttons.length() - 1) % buttons.length();
+                if navigation.next {
+                    chosen = (position + 1) % buttons.length();
+                }
+                Focus(buttons[chosen], events);
+            }
+            if pointer := navigation.pointer {
+                FollowPointer(pointer, events);
+            } else {
+                pointerTarget = null;
+                lastPointer = null;
+            }
+            if navigation.confirm {
+                if button := focused {
+                    pressed = true;
+                    events.push(NodeEvent { node: button, event: i32(ChaosUiC:::LANTERN_CHAOS_UI_PRESS) });
+                    events.push(NodeEvent { node: button, event: i32(ChaosUiC:::LANTERN_CHAOS_UI_RELEASE) });
+                }
+            }
+            for nodeEvent in events {
+                unsafe {
+                    ChaosUiC:::lantern_chaos_ui_dispatch(handle, nodeEvent.node, nodeEvent.event);
+                }
+            }
+        }
+
+        Update~: () -> void {
+            nodes.freeAll();
+            nodes = [];
+            count~ usize = 0;
+            unsafe {
+                ChaosUiC:::lantern_chaos_ui_tick(handle);
+                first~ raw ChaosUiC:::lantern_chaos_ui_node* = null;
+                status: u32 = lantern:::chaosuicalls:::lantern_chaos_ui_snapshot(handle, first, count);
+                if status != ChaosUiC:::LANTERN_CHAOS_UI_OK {
+                    count = 0;
+                }
+            }
+            for index~ usize = 0; index < count; index++ {
+                raw~ ChaosUiC:::lantern_chaos_ui_node = ChaosUiC:::lantern_chaos_ui_node { };
+                copied~ u32 = 0;
+                unsafe {
+                    copied = lantern:::chaosuicalls:::lantern_chaos_ui_snapshot_node(handle, index, raw);
+                }
+                if copied == ChaosUiC:::LANTERN_CHAOS_UI_OK {
+                    made~ UiNode = NodeFromRaw(raw);
+                    nodes.push(made!);
+                }
+            }
+            LinkChildren(nodes.borrow().mutable());
+        }
+
+        ButtonRects :: () -> Array<ButtonRect>! {
+            found~ Array<ButtonRect>! = [];
+            if rects.length() != nodes.length() {
+                return found!;
+            }
+            for index~ usize = 0; index < nodes.length(); index++ {
+                if nodes[index].focusable {
+                    found.push(ButtonRect { node: nodes[index].id, rect: rects[index] });
+                }
+            }
+            return found!;
+        }
+
+        Focused :: () -> u64? {
+            return focused;
+        }
+
+        ChosenStyles :: () -> Array<Style>! {
+            inFocus~ Array<bool>! = [];
+            defer delete inFocus;
+            styles~ Array<Style>! = [];
+            for index~ usize = 0; index < nodes.length(); index++ {
+                focusedHere~ bool = false;
+                if current := focused {
+                    focusedHere = current == nodes[index].id;
+                }
+                if parent := nodes[index].parent {
+                    focusedHere = focusedHere || inFocus[parent];
+                }
+                inFocus.push(focusedHere);
+                chosen~ Style = nodes[index].style;
+                if focusedHere {
+                    if hover := nodes[index].hover {
+                        chosen = hover;
+                    }
+                    if pressed {
+                        if active := nodes[index].active {
+                            chosen = active;
+                        }
+                    }
+                }
+                styles.push(chosen);
+            }
+            return styles!;
+        }
+
+        Draw~: (overlay: lantern:::renderer:::Overlay~*, screen: Vec2, scale: f32) -> void {
+            styles: Array<Style>! = ChosenStyles();
+            laidOut: Array<Rect>! = LayOut(nodes, styles, screen, scale);
+            DrawNodes(nodes, styles, laidOut, overlay, scale);
+            delete rects;
+            rects = laidOut!;
+            delete styles;
+        }
+
+        MessagesSince :: (first: usize) -> Array<string!>! {
+            messages~ Array<string!>! = [];
+            count~ usize = 0;
+            unsafe {
+                count = ChaosUiC:::lantern_chaos_ui_diagnostic_count(handle);
+            }
+            for index~ usize = first; index < count; index++ {
+                text~ raw u8* = null;
+                length~ usize = 0;
+                status~ u32 = 0;
+                unsafe {
+                    status = lantern:::chaosuicalls:::lantern_chaos_ui_diagnostic(handle, index, text, length);
+                }
+                if status == ChaosUiC:::LANTERN_CHAOS_UI_OK && text != null {
+                    messages.push(lantern:::nyx:::ReadText(NyxC:::nyx_str { data_: text, length: length }));
+                }
+            }
+            return messages!;
+        }
+
+        TakeMessages~: () -> Array<string!>! {
+            messages: Array<string!>! = MessagesSince(reportedMessages);
+            reportedMessages += messages.length();
+            return messages!;
+        }
+    }
+
+    OwnedUiText :: (text: string) -> string! {
+        return `${text}`;
+    }
+}

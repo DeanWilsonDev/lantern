@@ -1,0 +1,349 @@
+lantern:::chaosui :: namespace {
+    DEFAULT_FONT_SIZE: f32 : 16.0f;
+
+    Rect :: struct {
+        min~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
+        max~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
+
+        static FromSize :: (minimum: Vec2, size: Vec2) -> Rect {
+            return Rect { min: minimum, max: minimum + size };
+        }
+
+        Size :: () -> Vec2 {
+            return max - min;
+        }
+
+        Contains :: (point: Vec2) -> bool {
+            return point.x >= min.x && point.y >= min.y && point.x < max.x && point.y < max.y;
+        }
+
+        Inset :: (left: f32, top: f32, right: f32, bottom: f32) -> Rect {
+            insetMinimum: Vec2 = min + Vec2 { x: left, y: top };
+            insetMaximum: Vec2 = max - Vec2 { x: right, y: bottom };
+            return Rect { min: insetMinimum, max: Vec2 { x: Math:::max(insetMaximum.x, insetMinimum.x), y: Math:::max(insetMaximum.y, insetMinimum.y) } };
+        }
+    }
+
+    Edges :: struct {
+        left~ f32 = 0.0f;
+        top~ f32 = 0.0f;
+        right~ f32 = 0.0f;
+        bottom~ f32 = 0.0f;
+    }
+
+    TextScale :: (style: Style, scale: f32) -> f32 {
+        pixels: f32 = (style.fontSize ?? DEFAULT_FONT_SIZE) * scale;
+        return Math:::max(Math:::round(pixels / f32(lantern:::renderer:::GLYPH_SIZE)), 1.0f);
+    }
+
+    MainOf :: (size: Vec2, direction: Direction) -> f32 {
+        if direction == Direction:::Row {
+            return size.x;
+        }
+        return size.y;
+    }
+
+    CrossOf :: (size: Vec2, direction: Direction) -> f32 {
+        if direction == Direction:::Row {
+            return size.y;
+        }
+        return size.x;
+    }
+
+    FromMainCross :: (main: f32, cross: f32, direction: Direction) -> Vec2 {
+        if direction == Direction:::Row {
+            return Vec2 { x: main, y: cross };
+        }
+        return Vec2 { x: cross, y: main };
+    }
+
+    MarginMain :: (margin: Insets, direction: Direction) -> f32 {
+        if direction == Direction:::Row {
+            return margin.Horizontal();
+        }
+        return margin.Vertical();
+    }
+
+    LayoutPass :: struct {
+        screen~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
+        scale~ f32 = 1.0f;
+
+        Resolve :: (length: Length?, container: f32?) -> f32? {
+            if chosen := length {
+                return chosen.Resolve(scale, container, screen);
+            }
+            return null;
+        }
+
+        EdgesOf :: (style: Style) -> Edges {
+            padding: Insets = style.padding.Scaled(scale);
+            border: f32 = style.borderWidth * scale;
+            return Edges { left: padding.left + border, top: padding.top + border, right: padding.right + border, bottom: padding.bottom + border };
+        }
+
+        ClampWidth :: (style: Style, width: f32, container: Vec2) -> f32 {
+            clamped~ f32 = width;
+            if maximum := Resolve(style.maxWidth, container.x) {
+                clamped = Math:::min(clamped, maximum);
+            }
+            if minimum := Resolve(style.minWidth, container.x) {
+                clamped = Math:::max(clamped, minimum);
+            }
+            return Math:::max(clamped, 0.0f);
+        }
+    }
+
+    FlowChildren :: (nodes: Array<UiNode>, styles: Array<Style>, index: usize) -> Array<usize>! {
+        flow~ Array<usize>! = [];
+        for child in nodes[index].children {
+            if !styles[child].IsOutOfFlow() {
+                flow.push(child);
+            }
+        }
+        return flow!;
+    }
+
+    PositionedChildren :: (nodes: Array<UiNode>, styles: Array<Style>, index: usize) -> Array<usize>! {
+        positioned~ Array<usize>! = [];
+        for child in nodes[index].children {
+            if styles[child].IsOutOfFlow() {
+                positioned.push(child);
+            }
+        }
+        return positioned!;
+    }
+
+    Measure :: (pass: LayoutPass, nodes: Array<UiNode>, styles: Array<Style>, index: usize, container: Vec2) -> Vec2 {
+        style: Style = styles[index];
+        edges: Edges = pass.EdgesOf(style);
+        edge: Vec2 = Vec2 { x: edges.left + edges.right, y: edges.top + edges.bottom };
+        fixedWidth: f32? = pass.Resolve(style.width, container.x);
+        fixedHeight: f32? = pass.Resolve(style.height, container.y);
+        content~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
+        if nodes[index].kind == NodeKind:::Text {
+            content = lantern:::renderer:::MeasureText(nodes[index].text, TextScale(style, pass.scale));
+        } else {
+            inner: Vec2 = Vec2 { x: Math:::max((fixedWidth ?? container.x) - edge.x, 0.0f), y: Math:::max((fixedHeight ?? container.y) - edge.y, 0.0f) };
+            direction: Direction = style.StackDirection();
+            main~ f32 = 0.0f;
+            cross~ f32 = 0.0f;
+            flow: Array<usize>! = FlowChildren(nodes, styles, index);
+            for child in flow {
+                margin: Insets = styles[child].margin.Scaled(pass.scale);
+                size: Vec2 = Measure(pass, nodes, styles, child, inner) + Vec2 { x: margin.Horizontal(), y: margin.Vertical() };
+                main += MainOf(size, direction);
+                cross = Math:::max(cross, CrossOf(size, direction));
+            }
+            if flow.length() > 1 {
+                main += style.gap * pass.scale * f32(flow.length() - 1);
+            }
+            delete flow;
+            content = FromMainCross(main, cross, direction);
+        }
+        width: f32 = pass.ClampWidth(style, fixedWidth ?? (content.x + edge.x), container);
+        height: f32 = Math:::max(fixedHeight ?? (content.y + edge.y), 0.0f);
+        return Vec2 { x: width, y: height };
+    }
+
+    Nudged :: (pass: LayoutPass, style: Style, rect: Rect, container: Vec2) -> Rect {
+        offsetX~ f32 = 0.0f;
+        if left := pass.Resolve(style.left, container.x) {
+            offsetX = left;
+        } else if right := pass.Resolve(style.right, container.x) {
+            offsetX = -right;
+        }
+        offsetY~ f32 = 0.0f;
+        if top := pass.Resolve(style.top, container.y) {
+            offsetY = top;
+        } else if bottom := pass.Resolve(style.bottom, container.y) {
+            offsetY = -bottom;
+        }
+        offset: Vec2 = Vec2 { x: offsetX, y: offsetY };
+        return Rect { min: rect.min + offset, max: rect.max + offset };
+    }
+
+    Arrange :: (pass: LayoutPass, nodes: Array<UiNode>, styles: Array<Style>, rects: Array<Rect~>, index: usize, rect: Rect, containing: Rect) -> void {
+        rects[index] = rect;
+        style: Style = styles[index];
+        border: f32 = style.borderWidth * pass.scale;
+        edges: Edges = pass.EdgesOf(style);
+        content: Rect = rect.Inset(edges.left, edges.top, edges.right, edges.bottom);
+        childContaining~ Rect = containing;
+        if style.position != Position:::Static {
+            childContaining = rect.Inset(border, border, border, border);
+        }
+        direction: Direction = style.StackDirection();
+        flow: Array<usize>! = FlowChildren(nodes, styles, index);
+        defer delete flow;
+        contentSize: Vec2 = content.Size();
+        contentMain: f32 = MainOf(contentSize, direction);
+        contentCross: f32 = CrossOf(contentSize, direction);
+        gap: f32 = style.gap * pass.scale;
+        gaps~ f32 = 0.0f;
+        if flow.length() > 1 {
+            gaps = gap * f32(flow.length() - 1);
+        }
+        sizes~ Array<Vec2>! = [];
+        defer delete sizes;
+        margins~ Array<Insets>! = [];
+        defer delete margins;
+        totalGrow~ f32 = 0.0f;
+        for child in flow {
+            sizes.push(Measure(pass, nodes, styles, child, contentSize));
+            margins.push(styles[child].margin.Scaled(pass.scale));
+            totalGrow += styles[child].flexGrow;
+        }
+        free~ f32 = 0.0f;
+        if totalGrow > 0.0f {
+            fixed~ f32 = 0.0f;
+            for position~ usize = 0; position < flow.length(); position++ {
+                if styles[flow[position]].flexGrow <= 0.0f {
+                    fixed += MainOf(sizes[position], direction) + MarginMain(margins[position], direction);
+                }
+            }
+            available: f32 = Math:::max(contentMain - fixed - gaps, 0.0f);
+            for position~ usize = 0; position < flow.length(); position++ {
+                grow: f32 = styles[flow[position]].flexGrow;
+                if grow > 0.0f {
+                    main: f32 = Math:::max(available * grow / totalGrow - MarginMain(margins[position], direction), 0.0f);
+                    sizes[position] = FromMainCross(main, CrossOf(sizes[position], direction), direction);
+                }
+            }
+        } else {
+            used~ f32 = 0.0f;
+            for position~ usize = 0; position < flow.length(); position++ {
+                used += MainOf(sizes[position], direction) + MarginMain(margins[position], direction);
+            }
+            free = Math:::max(contentMain - used - gaps, 0.0f);
+        }
+        cursor~ f32 = 0.0f;
+        between~ f32 = 0.0f;
+        when style.justifyContent {
+            Justify:::Start -> { },
+            Justify:::Center -> {
+                cursor = free / 2.0f;
+            },
+            Justify:::End -> {
+                cursor = free;
+            },
+            Justify:::SpaceBetween -> {
+                if flow.length() > 1 {
+                    between = free / f32(flow.length() - 1);
+                }
+            }
+        }
+        align: Align = style.alignItems ?? Align:::Stretch;
+        for position~ usize = 0; position < flow.length(); position++ {
+            child: usize = flow[position];
+            childStyle: Style = styles[child];
+            margin: Insets = margins[position];
+            size: Vec2 = sizes[position];
+            marginMainStart~ f32 = margin.top;
+            marginMainEnd~ f32 = margin.bottom;
+            marginCrossStart~ f32 = margin.left;
+            marginCrossEnd~ f32 = margin.right;
+            hasCrossSize~ bool = childStyle.width != null;
+            if direction == Direction:::Row {
+                marginMainStart = margin.left;
+                marginMainEnd = margin.right;
+                marginCrossStart = margin.top;
+                marginCrossEnd = margin.bottom;
+                hasCrossSize = childStyle.height != null;
+            }
+            room: f32 = Math:::max(contentCross - marginCrossStart - marginCrossEnd, 0.0f);
+            cross~ f32 = CrossOf(size, direction);
+            crossOffset~ f32 = 0.0f;
+            when align {
+                Align:::Stretch -> {
+                    if !hasCrossSize {
+                        cross = room;
+                    }
+                },
+                Align:::Start -> { },
+                Align:::Center -> {
+                    crossOffset = (room - cross) / 2.0f;
+                },
+                Align:::End -> {
+                    crossOffset = room - cross;
+                }
+            }
+            main: f32 = MainOf(size, direction);
+            childPosition: Vec2 = content.min + FromMainCross(cursor + marginMainStart, crossOffset + marginCrossStart, direction);
+            childRect~ Rect = Rect:::FromSize(childPosition, FromMainCross(main, cross, direction));
+            if childStyle.position == Position:::Relative || childStyle.position == Position:::Sticky {
+                childRect = Nudged(pass, childStyle, childRect, contentSize);
+            }
+            Arrange(pass, nodes, styles, rects, child, childRect, childContaining);
+            cursor += marginMainStart + main + marginMainEnd + gap + between;
+        }
+        positioned: Array<usize>! = PositionedChildren(nodes, styles, index);
+        for child in positioned {
+            PlacePositioned(pass, nodes, styles, rects, child, childContaining, content.min);
+        }
+        delete positioned;
+    }
+
+    PlacePositioned :: (pass: LayoutPass, nodes: Array<UiNode>, styles: Array<Style>, rects: Array<Rect~>, index: usize, containing: Rect, staticPosition: Vec2) -> void {
+        style: Style = styles[index];
+        block~ Rect = containing;
+        if style.position == Position:::Fixed {
+            block = Rect:::FromSize(Vec2 { x: 0.0f, y: 0.0f }, pass.screen);
+        }
+        blockSize: Vec2 = block.Size();
+        margin: Insets = style.margin.Scaled(pass.scale);
+        size~ Vec2 = Measure(pass, nodes, styles, index, blockSize);
+        left: f32? = pass.Resolve(style.left, blockSize.x);
+        right: f32? = pass.Resolve(style.right, blockSize.x);
+        top: f32? = pass.Resolve(style.top, blockSize.y);
+        bottom: f32? = pass.Resolve(style.bottom, blockSize.y);
+        if style.width == null {
+            if leftOffset := left {
+                if rightOffset := right {
+                    size.x = Math:::max(blockSize.x - leftOffset - rightOffset - margin.Horizontal(), 0.0f);
+                }
+            }
+        }
+        if style.height == null {
+            if topOffset := top {
+                if bottomOffset := bottom {
+                    size.y = Math:::max(blockSize.y - topOffset - bottomOffset - margin.Vertical(), 0.0f);
+                }
+            }
+        }
+        x~ f32 = staticPosition.x + margin.left;
+        if leftOffset := left {
+            x = block.min.x + leftOffset + margin.left;
+        } else if rightOffset := right {
+            x = block.max.x - rightOffset - margin.right - size.x;
+        }
+        y~ f32 = staticPosition.y + margin.top;
+        if topOffset := top {
+            y = block.min.y + topOffset + margin.top;
+        } else if bottomOffset := bottom {
+            y = block.max.y - bottomOffset - margin.bottom - size.y;
+        }
+        Arrange(pass, nodes, styles, rects, index, Rect:::FromSize(Vec2 { x: x, y: y }, size), containing);
+    }
+
+    LayOut :: (nodes: Array<UiNode>, styles: Array<Style>, screen: Vec2, scale: f32) -> Array<Rect>! {
+        rects~ Array<Rect>! = [];
+        for index~ usize = 0; index < nodes.length(); index++ {
+            rects.push(Rect { });
+        }
+        pass: LayoutPass = LayoutPass { screen: screen, scale: scale };
+        window: Rect = Rect:::FromSize(Vec2 { x: 0.0f, y: 0.0f }, screen);
+        for index~ usize = 0; index < nodes.length(); index++ {
+            if nodes[index].parent != null {
+                continue;
+            }
+            if styles[index].IsOutOfFlow() {
+                PlacePositioned(pass, nodes, styles, rects, index, window, Vec2 { x: 0.0f, y: 0.0f });
+            } else {
+                margin: Insets = styles[index].margin.Scaled(scale);
+                size: Vec2 = Measure(pass, nodes, styles, index, screen);
+                Arrange(pass, nodes, styles, rects, index, Rect:::FromSize(Vec2 { x: margin.left, y: margin.top }, size), window);
+            }
+        }
+        return rects!;
+    }
+}

@@ -23,5 +23,10 @@ fi
 nyx_include_directory="$(cd "$nyx_source_directory/include" && pwd)"
 mkdir -p "$engine_directory/generated"
 "$nox_command" bind-c "$nyx_include_directory/nyx/nyx.h" "-I$nyx_include_directory" --from "$nyx_include_directory/nyx" \
-    --library nyx-capi --namespace NyxC -o "$engine_directory/generated/nyx.nox" 2> "$engine_directory/generated/nyx-binding-notes.txt"
+    --library lantern-native --namespace NyxC -o "$engine_directory/generated/nyx.nox" 2> "$engine_directory/generated/nyx-binding-notes.txt"
 echo "wrote generated/nyx.nox; notes in generated/nyx-binding-notes.txt"
+chaos_ui_include_directory="$engine_directory/native/include"
+"$nox_command" bind-c "$chaos_ui_include_directory/lantern_chaos_ui.h" "-I$chaos_ui_include_directory" "-I$nyx_include_directory" \
+    --from "$chaos_ui_include_directory" --library lantern-native --namespace ChaosUiC -o "$engine_directory/generated/chaos-ui.nox" \
+    2> "$engine_directory/generated/chaos-ui-binding-notes.txt"
+echo "wrote generated/chaos-ui.nox; notes in generated/chaos-ui-binding-notes.txt"

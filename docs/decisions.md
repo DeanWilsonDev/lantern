@@ -601,3 +601,24 @@ namespaces and PascalCase types, and that Lantern never name another engine.
 
 Card: `naming/lantern-names/move-the-engine-api-under-lantern`.
 
+
+## D-046 The Nox engine links Nyx and the Chaos bridge as one library
+
+The Nox engine (`engine/`) needs the Chaos UI bridge that `crates/chaos-ui` builds for the Rust
+engine. The bridge reaches Nyx's internals through `nyx-host-interop.hpp`, so it has to share one
+copy of Nyx with the C API the engine calls.
+
+- **One library.** `engine/native/` builds `liblantern-native`: Nyx's C API (linked whole), Chaos,
+  Cosmos and the bridge, exporting only the `nyx_` and `lantern_chaos_ui_` functions. Both
+  `generated/nyx.nox` and `generated/chaos-ui.nox` link it, and `libnyx-capi` isn't used any more.
+- **Current upstreams.** It builds from nyx-scripting-language, chaos-ui-framework and
+  cosmos-styling-language on `proto` beside lantern, so the bridge moved to Chaos's current names
+  (`Equinox::IWidget`, `include/chaos`, `include/cosmos`). `crates/chaos-ui` keeps its pinned
+  commits and its own copy of the bridge.
+- **One call added.** `lantern_chaos_ui_snapshot_node` copies one node of the last snapshot, since
+  Nox can't index a C array through a raw pointer.
+- **Chaos's target.** The bridge still sets `ChaosBuildTarget::UmbraEngine`, the only Umbra name
+  in Lantern, until Chaos has a target named for game engines (Nyx board,
+  `proto-a-chaos-build-target-for-game-engines-that-doesn-t-say-umbra`).
+
+Story: `engine-on-nox/l7-game-ui/port-chaos-ui-the-native-library-its-binding-nodes-styles-layout-and-drawing`.

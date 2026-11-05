@@ -1,0 +1,60 @@
+ChaosUiC :: import ChaosUiC;
+NyxC :: import NyxC;
+
+lantern:::chaosui :: namespace {
+    NodeKind :: enum {
+        Frame,
+        Text,
+        Unsupported
+    }
+
+    UiNode :: struct {
+        id~ u64 = 0;
+        parent~ usize? = null;
+        children~ Array<usize>! = [];
+        kind~ NodeKind = NodeKind:::Frame;
+        text~ string! = "";
+        focusable~ bool = false;
+        style~ Style = Style { };
+        hover~ Style? = null;
+        active~ Style? = null;
+    }
+
+    NodeKindFromRaw :: (kind: i32) -> NodeKind {
+        return when kind {
+            0 -> NodeKind:::Frame,
+            1 -> NodeKind:::Text,
+            override -> NodeKind:::Unsupported,
+        };
+    }
+
+    NodeTextFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_node) -> string! {
+        return lantern:::nyx:::ReadText(NyxC:::nyx_str { data_: raw.text, length: raw.text_length });
+    }
+
+    NodeFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_node) -> UiNode {
+        node~ UiNode = UiNode { text: NodeTextFromRaw(raw) };
+        node.id = raw.id;
+        if raw.parent >= 0 {
+            node.parent = usize(raw.parent);
+        }
+        node.kind = NodeKindFromRaw(raw.kind);
+        node.focusable = (raw.events & u32(ChaosUiC:::LANTERN_CHAOS_UI_HAS_PRESS | ChaosUiC:::LANTERN_CHAOS_UI_HAS_RELEASE)) != 0;
+        node.style = StyleFromRaw(raw.style);
+        if raw.has_hover != 0 {
+            node.hover = StyleFromRaw(raw.hover);
+        }
+        if raw.has_active != 0 {
+            node.active = StyleFromRaw(raw.active);
+        }
+        return node!;
+    }
+
+    LinkChildren :: (nodes: Array<UiNode~>) -> void {
+        for index~ usize = 0; index < nodes.length(); index++ {
+            if parent := nodes[index].parent {
+                nodes[parent].children.push(index);
+            }
+        }
+    }
+}
