@@ -1,0 +1,95 @@
+Sdl :: import Sdl;
+CText :: import lantern:::nyx:::CText;
+BridgeHost :: import penumbra:::bridge:::BridgeHost;
+WindowRequests :: import penumbra:::bridge:::WindowRequests;
+
+lantern:::worldeditor:::filedialogs :: namespace {
+    FileDialog :: class {
+    public:
+        pending~ bool = false;
+        finished~ Atomic<bool> = atomic(false);
+        chosenPath~ string!? = null;
+
+        FileDialog~: () {
+            this->filterName = new CText("");
+            this->filterPattern = new CText("");
+        }
+
+        !FileDialog~: () {
+            delete this->chosenPath;
+            delete this->filterName;
+            delete this->filterPattern;
+        }
+
+        Show~: (requests: WindowRequests~*) -> bool {
+            guard this->pending == false return false;
+            delete this->filterName;
+            this->filterName = new CText(requests->fileDialogFilterName);
+            delete this->filterPattern;
+            this->filterPattern = new CText(requests->fileDialogFilterPattern);
+            this->filter.name = this->filterName->bytes;
+            this->filter.pattern = this->filterPattern->bytes;
+            delete this->chosenPath;
+            this->chosenPath = null;
+            this->finished.store(false);
+            this->pending = true;
+            startingPath~ string? = null;
+            if requests->fileDialogDefaultPath.length() > 0 {
+                startingPath = requests->fileDialogDefaultPath;
+            }
+            unsafe {
+                self: raw FileDialog~* = this;
+                viewed := reinterpret<raw u8~*>(self);
+                userdata: raw u8~* = viewed^*;
+                filters: raw Sdl:::SDL_DialogFileFilter* = this->filter;
+                if requests->fileDialogSaves {
+                    Sdl:::SDL_ShowSaveFileDialog(FileDialogClosed, userdata, null, filters, 1, startingPath);
+                } else {
+                    Sdl:::SDL_ShowOpenFileDialog(FileDialogClosed, userdata, null, filters, 1, startingPath, false);
+                }
+            }
+            return true;
+        }
+
+        FinishIfClosed~: (host: BridgeHost~*) -> void {
+            guard this->pending == true return;
+            guard this->finished.load() == true return;
+            this->pending = false;
+            if chosen := this->chosenPath {
+                host->FinishFileDialog(chosen);
+            } else {
+                host->FinishFileDialog(null);
+            }
+            delete this->chosenPath;
+            this->chosenPath = null;
+        }
+
+        Close~: (chosen: string!?) -> void {
+            delete this->chosenPath;
+            this->chosenPath = chosen!;
+            this->finished.store(true);
+        }
+
+    private:
+        filterName~ CText*!;
+        filterPattern~ CText*!;
+        filter~ Sdl:::SDL_DialogFileFilter = Sdl:::SDL_DialogFileFilter { };
+    }
+
+    FileDialogClosed :: (userdata: raw u8~*, fileList: raw u8**, filterIndex: i32) -> void {
+        unsafe {
+            viewed := reinterpret<raw FileDialog~*>(userdata);
+            dialog: raw FileDialog~* = viewed^*;
+            if fileList == null {
+                dialog->Close(null);
+                return;
+            }
+            firstPath: raw u8* = fileList^*;
+            if firstPath == null {
+                dialog->Close(null);
+                return;
+            }
+            dialog->Close(copyCString(firstPath));
+        }
+    }
+}
