@@ -577,6 +577,11 @@ bool lantern_editor_set_parent(LanternEditor* editor, int64_t child, int64_t par
     return nox_lantern__editorapi__SetParent(editor->backend, child, parent);
 }
 
+bool lantern_editor_move_before(LanternEditor* editor, int64_t child, int64_t sibling) {
+    if (!editor) return false;
+    return nox_lantern__editorapi__MoveBefore(editor->backend, child, sibling);
+}
+
 bool lantern_editor_set_selection_field(LanternEditor* editor, const char* field, const char* text) {
     if (!editor) return false;
     return nox_lantern__editorapi__SetSelectionField(editor->backend, NoxText(field), NoxText(text));

@@ -803,3 +803,24 @@ to the front.
   entities, and markers while they're hidden from view, are skipped as they are for a plain click.
 
 Card: `world-editor/follow-ups-after-the-first-full-pass/selection-cycling-through-overlapping-entities-on-repeated-clicks`.
+
+## D-054 Outliner rows reorder by dropping on the line between them
+
+Dragging a row in the outliner now does something: Penumbra gained a drag session (penumbra-ui-engine's
+`DragDispatch`) and penumbra-bridge maps Chaos's `dragPayload`, `onDragStart`, `onDragEnd`, `onDragEnter`,
+`onDragLeave` and `onDrop` onto it. Before that the rows' drag props were inert.
+
+- **Three drop places.** A row's middle parents the dragged entity under that row, as before. While a drag is
+  going, each row shows a thin drop line across its top edge (an absolutely positioned 8px strip, so the rows
+  don't move); dropping there moves the entity just before that row, under the row's parent. The empty tail
+  under the list moves it to the end of the root.
+- **One edit.** `EditorSession::MoveBefore(child, sibling)` removes the entity and inserts it at its new place in
+  the world's entity array, so one undo puts it back. A move to another parent keeps the entity where it is in
+  the world, as `SetParent` does, and a move in among its own descendants is refused.
+- **Order is the array order.** The outline lists siblings in the order the world file holds them, so moving
+  in the outline saves as a new order in the file.
+- **Highlights.** The application keeps the drag (`outlineDragging`) and the hovered drop place
+  (`outlineDropTarget`) as signals. The hovered row gets an accent border and the hovered line turns accent.
+- **C++ Penumbra only.** The Nox Penumbra port isn't changed; it's replaced as a later, separate pass.
+
+Card: `world-editor/follow-ups-after-the-first-full-pass/reorder-siblings-by-drag-and-drop-in-the-outliner`.

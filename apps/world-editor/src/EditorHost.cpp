@@ -164,6 +164,9 @@ void RegisterOutlineFunctions(nyx::host::NyxRuntime& Runtime, LanternEditor* Edi
     Runtime.RegisterFunction("editorSetParent", [Editor](std::int64_t Child, std::int64_t Parent) -> bool {
         return lantern_editor_set_parent(Editor, Child, Parent);
     });
+    Runtime.RegisterFunction("editorMoveBefore", [Editor](std::int64_t Child, std::int64_t Sibling) -> bool {
+        return lantern_editor_move_before(Editor, Child, Sibling);
+    });
 }
 
 void RegisterInspectorFunctions(nyx::host::NyxRuntime& Runtime, LanternEditor* Editor) {

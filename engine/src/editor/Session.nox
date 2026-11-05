@@ -1045,30 +1045,76 @@ lantern:::editor :: namespace {
                 delete entityFound;
                 return true;
             }
-            if newParent := parent {
-                current~ u64? = newParent;
-                steps~ usize = 0;
-                while current != null && steps <= document->world->entities.length() {
-                    key: u64 = current ?? 0;
-                    if key == child {
-                        delete entityFound;
-                        return Refuse("an entity cannot be parented under itself".copy());
-                    }
-                    found: usize? = document->world->IndexOf(key);
-                    current = null;
-                    if index := found {
-                        current = document->world->entities[index]->parent;
-                    }
-                    steps += 1;
-                }
+            if ParentChainContains(parent, child) {
+                delete entityFound;
+                return Refuse("an entity cannot be parented under itself".copy());
             }
-            worldPosition: Vec3 = WorldOriginOf(child);
-            newParentWorld: Mat4 = WorldMatrixOf(parent);
-            entityFound->parent = parent;
-            entityFound->transform.position = InverseOrIdentity(newParentWorld).transformPoint(worldPosition);
+            KeepWorldPositionUnder(entityFound, child, parent);
             edits~ Array<Edit*!>! = [];
             edits.push(Edit:::Replace(entityFound!));
             return ExecuteEdits("Change parent", edits!);
+        }
+
+        MoveBefore~: (child: u64, sibling: u64?) -> bool {
+            world: lantern:::world:::WorldFile* = document->world;
+            guard childIndex := world->IndexOf(child) return false;
+            newParent~ u64? = null;
+            targetIndex~ usize = LAST_INDEX;
+            if siblingKey := sibling {
+                if siblingKey == child {
+                    return true;
+                }
+                guard siblingIndex := world->IndexOf(siblingKey) return false;
+                newParent = world->entities[siblingIndex]->parent;
+                targetIndex = when (childIndex < siblingIndex) { true -> siblingIndex - 1, false -> siblingIndex };
+            }
+            sameParent: bool = SameOptionalU64(world->entities[childIndex]->parent, newParent);
+            alreadyLast: bool = sibling == null && childIndex + 1 == world->entities.length();
+            if sameParent && (targetIndex == childIndex || alreadyLast) {
+                return true;
+            }
+            if ParentChainContains(newParent, child) {
+                return Refuse("an entity cannot be parented under itself".copy());
+            }
+            entityFound: lantern:::world:::WorldEntity*!? = EntityCopy(child);
+            guard entityFound return false;
+            if !sameParent {
+                KeepWorldPositionUnder(entityFound, child, newParent);
+            }
+            name: string! = `${entityFound->name}`;
+            label: string! = `Move ${name}`;
+            delete name;
+            edits~ Array<Edit*!>! = [];
+            edits.push(Edit:::Remove(child));
+            edits.push(Edit:::Insert(targetIndex, entityFound!));
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        ParentChainContains~: (start: u64?, key: u64) -> bool {
+            current~ u64? = start;
+            steps~ usize = 0;
+            while current != null && steps <= document->world->entities.length() {
+                visited: u64 = current ?? 0;
+                if visited == key {
+                    return true;
+                }
+                found: usize? = document->world->IndexOf(visited);
+                current = null;
+                if index := found {
+                    current = document->world->entities[index]->parent;
+                }
+                steps += 1;
+            }
+            return false;
+        }
+
+        KeepWorldPositionUnder~: (entity: lantern:::world:::WorldEntity~*, key: u64, parent: u64?) -> void {
+            worldPosition: Vec3 = WorldOriginOf(key);
+            newParentWorld: Mat4 = WorldMatrixOf(parent);
+            entity->parent = parent;
+            entity->transform.position = InverseOrIdentity(newParentWorld).transformPoint(worldPosition);
         }
 
         GroupSelection~: () -> bool {
