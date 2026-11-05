@@ -656,5 +656,33 @@ one type for one type. Where the Rust leans on something Nox doesn't have, it do
 - **Tests.** The camera, scene geometry and preferences tests are the Rust ones. `document.rs` and
   `palette.rs` had none, so `the-document-undoes-redoes-coalesces-and-previews` and
   `the-palette-loads-saves-and-falls-back` are new.
+- **Saved palettes.** A saved palette holds the same JSON as Rust's, but it's laid out as the world
+  file is (`1` and `[1, 0.5, 1]`), where serde's pretty printer writes `1.0` and one array element
+  per line. Saved preferences match Rust byte for byte.
 
 Story: `engine-on-nox/l8-editor/port-editor-core-s-model-document-palette-preferences-camera-and-scene-geometry`.
+
+## D-049 Nox gizmo handles are a struct, and the viewport build waits for the session
+
+`engine/src/editor/Gizmo.nox`, `Inspector.nox` and `Viewport.nox` port `gizmo.rs`, `inspector.rs`
+and the drawing half of `viewport.rs`.
+
+- **Handles.** Rust's `Handle` enum carries an axis in two of its variants. In Nox it's a `Handle`
+  struct with a `HandleKind` and an axis, compared with `Same`, since optionals have no `==`.
+- **Gizmo frame.** `GizmoFrame` keeps its three axes as `xAxis`, `yAxis` and `zAxis` fields.
+  `EulerDegrees` ports glam's YXZ path: it builds the rotation matrix's columns and takes
+  `atan2`s, and when the pitch is within glam's tolerance of ±90° it puts the whole turn into yaw
+  and sets roll to 0, as glam does. Degrees use Rust's `to_degrees` constant, `57.29578`.
+- **Inspector.** Choices are an array on the `InspectorField`, not a payload on `FieldKind`.
+  Numbers parse with Rust's `f32` grammar (sign, digits, an optional point and exponent, or `inf`
+  and `nan`) checked before `strtod` reads them, and they're shown as Rust shows them.
+  Two known gaps: `strtod` reads to f64 and then rounds to f32, where Rust rounds once, so an
+  input very close to an f32 halfway point can land one step away; and above about 10⁶,
+  `FormatNumber` can print a different last digit from Rust's shortest form (`1585384.2` against
+  `1585384.3`), the same shortest-digits gap the L4 float formatting has.
+- **Viewport.** `build_viewport` reads the session's selection, hover, view options and gizmo, so
+  it moves with the session in the next story, along with its two tests. This story ports what
+  it draws with: `ViewportResources`, marker matrices and bounds, oriented outlines, the grid, the
+  plane marker, arrows and the rubber band.
+
+Story: `engine-on-nox/l8-editor/port-editor-core-s-interaction-viewport-picking-gizmos-and-the-inspector`.

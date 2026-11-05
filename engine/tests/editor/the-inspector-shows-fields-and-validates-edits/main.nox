@@ -1,0 +1,166 @@
+lantern :: import lantern;
+
+Block :: () -> lantern:::world:::WorldEntity*! {
+    entity := new lantern:::world:::WorldEntity(7, "wall", "block");
+    entity->shape = lantern:::world:::Shape:::Box(Vec3 { x: 1.0f, y: 0.5f, z: 2.0f });
+    entity->SetMaterial("wall");
+    entity->collider = lantern:::world:::ColliderKind:::Static;
+    return entity!;
+}
+
+FieldNamed :: (fields: Array<lantern:::editor:::InspectorField*!>, key: string) -> lantern:::editor:::InspectorField*? {
+    for field in fields {
+        if field->key == key {
+            return field;
+        }
+    }
+    return null;
+}
+
+Edited :: (entity: lantern:::world:::WorldEntity*, field: string, text: string) -> lantern:::world:::WorldEntity*!? {
+    when lantern:::editor:::ApplyField(entity, field, text) {
+        Result:::Ok(edited) -> {
+            return edited!;
+        },
+        Result:::Err(message) -> {
+            delete message;
+            return null;
+        }
+    }
+}
+
+Refuses :: (entity: lantern:::world:::WorldEntity*, field: string, text: string) -> bool {
+    edited: lantern:::world:::WorldEntity*!? = Edited(entity, field, text);
+    refused: bool = edited == null;
+    delete edited;
+    return refused;
+}
+
+FieldsShowSizesAsFullExtents :: (palette: lantern:::editor:::Palette*) -> void {
+    entity := Block();
+    world := new lantern:::world:::WorldFile("w");
+    fields~ Array<lantern:::editor:::InspectorField*!>! = lantern:::editor:::FieldsFor(entity, world, palette);
+    sizeFound: lantern:::editor:::InspectorField*? = FieldNamed(fields, "size.z");
+    assert(sizeFound != null, "a box shows its size");
+    if sizeZ := sizeFound {
+        assert(sizeZ->value == "4", "a box's size is its full extent");
+    }
+    colliderFound: lantern:::editor:::InspectorField*? = FieldNamed(fields, "collider");
+    if collider := colliderFound {
+        assert(collider->value == "static", "the collider shows");
+    }
+    assert(colliderFound != null, "a shape shows its collider");
+    fields.freeAll();
+    delete world;
+    delete entity;
+}
+
+EditingFieldsValidatesInput :: () -> void {
+    entity := Block();
+    moved: lantern:::world:::WorldEntity*!? = Edited(entity, "position.y", "2.5");
+    if raised := moved {
+        assert(raised->transform.position.y == 2.5f, "a typed number moves the entity");
+    }
+    assert(moved != null, "a number is accepted");
+    delete moved;
+    assert(Refuses(entity, "position.y", "abc"), "text isn't a number");
+    assert(Refuses(entity, "scale.x", "0"), "a zero scale is refused");
+    resized: lantern:::world:::WorldEntity*!? = Edited(entity, "size.x", "3");
+    if wider := resized {
+        halfExtents: Vec3 = (wider->shape ?? lantern:::world:::Shape { }).halfExtents;
+        assert(halfExtents.x == 1.5f && halfExtents.y == 0.5f && halfExtents.z == 2.0f, "a size sets the half extent");
+    }
+    assert(resized != null, "a size is accepted");
+    delete resized;
+    tinted: lantern:::world:::WorldEntity*!? = Edited(entity, "tint", "ffe0a0");
+    if coloured := tinted {
+        assert(coloured->tint != null, "a tint is set");
+        if tint := coloured->tint {
+            assert(tint == "#FFE0A0", "a tint is normalised to #RRGGBB");
+        }
+    }
+    delete tinted;
+    unshaped: lantern:::world:::WorldEntity*!? = Edited(entity, "shape", "none");
+    if marker := unshaped {
+        assert(marker->shape == null && marker->collider == null && marker->material == null, "removing the shape removes its look and collision");
+    }
+    assert(unshaped != null, "a shape can be removed");
+    delete unshaped;
+    delete entity;
+}
+
+AMultiSelectionMarksDisagreementsMixed :: (palette: lantern:::editor:::Palette*) -> void {
+    first := Block();
+    second := Block();
+    second->id = 8;
+    second->SetName("wall_2");
+    second->transform.position = Vec3 { x: 3.0f, y: 0.0f, z: 0.0f };
+    second->SetNumberProperty("speed", 2.0f);
+    world := new lantern:::world:::WorldFile("w");
+    others~ Array<lantern:::world:::WorldEntity*>! = [];
+    others.push(second);
+    fields~ Array<lantern:::editor:::InspectorField*!>! = lantern:::editor:::FieldsForSelection(first, others, world, palette);
+    delete others;
+    assert((FieldNamed(fields, "name")?.mixed ?? false), "different names are mixed");
+    assert((FieldNamed(fields, "position.x")?.mixed ?? false), "different x positions are mixed");
+    assert(!(FieldNamed(fields, "position.y")?.mixed ?? true), "the same y position isn't mixed");
+    assert(!(FieldNamed(fields, "material")?.mixed ?? true), "the same material isn't mixed");
+    assert(FieldNamed(fields, "property:speed") == null, "only the primary's fields show");
+    fields.freeAll();
+    nobody~ Array<lantern:::world:::WorldEntity*>! = [];
+    typed~ Array<lantern:::editor:::InspectorField*!>! = lantern:::editor:::FieldsForSelection(second, nobody, world, palette);
+    delete nobody;
+    speedFound: lantern:::editor:::InspectorField*? = FieldNamed(typed, "property:speed");
+    if speed := speedFound {
+        assert(speed->kind == lantern:::editor:::FieldKind:::Number, "a number property is a number field");
+    }
+    assert(speedFound != null, "a property shows");
+    tintFound: lantern:::editor:::InspectorField*? = FieldNamed(typed, "tint");
+    if tint := tintFound {
+        assert(tint->kind == lantern:::editor:::FieldKind:::Color, "the tint is a colour field");
+    }
+    typed.freeAll();
+    delete world;
+    delete second;
+    delete first;
+}
+
+IsVector :: (parsed: lantern:::editor:::ParsedProperty, x: f32, y: f32, z: f32) -> bool {
+    return parsed.value.kind == lantern:::world:::PropertyKind:::Vector && parsed.value.vector.x == x && parsed.value.vector.y == y && parsed.value.vector.z == z;
+}
+
+PropertiesParseByShape :: () -> void {
+    flag: lantern:::editor:::ParsedProperty = lantern:::editor:::ParseProperty("true");
+    assert(flag.value.kind == lantern:::world:::PropertyKind:::Boolean && flag.value.boolean, "true is a flag");
+    number: lantern:::editor:::ParsedProperty = lantern:::editor:::ParseProperty(" 6 ");
+    assert(number.value.kind == lantern:::world:::PropertyKind:::Number && number.value.number == 6.0f, "a number is a number");
+    assert(IsVector(lantern:::editor:::ParseProperty("0, 0, -6"), 0.0f, 0.0f, -6.0f), "three numbers are a vector");
+    assert(IsVector(lantern:::editor:::ParseProperty("[1,2,3]"), 1.0f, 2.0f, 3.0f), "a bracketed list is a vector");
+    text: lantern:::editor:::ParsedProperty = lantern:::editor:::ParseProperty("hello");
+    assert(text.isText && text.value.kind == lantern:::world:::PropertyKind:::Text, "anything else is text");
+    entity := Block();
+    sped: lantern:::world:::WorldEntity*!? = Edited(entity, "property:speed", "4");
+    if fast := sped {
+        assert((fast->NumberProperty("speed") ?? 0.0f) == 4.0f, "a typed property is stored");
+        cleared: lantern:::world:::WorldEntity*!? = Edited(fast, "property:speed", "");
+        if empty := cleared {
+            assert(empty->PropertyCount() == 0, "an empty property is removed");
+        }
+        delete cleared;
+    }
+    assert(sped != null, "a property is accepted");
+    delete sped;
+    delete entity;
+    assert(lantern:::editor:::FormatNumber(0.1f) == "0.1" && lantern:::editor:::FormatNumber(-0.00001f) == "0", "numbers show in their shortest form");
+}
+
+main :: () -> i32 {
+    palette := lantern:::editor:::Palette:::Fallback();
+    FieldsShowSizesAsFullExtents(palette);
+    EditingFieldsValidatesInput();
+    AMultiSelectionMarksDisagreementsMixed(palette);
+    PropertiesParseByShape();
+    delete palette;
+    print("the inspector shows fields and validates edits");
+    return 0;
+}

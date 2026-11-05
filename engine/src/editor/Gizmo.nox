@@ -1,0 +1,552 @@
+lantern:::editor :: namespace {
+    GIZMO_SIZE_PIXELS: f32 : 90.0f;
+    GRAB_DISTANCE_PIXELS: f32 : 9.0f;
+    RING_SEGMENTS: u32 : 64;
+    PLANE_HANDLE_FROM: f32 : 0.35f;
+    PLANE_HANDLE_TO: f32 : 0.6f;
+    UNIFORM_HANDLE_RADIUS: f32 : 0.11f;
+
+    GizmoTool :: enum {
+        Translate,
+        Rotate,
+        Scale
+    }
+
+    GizmoToolName :: (tool: GizmoTool) -> string {
+        return when tool {
+            GizmoTool:::Translate -> "move",
+            GizmoTool:::Rotate -> "rotate",
+            GizmoTool:::Scale -> "scale"
+        };
+    }
+
+    GizmoToolNamed :: (name: string) -> GizmoTool? {
+        if name == "move" || name == "translate" {
+            return GizmoTool:::Translate;
+        }
+        if name == "rotate" {
+            return GizmoTool:::Rotate;
+        }
+        if name == "scale" {
+            return GizmoTool:::Scale;
+        }
+        return null;
+    }
+
+    GizmoSpace :: enum {
+        World,
+        Local
+    }
+
+    GizmoSpaceName :: (space: GizmoSpace) -> string {
+        return when space {
+            GizmoSpace:::World -> "world",
+            GizmoSpace:::Local -> "local"
+        };
+    }
+
+    GizmoSpaceNamed :: (name: string) -> GizmoSpace? {
+        if name == "world" {
+            return GizmoSpace:::World;
+        }
+        if name == "local" {
+            return GizmoSpace:::Local;
+        }
+        return null;
+    }
+
+    ToggledSpace :: (space: GizmoSpace) -> GizmoSpace {
+        return when space {
+            GizmoSpace:::World -> GizmoSpace:::Local,
+            GizmoSpace:::Local -> GizmoSpace:::World
+        };
+    }
+
+    PivotMode :: enum {
+        Primary,
+        Center
+    }
+
+    PivotModeName :: (mode: PivotMode) -> string {
+        return when mode {
+            PivotMode:::Primary -> "primary",
+            PivotMode:::Center -> "center"
+        };
+    }
+
+    PivotModeNamed :: (name: string) -> PivotMode? {
+        if name == "primary" || name == "pivot" {
+            return PivotMode:::Primary;
+        }
+        if name == "center" || name == "centre" || name == "bounds" {
+            return PivotMode:::Center;
+        }
+        return null;
+    }
+
+    ToggledPivot :: (mode: PivotMode) -> PivotMode {
+        return when mode {
+            PivotMode:::Primary -> PivotMode:::Center,
+            PivotMode:::Center -> PivotMode:::Primary
+        };
+    }
+
+    Axis :: enum {
+        X,
+        Y,
+        Z
+    }
+
+    AxisAt :: (index: usize) -> Axis {
+        if index == 0 {
+            return Axis:::X;
+        }
+        if index == 1 {
+            return Axis:::Y;
+        }
+        return Axis:::Z;
+    }
+
+    AxisIndex :: (axis: Axis) -> usize {
+        return when axis {
+            Axis:::X -> 0,
+            Axis:::Y -> 1,
+            Axis:::Z -> 2
+        };
+    }
+
+    AxisUnit :: (axis: Axis) -> Vec3 {
+        return when axis {
+            Axis:::X -> Vec3 { x: 1.0f, y: 0.0f, z: 0.0f },
+            Axis:::Y -> Vec3 { x: 0.0f, y: 1.0f, z: 0.0f },
+            Axis:::Z -> Vec3 { x: 0.0f, y: 0.0f, z: 1.0f }
+        };
+    }
+
+    AxisColor :: (axis: Axis) -> lantern:::core:::Color {
+        return when axis {
+            Axis:::X -> lantern:::core:::Color:::FromHex(15225418),
+            Axis:::Y -> lantern:::core:::Color:::FromHex(8114251),
+            Axis:::Z -> lantern:::core:::Color:::FromHex(4886783)
+        };
+    }
+
+    AxisName :: (axis: Axis) -> string {
+        return when axis {
+            Axis:::X -> "x",
+            Axis:::Y -> "y",
+            Axis:::Z -> "z"
+        };
+    }
+
+    AxisUpperName :: (axis: Axis) -> string {
+        return when axis {
+            Axis:::X -> "X",
+            Axis:::Y -> "Y",
+            Axis:::Z -> "Z"
+        };
+    }
+
+    AxisNamed :: (name: string) -> Axis? {
+        if name == "x" || name == "X" {
+            return Axis:::X;
+        }
+        if name == "y" || name == "Y" {
+            return Axis:::Y;
+        }
+        if name == "z" || name == "Z" {
+            return Axis:::Z;
+        }
+        return null;
+    }
+
+    FirstOtherAxis :: (axis: Axis) -> Axis {
+        return when axis {
+            Axis:::X -> Axis:::Y,
+            Axis:::Y -> Axis:::Z,
+            Axis:::Z -> Axis:::X
+        };
+    }
+
+    SecondOtherAxis :: (axis: Axis) -> Axis {
+        return when axis {
+            Axis:::X -> Axis:::Z,
+            Axis:::Y -> Axis:::X,
+            Axis:::Z -> Axis:::Y
+        };
+    }
+
+    HandleKind :: enum {
+        Axis,
+        Plane,
+        Uniform
+    }
+
+    Handle :: struct {
+        kind~ HandleKind = HandleKind:::Uniform;
+        axis~ Axis = Axis:::X;
+
+        static OnAxis :: (handleAxis: Axis) -> Handle {
+            return Handle { kind: HandleKind:::Axis, axis: handleAxis };
+        }
+
+        static InPlane :: (normal: Axis) -> Handle {
+            return Handle { kind: HandleKind:::Plane, axis: normal };
+        }
+
+        static Uniform :: () -> Handle {
+            return Handle { kind: HandleKind:::Uniform, axis: Axis:::X };
+        }
+
+        Same :: (other: Handle) -> bool {
+            if kind != other.kind {
+                return false;
+            }
+            return kind == HandleKind:::Uniform || axis == other.axis;
+        }
+
+        Color :: () -> lantern:::core:::Color {
+            if kind == HandleKind:::Uniform {
+                return lantern:::core:::Color:::Rgb(0.85f, 0.85f, 0.9f);
+            }
+            return AxisColor(axis);
+        }
+
+        Describe :: () -> string! {
+            if kind == HandleKind:::Axis {
+                return `${AxisUpperName(axis)}`;
+            }
+            if kind == HandleKind:::Plane {
+                return `${AxisUpperName(FirstOtherAxis(axis))}${AxisUpperName(SecondOtherAxis(axis))}`;
+            }
+            return "all".copy();
+        }
+    }
+
+    SameOptionalHandle :: (left: Handle?, right: Handle?) -> bool {
+        guard leftHandle := left return right == null;
+        guard rightHandle := right return false;
+        return leftHandle.Same(rightHandle);
+    }
+
+    HoverColor :: () -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgb(1.0f, 0.86f, 0.3f);
+    }
+
+    SnapSettings :: struct {
+        enabled~ bool = true;
+        translateStep~ f32 = 0.25f;
+        rotateStepDegrees~ f32 = 15.0f;
+        scaleStep~ f32 = 0.1f;
+    }
+
+    Snap :: (value: f32, step: f32) -> f32 {
+        if step <= 0.0f {
+            return value;
+        }
+        return Math:::round(value / step) * step;
+    }
+
+    BestHandle :: struct {
+        found~ bool = false;
+        score~ f32 = 0.0f;
+        handle~ Handle = Handle { };
+
+        Considered :: (distance: f32?, candidate: Handle, bias: f32) -> BestHandle {
+            guard pixels := distance return BestHandle { found: found, score: score, handle: handle };
+            scored: f32 = pixels - bias;
+            if pixels <= GRAB_DISTANCE_PIXELS && (!found || scored < score) {
+                return BestHandle { found: true, score: scored, handle: candidate };
+            }
+            return BestHandle { found: found, score: score, handle: handle };
+        }
+    }
+
+    GizmoFrame :: struct {
+        pivot~ Vec3 = Vec3 { };
+        xAxis~ Vec3 = Vec3 { x: 1.0f, y: 0.0f, z: 0.0f };
+        yAxis~ Vec3 = Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+        zAxis~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: 1.0f };
+        size~ f32 = 1.0f;
+        viewDirection~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+
+        static Create :: (tool: GizmoTool, space: GizmoSpace, framePivot: Vec3, orientation: Quaternion, projection: ViewportProjection) -> GizmoFrame {
+            local: bool = tool == GizmoTool:::Scale || space == GizmoSpace:::Local;
+            frame~ GizmoFrame = GizmoFrame {
+                pivot: framePivot,
+                size: projection.WorldPerPixel(framePivot) * GIZMO_SIZE_PIXELS,
+                viewDirection: projection.camera.forward
+            };
+            if local {
+                frame.xAxis = orientation.rotate(AxisUnit(Axis:::X));
+                frame.yAxis = orientation.rotate(AxisUnit(Axis:::Y));
+                frame.zAxis = orientation.rotate(AxisUnit(Axis:::Z));
+            }
+            return frame;
+        }
+
+        AxisVector :: (axis: Axis) -> Vec3 {
+            return when axis {
+                Axis:::X -> xAxis,
+                Axis:::Y -> yAxis,
+                Axis:::Z -> zAxis
+            };
+        }
+
+        RingRadius :: () -> f32 {
+            return size * 0.85f;
+        }
+
+        RingPoint :: (axis: Axis, index: u32) -> Vec3 {
+            normal: Vec3 = AxisVector(axis);
+            tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(normal);
+            bitangent: Vec3 = normal.cross(tangent);
+            angle: f32 = Math:::TAU * f32(index) / f32(RING_SEGMENTS);
+            return pivot + (tangent * Math:::cos(angle) + bitangent * Math:::sin(angle)) * RingRadius();
+        }
+
+        PlaneCorner :: (normal: Axis, corner: usize) -> Vec3 {
+            first: Vec3 = AxisVector(FirstOtherAxis(normal));
+            second: Vec3 = AxisVector(SecondOtherAxis(normal));
+            near: f32 = size * PLANE_HANDLE_FROM;
+            far: f32 = size * PLANE_HANDLE_TO;
+            if corner == 0 {
+                return pivot + first * near + second * near;
+            }
+            if corner == 1 {
+                return pivot + first * far + second * near;
+            }
+            if corner == 2 {
+                return pivot + first * far + second * far;
+            }
+            return pivot + first * near + second * far;
+        }
+
+        HitTest :: (tool: GizmoTool, projection: ViewportProjection, cursor: Vec2) -> Handle? {
+            best~ BestHandle = BestHandle { };
+            if tool != GizmoTool:::Rotate {
+                if center := projection.Project(pivot) {
+                    radiusPixels: f32 = UNIFORM_HANDLE_RADIUS * GIZMO_SIZE_PIXELS;
+                    distance: f32 = Math:::max(lantern:::core:::Vec2Length(cursor - center) - radiusPixels, 0.0f);
+                    best = best.Considered(distance, Handle:::Uniform(), 2.0f);
+                }
+                for normalIndex~ usize = 0; normalIndex < 3; normalIndex++ {
+                    normal: Axis = AxisAt(normalIndex);
+                    projected~ Array<Vec2>! = [];
+                    for corner~ usize = 0; corner < 4; corner++ {
+                        if pixel := projection.Project(PlaneCorner(normal, corner)) {
+                            projected.push(pixel);
+                        }
+                    }
+                    if projected.length() == 4 {
+                        distance~ f32? = null;
+                        if PointInQuad(projected, cursor) {
+                            distance = 0.0f;
+                        } else {
+                            for corner~ usize = 0; corner < 4; corner++ {
+                                if edge := ScreenSegmentDistance(projection, PlaneCorner(normal, corner), PlaneCorner(normal, (corner + 1) % 4), cursor) {
+                                    if closest := distance {
+                                        distance = Math:::min(closest, edge);
+                                    } else {
+                                        distance = edge;
+                                    }
+                                }
+                            }
+                        }
+                        best = best.Considered(distance, Handle:::InPlane(normal), 1.0f);
+                    }
+                    delete projected;
+                }
+            }
+            for axisIndex~ usize = 0; axisIndex < 3; axisIndex++ {
+                axis: Axis = AxisAt(axisIndex);
+                distance~ f32? = null;
+                if tool == GizmoTool:::Rotate {
+                    for index~ u32 = 0; index < RING_SEGMENTS; index++ {
+                        if segment := ScreenSegmentDistance(projection, RingPoint(axis, index), RingPoint(axis, index + 1), cursor) {
+                            if closest := distance {
+                                distance = Math:::min(closest, segment);
+                            } else {
+                                distance = segment;
+                            }
+                        }
+                    }
+                } else {
+                    start: Vec3 = pivot + AxisVector(axis) * size * 0.15f;
+                    end: Vec3 = pivot + AxisVector(axis) * size;
+                    distance = ScreenSegmentDistance(projection, start, end, cursor);
+                }
+                best = best.Considered(distance, Handle:::OnAxis(axis), 0.0f);
+            }
+            if best.found {
+                return best.handle;
+            }
+            return null;
+        }
+
+        AxisParameter :: (axis: Axis, ray: Ray) -> f32? {
+            direction: Vec3 = AxisVector(axis);
+            toPivot: Vec3 = pivot - ray.origin;
+            cosine: f32 = direction.dot(ray.direction);
+            denominator: f32 = 1.0f - cosine * cosine;
+            if denominator < 0.0001f {
+                return null;
+            }
+            alongRay: f32 = ray.direction.dot(toPivot);
+            alongAxis: f32 = direction.dot(toPivot);
+            return (cosine * alongRay - alongAxis) / denominator;
+        }
+
+        DragPlaneNormal :: (handle: Handle) -> Vec3 {
+            if handle.kind == HandleKind:::Uniform {
+                return viewDirection * -1.0f;
+            }
+            return AxisVector(handle.axis);
+        }
+
+        PlanePoint :: (handle: Handle, ray: Ray) -> Vec3? {
+            return ray.IntersectPlane(pivot, DragPlaneNormal(handle));
+        }
+
+        RingAngle :: (axis: Axis, ray: Ray) -> f32? {
+            normal: Vec3 = AxisVector(axis);
+            crossing: Vec3? = ray.IntersectPlane(pivot, normal);
+            guard point := crossing return null;
+            offset: Vec3 = point - pivot;
+            tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(normal);
+            bitangent: Vec3 = normal.cross(tangent);
+            return Math:::atan2(offset.dot(bitangent), offset.dot(tangent));
+        }
+
+        ColorFor :: (handle: Handle, highlighted: Handle?) -> lantern:::core:::Color {
+            if lit := highlighted {
+                if lit.Same(handle) {
+                    return HoverColor();
+                }
+            }
+            return handle.Color();
+        }
+
+        Draw :: (tool: GizmoTool, highlighted: Handle?, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
+            for axisIndex~ usize = 0; axisIndex < 3; axisIndex++ {
+                axis: Axis = AxisAt(axisIndex);
+                color: lantern:::core:::Color = ColorFor(Handle:::OnAxis(axis), highlighted);
+                direction: Vec3 = AxisVector(axis);
+                if tool == GizmoTool:::Translate {
+                    tip: Vec3 = pivot + direction * size;
+                    renderWorld->Line(pivot, tip, color);
+                    side: Vec3 = lantern:::core:::AnyOrthonormalVector3(direction);
+                    other: Vec3 = direction.cross(side);
+                    base: Vec3 = tip - direction * size * 0.18f;
+                    renderWorld->Line(tip, base + side * size * 0.06f, color);
+                    renderWorld->Line(tip, base - side * size * 0.06f, color);
+                    renderWorld->Line(tip, base + other * size * 0.06f, color);
+                    renderWorld->Line(tip, base - other * size * 0.06f, color);
+                } else if tool == GizmoTool:::Scale {
+                    tip: Vec3 = pivot + direction * size;
+                    renderWorld->Line(pivot, tip, color);
+                    renderWorld->AabbLines(lantern:::core:::Aabb:::FromCenterHalfExtents(tip, lantern:::core:::Splat3(size * 0.06f)), color);
+                } else {
+                    for index~ u32 = 0; index < RING_SEGMENTS; index++ {
+                        renderWorld->Line(RingPoint(axis, index), RingPoint(axis, index + 1), color);
+                    }
+                }
+            }
+            if tool == GizmoTool:::Rotate {
+                return;
+            }
+            for normalIndex~ usize = 0; normalIndex < 3; normalIndex++ {
+                normal: Axis = AxisAt(normalIndex);
+                handle: Handle = Handle:::InPlane(normal);
+                color: lantern:::core:::Color = ColorFor(handle, highlighted);
+                for corner~ usize = 0; corner < 4; corner++ {
+                    renderWorld->Line(PlaneCorner(normal, corner), PlaneCorner(normal, (corner + 1) % 4), color);
+                }
+                if SameOptionalHandle(highlighted, handle) {
+                    renderWorld->Line(PlaneCorner(normal, 0), PlaneCorner(normal, 2), color);
+                    renderWorld->Line(PlaneCorner(normal, 1), PlaneCorner(normal, 3), color);
+                }
+            }
+            renderWorld->CircleLines(pivot, viewDirection * -1.0f, size * UNIFORM_HANDLE_RADIUS, 24, ColorFor(Handle:::Uniform(), highlighted));
+        }
+    }
+
+    PointInQuad :: (corners: Array<Vec2>, point: Vec2) -> bool {
+        sign~ f32 = 0.0f;
+        for index~ usize = 0; index < corners.length(); index++ {
+            edge: Vec2 = corners[(index + 1) % corners.length()] - corners[index];
+            toPoint: Vec2 = point - corners[index];
+            cross: f32 = edge.x * toPoint.y - edge.y * toPoint.x;
+            if Math:::abs(cross) < 0.000001f {
+                continue;
+            }
+            crossSign: f32 = lantern:::core:::Signum(cross);
+            if sign == 0.0f {
+                sign = crossSign;
+            } else if crossSign != sign {
+                return false;
+            }
+        }
+        return sign != 0.0f;
+    }
+
+    ScreenSegmentDistance :: (projection: ViewportProjection, start: Vec3, end: Vec3, cursor: Vec2) -> f32? {
+        projectedStart: Vec2? = projection.Project(start);
+        guard first := projectedStart return null;
+        projectedEnd: Vec2? = projection.Project(end);
+        guard second := projectedEnd return null;
+        segment: Vec2 = second - first;
+        lengthSquared: f32 = Dot2(segment, segment);
+        along~ f32 = 0.0f;
+        if lengthSquared >= 0.000001f {
+            along = Math:::clamp(Dot2(cursor - first, segment) / lengthSquared, 0.0f, 1.0f);
+        }
+        return lantern:::core:::Vec2Length(first + segment * along - cursor);
+    }
+
+    Dot2 :: (left: Vec2, right: Vec2) -> f32 {
+        return left.x * right.x + left.y * right.y;
+    }
+
+    EulerDegrees :: (rotation: Quaternion) -> Vec3 {
+        unit: Quaternion = rotation.normalized();
+        x2: f32 = unit.x + unit.x;
+        y2: f32 = unit.y + unit.y;
+        z2: f32 = unit.z + unit.z;
+        xx: f32 = unit.x * x2;
+        xy: f32 = unit.x * y2;
+        xz: f32 = unit.x * z2;
+        yy: f32 = unit.y * y2;
+        yz: f32 = unit.y * z2;
+        zz: f32 = unit.z * z2;
+        wx: f32 = unit.w * x2;
+        wy: f32 = unit.w * y2;
+        wz: f32 = unit.w * z2;
+        column0x: f32 = 1.0f - (yy + zz);
+        column0y: f32 = xy + wz;
+        column0z: f32 = xz - wy;
+        column1y: f32 = 1.0f - (xx + zz);
+        column2x: f32 = xz + wy;
+        column2y: f32 = yz - wx;
+        column2z: f32 = 1.0f - (xx + yy);
+        cosinePitch: f32 = Math:::sqrt(column1y * column1y + column0y * column0y);
+        pitch: f32 = Math:::atan2(-column2y, cosinePitch);
+        yaw~ f32 = 0.0f;
+        roll~ f32 = 0.0f;
+        if cosinePitch > 16.0f * 0.00000011920929f {
+            yaw = Math:::atan2(column2x, column2z);
+            roll = Math:::atan2(column0y, column1y);
+        } else {
+            yaw = Math:::atan2(-column0z, column0x);
+        }
+        return Vec3 { x: TidyDegrees(pitch), y: TidyDegrees(yaw), z: TidyDegrees(roll) };
+    }
+
+    TidyDegrees :: (radians: f32) -> f32 {
+        degrees: f32 = Math:::round(radians * 57.29578f * 1000.0f) / 1000.0f;
+        if degrees == 0.0f {
+            return 0.0f;
+        }
+        return degrees;
+    }
+}
