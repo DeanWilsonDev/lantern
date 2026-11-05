@@ -1,0 +1,177 @@
+Sdl :: import Sdl;
+
+lantern:::editorbackend :: namespace {
+    Sdl :: import Sdl;
+
+    SCRATCH_LEVEL_FILE: string : ".editor-play.world.json";
+    GAME_DIRECTORY: string : "games/platformer";
+
+    ProcessArguments :: struct {
+        program~ raw u8~* = null;
+        gameDirectory~ raw u8~* = null;
+        terminator~ raw u8~* = null;
+    }
+
+    RunningOnWindows :: () -> bool {
+        platform~ string! = "".copy();
+        unsafe {
+            delete platform;
+            platform = copyCString(Sdl:::SDL_GetPlatform());
+        }
+        windows: bool = platform == "Windows";
+        delete platform;
+        return windows;
+    }
+
+    RunnerFileName :: () -> string {
+        return when RunningOnWindows() { true -> "lantern.exe", false -> "lantern" };
+    }
+
+    ParentDirectory :: (path: string) -> string! {
+        trimmed~ string! = `${path}`;
+        while trimmed.length() > 1 && (trimmed.endsWith("/") || trimmed.endsWith("\\")) {
+            shorter: string! = trimmed.substring(0, trimmed.length() - 1).copy();
+            delete trimmed;
+            trimmed = shorter!;
+        }
+        separator: usize? = lantern:::editor:::LastSeparator(trimmed);
+        if position := separator {
+            parent: string! = trimmed.substring(0, position).copy();
+            delete trimmed;
+            return parent!;
+        }
+        delete trimmed;
+        return ".".copy();
+    }
+
+    WorkspaceRoot :: (assetsDirectory: string) -> string!? {
+        parent: string! = ParentDirectory(assetsDirectory);
+        marker: string! = `${parent}/engine/nox.json`;
+        found: bool = pathExists(marker);
+        delete marker;
+        if !found {
+            delete parent;
+            return null;
+        }
+        return parent!;
+    }
+
+    ChooseRunner :: (assetsDirectory: string) -> string!? {
+        explicit: string!? = environmentVariable("LANTERN_RUNNER");
+        if text := explicit {
+            if text.length() > 0 {
+                return explicit!;
+            }
+        }
+        delete explicit;
+        basePath~ string! = "".copy();
+        unsafe {
+            delete basePath;
+            basePath = copyCString(Sdl:::SDL_GetBasePath());
+        }
+        sibling: string! = `${basePath}${RunnerFileName()}`;
+        delete basePath;
+        if pathExists(sibling) {
+            return sibling!;
+        }
+        delete sibling;
+        workspace: string!? = WorkspaceRoot(assetsDirectory);
+        guard root := workspace return null;
+        built: string! = `${root}/engine/build/${RunnerFileName()}`;
+        delete workspace;
+        if pathExists(built) {
+            return built!;
+        }
+        delete built;
+        return null;
+    }
+
+    GameDirectoryFor :: (assetsDirectory: string) -> string! {
+        workspace: string!? = WorkspaceRoot(assetsDirectory);
+        if root := workspace {
+            directory: string! = `${root}/${GAME_DIRECTORY}`;
+            delete workspace;
+            return directory!;
+        }
+        return `${assetsDirectory}/../${GAME_DIRECTORY}`;
+    }
+
+    PlaySession :: class {
+    public:
+        process~ raw Sdl:::SDL_Process~* = null;
+        levelPath~ string!;
+        startedTicks~ u64 = 0;
+
+        PlaySession~: (runningProcess: raw Sdl:::SDL_Process~*, scratchLevel: string) {
+            process = runningProcess;
+            levelPath = `${scratchLevel}`;
+            unsafe {
+                startedTicks = Sdl:::SDL_GetTicks();
+            }
+        }
+
+        !PlaySession~: () {
+            unsafe {
+                if process != null {
+                    Sdl:::SDL_DestroyProcess(process);
+                }
+            }
+            delete levelPath;
+        }
+
+        Seconds :: () -> f32 {
+            now~ u64 = 0;
+            unsafe {
+                now = Sdl:::SDL_GetTicks();
+            }
+            return f32(now - startedTicks) / 1000.0f;
+        }
+
+        Kill~: () -> void {
+            exitCode~ i32 = 0;
+            unsafe {
+                if process != null {
+                    Sdl:::SDL_KillProcess(process, true);
+                    Sdl:::SDL_WaitProcess(process, true, exitCode);
+                }
+            }
+        }
+
+        Finished~: () -> i32? {
+            exitCode~ i32 = 0;
+            finished~ bool = false;
+            unsafe {
+                if process != null {
+                    finished = Sdl:::SDL_WaitProcess(process, false, exitCode);
+                }
+            }
+            if !finished {
+                return null;
+            }
+            return exitCode;
+        }
+    }
+
+    SpawnRunner :: (runner: string, gameDirectory: string, levelPath: string, assetsDirectory: string) -> raw Sdl:::SDL_Process~* {
+        arguments~ ProcessArguments = ProcessArguments { };
+        process~ raw Sdl:::SDL_Process~* = null;
+        unsafe {
+            environment: raw Sdl:::SDL_Environment~* = Sdl:::SDL_GetEnvironment();
+            Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_LEVEL", levelPath, true);
+            Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_ASSETS", assetsDirectory, true);
+            arguments.program = Sdl:::SDL_strdup(runner);
+            arguments.gameDirectory = Sdl:::SDL_strdup(gameDirectory);
+            properties: Sdl:::SDL_PropertiesID = Sdl:::SDL_CreateProperties();
+            argumentBytes: u8~* = reinterpret<u8>(arguments);
+            Sdl:::SDL_SetPointerProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argumentBytes);
+            Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_NULL));
+            Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_INHERITED));
+            Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_INHERITED));
+            process = Sdl:::SDL_CreateProcessWithProperties(properties);
+            Sdl:::SDL_DestroyProperties(properties);
+            Sdl:::SDL_free(arguments.program);
+            Sdl:::SDL_free(arguments.gameDirectory);
+        }
+        return process;
+    }
+}

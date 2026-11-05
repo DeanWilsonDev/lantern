@@ -1,0 +1,51 @@
+lantern :: import lantern;
+
+StubResources :: class {
+    implements:
+        lantern:::editor:::ViewportResources;
+public:
+    StubResources~: () { }
+
+    ShapeMesh~: (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+        return lantern:::core:::HandleFromBits<lantern:::renderer:::MeshTag>(1);
+    }
+
+    MaterialTexture~: (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
+        return null;
+    }
+
+    MarkerMeshHandle~: (mesh: lantern:::editor:::MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+        return lantern:::core:::HandleFromBits<lantern:::renderer:::MeshTag>(2);
+    }
+}
+
+main :: () -> i32 {
+    palette := lantern:::editor:::Palette:::Fallback();
+    defer delete palette;
+    resources := new StubResources();
+    defer delete resources;
+    renderWorld := new lantern:::renderer:::RenderWorld();
+    defer delete renderWorld;
+    failures~ i32 = 0;
+    for template in palette->templates {
+        lantern:::editorbackend:::BuildTemplatePreview(template, palette, resources, renderWorld, 0.3f);
+        if renderWorld->draws.length() != 1 {
+            print(`${template->id}: ${renderWorld->draws.length()} draws`);
+            failures += 1;
+        }
+        if renderWorld->lines.length() == 0 {
+            print(`${template->id}: no lines`);
+            failures += 1;
+        }
+        towards: Vec3 = lantern:::core:::Normalize3(Vec3 { } - renderWorld->camera.position);
+        if towards.dot(renderWorld->camera.forward) <= 0.9f {
+            print(`${template->id}: the camera doesn't look at the template`);
+            failures += 1;
+        }
+    }
+    if failures != 0 {
+        return 1;
+    }
+    print("a template preview draws the template and looks at it");
+    return 0;
+}

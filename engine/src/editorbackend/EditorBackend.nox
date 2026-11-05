@@ -1,0 +1,499 @@
+Sdl :: import Sdl;
+
+lantern:::editorbackend :: namespace {
+    Sdl :: import Sdl;
+
+    MAXIMUM_VIEWPORT_SIDE: u32 : 8192;
+    MAXIMUM_PREVIEW_SIDE: u32 : 4096;
+
+    ClampSide :: (side: u32, maximum: u32) -> u32 {
+        if side < 1 {
+            return 1;
+        }
+        if side > maximum {
+            return maximum;
+        }
+        return side;
+    }
+
+    NowNanoseconds :: () -> u64 {
+        now~ u64 = 0;
+        unsafe {
+            now = Sdl:::SDL_GetTicksNS();
+        }
+        return now;
+    }
+
+    RenderStats :: struct {
+        lastRenderMilliseconds~ f32 = 0.0f;
+        framesPerSecond~ f32 = 0.0f;
+        drawsSubmitted~ u32 = 0;
+        drawsCulled~ u32 = 0;
+        triangles~ u64 = 0;
+        lines~ u32 = 0;
+        lastRenderNanoseconds~ u64? = null;
+
+        Record~: (startedNanoseconds: u64, report: lantern:::gpu:::FrameReport) -> void {
+            now: u64 = NowNanoseconds();
+            lastRenderMilliseconds = f32(f64(now - startedNanoseconds) / 1000000.0f);
+            if previous := lastRenderNanoseconds {
+                seconds: f32 = Math:::max(f32(f64(now - previous) / 1000000000.0f), 0.0001f);
+                instantFramesPerSecond: f32 = 1.0f / seconds;
+                if framesPerSecond == 0.0f {
+                    framesPerSecond = instantFramesPerSecond;
+                } else {
+                    framesPerSecond = framesPerSecond * 0.9f + instantFramesPerSecond * 0.1f;
+                }
+            }
+            lastRenderNanoseconds = now;
+            drawsSubmitted = report.drawsSubmitted;
+            drawsCulled = report.drawsCulled;
+            triangles = report.triangles;
+            lines = report.lineCount;
+        }
+
+        Get :: (name: string) -> string!? {
+            if name == "render_ms" {
+                return lantern:::core:::FixedDecimals(f64(lastRenderMilliseconds), 2, 0);
+            }
+            if name == "fps" {
+                return lantern:::core:::FixedDecimals(f64(framesPerSecond), 0, 0);
+            }
+            if name == "draws" {
+                return `${drawsSubmitted}`;
+            }
+            if name == "culled" {
+                return `${drawsCulled}`;
+            }
+            if name == "triangles" {
+                return `${triangles}`;
+            }
+            if name == "lines" {
+                return `${lines}`;
+            }
+            return null;
+        }
+    }
+
+    LoadPaletteOrFallback :: (path: string) -> lantern:::editor:::Palette*! {
+        when lantern:::editor:::Palette:::Load(path) {
+            Result:::Ok(palette) -> {
+                return palette!;
+            },
+            Result:::Err(failure) -> {
+                message: string! = `palette not loaded, using the generic one: ${failure}`;
+                lantern:::core:::LogWarn("editor", message);
+                delete message;
+                delete failure;
+                return lantern:::editor:::Palette:::Fallback();
+            }
+        }
+    }
+
+    OpenSession :: (palettePath: string, worldPath: string) -> lantern:::editor:::EditorSession*! {
+        when lantern:::editor:::EditorSession:::Open(worldPath, LoadPaletteOrFallback(palettePath)) {
+            Result:::Ok(session) -> {
+                return session!;
+            },
+            Result:::Err(failure) -> {
+                lantern:::core:::LogWarn("editor", failure);
+                session := lantern:::editor:::EditorSession:::Create(new lantern:::world:::WorldFile("untitled"), "", LoadPaletteOrFallback(palettePath));
+                session->NewWorld("untitled");
+                session->Note(lantern:::editor:::LogLevel:::Error, failure);
+                delete failure;
+                return session!;
+            }
+        }
+    }
+
+    LoadPreferences :: (path: string!?) -> lantern:::editor:::EditorPreferences*! {
+        defer delete path;
+        guard file := path return new lantern:::editor:::EditorPreferences();
+        if !pathExists(file) {
+            return new lantern:::editor:::EditorPreferences();
+        }
+        when lantern:::editor:::EditorPreferences:::Load(file) {
+            Result:::Ok(preferences) -> {
+                return preferences!;
+            },
+            Result:::Err(failure) -> {
+                message: string! = `preferences not loaded: ${failure}`;
+                lantern:::core:::LogWarn("editor", message);
+                delete message;
+                delete failure;
+                return new lantern:::editor:::EditorPreferences();
+            }
+        }
+    }
+
+    EditorBackend :: class {
+    public:
+        session~ lantern:::editor:::EditorSession*!;
+        assetsDirectory~ string!;
+        gpu~ GpuViewportResources*!? = null;
+        rendererError~ string!? = null;
+        renderWorld~ lantern:::renderer:::RenderWorld*!;
+        pixels~ Array<u8>! = [];
+        pixelWidth~ u32 = 0;
+        pixelHeight~ u32 = 0;
+        stats~ RenderStats = RenderStats { };
+        play~ PlaySession*!? = null;
+        previewWorld~ lantern:::renderer:::RenderWorld*!;
+        previewPixels~ Array<u8>! = [];
+        previewWidth~ u32 = 0;
+        previewHeight~ u32 = 0;
+        thumbnails~ Array<Thumbnail*!>! = [];
+        preferences~ lantern:::editor:::EditorPreferences*!;
+        preferencesPath~ string!? = null;
+
+        EditorBackend~: (assets: string, worldPath: string) {
+            assetsDirectory = `${assets}`;
+            palettePath: string! = `${assets}/editor/palette.json`;
+            chosenWorld~ string! = `${worldPath}`;
+            if worldPath.length() == 0 {
+                delete chosenWorld;
+                chosenWorld = `${assets}/worlds/course.world.json`;
+            }
+            session = OpenSession(palettePath, chosenWorld);
+            delete chosenWorld;
+            session->SetPalettePath(palettePath);
+            delete palettePath;
+            renderWorld = new lantern:::renderer:::RenderWorld();
+            previewWorld = new lantern:::renderer:::RenderWorld();
+            preferencesPath = lantern:::editor:::EditorPreferences:::DefaultPath();
+            pathCopy~ string!? = null;
+            if path := preferencesPath {
+                pathCopy = path.copy();
+            }
+            preferences = LoadPreferences(pathCopy!);
+            ApplyPreferences();
+        }
+
+        !EditorBackend~: () {
+            StopPlay();
+            delete session;
+            delete gpu;
+            delete renderWorld;
+            delete previewWorld;
+            delete pixels;
+            delete previewPixels;
+            thumbnails.freeAll();
+            delete preferences;
+            delete preferencesPath;
+            delete rendererError;
+            delete assetsDirectory;
+        }
+
+        ApplyPreferences~: () -> void {
+            recent~ Array<string!>! = preferences->List("recent_files");
+            session->SetRecentFiles(recent);
+            recent.freeAll();
+            if enabled := preferences->Get("snap.enabled") {
+                session->SetSnapEnabled(enabled == "true");
+            }
+            for step in ["translate", "rotate", "scale"] {
+                key: string! = `snap.${step}`;
+                if text := preferences->Get(key) {
+                    if value := lantern:::editor:::ParsedNumber(text) {
+                        session->SetSnapStep(step, value);
+                    }
+                }
+                delete key;
+            }
+            names: Array<string>! = lantern:::editor:::ViewOptions:::Names();
+            for name in names {
+                key: string! = `view.${name}`;
+                if value := preferences->Get(key) {
+                    copied: string! = value.copy();
+                    session->SetViewOption(name, copied);
+                    delete copied;
+                }
+                delete key;
+            }
+            delete names;
+        }
+
+        SavePreferences~: () -> bool {
+            recentCopy~ Array<string!>! = [];
+            for file in session->recentFiles {
+                recentCopy.push(file.copy());
+            }
+            preferences->SetList("recent_files", recentCopy);
+            recentCopy.freeAll();
+            preferences->Set("snap.enabled", when session->snap.enabled { true -> "true", false -> "false" });
+            for step in ["translate", "rotate", "scale"] {
+                if value := session->SnapStep(step) {
+                    key: string! = `snap.${step}`;
+                    text: string! = lantern:::editor:::FormatNumber(value);
+                    preferences->Set(key, text);
+                    delete text;
+                    delete key;
+                }
+            }
+            names: Array<string>! = lantern:::editor:::ViewOptions:::Names();
+            for name in names {
+                valueFound: string!? = session->view.Get(name);
+                if value := valueFound {
+                    key: string! = `view.${name}`;
+                    preferences->Set(key, value);
+                    delete key;
+                }
+                delete valueFound;
+            }
+            delete names;
+            guard path := preferencesPath return false;
+            failure: string!? = preferences->Save(path);
+            if problem := failure {
+                message: string! = `Preferences not saved: ${problem}`;
+                session->Note(lantern:::editor:::LogLevel:::Warning, message);
+                delete message;
+                delete failure;
+                return false;
+            }
+            return true;
+        }
+
+        EnsureGpu~: () -> string!? {
+            if gpu != null {
+                return null;
+            }
+            if failure := rendererError {
+                return `${failure}`;
+            }
+            when lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions:::FromEnvironment()) {
+                Result:::Ok(renderer) -> {
+                    gpu = new GpuViewportResources(renderer!, assetsDirectory);
+                    return null;
+                },
+                Result:::Err(failure) -> {
+                    message: string! = `viewport GPU unavailable: ${failure}`;
+                    delete failure;
+                    lantern:::core:::LogError("editor", message);
+                    rendererError = `${message}`;
+                    return message!;
+                }
+            }
+        }
+
+        Render~: (requestedWidth: u32, requestedHeight: u32) -> string!? {
+            started: u64 = NowNanoseconds();
+            width: u32 = ClampSide(requestedWidth, MAXIMUM_VIEWPORT_SIDE);
+            height: u32 = ClampSide(requestedHeight, MAXIMUM_VIEWPORT_SIDE);
+            session->SetViewportSize(Vec2 { x: f32(width), y: f32(height) });
+            failure: string!? = EnsureGpu();
+            if failure != null {
+                return failure!;
+            }
+            delete failure;
+            active~ GpuViewportResources*!? = gpu!;
+            gpu = null;
+            guard active return "viewport GPU unavailable".copy();
+            active->Prepare();
+            world~ lantern:::renderer:::RenderWorld*! = renderWorld!;
+            lantern:::editor:::BuildViewport(session, active, world);
+            outcome~ string!? = null;
+            when active->renderer->RenderOffscreen(world, width, height) {
+                Result:::Ok(report) -> {
+                    delete pixels;
+                    pixels = active->renderer->TakeOffscreenPixels();
+                    pixelWidth = width;
+                    pixelHeight = height;
+                    stats.Record(started, report);
+                },
+                Result:::Err(problem) -> {
+                    outcome = problem!;
+                }
+            }
+            renderWorld = world!;
+            gpu = active!;
+            return outcome!;
+        }
+
+        IsPlaying~: () -> bool {
+            PollPlay();
+            return play != null;
+        }
+
+        PlaySeconds :: () -> f32 {
+            if running := play {
+                return running->Seconds();
+            }
+            return 0.0f;
+        }
+
+        StartPlay~: () -> bool {
+            if IsPlaying() {
+                session->Note(lantern:::editor:::LogLevel:::Warning, "The game is already running");
+                return false;
+            }
+            runnerFound: string!? = ChooseRunner(assetsDirectory);
+            guard runner := runnerFound return session->Report("No game runner found: set LANTERN_RUNNER to the lantern executable, or build engine/build/lantern in the workspace".copy());
+            gameDirectory: string! = GameDirectoryFor(assetsDirectory);
+            levelPath: string! = `${assetsDirectory}/worlds/${SCRATCH_LEVEL_FILE}`;
+            saveFailure: string!? = session->World()->Save(levelPath);
+            if problem := saveFailure {
+                message: string! = `Couldn't write the play level: ${problem}`;
+                session->Note(lantern:::editor:::LogLevel:::Error, message);
+                delete message;
+                delete saveFailure;
+                delete runnerFound;
+                delete gameDirectory;
+                delete levelPath;
+                return false;
+            }
+            process: raw Sdl:::SDL_Process~* = SpawnRunner(runner, gameDirectory, levelPath, assetsDirectory);
+            if process == null {
+                failureText~ string! = "".copy();
+                unsafe {
+                    delete failureText;
+                    failureText = copyCString(Sdl:::SDL_GetError());
+                }
+                message: string! = `Couldn't start the game: ${failureText}`;
+                session->Note(lantern:::editor:::LogLevel:::Error, message);
+                delete message;
+                delete failureText;
+                when removeFile(levelPath) {
+                    Result:::Ok(removed) -> { },
+                    Result:::Err(error) -> {
+                        delete error;
+                    }
+                }
+                delete runnerFound;
+                delete gameDirectory;
+                delete levelPath;
+                return false;
+            }
+            message: string! = `Playing ${levelPath} with ${runner}`;
+            session->Note(lantern:::editor:::LogLevel:::Info, message);
+            delete message;
+            play = new PlaySession(process, levelPath);
+            delete runnerFound;
+            delete gameDirectory;
+            delete levelPath;
+            return true;
+        }
+
+        ForgetPlay~: () -> void {
+            if running := play {
+                when removeFile(running->levelPath) {
+                    Result:::Ok(removed) -> { },
+                    Result:::Err(error) -> {
+                        delete error;
+                    }
+                }
+            }
+            delete play;
+            play = null;
+        }
+
+        StopPlay~: () -> bool {
+            if play == null {
+                return false;
+            }
+            active~ PlaySession*!? = play!;
+            play = null;
+            guard active return false;
+            active->Kill();
+            play = active!;
+            ForgetPlay();
+            session->Note(lantern:::editor:::LogLevel:::Info, "Stopped the game");
+            return true;
+        }
+
+        PollPlay~: () -> void {
+            exitCode~ i32? = null;
+            seconds~ f32 = 0.0f;
+            active~ PlaySession*!? = play!;
+            play = null;
+            guard active return;
+            exitCode = active->Finished();
+            seconds = active->Seconds();
+            play = active!;
+            guard code := exitCode return;
+            ForgetPlay();
+            shown: string! = lantern:::core:::FixedDecimals(f64(seconds), 0, 0);
+            if code == 0 {
+                message: string! = `The game quit after ${shown} s`;
+                session->Note(lantern:::editor:::LogLevel:::Info, message);
+                delete message;
+            } else {
+                message: string! = `The game exited with exit status: ${code} after ${shown} s`;
+                session->Note(lantern:::editor:::LogLevel:::Warning, message);
+                delete message;
+            }
+            delete shown;
+        }
+
+        RenderTemplatePreview~: (templateId: string, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
+            width: u32 = ClampSide(requestedWidth, MAXIMUM_PREVIEW_SIDE);
+            height: u32 = ClampSide(requestedHeight, MAXIMUM_PREVIEW_SIDE);
+            failure: string!? = EnsureGpu();
+            if failure != null {
+                return failure!;
+            }
+            delete failure;
+            active~ GpuViewportResources*!? = gpu!;
+            gpu = null;
+            guard active return "viewport GPU unavailable".copy();
+            world~ lantern:::renderer:::RenderWorld*! = previewWorld!;
+            outcome~ string!? = null;
+            if template := session->palette->Template(templateId) {
+                BuildTemplatePreview(template, session->palette, active, world, spin);
+                when active->renderer->RenderOffscreen(world, width, height) {
+                    Result:::Ok(report) -> {
+                        delete previewPixels;
+                        previewPixels = active->renderer->TakeOffscreenPixels();
+                        previewWidth = width;
+                        previewHeight = height;
+                    },
+                    Result:::Err(problem) -> {
+                        outcome = problem!;
+                    }
+                }
+            } else {
+                outcome = `no template '${templateId}'`;
+            }
+            previewWorld = world!;
+            gpu = active!;
+            return outcome!;
+        }
+
+        ThumbnailIndex :: (templateId: string) -> usize? {
+            for index~ usize = 0; index < thumbnails.length(); index++ {
+                if thumbnails[index]->templateId == templateId {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        RenderThumbnail~: (templateId: string, requestedSize: u32) -> string!? {
+            size: u32 = when (requestedSize < 8) { true -> 8, false -> when (requestedSize > 512) { true -> 512, false -> requestedSize } };
+            revision: u64 = session->paletteRevision;
+            if index := ThumbnailIndex(templateId) {
+                if thumbnails[index]->paletteRevision == revision && thumbnails[index]->size == size {
+                    return null;
+                }
+            }
+            failure: string!? = RenderTemplatePreview(templateId, size, size, 0.0f);
+            if failure != null {
+                return failure!;
+            }
+            delete failure;
+            index~ usize = thumbnails.length();
+            if existing := ThumbnailIndex(templateId) {
+                index = existing;
+            } else {
+                thumbnails.push(new Thumbnail(templateId));
+            }
+            thumbnail: Thumbnail~* = thumbnails[index];
+            oldPixels: Array<u8>! = thumbnail->pixels!;
+            thumbnail->pixels = previewPixels!;
+            previewPixels = [];
+            delete oldPixels;
+            thumbnail->size = size;
+            thumbnail->paletteRevision = revision;
+            return null;
+        }
+    }
+}

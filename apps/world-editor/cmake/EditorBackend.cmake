@@ -1,12 +1,23 @@
-# Builds crates/editor-backend with Cargo and exposes it as the `lantern_editor_backend` target.
+# Exposes the editor backend as the `lantern_editor_backend` target: engine/editor-backend (Nox) by default,
+# or crates/editor-backend built with Cargo when LANTERN_EDITOR_BACKEND is rust.
 #
-# The backend links the system SDL3 (its `system-sdl` feature, found through pkg-config), the
+# The Rust backend links the system SDL3 (its `system-sdl` feature, found through pkg-config), the
 # same SDL Penumbra uses, so the process has one SDL. Set PKG_CONFIG_PATH if SDL3 is installed
 # somewhere pkg-config doesn't look by default.
 
-find_program(CARGO_EXECUTABLE cargo REQUIRED)
+set(LANTERN_EDITOR_BACKEND "nox" CACHE STRING "The editor backend to link: nox (engine/editor-backend) or rust (crates/editor-backend)")
+set_property(CACHE LANTERN_EDITOR_BACKEND PROPERTY STRINGS nox rust)
 
 get_filename_component(LANTERN_WORKSPACE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+
+if(LANTERN_EDITOR_BACKEND STREQUAL "nox")
+    add_subdirectory("${LANTERN_WORKSPACE_ROOT}/engine/editor-backend" "${CMAKE_CURRENT_BINARY_DIR}/editor-backend")
+    return()
+elseif(NOT LANTERN_EDITOR_BACKEND STREQUAL "rust")
+    message(FATAL_ERROR "LANTERN_EDITOR_BACKEND is '${LANTERN_EDITOR_BACKEND}'; use nox or rust")
+endif()
+
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(LANTERN_CARGO_PROFILE_FLAG "")

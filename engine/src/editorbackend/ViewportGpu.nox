@@ -1,0 +1,192 @@
+lantern:::editorbackend :: namespace {
+    UNUSED_FRAMES_BEFORE_RELEASE: u64 : 600;
+
+    CachedShapeMesh :: struct {
+        shape~ lantern:::world:::Shape = lantern:::world:::Shape { };
+        mesh~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        lastUsedFrame~ u64 = 0;
+    }
+
+    CachedMarkerMesh :: struct {
+        marker~ lantern:::editor:::MarkerMesh = lantern:::editor:::MarkerMesh:::Cube;
+        mesh~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    }
+
+    CachedMaterial :: class {
+    public:
+        name~ string!;
+        texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
+
+        CachedMaterial~: (materialName: string, materialTexture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?) {
+            name = `${materialName}`;
+            texture = materialTexture;
+        }
+
+        !CachedMaterial~: () {
+            delete name;
+        }
+    }
+
+    SameShape :: (left: lantern:::world:::Shape, right: lantern:::world:::Shape) -> bool {
+        if left.kind != right.kind {
+            return false;
+        }
+        if left.kind == lantern:::world:::ShapeKind:::Box {
+            return left.halfExtents == right.halfExtents;
+        }
+        return left.width == right.width && left.height == right.height && left.length == right.length;
+    }
+
+    UploadMesh :: (renderer: lantern:::gpu:::GpuRenderer~*, mesh: lantern:::renderer:::MeshData*, what: string) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+        when renderer->CreateMesh(mesh) {
+            Result:::Ok(handle) -> {
+                return handle;
+            },
+            Result:::Err(failure) -> {
+                message: string! = `uploading the ${what} mesh failed: ${failure}`;
+                lantern:::core:::LogError("editor", message);
+                delete message;
+                delete failure;
+                return null;
+            }
+        }
+    }
+
+    GpuViewportResources :: class {
+        implements:
+            lantern:::editor:::ViewportResources;
+    public:
+        renderer~ lantern:::gpu:::GpuRenderer*!;
+        assetsDirectory~ string!;
+        shapes~ Array<CachedShapeMesh>! = [];
+        markers~ Array<CachedMarkerMesh>! = [];
+        materials~ Array<CachedMaterial*!>! = [];
+        frame~ u64 = 0;
+
+        GpuViewportResources~: (gpuRenderer: lantern:::gpu:::GpuRenderer*!, assets: string) {
+            renderer = gpuRenderer!;
+            assetsDirectory = `${assets}`;
+        }
+
+        !GpuViewportResources~: () {
+            delete shapes;
+            delete markers;
+            materials.freeAll();
+            delete assetsDirectory;
+            delete renderer;
+        }
+
+        Prepare~: () -> void {
+            frame += 1;
+            kept~ Array<CachedShapeMesh>! = [];
+            for cached in shapes {
+                if frame - cached.lastUsedFrame < UNUSED_FRAMES_BEFORE_RELEASE {
+                    kept.push(cached);
+                } else {
+                    renderer->RemoveMesh(cached.mesh);
+                }
+            }
+            delete shapes;
+            shapes = kept!;
+        }
+
+        ShapeMesh~: (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+            for index~ usize = 0; index < shapes.length(); index++ {
+                if SameShape(shapes[index].shape, shape) {
+                    shapes[index].lastUsedFrame = frame;
+                    return shapes[index].mesh;
+                }
+            }
+            data := lantern:::world:::ShapeMesh(shape);
+            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(renderer, data, "shape");
+            delete data;
+            guard mesh := uploaded return null;
+            shapes.push(CachedShapeMesh { shape: shape, mesh: mesh, lastUsedFrame: frame });
+            return mesh;
+        }
+
+        MaterialTexture~: (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
+            guard name := material return null;
+            for cached in materials {
+                if cached->name == name {
+                    return cached->texture;
+                }
+            }
+            path: string! = `${assetsDirectory}/textures/${name}.png`;
+            data~ lantern:::renderer:::TextureData*!? = null;
+            when lantern:::renderer:::TextureData:::LoadPng(path) {
+                Result:::Ok(loaded) -> {
+                    data = loaded!;
+                },
+                Result:::Err(failure) -> {
+                    message: string! = `material '${name}': ${failure}; using a checker`;
+                    lantern:::core:::LogWarn("editor", message);
+                    delete message;
+                    delete failure;
+                    data = lantern:::renderer:::TextureData:::Checker(64, 8, lantern:::core:::Color:::Rgb(0.8f, 0.8f, 0.8f), lantern:::core:::Color:::Rgb(0.55f, 0.55f, 0.6f));
+                }
+            }
+            delete path;
+            texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
+            if loadedData := data {
+                when renderer->CreateTexture(loadedData) {
+                    Result:::Ok(handle) -> {
+                        texture = handle;
+                    },
+                    Result:::Err(failure) -> {
+                        message: string! = `uploading '${name}' failed: ${failure}`;
+                        lantern:::core:::LogError("editor", message);
+                        delete message;
+                        delete failure;
+                    }
+                }
+            }
+            delete data;
+            materials.push(new CachedMaterial(name, texture));
+            return texture;
+        }
+
+        MarkerMeshHandle~: (marker: lantern:::editor:::MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+            if marker == lantern:::editor:::MarkerMesh:::Plane {
+                return null;
+            }
+            for cached in markers {
+                if cached.marker == marker {
+                    return cached.mesh;
+                }
+            }
+            data := MarkerMeshData(marker);
+            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(renderer, data, "marker");
+            delete data;
+            guard mesh := uploaded return null;
+            markers.push(CachedMarkerMesh { marker: marker, mesh: mesh });
+            return mesh;
+        }
+
+        MarkerMeshData :: (marker: lantern:::editor:::MarkerMesh) -> lantern:::renderer:::MeshData*! {
+            if marker == lantern:::editor:::MarkerMesh:::Sphere {
+                return lantern:::renderer:::Sphere(0.3f, 16, 8);
+            }
+            if marker == lantern:::editor:::MarkerMesh:::Capsule {
+                return lantern:::renderer:::Capsule(0.35f, 0.55f, 16, 8);
+            }
+            if marker == lantern:::editor:::MarkerMesh:::Gem {
+                path: string! = `${assetsDirectory}/models/gem.glb`;
+                defer delete path;
+                when lantern:::renderer:::LoadGltfMesh(path) {
+                    Result:::Ok(model) -> {
+                        return model!;
+                    },
+                    Result:::Err(failure) -> {
+                        message: string! = `gem model: ${failure}; using the generated gem`;
+                        lantern:::core:::LogWarn("editor", message);
+                        delete message;
+                        delete failure;
+                        return lantern:::renderer:::Gem(0.3f, 0.8f);
+                    }
+                }
+            }
+            return lantern:::renderer:::Cube(0.6f);
+        }
+    }
+}

@@ -1,0 +1,804 @@
+lantern:::editorapicopy :: foreign "c" {
+    memcpy :: (destination: Array<u8~>, source: Array<u8>, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::editorapi :: namespace {
+    EditorBackend :: import lantern:::editorbackend:::EditorBackend;
+    EditorSession :: import lantern:::editor:::EditorSession;
+    OutlineRow :: import lantern:::editor:::OutlineRow;
+    InspectorField :: import lantern:::editor:::InspectorField;
+
+    FIELD_KEY: u32 : 0;
+    FIELD_LABEL: u32 : 1;
+    FIELD_GROUP: u32 : 2;
+    FIELD_VALUE: u32 : 3;
+    FIELD_KIND: u32 : 4;
+    FIELD_MIXED: u32 : 5;
+
+    TEMPLATE_ID: u32 : 0;
+    TEMPLATE_LABEL: u32 : 1;
+    TEMPLATE_KIND: u32 : 2;
+
+    EntityKey :: (entity: i64) -> u64 {
+        if entity < 0 {
+            return 0;
+        }
+        return u64(entity);
+    }
+
+    EntityId :: (key: u64?) -> i64 {
+        if found := key {
+            return i64(found);
+        }
+        return 0;
+    }
+
+    BoolText :: (value: bool) -> string! {
+        if value {
+            return "true".copy();
+        }
+        return "false".copy();
+    }
+
+    CopyInto :: (source: Array<u8>, target: Array<u8~>) -> bool {
+        if target.length() < source.length() {
+            return false;
+        }
+        if source.length() == 0 {
+            return true;
+        }
+        unsafe {
+            lantern:::editorapicopy:::memcpy(target, source, source.length());
+        }
+        return true;
+    }
+
+    export Editor :: class {
+    public:
+        backend~ EditorBackend*!;
+        apiStatus~ string!? = null;
+        outline~ Array<OutlineRow*!>! = [];
+        outlineRevision~ u64? = null;
+        inspector~ Array<InspectorField*!>! = [];
+        inspectorRevision~ u64? = null;
+        thumbnailSide~ u32 = 0;
+
+        Editor~: (assets: string, worldPath: string) {
+            backend = new EditorBackend(assets, worldPath);
+        }
+
+        !Editor~: () {
+            delete backend;
+            delete apiStatus;
+            outline.freeAll();
+            inspector.freeAll();
+        }
+
+        Session :: () -> EditorSession~* {
+            return backend->session;
+        }
+
+        ClearApiStatus~: () -> void {
+            delete apiStatus;
+            apiStatus = null;
+        }
+
+        ShowError~: (error: string!) -> void {
+            if current := apiStatus {
+                if current == error {
+                    delete error;
+                    return;
+                }
+            }
+            delete apiStatus;
+            apiStatus = error!;
+        }
+
+        RefreshOutline~: () -> void {
+            revision: u64 = backend->session->UiRevision();
+            if cached := outlineRevision {
+                if cached == revision {
+                    return;
+                }
+            }
+            outline.freeAll();
+            outline = backend->session->Outline();
+            outlineRevision = revision;
+        }
+
+        RefreshInspector~: () -> void {
+            revision: u64 = backend->session->UiRevision();
+            if cached := inspectorRevision {
+                if cached == revision {
+                    return;
+                }
+            }
+            inspector.freeAll();
+            inspector = backend->session->Inspector();
+            inspectorRevision = revision;
+        }
+
+        OutlineRowAt~: (row: u32) -> OutlineRow*? {
+            RefreshOutline();
+            if usize(row) >= outline.length() {
+                return null;
+            }
+            return outline[usize(row)];
+        }
+
+        InspectorFieldAt~: (index: u32) -> InspectorField*? {
+            RefreshInspector();
+            if usize(index) >= inspector.length() {
+                return null;
+            }
+            return inspector[usize(index)];
+        }
+
+        EntityText :: (entity: i64, wantKind: bool) -> string! {
+            world := backend->session->World();
+            guard index := world->IndexOf(EntityKey(entity)) return "".copy();
+            if wantKind {
+                return world->entities[index]->kind.copy();
+            }
+            return world->entities[index]->name.copy();
+        }
+    }
+
+    export Create :: (assets: string, worldPath: string) -> Editor*! {
+        return new Editor(assets, worldPath);
+    }
+
+    export Destroy :: (editor: Editor*!) -> void {
+        delete editor;
+    }
+
+    export Revision :: (editor: Editor*) -> u64 {
+        extra: u64 = when (editor->apiStatus == null) { true -> 0, false -> 1 };
+        return editor->backend->session->UiRevision() + extra;
+    }
+
+    export Status :: (editor: Editor*) -> string! {
+        if status := editor->apiStatus {
+            return status.copy();
+        }
+        return editor->backend->session->status.copy();
+    }
+
+    export Title :: (editor: Editor*) -> string! {
+        return editor->backend->session->Title();
+    }
+
+    export DocumentPath :: (editor: Editor*) -> string! {
+        if path := editor->backend->session->document->path {
+            return path.copy();
+        }
+        return "".copy();
+    }
+
+    export IsDirty :: (editor: Editor*) -> bool {
+        return editor->backend->session->document->IsDirty();
+    }
+
+    export Open :: (editor: Editor~*, path: string) -> bool {
+        editor->ClearApiStatus();
+        return editor->Session()->Load(path);
+    }
+
+    export Save :: (editor: Editor~*) -> bool {
+        editor->ClearApiStatus();
+        return editor->Session()->Save();
+    }
+
+    export SaveAs :: (editor: Editor~*, path: string) -> bool {
+        editor->ClearApiStatus();
+        if path.trim().length() == 0 {
+            return false;
+        }
+        return editor->Session()->SaveAs(path);
+    }
+
+    export NewWorld :: (editor: Editor~*, name: string) -> void {
+        editor->ClearApiStatus();
+        if name.length() == 0 {
+            editor->Session()->NewWorld("untitled");
+        } else {
+            editor->Session()->NewWorld(name);
+        }
+    }
+
+    export Render :: (editor: Editor~*, width: u32, height: u32) -> bool {
+        failure: string!? = editor->backend->Render(width, height);
+        if problem := failure {
+            editor->ShowError(problem.copy());
+            delete failure;
+            return false;
+        }
+        return true;
+    }
+
+    export PixelWidth :: (editor: Editor*) -> u32 {
+        if editor->backend->pixels.length() == 0 {
+            return 0;
+        }
+        return editor->backend->pixelWidth;
+    }
+
+    export PixelHeight :: (editor: Editor*) -> u32 {
+        if editor->backend->pixels.length() == 0 {
+            return 0;
+        }
+        return editor->backend->pixelHeight;
+    }
+
+    export CopyPixels :: (editor: Editor*, target: Array<u8~>) -> bool {
+        return CopyInto(editor->backend->pixels, target);
+    }
+
+    export PointerMove :: (editor: Editor~*, x: f32, y: f32) -> void {
+        editor->Session()->PointerMoved(Vec2 { x: x, y: y });
+    }
+
+    export PointerButton :: (editor: Editor~*, button: u32, down: bool, modifiers: u32) -> void {
+        guard pressed := lantern:::editor:::PointerButtonAt(button) return;
+        editor->ClearApiStatus();
+        editor->Session()->SetPointerButton(pressed, down, lantern:::editor:::Modifiers:::FromBits(modifiers));
+    }
+
+    export Wheel :: (editor: Editor~*, notches: f32) -> void {
+        editor->Session()->Wheel(notches);
+    }
+
+    export Key :: (editor: Editor~*, keyName: string, down: bool, modifiers: u32) -> bool {
+        guard editorKey := lantern:::editor:::EditorKey:::FromName(keyName) return false;
+        return editor->Session()->Key(editorKey, down, lantern:::editor:::Modifiers:::FromBits(modifiers));
+    }
+
+    export ReleaseKeys :: (editor: Editor~*) -> void {
+        editor->Session()->ReleaseKeys();
+    }
+
+    export Update :: (editor: Editor~*, seconds: f32) -> void {
+        clamped~ f32 = seconds;
+        if !(clamped >= 0.0f) {
+            clamped = 0.0f;
+        }
+        if clamped > 0.25f {
+            clamped = 0.25f;
+        }
+        editor->Session()->Update(clamped);
+        editor->backend->PollPlay();
+    }
+
+    export FrameSelection :: (editor: Editor~*) -> void {
+        editor->Session()->FrameSelection();
+    }
+
+    export SetTool :: (editor: Editor~*, name: string) -> void {
+        guard tool := lantern:::editor:::GizmoToolNamed(name) return;
+        editor->Session()->SetTool(tool);
+    }
+
+    export Tool :: (editor: Editor*) -> string! {
+        return lantern:::editor:::GizmoToolName(editor->backend->session->tool).copy();
+    }
+
+    export SetSnap :: (editor: Editor~*, enabled: bool) -> void {
+        editor->Session()->SetSnapEnabled(enabled);
+    }
+
+    export Snap :: (editor: Editor*) -> bool {
+        return editor->backend->session->snap.enabled;
+    }
+
+    export OutlineCount :: (editor: Editor*) -> u32 {
+        return u32(editor->backend->session->World()->entities.length());
+    }
+
+    export OutlineId :: (editor: Editor~*, row: u32) -> i64 {
+        guard found := editor->OutlineRowAt(row) return 0;
+        return i64(found->key);
+    }
+
+    export OutlineDepth :: (editor: Editor~*, row: u32) -> u32 {
+        guard found := editor->OutlineRowAt(row) return 0;
+        return found->depth;
+    }
+
+    export OutlineParent :: (editor: Editor~*, row: u32) -> i64 {
+        guard found := editor->OutlineRowAt(row) return 0;
+        return EntityId(found->parent);
+    }
+
+    export OutlineHasChildren :: (editor: Editor~*, row: u32) -> bool {
+        guard found := editor->OutlineRowAt(row) return false;
+        return found->hasChildren;
+    }
+
+    export EntityName :: (editor: Editor*, entity: i64) -> string! {
+        return editor->EntityText(entity, false);
+    }
+
+    export EntityKind :: (editor: Editor*, entity: i64) -> string! {
+        return editor->EntityText(entity, true);
+    }
+
+    export IsSelected :: (editor: Editor*, entity: i64) -> bool {
+        return editor->backend->session->IsSelected(EntityKey(entity));
+    }
+
+    export Select :: (editor: Editor~*, entity: i64, additive: bool) -> void {
+        if additive {
+            editor->Session()->ToggleSelected(EntityKey(entity));
+        } else {
+            editor->Session()->SelectOnly(EntityKey(entity));
+        }
+    }
+
+    export ClearSelection :: (editor: Editor~*) -> void {
+        editor->Session()->ClearSelection();
+    }
+
+    export PrimarySelection :: (editor: Editor*) -> i64 {
+        return EntityId(editor->backend->session->PrimarySelection());
+    }
+
+    export SelectionCount :: (editor: Editor*) -> u32 {
+        return u32(editor->backend->session->selection.length());
+    }
+
+    export FieldCount :: (editor: Editor~*) -> u32 {
+        editor->RefreshInspector();
+        return u32(editor->inspector.length());
+    }
+
+    export Field :: (editor: Editor~*, index: u32, part: u32) -> string! {
+        guard field := editor->InspectorFieldAt(index) return "".copy();
+        if part == FIELD_KEY {
+            return field->key.copy();
+        }
+        if part == FIELD_LABEL {
+            return field->label.copy();
+        }
+        if part == FIELD_GROUP {
+            return field->group.copy();
+        }
+        if part == FIELD_VALUE {
+            return field->value.copy();
+        }
+        if part == FIELD_KIND {
+            return lantern:::editor:::FieldKindName(field->kind).copy();
+        }
+        if part == FIELD_MIXED {
+            return BoolText(field->mixed);
+        }
+        return "".copy();
+    }
+
+    export FieldChoiceCount :: (editor: Editor~*, index: u32) -> u32 {
+        guard field := editor->InspectorFieldAt(index) return 0;
+        return u32(field->choices.length());
+    }
+
+    export FieldChoice :: (editor: Editor~*, index: u32, choice: u32) -> string! {
+        guard field := editor->InspectorFieldAt(index) return "".copy();
+        if usize(choice) >= field->choices.length() {
+            return "".copy();
+        }
+        return field->choices[usize(choice)].copy();
+    }
+
+    export SetField :: (editor: Editor~*, entity: i64, field: string, text: string) -> bool {
+        editor->ClearApiStatus();
+        return editor->Session()->SetField(EntityKey(entity), field, text);
+    }
+
+    export CommitField :: (editor: Editor~*) -> void {
+        editor->Session()->CommitField();
+    }
+
+    export TemplateCount :: (editor: Editor*) -> u32 {
+        return u32(editor->backend->session->palette->templates.length());
+    }
+
+    export Template :: (editor: Editor*, index: u32, part: u32) -> string! {
+        templates: lantern:::editor:::Palette* = editor->backend->session->palette;
+        if usize(index) >= templates->templates.length() {
+            return "".copy();
+        }
+        template: lantern:::editor:::EntityTemplate* = templates->templates[usize(index)];
+        if part == TEMPLATE_ID {
+            return template->id.copy();
+        }
+        if part == TEMPLATE_LABEL {
+            return template->label.copy();
+        }
+        if part == TEMPLATE_KIND {
+            return template->prototype->kind.copy();
+        }
+        return "".copy();
+    }
+
+    export AddEntity :: (editor: Editor~*, templateId: string) -> i64 {
+        editor->ClearApiStatus();
+        return EntityId(editor->Session()->AddEntity(templateId, false));
+    }
+
+    export DeleteSelection :: (editor: Editor~*) -> bool {
+        return editor->Session()->DeleteSelection();
+    }
+
+    export DuplicateSelection :: (editor: Editor~*) -> bool {
+        return editor->Session()->DuplicateSelection();
+    }
+
+    export Undo :: (editor: Editor~*) -> bool {
+        editor->ClearApiStatus();
+        return editor->Session()->Undo();
+    }
+
+    export Redo :: (editor: Editor~*) -> bool {
+        editor->ClearApiStatus();
+        return editor->Session()->Redo();
+    }
+
+    export CanUndo :: (editor: Editor*) -> bool {
+        return editor->backend->session->document->CanUndo();
+    }
+
+    export CanRedo :: (editor: Editor*) -> bool {
+        return editor->backend->session->document->CanRedo();
+    }
+
+    export RecentFileCount :: (editor: Editor*) -> u32 {
+        return u32(editor->backend->session->recentFiles.length());
+    }
+
+    export RecentFile :: (editor: Editor*, index: u32) -> string! {
+        files: EditorSession* = editor->backend->session;
+        if usize(index) >= files->recentFiles.length() {
+            return "".copy();
+        }
+        return files->recentFiles[usize(index)].copy();
+    }
+
+    export Preference :: (editor: Editor*, name: string) -> string! {
+        if value := editor->backend->preferences->Get(name) {
+            return value.copy();
+        }
+        return "".copy();
+    }
+
+    export SetPreference :: (editor: Editor~*, name: string, value: string) -> bool {
+        return editor->backend->preferences->Set(name, value);
+    }
+
+    export SavePreferences :: (editor: Editor~*) -> bool {
+        return editor->backend->SavePreferences();
+    }
+
+    export AssetsDirectory :: (editor: Editor*) -> string! {
+        return editor->backend->assetsDirectory.copy();
+    }
+
+    export SetSpace :: (editor: Editor~*, name: string) -> void {
+        guard space := lantern:::editor:::GizmoSpaceNamed(name) return;
+        editor->Session()->SetSpace(space);
+    }
+
+    export Space :: (editor: Editor*) -> string! {
+        return lantern:::editor:::GizmoSpaceName(editor->backend->session->space).copy();
+    }
+
+    export SetPivotMode :: (editor: Editor~*, name: string) -> void {
+        guard mode := lantern:::editor:::PivotModeNamed(name) return;
+        editor->Session()->SetPivotMode(mode);
+    }
+
+    export PivotMode :: (editor: Editor*) -> string! {
+        return lantern:::editor:::PivotModeName(editor->backend->session->pivotMode).copy();
+    }
+
+    export SetSnapStep :: (editor: Editor~*, name: string, value: f32) -> bool {
+        return editor->Session()->SetSnapStep(name, value);
+    }
+
+    export SnapStep :: (editor: Editor*, name: string) -> f32 {
+        if value := editor->backend->session->SnapStep(name) {
+            return value;
+        }
+        return 0.0f;
+    }
+
+    export SetViewOption :: (editor: Editor~*, name: string, value: string) -> bool {
+        return editor->Session()->SetViewOption(name, value);
+    }
+
+    export ViewOption :: (editor: Editor*, name: string) -> string! {
+        valueFound: string!? = editor->backend->session->view.Get(name);
+        if value := valueFound {
+            copied: string! = value.copy();
+            delete valueFound;
+            return copied!;
+        }
+        return "".copy();
+    }
+
+    export HoveredHandle :: (editor: Editor*) -> string! {
+        if handle := editor->backend->session->HoveredHandle() {
+            return handle.Describe();
+        }
+        return "".copy();
+    }
+
+    export CameraPreset :: (editor: Editor~*, name: string) -> bool {
+        return editor->Session()->CameraPreset(name);
+    }
+
+    export SetOrthographic :: (editor: Editor~*, orthographic: bool) -> void {
+        editor->Session()->SetOrthographic(orthographic);
+    }
+
+    export IsOrthographic :: (editor: Editor*) -> bool {
+        return editor->backend->session->camera.orthographic;
+    }
+
+    export CameraDescription :: (editor: Editor*) -> string! {
+        return editor->backend->session->CameraDescription();
+    }
+
+    export FrameAll :: (editor: Editor~*) -> void {
+        editor->Session()->FrameAll();
+    }
+
+    export SetBookmark :: (editor: Editor~*, slot: u32) -> bool {
+        return editor->Session()->SetBookmark(usize(slot));
+    }
+
+    export GoToBookmark :: (editor: Editor~*, slot: u32) -> bool {
+        return editor->Session()->GoToBookmark(usize(slot));
+    }
+
+    export HasBookmark :: (editor: Editor*, slot: u32) -> bool {
+        return editor->backend->session->HasBookmark(usize(slot));
+    }
+
+    export AlignCameraToSelection :: (editor: Editor~*) -> bool {
+        return editor->Session()->AlignCameraToSelection();
+    }
+
+    export AlignSelectionToCamera :: (editor: Editor~*) -> bool {
+        return editor->Session()->AlignSelectionToCamera();
+    }
+
+    export EntityCount :: (editor: Editor*) -> u32 {
+        return u32(editor->backend->session->World()->entities.length());
+    }
+
+    export IsHidden :: (editor: Editor*, entity: i64) -> bool {
+        return editor->backend->session->IsHidden(EntityKey(entity));
+    }
+
+    export SetHidden :: (editor: Editor~*, entity: i64, hidden: bool) -> void {
+        editor->Session()->SetHidden(EntityKey(entity), hidden);
+    }
+
+    export IsLocked :: (editor: Editor*, entity: i64) -> bool {
+        return editor->backend->session->IsLocked(EntityKey(entity));
+    }
+
+    export SetLocked :: (editor: Editor~*, entity: i64, locked: bool) -> void {
+        editor->Session()->SetLocked(EntityKey(entity), locked);
+    }
+
+    export HideSelection :: (editor: Editor~*) -> void {
+        editor->Session()->HideSelection();
+    }
+
+    export UnhideAll :: (editor: Editor~*) -> void {
+        editor->Session()->UnhideAll();
+    }
+
+    export LockSelection :: (editor: Editor~*, locked: bool) -> void {
+        editor->Session()->LockSelection(locked);
+    }
+
+    export SelectAll :: (editor: Editor~*) -> void {
+        editor->Session()->SelectAll();
+    }
+
+    export InvertSelection :: (editor: Editor~*) -> void {
+        editor->Session()->InvertSelection();
+    }
+
+    export SelectKind :: (editor: Editor~*, kind: string) -> void {
+        editor->Session()->SelectKind(kind);
+    }
+
+    export SelectChildren :: (editor: Editor~*) -> void {
+        editor->Session()->SelectChildren();
+    }
+
+    export SetParent :: (editor: Editor~*, child: i64, parent: i64) -> bool {
+        editor->Session()->CommitField();
+        parentKey~ u64? = null;
+        if parent > 0 {
+            parentKey = EntityKey(parent);
+        }
+        return editor->Session()->SetParent(EntityKey(child), parentKey);
+    }
+
+    export SetSelectionField :: (editor: Editor~*, field: string, text: string) -> bool {
+        return editor->Session()->SetFieldOnSelection(field, text);
+    }
+
+    export RenameProperty :: (editor: Editor~*, oldName: string, newName: string) -> bool {
+        return editor->Session()->RenameProperty(oldName, newName);
+    }
+
+    export AddEntityAtCursor :: (editor: Editor~*, templateId: string) -> i64 {
+        editor->Session()->CommitField();
+        return EntityId(editor->Session()->AddEntity(templateId, true));
+    }
+
+    export DuplicateAlong :: (editor: Editor~*, axisName: string) -> bool {
+        guard axis := lantern:::editor:::AxisNamed(axisName) return false;
+        return editor->Session()->DuplicateSelectionAlong(axis);
+    }
+
+    export MirrorSelection :: (editor: Editor~*, axisName: string) -> bool {
+        guard axis := lantern:::editor:::AxisNamed(axisName) return false;
+        return editor->Session()->MirrorSelection(axis);
+    }
+
+    export SnapSelectionToGround :: (editor: Editor~*) -> bool {
+        return editor->Session()->SnapSelectionToGround();
+    }
+
+    export GroupSelection :: (editor: Editor~*) -> bool {
+        return editor->Session()->GroupSelection();
+    }
+
+    export AlignSelection :: (editor: Editor~*, axisName: string) -> bool {
+        guard axis := lantern:::editor:::AxisNamed(axisName) return false;
+        return editor->Session()->AlignSelection(axis);
+    }
+
+    export DistributeSelection :: (editor: Editor~*, axisName: string) -> bool {
+        guard axis := lantern:::editor:::AxisNamed(axisName) return false;
+        return editor->Session()->DistributeSelection(axis);
+    }
+
+    export RevertToTemplate :: (editor: Editor~*) -> bool {
+        return editor->Session()->RevertSelectionToTemplate();
+    }
+
+    export ApplyToTemplate :: (editor: Editor~*) -> bool {
+        return editor->Session()->ApplyPrimaryToTemplate();
+    }
+
+    export HistoryCount :: (editor: Editor*) -> u32 {
+        labels~ Array<string!>! = editor->backend->session->document->HistoryLabels();
+        count: u32 = u32(labels.length());
+        labels.freeAll();
+        return count;
+    }
+
+    export HistoryLabel :: (editor: Editor*, index: u32) -> string! {
+        labels~ Array<string!>! = editor->backend->session->document->HistoryLabels();
+        label~ string! = "".copy();
+        if usize(index) < labels.length() {
+            delete label;
+            label = labels[usize(index)].copy();
+        }
+        labels.freeAll();
+        return label!;
+    }
+
+    export HistoryPosition :: (editor: Editor*) -> u32 {
+        return u32(editor->backend->session->document->HistoryPosition());
+    }
+
+    export JumpHistory :: (editor: Editor~*, position: u32) -> bool {
+        editor->Session()->CommitField();
+        return editor->Session()->JumpHistory(usize(position));
+    }
+
+    export LogCount :: (editor: Editor*) -> u32 {
+        return u32(editor->backend->session->log.length());
+    }
+
+    export LogText :: (editor: Editor*, index: u32) -> string! {
+        session: EditorSession* = editor->backend->session;
+        if usize(index) >= session->log.length() {
+            return "".copy();
+        }
+        return session->log[usize(index)]->text.copy();
+    }
+
+    export LogLevel :: (editor: Editor*, index: u32) -> string! {
+        session: EditorSession* = editor->backend->session;
+        if usize(index) >= session->log.length() {
+            return "".copy();
+        }
+        return lantern:::editor:::LogLevelName(session->log[usize(index)]->level).copy();
+    }
+
+    export ClearLog :: (editor: Editor~*) -> void {
+        editor->Session()->ClearLog();
+    }
+
+    export Play :: (editor: Editor~*) -> bool {
+        return editor->backend->StartPlay();
+    }
+
+    export StopPlay :: (editor: Editor~*) -> bool {
+        return editor->backend->StopPlay();
+    }
+
+    export IsPlaying :: (editor: Editor~*) -> bool {
+        return editor->backend->IsPlaying();
+    }
+
+    export Stat :: (editor: Editor*, name: string) -> string! {
+        if name == "entities" {
+            return `${editor->backend->session->World()->entities.length()}`;
+        }
+        if name == "selected" {
+            return `${editor->backend->session->selection.length()}`;
+        }
+        if name == "play_seconds" {
+            return lantern:::core:::FixedDecimals(f64(editor->backend->PlaySeconds()), 0, 0);
+        }
+        valueFound: string!? = editor->backend->stats.Get(name);
+        if value := valueFound {
+            copied: string! = value.copy();
+            delete valueFound;
+            return copied!;
+        }
+        return "".copy();
+    }
+
+    export RenderPreview :: (editor: Editor~*, templateId: string, width: u32, height: u32, spin: f32) -> bool {
+        failure: string!? = editor->backend->RenderTemplatePreview(templateId, width, height, spin);
+        if problem := failure {
+            editor->ShowError(problem.copy());
+            delete failure;
+            return false;
+        }
+        return true;
+    }
+
+    export PreviewWidth :: (editor: Editor*) -> u32 {
+        if editor->backend->previewPixels.length() == 0 {
+            return 0;
+        }
+        return editor->backend->previewWidth;
+    }
+
+    export PreviewHeight :: (editor: Editor*) -> u32 {
+        if editor->backend->previewPixels.length() == 0 {
+            return 0;
+        }
+        return editor->backend->previewHeight;
+    }
+
+    export CopyPreviewPixels :: (editor: Editor*, target: Array<u8~>) -> bool {
+        return CopyInto(editor->backend->previewPixels, target);
+    }
+
+    export Thumbnail :: (editor: Editor~*, templateId: string, size: u32) -> u32 {
+        failure: string!? = editor->backend->RenderThumbnail(templateId, size);
+        if problem := failure {
+            editor->ShowError(problem.copy());
+            delete failure;
+            return 0;
+        }
+        guard index := editor->backend->ThumbnailIndex(templateId) return 0;
+        return editor->backend->thumbnails[index]->size;
+    }
+
+    export CopyThumbnailPixels :: (editor: Editor*, templateId: string, target: Array<u8~>) -> bool {
+        guard index := editor->backend->ThumbnailIndex(templateId) return false;
+        return CopyInto(editor->backend->thumbnails[index]->pixels, target);
+    }
+}

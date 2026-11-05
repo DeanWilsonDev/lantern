@@ -167,6 +167,14 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   (what the viewport draws: `BuildViewport`, outlines, the grid, markers, arrows and the rubber band) and
   `Session.nox` with `SessionTypes.nox` (`EditorSession`: selection, hiding and locking, tools, snapping, view options,
   clicks, drags, keys and flying, every editing command, camera bookmarks and the log).
+- `src/editorbackend/` is the Rust `editor-backend` crate, `lantern:::editorbackend`: `EditorBackend.nox`
+  (`EditorBackend`: the session, preferences, rendering the viewport off-screen and its statistics), `ViewportGpu.nox`
+  (`GpuViewportResources`, the meshes and textures the viewport draws with, on an off-screen `GpuRenderer`),
+  `Preview.nox` (the turntable preview and thumbnails of a palette template) and `Play.nox` (play in editor: finding
+  the game runner and running it as a child process). `editor-backend/` builds it into a static library behind
+  `include/lantern_editor.h`: `src/EditorApi.nox` exports the C API as `lantern:::editorapi`, and
+  `shim/lantern_editor.c` implements the header over those exports. Its `CMakeLists.txt` builds the library and a C
+  test of the API (`tests/lantern_editor_test.c`); `apps/world-editor` links it the same way.
 - `src/stub/` is the stub game `main` runs when it's given no game directory: it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the

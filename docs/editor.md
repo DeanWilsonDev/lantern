@@ -37,11 +37,14 @@ apps/world-editor (C++26, CMake)                      crates/ (Rust)
   with snapping, world or local space and primary or centre pivots, the inspector's fields, the
   outline, hiding and locking, the editing operations, preferences and the input state machine.
   It is unit tested.
-- **`lantern-editor-backend`** owns one `EditorSession` and an off-screen `GpuRenderer`. It
+- **The editor backend** owns one `EditorSession` and an off-screen `GpuRenderer`. It
   draws the viewport, the template thumbnails and the turntable preview into memory, launches
   the game for play-in-editor, and exposes everything through a C API
-  (`crates/editor-backend/include/lantern_editor.h`). It is built as a static library linked
-  against the system SDL3, the same SDL Penumbra uses.
+  (`engine/editor-backend/include/lantern_editor.h`). It is written in Nox
+  (`engine/src/editorbackend/` and `engine/editor-backend/`, `docs/decisions.md` D-051) and built
+  as a static library linked against the system SDL3, the same SDL Penumbra uses. The Rust
+  backend (`crates/editor-backend`) implements the same header and is still there to compare
+  with: configure with `-DLANTERN_EDITOR_BACKEND=rust` to link it instead.
 - **`apps/world-editor`** is the front end, built the same way as Pharos. `main.cpp` opens the
   backend, loads the UI through `ChaosApplicationHost`, registers the viewport renderers and
   runs. `EditorHost.cpp` registers one Nyx host function per C API call (`editorRevision()`,
@@ -85,8 +88,13 @@ writes the names the editor's host registers (its `editor*` functions, `appInsta
 `Application` members, `Component` and `@signal`) for `nyx check` and nyx-lsp, through
 `src/ui/.nyx.json`. Commit it when it changes.
 
-CMake runs `cargo build -p lantern-editor-backend` itself on every build. If SDL3 is somewhere
-pkg-config doesn't look, set `PKG_CONFIG_PATH` (for example `/usr/local/lib/pkgconfig`).
+CMake runs `nox build` over `engine/editor-backend` itself when a Nox source changes, so `nox` has
+to be on `PATH` and `engine/generated/` has to exist: run `engine/tools/bind-sdl.sh` and
+`engine/tools/install-dependencies.sh` first (`engine/README.md`). The backend finds its compiled
+shaders in `engine/shaders/compiled/` (run `engine/tools/build-shaders.sh`), or in
+`LANTERN_SHADER_DIRECTORY`. With `-DLANTERN_EDITOR_BACKEND=rust`, CMake runs
+`cargo build -p lantern-editor-backend` instead; if SDL3 is somewhere pkg-config doesn't look, set
+`PKG_CONFIG_PATH` (for example `/usr/local/lib/pkgconfig`).
 
 The stack is fetched from `proto` (Penumbra, Chaos, Cosmos) and `main` (penumbra-ui-backend,
 Cimmerian). To build against other branches or local checkouts:
@@ -97,12 +105,18 @@ Cimmerian). To build against other branches or local checkouts:
 -DFETCHCONTENT_SOURCE_DIR_PENUMBRA=../penumbra   # a local checkout (CMake's own switch)
 ```
 
-The Rust parts are tested without the app:
+The backend is tested without the app. Its Nox parts are in the engine's test suite
+(`engine/tests/editor/` and `engine/tests/editorbackend/`, run by `engine/tools/run-tests.sh`),
+and `engine/editor-backend` builds on its own with a C test of the whole C API:
 
 ```sh
-cargo test -p lantern-world-format -p lantern-editor-core
-cargo test -p lantern-editor-backend      # needs a GPU or lavapipe for the render tests
+cmake -S engine/editor-backend -B engine/editor-backend/build -G Ninja
+cmake --build engine/editor-backend/build
+ctest --test-dir engine/editor-backend/build --output-on-failure   # needs a GPU or lavapipe for the render test
 ```
+
+`LANTERN_REQUIRE_GPU=1` turns a skipped render into a failure, and `LANTERN_EDITOR_CAPTURE=out.ppm`
+saves the rendered viewport.
 
 ## The panels
 
