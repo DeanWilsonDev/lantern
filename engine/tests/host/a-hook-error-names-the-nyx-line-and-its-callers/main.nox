@@ -1,0 +1,95 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+lantern:::testoutput :: foreign "c" {
+    open :: (path: string, flags: i32) -> i32;
+    dup :: (fileDescriptor: i32) -> i32;
+    dup2 :: (fromDescriptor: i32, toDescriptor: i32) -> i32;
+    close :: (fileDescriptor: i32) -> i32;
+    fflush :: (stream: raw u8~*) -> i32;
+}
+
+STANDARD_OUTPUT: i32 : 1;
+WRITE_ONLY: i32 : 1;
+
+SilenceStandardOutput :: () -> i32 {
+    unsafe {
+        saved: i32 = lantern:::testoutput:::dup(STANDARD_OUTPUT);
+        discard: i32 = lantern:::testoutput:::open("/dev/null", WRITE_ONLY);
+        lantern:::testoutput:::dup2(discard, STANDARD_OUTPUT);
+        lantern:::testoutput:::close(discard);
+        return saved;
+    }
+}
+
+RestoreStandardOutput :: (saved: i32) -> void {
+    unsafe {
+        lantern:::testoutput:::fflush(null);
+        lantern:::testoutput:::dup2(saved, STANDARD_OUTPUT);
+        lantern:::testoutput:::close(saved);
+    }
+}
+
+SCRIPTS_DIRECTORY: string : "tests/support/games/broken";
+
+RunFrames :: (frameLoop: lantern:::engine:::FrameLoop~*, platform: lantern:::testing:::ScriptedPlatform~*, host: lantern:::host:::GameHost~*) -> void {
+    while platform->HasFrames() {
+        frameLoop->RunFrame(platform, host);
+    }
+}
+
+AddFrames :: (platform: lantern:::testing:::ScriptedPlatform~*, count: usize) -> void {
+    for index~ usize = 0; index < count; index++ {
+        platform->AddFrame(f64(platform->frames.length()) / 60.0f);
+    }
+}
+
+HeadlessState :: () -> lantern:::host:::EngineState*! {
+    when lantern:::host:::EngineState:::Create(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), null) {
+        Result:::Ok(state) -> {
+            return state!;
+        },
+        Result:::Err(message) -> {
+            print(`the engine state failed: ${message}`);
+            delete message;
+            assert(false, "the headless engine state starts");
+            return new lantern:::host:::EngineState(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), null);
+        }
+    }
+}
+
+ExpectInError :: (error: string, expected: string) -> void {
+    if !error.contains(expected) {
+        print(`'${expected}' isn't in the error '${error}'`);
+    }
+    assert(error.contains(expected), "the hook error has every expected part");
+}
+
+main :: () -> i32 {
+    host := new lantern:::host:::GameHost(HeadlessState(), new lantern:::host:::ScriptSource(SCRIPTS_DIRECTORY, "main.nyx", "Broken"));
+    platform := new lantern:::testing:::ScriptedPlatform();
+    frameLoop := new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
+    AddFrames(platform, 10);
+    saved: i32 = SilenceStandardOutput();
+    RunFrames(frameLoop, platform, host);
+    RestoreStandardOutput(saved);
+    if error := host->scriptError {
+        if !error.startsWith("OnFixedUpdate: ") {
+            print(`the error was '${error}'`);
+        }
+        assert(error.startsWith("OnFixedUpdate: "), "the error names the hook");
+        ExpectInError(error, " at Broken.Target (");
+        ExpectInError(error, "main.nyx:8:9)");
+        ExpectInError(error, "\n    called from Broken.OnFixedUpdate (");
+    } else {
+        assert(false, "the hook fails");
+    }
+    assert(lantern:::host:::ByteLengthOfCodePoints("héllo", 2) == 3, "an error line is cut after whole characters");
+    assert(lantern:::host:::ByteLengthOfCodePoints("abc", 5) == 3, "a short line keeps every byte");
+    delete frameLoop;
+    delete platform;
+    host->Shutdown();
+    delete host;
+    print("a hook error names the nyx line and its callers");
+    return 0;
+}
