@@ -1,0 +1,183 @@
+lantern:::host :: namespace {
+    DefineAction :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, kind: lantern:::core:::ActionKind) -> void {
+        name: string! = context->Text(0);
+        defer delete name;
+        if Stopped(context) {
+            return;
+        }
+        unsafe {
+            if state->input->actions->Find(name) != null {
+                message: string! = `the action '${name}' is defined twice`;
+                Invalid(context, message);
+                delete message;
+                return;
+            }
+            state->input->actions->Register(name, kind);
+            state->input->configurationChanged = true;
+        }
+    }
+
+    BindAction :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, binding: lantern:::core:::Binding) -> void {
+        name: string! = context->Text(0);
+        defer delete name;
+        if Stopped(context) {
+            return;
+        }
+        unsafe {
+            found: lantern:::core:::ActionId? = state->input->actions->Find(name);
+            if found == null {
+                message: string! = `no action named '${name}'; define it first`;
+                NotFound(context, message);
+                delete message;
+                return;
+            }
+            guard action := found return;
+            if IsEngineAction(action) {
+                message: string! = `'${name}' is an engine action`;
+                Invalid(context, message);
+                delete message;
+                return;
+            }
+            state->input->bindings->Bind(action, binding);
+            state->input->configurationChanged = true;
+        }
+    }
+
+    FindAction :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*) -> lantern:::core:::ActionId? {
+        name: string! = context->Text(0);
+        defer delete name;
+        if Stopped(context) {
+            return null;
+        }
+        unsafe {
+            if action := state->input->actions->Find(name) {
+                return action;
+            }
+        }
+        message: string! = `no action named '${name}'`;
+        NotFound(context, message);
+        delete message;
+        return null;
+    }
+
+    RegisterInputApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        input := new HostNamespace(runtime, "lantern::input");
+        input->Function("DefineButton", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            DefineAction(context, state, lantern:::core:::ActionKind:::Button);
+        });
+        input->Function("DefineAxis", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            DefineAction(context, state, lantern:::core:::ActionKind:::Axis1D);
+        });
+        input->Function("DefineVector", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            DefineAction(context, state, lantern:::core:::ActionKind:::Axis2D);
+        });
+        input->Function("BindKey", "(action: string, key: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            binding := lantern:::core:::Binding:::Key(KeyArgument(context, 1));
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, binding);
+        });
+        input->Function("BindMouseButton", "(action: string, button: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            binding := lantern:::core:::Binding:::Mouse(MouseButtonArgument(context, 1));
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, binding);
+        });
+        input->Function("BindGamepadButton", "(action: string, button: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            binding := lantern:::core:::Binding:::Gamepad(GamepadButtonArgument(context, 1));
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, binding);
+        });
+        input->Function("BindGamepadAxisButton", "(action: string, axis: string, threshold: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            axis: lantern:::core:::GamepadAxis = GamepadAxisArgument(context, 1);
+            threshold: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, lantern:::core:::Binding:::GamepadAxisButton(axis, threshold));
+        });
+        input->Function("BindKeyAxis", "(action: string, negative: string, positive: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            negative: lantern:::core:::KeyCode = KeyArgument(context, 1);
+            positive: lantern:::core:::KeyCode = KeyArgument(context, 2);
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, lantern:::core:::Binding:::KeyAxis(negative, positive));
+        });
+        input->Function("BindGamepadAxis", "(action: string, axis: string, scale: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            axis: lantern:::core:::GamepadAxis = GamepadAxisArgument(context, 1);
+            scale: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, lantern:::core:::Binding:::GamepadAxisValue(axis, scale));
+        });
+        input->Function("BindKeys", "(action: string, up: string, down: string, left: string, right: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            up: lantern:::core:::KeyCode = KeyArgument(context, 1);
+            down: lantern:::core:::KeyCode = KeyArgument(context, 2);
+            left: lantern:::core:::KeyCode = KeyArgument(context, 3);
+            right: lantern:::core:::KeyCode = KeyArgument(context, 4);
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, lantern:::core:::Binding:::KeyVector(up, down, left, right));
+        });
+        input->Function("BindStick", "(action: string, stick: string, scale: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            stick: lantern:::core:::GamepadStick = GamepadStickArgument(context, 1);
+            scale: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, lantern:::core:::Binding:::Stick(stick, scale));
+        });
+        input->Function("BindMouseMotion", "(action: string, scale: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            scale: f32 = context->F32(1);
+            if Stopped(context) {
+                return;
+            }
+            BindAction(context, state, lantern:::core:::Binding:::MouseMotion(scale));
+        });
+        input->Function("IsPressed", "(action: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            if action := FindAction(context, state) {
+                unsafe {
+                    context->ReturnBool(state->input->snapshot->Pressed(action));
+                }
+            }
+        });
+        input->Function("IsReleased", "(action: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            if action := FindAction(context, state) {
+                unsafe {
+                    context->ReturnBool(state->input->snapshot->Released(action));
+                }
+            }
+        });
+        input->Function("IsHeld", "(action: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            if action := FindAction(context, state) {
+                unsafe {
+                    context->ReturnBool(state->input->snapshot->Held(action));
+                }
+            }
+        });
+        input->Function("Axis", "(action: string) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            if action := FindAction(context, state) {
+                unsafe {
+                    context->ReturnF32(state->input->snapshot->Axis(action));
+                }
+            }
+        });
+        input->Function("Vector", "(action: string) -> lantern:::math:::Vec2", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            if action := FindAction(context, state) {
+                unsafe {
+                    ReturnVec2(context, math, state->input->snapshot->Vector(action));
+                }
+            }
+        });
+        failure := input->Finish();
+        delete input;
+        return failure!;
+    }
+}
