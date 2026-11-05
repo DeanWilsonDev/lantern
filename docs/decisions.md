@@ -772,9 +772,12 @@ Clicking a face applies the camera preset that puts the camera on that face's si
   without perspective, so the cube keeps its size whatever the zoom. A face is drawn when it points
   at the camera. The visible faces of a cube never overlap in this projection, so the hit test takes
   the first visible face that contains the point.
-- **Faces are named after their presets.** +Z is front, -Z back, +X left, -X right, +Y top and
-  -Y bottom, which is how `OrbitCamera.ApplyPreset` already places the camera. "Left" therefore
-  shows the level from +X.
+- **Faces are named after their presets.** +Z is front, -Z back, +X right, -X left, +Y top and
+  -Y bottom.
+- **The left and right presets swap sides.** The front view puts the camera on +Z with +X on the
+  screen's right, so the right view now looks from +X and the left view from -X, as Blender, Maya
+  and Unity do. Before, as in the Rust editor, "left" looked from +X, which the cube made plain: in
+  the default view its right-hand face read LEFT.
 - **Labels** use the font atlas, which `ViewportResources` now provides as `FontTexture`. A label is
   shown only on a face turned well towards the camera, so it stays readable.
 - **Input.** A left click on a face applies its preset and starts no drag or selection. Hovering
