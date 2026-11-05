@@ -1,0 +1,53 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Load :: () -> i32 { return lantern:::world:::Load(\"../assets/worlds/course.world.json\"); }\nCountGems :: () -> i32 { count~ i32 = 0; for gem: i64 in lantern:::world:::FindByKind(\"gem\") { count += 1; } return count; }\nPeriod :: () -> f32 { return lantern:::world:::NumberProperty(lantern:::world:::Find(\"moving_platform\"), \"period_seconds\"); }\nTravel :: () -> f32 { return lantern:::world:::VectorProperty(lantern:::world:::Find(\"moving_platform\"), \"travel\").z; }\nGemKind :: () -> string { return lantern:::world:::Kind(lantern:::world:::Find(\"gem_0\")); }\nHasTravel :: () -> bool { return lantern:::world:::HasProperty(lantern:::world:::Find(\"moving_platform\"), \"travel\") && !lantern:::world:::HasProperty(lantern:::world:::Find(\"gem_0\"), \"travel\"); }\nMissingProperty :: () -> string { gem: i64 = lantern:::world:::Find(\"gem_0\"); caught~ string = \"no failure\"; when lantern:::world:::NumberProperty(gem, \"speed\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nWrongKind :: () -> string { platform: i64 = lantern:::world:::Find(\"moving_platform\"); caught~ string = \"no failure\"; when lantern:::world:::TextProperty(platform, \"period_seconds\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nMissingName :: () -> string { caught~ string = \"no failure\"; when lantern:::world:::Find(\"nobody\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nMissingFile :: () -> string { caught~ string = \"no failure\"; when lantern:::world:::Load(\"worlds/missing.world.json\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nPlatformTop :: () -> f32 { origin: lantern:::math:::Vec3 = { y: 10.0f, z: -21.0f }; return lantern:::physics:::Raycast(origin, lantern:::math:::Vec3:::Down(), 30.0f)?.Point()?.y ?? -1.0f; }\nRaisePlatform :: () -> f32 { platform: i64 = lantern:::world:::Find(\"moving_platform\"); start: lantern:::math:::Vec3 = lantern:::world:::Position(platform); raised: lantern:::math:::Vec3 = { x: start.x, y: start.y + 1.0f, z: start.z }; lantern:::world:::SetPosition(platform, raised); return lantern:::world:::Position(platform).y; }\nProbe :: () -> f32 { start: lantern:::math:::Vec3 = { x: 2.0f, y: 3.0f }; probe: i64 = lantern:::world:::Spawn(\"probe\", start); lantern:::world:::SetYaw(probe, 1.0f); scale: lantern:::math:::Vec3 = { x: 2.0f, y: 2.0f, z: 2.0f }; lantern:::world:::SetScale(probe, scale); moved: lantern:::math:::Vec3 = { x: 4.0f, y: 3.0f }; lantern:::world:::Teleport(probe, moved); return lantern:::world:::InterpolatedPosition(probe, 0.5f).x; }\nHideFloor :: () -> bool { floor: i64 = lantern:::world:::Find(\"start_floor\"); lantern:::world:::SetVisible(floor, false); return lantern:::world:::IsVisible(floor); }\nParented :: () -> f32 { parentAt: lantern:::math:::Vec3 = { x: 1.0f }; childAt: lantern:::math:::Vec3 = { x: 2.0f }; parent: i64 = lantern:::world:::Spawn(\"parent\", parentAt); child: i64 = lantern:::world:::Spawn(\"child\", childAt); lantern:::world:::SetParent(child, parent); return lantern:::world:::Position(child).x; }\nCycle :: () -> string { parent: i64 = lantern:::world:::Find(\"parent\"); child: i64 = lantern:::world:::Find(\"child\"); caught~ string = \"no failure\"; when lantern:::world:::SetParent(parent, child) { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nDespawned :: () -> string { gem: i64 = lantern:::world:::Find(\"gem_0\"); lantern:::world:::Despawn(gem); caught~ string = \"no failure\"; when lantern:::world:::Kind(gem) { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nClear :: () -> void { lantern:::world:::Clear(); }";
+
+I32Result :: (program: lantern:::nyx:::Program*, name: string) -> i32 {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: i32 = lantern:::testing:::I32OrFail(value->I32());
+    delete value;
+    return result;
+}
+
+Near :: (value: f32, expected: f32) -> bool {
+    return Math:::abs(value - expected) < 0.0001f;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    assert(I32Result(program, "Load") == 29, "every file entity spawns");
+    assert(state->world->Length() == 29, "the world holds them");
+    assert(state->worldMeshes.length() == 21, "each shaped entity gets a mesh");
+    assert(I32Result(program, "CountGems") == 6, "FindByKind finds the six gems");
+    assert(lantern:::testing:::F32Result(program, "Period") == 6.0f, "a number property reads back");
+    assert(lantern:::testing:::F32Result(program, "Travel") == -6.0f, "a vector property reads back");
+    lantern:::testing:::ExpectText(program, "GemKind", "gem");
+    assert(lantern:::testing:::BoolResult(program, "HasTravel"), "HasProperty answers per entity");
+    lantern:::testing:::ExpectText(program, "MissingProperty", "NotFound: the entity has no property 'speed'");
+    lantern:::testing:::ExpectText(program, "WrongKind", "NotFound: the property 'period_seconds' is not text");
+    lantern:::testing:::ExpectText(program, "MissingName", "NotFound: no entity named 'nobody'");
+    lantern:::testing:::ExpectTextStart(program, "MissingFile", "NotFound: ");
+    assert(Near(lantern:::testing:::F32Result(program, "PlatformTop"), 2.0f), "a ray lands on the platform's top");
+    assert(Near(lantern:::testing:::F32Result(program, "RaisePlatform"), 2.8f), "SetPosition moves the entity");
+    assert(Near(lantern:::testing:::F32Result(program, "PlatformTop"), 3.0f), "and its kinematic body");
+    assert(lantern:::testing:::F32Result(program, "Probe") == 4.0f, "a teleport doesn't interpolate");
+    assert(!lantern:::testing:::BoolResult(program, "HideFloor"), "SetVisible hides a mesh");
+    assert(lantern:::testing:::F32Result(program, "Parented") == 2.0f, "a child keeps its local position");
+    lantern:::testing:::ExpectText(program, "Cycle", "Unknown: cannot parent: WouldCreateCycle");
+    lantern:::testing:::ExpectTextStart(program, "Despawned", "NotFound: no entity with id ");
+    lantern:::testing:::CallOrFail(program, "Clear");
+    assert(state->world->Length() == 0, "Clear removes the game's entities");
+    assert(state->worldMeshes.length() == 0, "and the world's meshes");
+    delete program;
+    delete runtime;
+    delete state;
+    print("the world API loads the course and moves its entities");
+    return 0;
+}
