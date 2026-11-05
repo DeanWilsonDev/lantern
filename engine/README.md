@@ -103,7 +103,8 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   arguments from and returns through, and `HostCall`, one registered callback) and `HostType.nox` (object types,
   whose instances are `HostObject`s the type keeps by slot, and value types laid out as C structs). Every callback is
   one trampoline that finds its `HostCall` from the C userdata pointer. Delete values and programs before their
-  runtime.
+  runtime: each one counts itself in the runtime's `RuntimeLedger`, and deleting a runtime while any is alive stops
+  the program with a message naming what's left.
 - `src/sdl/` is the Rust `sdl-facade` crate: `SdlContext` (initialises SDL and shuts it down when deleted),
   `SdlWindow`, `SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
   `SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `SdlAudioOutput` (an `AudioSink` on
