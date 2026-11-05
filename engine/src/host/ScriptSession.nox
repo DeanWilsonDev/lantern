@@ -82,8 +82,10 @@ lantern:::host :: namespace {
         entryPath~ string!;
         scriptSeconds~ f64 = 0.0f;
         hookTotals~ Array<HookTotal>! = [];
+        gameUi~ GameUiState*!;
 
-        ScriptSession~: (sessionRuntime: lantern:::nyx:::Runtime*!, sessionProgram: lantern:::nyx:::Program*!, sessionMath: MathTypes, path: string!) {
+        ScriptSession~: (sessionRuntime: lantern:::nyx:::Runtime*!, sessionProgram: lantern:::nyx:::Program*!, sessionMath: MathTypes, path: string!, sessionUi: GameUiState*!) {
+            gameUi = sessionUi!;
             runtime = sessionRuntime!;
             program = sessionProgram!;
             math = sessionMath;
@@ -95,6 +97,7 @@ lantern:::host :: namespace {
         }
 
         !ScriptSession~: () {
+            delete gameUi;
             delete program;
             delete runtime;
             delete definedHooks;
@@ -111,10 +114,16 @@ lantern:::host :: namespace {
                 return Result<ScriptSession*!, string!>:::Err(OwnedText("nyx: the runtime could not be created"));
             }
             math~ MathTypes = MathTypes { };
-            registered: lantern:::nyx:::NyxError*!? = RegisterEngineApis(runtime, state, math);
+            gameUi := new GameUiState();
+            uiPointer~ raw GameUiState~* = null;
+            unsafe {
+                uiPointer = gameUi;
+            }
+            registered: lantern:::nyx:::NyxError*!? = RegisterEngineApis(runtime, state, math, uiPointer);
             if error := registered {
                 failure: string! = NyxFailureText(error);
                 delete registered;
+                delete gameUi;
                 delete runtime;
                 delete entryPath;
                 return Result<ScriptSession*!, string!>:::Err(failure!);
@@ -124,15 +133,30 @@ lantern:::host :: namespace {
             if error := searchFailed {
                 failure: string! = NyxFailureText(error);
                 delete searchFailed;
+                delete gameUi;
                 delete runtime;
                 delete entryPath;
                 return Result<ScriptSession*!, string!>:::Err(failure!);
             }
             delete searchFailed;
+            uiDirectory: string! = `${scriptsDirectory}/ui`;
+            started := lantern:::chaosui:::ChaosUi:::Create(runtime, scriptsDirectory, uiDirectory);
+            defer delete uiDirectory;
+            when started! {
+                Result:::Ok(chaos) -> {
+                    gameUi->chaos = chaos!;
+                },
+                Result:::Err(message) -> {
+                    delete gameUi;
+                    delete runtime;
+                    delete entryPath;
+                    return Result<ScriptSession*!, string!>:::Err(message!);
+                }
+            }
             mounted := runtime->MountFile(entryPath, applicationClass);
             when mounted! {
                 Result:::Ok(program) -> {
-                    session := new ScriptSession(runtime!, program!, math, entryPath!);
+                    session := new ScriptSession(runtime!, program!, math, entryPath!, gameUi!);
                     hooksFailure: string!? = session->FindHooks();
                     if text := hooksFailure {
                         failure: string! = `${text}`;
@@ -145,6 +169,7 @@ lantern:::host :: namespace {
                 },
                 Result:::Err(error) -> {
                     failure: string! = MountFailure(runtime, entryPath, error!);
+                    delete gameUi;
                     delete runtime;
                     delete entryPath;
                     return Result<ScriptSession*!, string!>:::Err(failure!);
@@ -176,10 +201,11 @@ lantern:::host :: namespace {
 
         FindHooks~: () -> string!? {
             guard mountedProgram ~= program return OwnedText("nyx: the program isn't mounted");
+            found~ lantern:::nyx:::Value*!? = null;
             application := mountedProgram->Application();
             when application! {
                 Result:::Ok(instance) -> {
-                    delete instance;
+                    found = instance!;
                 },
                 Result:::Err(error) -> {
                     return NyxFailure(error!);
@@ -192,10 +218,13 @@ lantern:::host :: namespace {
                         definedHooks[index] = defined;
                     },
                     Result:::Err(error) -> {
+                        delete found;
                         return NyxFailure(error!);
                     }
                 }
             }
+            delete gameUi->application;
+            gameUi->application = found!;
             return null;
         }
 
@@ -244,6 +273,39 @@ lantern:::host :: namespace {
             }
         }
 
+        UiNavigationActions :: () -> NavigationActions*? {
+            return gameUi->navigation;
+        }
+
+        NavigateUi~: (navigation: lantern:::chaosui:::Navigation) -> void {
+            guard chaos ~= gameUi->chaos return;
+            started: u64 = monotonicNanoseconds();
+            chaos->Navigate(navigation);
+            scriptSeconds += SecondsSince(started);
+        }
+
+        UpdateUi~: () -> void {
+            guard chaos ~= gameUi->chaos return;
+            started: u64 = monotonicNanoseconds();
+            chaos->Update();
+            scriptSeconds += SecondsSince(started);
+        }
+
+        DrawUi~: (overlay: lantern:::renderer:::Overlay~*, screen: Vec2, scale: f32) -> void {
+            guard chaos ~= gameUi->chaos return;
+            chaos->Draw(overlay, screen, scale);
+        }
+
+        UiButtonRects :: () -> Array<lantern:::chaosui:::ButtonRect>! {
+            guard chaos := gameUi->chaos return [];
+            return chaos->ButtonRects();
+        }
+
+        TakeUiMessages~: () -> Array<string!>! {
+            guard chaos ~= gameUi->chaos return [];
+            return chaos->TakeMessages();
+        }
+
         HookTotalOf :: (hook: GameHook) -> HookTotal {
             return hookTotals[GameHookIndex(hook)];
         }
@@ -261,33 +323,60 @@ lantern:::host :: namespace {
             Result:::Ok(state) -> {
                 runtime := new lantern:::nyx:::Runtime();
                 math~ MathTypes = MathTypes { };
+                gameUi := new GameUiState();
                 registered~ lantern:::nyx:::NyxError*!? = null;
                 unsafe {
                     statePointer: raw EngineState~* = state;
-                    registered = RegisterEngineApis(runtime, statePointer, math);
+                    uiPointer: raw GameUiState~* = gameUi;
+                    registered = RegisterEngineApis(runtime, statePointer, math, uiPointer);
                 }
+                failure~ string!? = null;
                 if error := registered {
-                    failure: string! = NyxFailureText(error);
-                    delete registered;
-                    delete runtime;
-                    delete state;
-                    return Result<string!, string!>:::Err(failure!);
+                    failure = NyxFailureText(error);
                 }
                 delete registered;
-                written := runtime->WriteHostSurface();
-                when written! {
-                    Result:::Ok(manifest) -> {
-                        delete runtime;
-                        delete state;
-                        return Result<string!, string!>:::Ok(manifest!);
-                    },
-                    Result:::Err(error) -> {
-                        failure: string! = NyxFailure(error!);
-                        delete runtime;
-                        delete state;
-                        return Result<string!, string!>:::Err(failure!);
+                manifestText~ string!? = null;
+                if failure == null {
+                    started := lantern:::chaosui:::ChaosUi:::Create(runtime, "", "");
+                    when started! {
+                        Result:::Ok(chaos) -> {
+                            gameUi->chaos = chaos!;
+                        },
+                        Result:::Err(message) -> {
+                            delete failure;
+                            failure = message!;
+                        }
                     }
                 }
+                if failure == null {
+                    written := runtime->WriteHostSurface();
+                    when written! {
+                        Result:::Ok(manifest) -> {
+                            manifestText = manifest!;
+                        },
+                        Result:::Err(error) -> {
+                            delete failure;
+                            failure = NyxFailure(error!);
+                        }
+                    }
+                }
+                delete gameUi;
+                delete runtime;
+                delete state;
+                if text := manifestText {
+                    result: string! = `${text}`;
+                    delete manifestText;
+                    delete failure;
+                    return Result<string!, string!>:::Ok(result!);
+                }
+                delete manifestText;
+                if text := failure {
+                    reason: string! = `${text}`;
+                    delete failure;
+                    return Result<string!, string!>:::Err(reason!);
+                }
+                delete failure;
+                return Result<string!, string!>:::Err(OwnedText("the host surface couldn't be written"));
             },
             Result:::Err(message) -> {
                 return Result<string!, string!>:::Err(message!);

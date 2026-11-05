@@ -112,9 +112,10 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   runtime: each one counts itself in the runtime's `RuntimeLedger`, and deleting a runtime while any is alive stops
   the program with a message naming what's left.
 - `src/host/` is the Rust `game-host` crate, `lantern:::host`: `GameManifest.nox` (`game.json`, the assets directory
-  and the `ScriptSource`), `ScriptSession.nox` (one loaded game: its runtime, program, which hooks it defines and the
-  time each takes, and `EngineHostSurface`, the API as a host surface manifest), `GameHost.nox` (the `Game` the frame
-  loop runs: hooks, F5 reload, F1 HUD, the script error overlay, the HUD's engine values and the capture on quit),
+  and the `ScriptSource`), `ScriptSession.nox` (one loaded game: its runtime, program, Chaos UI, which hooks it defines
+  and the time each takes, and `EngineHostSurface`, the API as a host surface manifest), `GameHost.nox` (the `Game` the frame
+  loop runs: hooks, F5 reload, F1 HUD, the script error overlay, the HUD's engine values, the capture on quit, and the game's UI: the mouse and
+  `SetNavigation`'s actions before `OnUpdate`, Chaos's updates and messages, and drawing after `OnRender`),
   `EngineState.nox` (everything the engine owns while a game runs, the engine's own F5 and F1 actions, the tags world
   files give entities, `ParseColor`), `RenderBackend.nox` (the `RenderBackend` interface and `HeadlessRenderer`, which
   hands out handles and counts what's live so a game runs in a test without a GPU), `HostApi.nox` (`HostNamespace`,
@@ -123,8 +124,8 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `Error:::Unknown`) and one file per group of the engine API: `MathApi.nox`, `EngineApi.nox` (engine, audio,
   overlay, camera, renderer and screen), `InputApi.nox` with `DeviceNames.nox`, `WorldApi.nox` (world files and
   entities), `PhysicsApi.nox` (`RayHit`, `ControllerStep` and `CharacterController` as host object types),
-  `AssetsApi.nox` (textures and meshes), `DebugApi.nox`, `GameUiApi.nox` (`lantern::ui`, which reports that Chaos
-  isn't there until milestone L7), and `EngineApis.nox`, which registers them all. `docs/game-api.md` lists every call.
+  `AssetsApi.nox` (textures and meshes), `DebugApi.nox`, `GameUiApi.nox` (`lantern::ui`: `Mount`, `Unmount`
+  and `SetNavigation` over the session's `GameUiState`, which holds its `ChaosUi` and the game's application value), and `EngineApis.nox`, which registers them all. `docs/game-api.md` lists every call.
 - `src/runner/GpuRenderBackend.nox` is the `RenderBackend` over `GpuRenderer`, kept out of `src/host` so the host's
   tests build without the GPU code, and `RunGame.nox` loads a game's manifest, opens the window, renderer and audio and
   runs its `GameHost` (`LANTERN_MAX_FRAMES`, `LANTERN_CAPTURE_PATH` and `LANTERN_DEBUG_HUD` as in the Rust runner).
@@ -163,7 +164,8 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   and an `expected.txt` with the exit code and output it must produce. They're the Rust tests, one program per test. Code a suite's
   tests share is in `tests/support/<suite>/`, `tests/support/games/drop/` is a small game without Chaos that the
   host tests and the runner check run, `tests/support/games/broken/` is a game whose hook fails, and
-  `tests/support/games/menu/` is the menu the `tests/chaosui` programs mount.
+  `tests/support/games/menu/` is the menu the `tests/chaosui` programs mount. `tests/support/platformer/` runs
+  `games/platformer` headless for the `tests/host` programs that play it, as the Rust `headless_game` tests did.
 - `tests/world/the-course-matches-the-rust-trace-at-every-display-rate/` runs the jump course the way the Rust
   `course_traversal` test does and compares every fixed step's position, velocity and grounded flag with the Rust run's
   `rust-<hz>hz.trace`, which match bit for bit. Set `LANTERN_TRACE_DIRECTORY` to write the Nox traces there too, and

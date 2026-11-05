@@ -618,7 +618,25 @@ copy of Nyx with the C API the engine calls.
 - **One call added.** `lantern_chaos_ui_snapshot_node` copies one node of the last snapshot, since
   Nox can't index a C array through a raw pointer.
 - **Chaos's target.** The bridge still sets `ChaosBuildTarget::UmbraEngine`, the only Umbra name
-  in Lantern, until Chaos has a target named for game engines (Nyx board,
+  in `engine/` (the Rust crates keep theirs until they're retired), until Chaos has a target named for game engines (Nyx board,
   `proto-a-chaos-build-target-for-game-engines-that-doesn-t-say-umbra`).
 
 Story: `engine-on-nox/l7-game-ui/port-chaos-ui-the-native-library-its-binding-nodes-styles-layout-and-drawing`.
+
+## D-047 The Nox game host keeps the game's UI in a GameUiState the session owns
+
+The Rust host shares its Chaos UI, the game's application value and the navigation actions with the
+`lantern::ui` functions through an `Rc<RefCell<GameUiState>>`. Nox has no shared ownership, so the
+Nox `ScriptSession` owns one `GameUiState` and the `lantern::ui` functions reach it through a raw
+pointer captured when they're registered, the way the other APIs reach `EngineState`.
+
+- **Order.** The session deletes the `GameUiState` first (the Chaos UI, then the application value),
+  then the program, then the runtime, as the Rust `Drop` does. Every failed load deletes it before
+  the runtime too, since Chaos allows one UI per process and a leaked one would stop every reload.
+- **Host surface.** `EngineHostSurface` starts Chaos as the Rust one does, so the Nox manifest
+  matches all 153 rows of the committed one.
+- **Tests.** The Rust `headless_game` tests that play the platformer are `tests/host` programs over
+  `tests/support/platformer/`. The scripted platform gives one event per frame, so a click is three
+  frames (move, press, release) where Rust queued the press and release together.
+
+Story: `engine-on-nox/l7-game-ui/wire-the-game-ui-into-the-game-host`.

@@ -1,10 +1,3 @@
-// Lantern's backend for Chaos and Cosmos. See include/lantern_chaos_ui.h for what it does and
-// docs/decisions.md D-043 for why it is shaped this way.
-//
-// Chaos reconciles against Equinox::IWidget, so a node here is a plain IWidget that remembers
-// what the component said about it (tag, class, text, handlers, number props). It is also a
-// Cosmos::IStyleTarget, so Cosmos can resolve its style by walking its ancestors. Layout and
-// drawing happen in Rust (crates/chaos-ui/src), from the snapshot this file builds.
 
 #include "lantern_chaos_ui.h"
 
@@ -62,12 +55,10 @@ static_assert(Value(Cosmos::Position::Absolute) == LANTERN_CHAOS_UI_ABSOLUTE);
 static_assert(Value(Cosmos::Position::Fixed) == LANTERN_CHAOS_UI_FIXED);
 static_assert(Value(Cosmos::Position::Sticky) == LANTERN_CHAOS_UI_STICKY);
 
-// The Nyx type a component's element tree has: `Name :: () -> lantern:::ui:::Element`.
 constexpr const char* ElementTypeName = "lantern::ui::Element";
 
 class UiNode;
 
-// Every live node by id, so the engine can send an event to a node it saw in a snapshot.
 class NodeRegistry {
 public:
     std::uint64_t Add(UiNode* Node) {
@@ -111,8 +102,6 @@ public:
     UiNode(const UiNode&)            = delete;
     UiNode& operator=(const UiNode&) = delete;
 
-    // -- Equinox::IWidget: what the reconciler changes --
-
     void ApplyPropDiff(const Equinox::ChaosPropDiff& Diff) override {
         if (Diff.ClassName) ClassName_ = *Diff.ClassName;
         if (Diff.Text) Text_ = *Diff.Text;
@@ -144,14 +133,10 @@ public:
         return Removed;
     }
 
-    // -- Cosmos::IStyleTarget: what the cascade reads --
-
     std::string                  ClassName() const override { return ClassName_; }
     std::string                  PrimitiveTag() const override { return CosmosTagFor(Tag_); }
     bool                         IsComponentRoot() const override { return ComponentRoot_; }
     const Cosmos::IStyleTarget*  Parent() const override { return Parent_; }
-
-    // -- Read by the snapshot and by events --
 
     std::uint64_t            Id() const { return Id_; }
     Chaos::ChaosElementTag   Tag() const { return Tag_; }
@@ -183,11 +168,8 @@ const T* PropAs(const Chaos::ChaosProps& Props, const char* Name) {
     return Found == Props.end() ? nullptr : std::get_if<T>(&Found->second);
 }
 
-// Builds a node tree for one Component. `<slot>`s and `None` give nothing here: Chaos's
-// ResolveSlots mounts slot contents afterwards, through this same function.
 std::unique_ptr<UiNode> BuildNode(NodeRegistry& Registry, const Chaos::Component& Node, bool IsMountRoot) {
     if (Node.Tag == Chaos::ChaosElementTag::None || Node.Tag == Chaos::ChaosElementTag::Slot) return nullptr;
-    // A component's own root bounds its stylesheet's descendant selectors (Cosmos spec §1.2).
     const bool ComponentRoot = IsMountRoot || Node.Instance != nullptr;
     auto Built = std::make_unique<UiNode>(Registry, Node.Tag, ComponentRoot);
     if (const auto* Class = PropAs<std::string>(Node.Props, "class")) Built->SetClassName(*Class);
@@ -209,8 +191,6 @@ std::unique_ptr<UiNode> BuildNode(NodeRegistry& Registry, const Chaos::Component
     return Built;
 }
 
-// -- Cosmos style → lantern_chaos_ui_style --
-
 lantern_chaos_ui_color ToColor(const Cosmos::Color& Color) { return {Color.R, Color.G, Color.B, Color.A}; }
 
 lantern_chaos_ui_length ToLength(const Cosmos::Length& Length) {
@@ -229,8 +209,6 @@ void ToInsets(const Cosmos::EdgeInsets& Insets, float (&Out)[4]) {
     Out[3] = Insets.Bottom;
 }
 
-// `attr(name)` single-number bindings (Cosmos spec §2): the property follows the element's own
-// number prop, in logical pixels for a length.
 void BindNumberAttributes(Cosmos::ResolvedStyle& Style, const std::unordered_map<std::string, float>& Numbers) {
     for (const Cosmos::AttrBinding& Binding : Style.AttrBindings) {
         const auto Found = Numbers.find(Binding.Attribute);
@@ -291,8 +269,6 @@ lantern_chaos_ui_style ExportStyle(const Cosmos::ResolvedStyle& Style) {
         Out.text_color = ToColor(*Style.TextColor);
         Mark(LANTERN_CHAOS_UI_SET_TEXT_COLOR);
     }
-    // `font-size` alone, or the size of a `font-family` + `font-size` request: Lantern draws
-    // with its own bitmap font, so only the size is used.
     if (Style.FontSizeLogical) {
         Out.font_size = *Style.FontSizeLogical;
         Mark(LANTERN_CHAOS_UI_SET_FONT_SIZE);
@@ -376,8 +352,6 @@ lantern_chaos_ui_style ExportStyle(const Cosmos::ResolvedStyle& Style) {
     return Out;
 }
 
-// `Over`'s set fields on top of `Base`: a `:hover` or `:active` block over the element's own
-// style.
 lantern_chaos_ui_style MergeStyle(lantern_chaos_ui_style Base, const lantern_chaos_ui_style& Over) {
     auto Has = [&Over](lantern_chaos_ui_style_bits Bit) { return (Over.set & static_cast<std::uint64_t>(Bit)) != 0; };
     if (Has(LANTERN_CHAOS_UI_SET_BACKGROUND)) Base.background = Over.background;
@@ -426,23 +400,19 @@ std::optional<std::string> ReadFile(const std::filesystem::path& Path) {
 }
 
 struct MountedTree {
-    // Destroyed bottom to top: slots first, then the nodes, then the component tree whose
-    // closures the nodes' handlers point into.
     std::shared_ptr<Chaos::Component>              Root;
     std::unique_ptr<Equinox::IWidget>                 Tree;
     std::vector<std::unique_ptr<chaos::SlotState>>  Slots;
 };
 
-} // namespace
+}
 
 struct lantern_chaos_ui {
     lantern_chaos_ui(nyx::host::NyxRuntime& Runtime, std::string ProjectRoot, Chaos::ChaosConfig Config)
         : Driver(std::move(Config), std::move(ProjectRoot), Runtime) {}
 
-    // Declared first so it is destroyed last: every node removes itself from it.
     NodeRegistry Registry;
 
-    // The C handle of the runtime the driver runs on, to check mount arguments against.
     nyx_runtime* RuntimeHandle = nullptr;
 
     Chaos::ChaosNyxDriver Driver;
@@ -465,7 +435,6 @@ struct lantern_chaos_ui {
         };
     }
 
-    // Moves new Chaos diagnostics into Messages; true when there were any.
     bool CollectDriverDiagnostics() {
         const std::vector<Chaos::Diagnostic>& All = Driver.Diagnostics();
         const bool                             Any = All.size() > ReportedDriverDiagnostics;
@@ -485,7 +454,6 @@ struct lantern_chaos_ui {
         for (const auto& Entry : std::filesystem::directory_iterator(Directory, Ignored)) {
             if (Entry.path().extension() == ".cosmos") Files.push_back(Entry.path());
         }
-        // Sorted, so rules from different files cascade in the same order on every machine.
         std::sort(Files.begin(), Files.end());
         for (const std::filesystem::path& File : Files) {
             const std::optional<std::string> Source = ReadFile(File);
@@ -570,8 +538,6 @@ lantern_chaos_ui_status lantern_chaos_ui_create(nyx_runtime* runtime, const char
     try {
         Chaos::ChaosConfig Config;
         Config.Target = Chaos::ChaosBuildTarget::UmbraEngine;
-        // Component imports (`MainMenu :: import MainMenu;`) are looked up under the search
-        // paths, relative to the project root: the whole game directory, as for Nyx imports.
         Config.SearchPaths = {"."};
         auto Ui       = std::make_unique<lantern_chaos_ui>(*Runtime, project_root, std::move(Config));
         Ui->RuntimeHandle = runtime;
@@ -673,7 +639,6 @@ lantern_chaos_ui_status lantern_chaos_ui_dispatch(lantern_chaos_ui* ui, uint64_t
     if (ui == nullptr) return LANTERN_CHAOS_UI_ERROR;
     UiNode* Node = ui->Registry.Find(node_id);
     if (Node == nullptr) return LANTERN_CHAOS_UI_ERROR;
-    // Copied: the handler may change what the node holds, or unmount the node.
     std::function<void()> Handler;
     switch (event) {
         case LANTERN_CHAOS_UI_PRESS: Handler = Node->OnPress; break;
@@ -685,7 +650,6 @@ lantern_chaos_ui_status lantern_chaos_ui_dispatch(lantern_chaos_ui* ui, uint64_t
     }
     if (!Handler) return LANTERN_CHAOS_UI_OK;
     try {
-        // Signal writes in the handler re-render once, at the end of the batch.
         chaos::ScopedEventBatch Batch;
         Handler();
     } catch (const std::exception& Error) {
@@ -707,4 +671,4 @@ lantern_chaos_ui_status lantern_chaos_ui_diagnostic(const lantern_chaos_ui* ui, 
     return LANTERN_CHAOS_UI_OK;
 }
 
-} // extern "C"
+}

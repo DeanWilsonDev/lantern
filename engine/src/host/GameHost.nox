@@ -17,6 +17,13 @@ lantern:::host :: namespace {
         return text.length();
     }
 
+    MouseForUi :: struct {
+        position~ Vec2? = null;
+        leftWentDown~ bool = false;
+        leftWentUp~ bool = false;
+        leftHeld~ bool = false;
+    }
+
     GameHost :: class {
         implements:
             lantern:::engine:::Game;
@@ -33,6 +40,7 @@ lantern:::host :: namespace {
         quit~ bool = false;
         mouseCaptured~ bool = false;
         pixelsPerPoint~ f32 = 1.0f;
+        mouse~ MouseForUi = MouseForUi { };
 
         GameHost~: (engineState: EngineState*!, scriptSource: ScriptSource*!) {
             state = engineState!;
@@ -100,6 +108,10 @@ lantern:::host :: namespace {
                     noArguments: Array<f32>! = [];
                     Call(GameHook:::OnStart, noArguments);
                     delete noArguments;
+                    if running ~= session {
+                        running->UpdateUi();
+                    }
+                    ReportUiMessages();
                 },
                 Result:::Err(error) -> {
                     message~ string! = OwnedText("the game failed to load (F5 retries):");
@@ -110,6 +122,49 @@ lantern:::host :: namespace {
                     delete error;
                 }
             }
+        }
+
+        ActionPressed :: (name: string) -> bool {
+            return state->input->Pressed(name) ?? false;
+        }
+
+        NavigateUi~: () -> void {
+            taken: MouseForUi = mouse;
+            mouse = MouseForUi { position: taken.position, leftHeld: taken.leftHeld };
+            navigation~ lantern:::chaosui:::Navigation = lantern:::chaosui:::Navigation { };
+            if position := taken.position {
+                if !mouseCaptured {
+                    navigation.pointer = lantern:::chaosui:::Pointer {
+                        position: Vec2 { x: position.x * pixelsPerPoint, y: position.y * pixelsPerPoint },
+                        pressed: taken.leftWentDown,
+                        released: taken.leftWentUp,
+                        held: taken.leftHeld,
+                    };
+                }
+            }
+            guard running ~= session return;
+            if actions := running->UiNavigationActions() {
+                navigation.previous = ActionPressed(actions->previous);
+                navigation.next = ActionPressed(actions->next);
+                navigation.confirm = ActionPressed(actions->confirm);
+            }
+            running->NavigateUi(navigation);
+            ReportUiMessages();
+        }
+
+        ReportUiMessages~: () -> void {
+            guard running ~= session return;
+            messages~ Array<string!>! = running->TakeUiMessages();
+            for message in messages {
+                if message.startsWith("cosmos:") {
+                    lantern:::core:::LogWarn("ui", message);
+                } else {
+                    reported: string! = `UI: ${message}`;
+                    ReportError(reported);
+                    delete reported;
+                }
+            }
+            messages.freeAll();
         }
 
         Shutdown~: () -> void {
@@ -229,7 +284,31 @@ lantern:::host :: namespace {
             }
         }
 
-        HandleEvent~: (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void { }
+        HandleEvent~: (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void {
+            when event <lantern:::platform:::PlatformEvent> {
+                MouseMoved(_, _, x, y) -> {
+                    mouse.position = Vec2 { x: x, y: y };
+                },
+                MouseButtonDown(button, x, y) -> {
+                    if button == lantern:::core:::MouseButton:::Left {
+                        mouse.position = Vec2 { x: x, y: y };
+                        mouse.leftWentDown = true;
+                        mouse.leftHeld = true;
+                    }
+                },
+                MouseButtonUp(button, x, y) -> {
+                    if button == lantern:::core:::MouseButton:::Left {
+                        mouse.position = Vec2 { x: x, y: y };
+                        mouse.leftWentUp = true;
+                        mouse.leftHeld = false;
+                    }
+                },
+                FocusLost -> {
+                    mouse.leftHeld = false;
+                },
+                default -> {},
+            }
+        }
 
         FixedUpdate~: (step: lantern:::engine:::FixedStepContext) -> void {
             if session == null {
@@ -260,6 +339,7 @@ lantern:::host :: namespace {
             if reload {
                 Reload();
             }
+            NavigateUi();
             frameArguments: Array<f32>! = [frame.frameSeconds];
             Call(GameHook:::OnUpdate, frameArguments);
             delete frameArguments;
@@ -286,7 +366,16 @@ lantern:::host :: namespace {
             renderArguments: Array<f32>! = [frame.alpha, frame.frameSeconds];
             Call(GameHook:::OnRender, renderArguments);
             delete renderArguments;
+            if running ~= session {
+                running->UpdateUi();
+            }
+            ReportUiMessages();
             engine: raw EngineState~* = StatePointer();
+            if running ~= session {
+                unsafe {
+                    running->DrawUi(engine->renderWorld->overlay, engine->screenSize, engine->uiScale * 0.5f);
+                }
+            }
             unsafe {
                 lantern:::engine:::ExtractDraws(engine->world, frame.alpha, engine->renderWorld);
             }
