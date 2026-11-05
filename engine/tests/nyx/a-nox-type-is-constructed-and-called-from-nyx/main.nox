@@ -1,0 +1,96 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+DropCount :: class {
+public:
+    drops~ i32 = 0;
+
+    DropCount~: () { }
+}
+
+Counter :: class {
+    implements:
+        lantern:::nyx:::HostObject;
+public:
+    count~ i32 = 0;
+    dropCount~ raw DropCount~* = null;
+
+    Counter~: (start: i32, drops: raw DropCount~*) {
+        count = start;
+        dropCount = drops;
+    }
+
+    !Counter~: () {
+        unsafe {
+            dropCount->drops += 1;
+        }
+    }
+
+    HostTypeName :: () -> string {
+        return "Counter";
+    }
+}
+
+CounterOf :: (context: lantern:::nyx:::CallContext~*) -> Counter~*? {
+    guard object ~= context->ReceiverObject() return null;
+    return object as Counter~*;
+}
+
+RegisterCounter :: (runtime: lantern:::nyx:::Runtime~*, drops: raw DropCount~*) -> raw lantern:::nyx:::HostType~* {
+    counterType := new lantern:::nyx:::HostType("Counter");
+    unsafe {
+        counterPointer: raw lantern:::nyx:::HostType~* = counterType;
+        counterType->Constructor("(start: i32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [drops] {
+            start: i32 = context->I32(0);
+            context->ReturnOwnObject(new Counter(start, drops));
+        });
+        counterType->Method("Add", "(amount: i32) -> void", true, new (context: lantern:::nyx:::CallContext~*) -> void {
+            amount: i32 = context->I32(0);
+            if counter ~= CounterOf(context) {
+                counter->count += amount;
+            }
+        });
+        counterType->Method("Count", "() -> i32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if counter ~= CounterOf(context) {
+                context->ReturnI32(counter->count);
+            }
+        });
+        counterType->StaticMethod("Zero", "() -> Counter", new (context: lantern:::nyx:::CallContext~*) -> void [drops] {
+            context->ReturnOwnObject(new Counter(0, drops));
+        });
+        failed := runtime->RegisterType(counterType!);
+        failedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(failed!);
+        assert(failedStatus == NyxC:::NYX_OK, "Counter registers");
+        return counterPointer;
+    }
+}
+
+COUNTER_SCRIPT: string : "Counters :: namespace {\n    Built :: () -> i32 { counter ~= new Counter(10); counter.Add(5); return counter.Count(); }\n    FromZero :: () -> i32 { counter ~= Counter:::Zero(); counter.Add(3); return counter.Count(); }\n    Bump :: (counter~ Counter) -> :Counter { counter.Add(1); return counter; }\n    Make :: (start: i32) -> Counter { return new Counter(start); }\n}";
+
+CountOf :: (counterType: raw lantern:::nyx:::HostType~*, value: lantern:::nyx:::Value*) -> i32 {
+    unsafe {
+        guard object ~= counterType->ObjectOf(value) return -1;
+        guard counter := object as Counter~* return -1;
+        return counter->count;
+    }
+}
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    count := new DropCount();
+    unsafe {
+        drops: raw DropCount~* = count;
+        RegisterCounter(runtime, drops);
+    }
+    program := lantern:::testing:::Mount(runtime, COUNTER_SCRIPT);
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    assert(lantern:::testing:::CallI32(program, "Counters:::Built", noArguments) == 15, "a constructed counter counts");
+    assert(lantern:::testing:::CallI32(program, "Counters:::FromZero", noArguments) == 3, "a static method makes one");
+    delete noArguments;
+    assert(count->drops == 2, "both counters are dropped");
+    delete program;
+    delete runtime;
+    delete count;
+    print("a Nox type is constructed and called from Nyx");
+    return 0;
+}

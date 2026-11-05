@@ -1,0 +1,33 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    fuelFailed := runtime->RegisterFunction("Fuel", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void {
+        context->Fail("Error::Unknown", "out of fuel");
+    });
+    fuelFailedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(fuelFailed!);
+    assert(fuelFailedStatus == NyxC:::NYX_OK, "Fuel registers");
+    program := lantern:::testing:::Mount(runtime, "Burn :: () -> i32 { left := Fuel(); return left + 1; }");
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    quiet := new lantern:::testing:::QuietOutput();
+    error := lantern:::testing:::ErrorOrFail(program->CallFunction("Burn", noArguments));
+    delete quiet;
+    delete noArguments;
+    assert(error->IsFailure(), "the call fails with a Nyx failure");
+    if failure := error->failure {
+        variant: string! = lantern:::testing:::TextOrFail(failure->ErrorVariant());
+        message: string! = lantern:::testing:::TextOrFail(failure->ErrorMessage());
+        assert(variant == "Error::Unknown", "the variant is the host's");
+        assert(message == "out of fuel", "the message is the host's");
+        delete variant;
+        delete message;
+    } else {
+        assert(false, "a failure carries its error value");
+    }
+    delete error;
+    delete program;
+    delete runtime;
+    print("host failure reaches the host as a Nyx failure");
+    return 0;
+}

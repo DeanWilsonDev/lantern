@@ -1,0 +1,492 @@
+NyxC :: import NyxC;
+
+lantern:::nyxarguments :: foreign "c" {
+    memcpy :: (destination: Array<u64~>, source: raw NyxC:::nyx_value~**, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::nyx :: namespace {
+    PANIC_VARIANT: string : "Error::Unknown";
+    MAX_HOST_ARGUMENTS: usize : 16;
+
+    HostObject :: interface {
+        HostTypeName : () -> string : 0;
+    }
+
+    ReleasedHostObject :: class {
+        implements:
+            HostObject;
+    public:
+        ReleasedHostObject~: () { }
+
+        HostTypeName :: () -> string {
+            return "released";
+        }
+    }
+
+    HostCallKind :: enum {
+        Function,
+        Method,
+        StaticMethod,
+        Operator,
+        Constructor
+    }
+
+    CallOutcome :: enum {
+        Returned,
+        Failed,
+        Refused
+    }
+
+    CallContext :: class {
+    public:
+        call~ raw NyxC:::nyx_call~* = null;
+        runtime~ raw NyxC:::nyx_runtime~* = null;
+        hostType~ raw HostType~* = null;
+        arguments~ u64[16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        argumentCount~ usize = 0;
+        firstArgument~ usize = 0;
+        receiver~ raw u8~* = null;
+        result~ raw NyxC:::nyx_value~* = null;
+        outcome~ CallOutcome = CallOutcome:::Returned;
+
+        CallContext~: (callHandle: raw NyxC:::nyx_call~*, callRuntime: raw NyxC:::nyx_runtime~*) {
+            call = callHandle;
+            runtime = callRuntime;
+        }
+
+        !CallContext~: () {
+            ReleaseResult();
+        }
+
+        ReleaseResult~: () -> void {
+            if result != null {
+                unsafe {
+                    NyxC:::nyx_value_release(result);
+                }
+                result = null;
+            }
+        }
+
+        Count :: () -> usize {
+            if argumentCount < firstArgument {
+                return 0;
+            }
+            return argumentCount - firstArgument;
+        }
+
+        Handle :: (index: usize) -> raw NyxC:::nyx_value~* {
+            if firstArgument + index >= argumentCount {
+                return null;
+            }
+            handleBits: u64 = arguments[firstArgument + index];
+            unsafe {
+                viewed := reinterpret<raw NyxC:::nyx_value~*>(handleBits);
+                return viewed^*;
+            }
+        }
+
+        Argument :: (index: usize) -> Value*! {
+            handle: raw NyxC:::nyx_value~* = Handle(index);
+            unsafe {
+                if handle == null {
+                    made~ raw NyxC:::nyx_value~* = null;
+                    NyxC:::nyx_value_new_null(runtime, made);
+                    return new Value(made, runtime);
+                }
+                return new Value(NyxC:::nyx_value_retain(handle), runtime);
+            }
+        }
+
+        Missing~: (index: usize) -> bool {
+            if Handle(index) == null {
+                message: string! = `missing argument ${index + 1}`;
+                Refuse(message);
+                delete message;
+                return true;
+            }
+            return false;
+        }
+
+        ReadFailed~: (status: NyxC:::nyx_status) -> void {
+            if status == NyxC:::NYX_OK {
+                return;
+            }
+            message: string! = LastErrorMessage(runtime);
+            name: string! = StatusName(status);
+            refused: string! = `${name}: ${message}`;
+            Refuse(refused);
+            delete refused;
+            delete name;
+            delete message;
+        }
+
+        Bool~: (index: usize) -> bool {
+            read~ bool = false;
+            if Missing(index) {
+                return read;
+            }
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_bool(Handle(index), read);
+            }
+            ReadFailed(status);
+            return read;
+        }
+
+        I32~: (index: usize) -> i32 {
+            read~ i32 = 0;
+            if Missing(index) {
+                return read;
+            }
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_i32(Handle(index), read);
+            }
+            ReadFailed(status);
+            return read;
+        }
+
+        I64~: (index: usize) -> i64 {
+            read~ i64 = 0;
+            if Missing(index) {
+                return read;
+            }
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_i64(Handle(index), read);
+            }
+            ReadFailed(status);
+            return read;
+        }
+
+        F32~: (index: usize) -> f32 {
+            read~ f32 = 0.0f;
+            if Missing(index) {
+                return read;
+            }
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_f32(Handle(index), read);
+            }
+            ReadFailed(status);
+            return read;
+        }
+
+        F64~: (index: usize) -> f64 {
+            read~ f64 = 0.0f;
+            if Missing(index) {
+                return read;
+            }
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_f64(Handle(index), read);
+            }
+            ReadFailed(status);
+            return read;
+        }
+
+        Text~: (index: usize) -> string! {
+            if Missing(index) {
+                return "";
+            }
+            read~ NyxC:::nyx_str = NyxC:::nyx_str { };
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_string(Handle(index), read);
+            }
+            ReadFailed(status);
+            return ReadText(read);
+        }
+
+        HostBytes~: (index: usize, valueType: HostType*) -> raw u8~* {
+            instance~ raw u8~* = null;
+            if Missing(index) {
+                return instance;
+            }
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_host_object(Handle(index), valueType->handle, instance);
+            }
+            ReadFailed(status);
+            return instance;
+        }
+
+        HostObjectAt~: (index: usize, objectType: HostType~*) -> HostObject~*? {
+            instance: raw u8~* = HostBytes(index, objectType);
+            if instance == null {
+                return null;
+            }
+            return objectType->ObjectAt(instance);
+        }
+
+        ReceiverObject :: () -> HostObject~*? {
+            if hostType == null || receiver == null {
+                return null;
+            }
+            unsafe {
+                return hostType->ObjectAt(receiver);
+            }
+        }
+
+        Keep~: (made: raw NyxC:::nyx_value~*) -> void {
+            ReleaseResult();
+            result = made;
+        }
+
+        Return~: (value: Value*!) -> void {
+            unsafe {
+                Keep(NyxC:::nyx_value_retain(value->handle));
+            }
+            delete value;
+        }
+
+        ReturnNull~: () -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_null(runtime, made);
+            }
+            Keep(made);
+        }
+
+        ReturnBool~: (value: bool) -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_bool(runtime, value, made);
+            }
+            Keep(made);
+        }
+
+        ReturnI32~: (value: i32) -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_i32(runtime, value, made);
+            }
+            Keep(made);
+        }
+
+        ReturnI64~: (value: i64) -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_i64(runtime, value, made);
+            }
+            Keep(made);
+        }
+
+        ReturnF32~: (value: f32) -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_f32(runtime, value, made);
+            }
+            Keep(made);
+        }
+
+        ReturnF64~: (value: f64) -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_f64(runtime, value, made);
+            }
+            Keep(made);
+        }
+
+        ReturnText~: (value: string) -> void {
+            text := new CText(value);
+            made~ raw NyxC:::nyx_value~* = null;
+            unsafe {
+                NyxC:::nyx_value_new_string(runtime, text->Str(), made);
+            }
+            delete text;
+            Keep(made);
+        }
+
+        ReturnHostBytes~: (valueType: HostType*, bytes: raw u8~*) -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_new_host_object(valueType->handle, bytes, made);
+            }
+            ReadFailed(status);
+            Keep(made);
+        }
+
+        ReturnObject~: (objectType: HostType~*, object: HostObject*!) -> void {
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = objectType->WrapHandle(object!, made);
+            }
+            ReadFailed(status);
+            Keep(made);
+        }
+
+        ReturnOwnObject~: (object: HostObject*!) -> void {
+            if hostType == null {
+                delete object;
+                Refuse("only a host type's own call can return its object");
+                return;
+            }
+            unsafe {
+                ReturnObject(hostType, object!);
+            }
+        }
+
+        ReturnOwnBytes~: (bytes: raw u8~*) -> void {
+            if hostType == null {
+                Refuse("only a host type's own call can return its value");
+                return;
+            }
+            unsafe {
+                ReturnHostBytes(hostType, bytes);
+            }
+        }
+
+        ReceiverBytes :: () -> raw u8~* {
+            return receiver;
+        }
+
+        Fail~: (variant: string, message: string) -> void {
+            variantText := new CText(variant);
+            messageText := new CText(message);
+            made~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_new_error(runtime, variantText->Str(), messageText->Str(), made);
+            }
+            delete variantText;
+            delete messageText;
+            if status != NyxC:::NYX_OK {
+                ReadFailed(status);
+                return;
+            }
+            Keep(made);
+            outcome = CallOutcome:::Failed;
+        }
+
+        Refuse~: (message: string) -> void {
+            if outcome == CallOutcome:::Refused {
+                return;
+            }
+            ReleaseResult();
+            text := new CText(message);
+            unsafe {
+                NyxC:::nyx_call_set_message(call, text->Str());
+            }
+            delete text;
+            outcome = CallOutcome:::Refused;
+        }
+
+        Refused :: () -> bool {
+            return outcome == CallOutcome:::Refused;
+        }
+
+        Finish~: (outResult: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status {
+            if outcome == CallOutcome:::Refused {
+                return NyxC:::NYX_ERROR_REFUSED;
+            }
+            if result != null {
+                unsafe {
+                    outResult^* = result;
+                }
+                result = null;
+            }
+            if outcome == CallOutcome:::Failed {
+                return NyxC:::NYX_ERROR_FAILURE;
+            }
+            return NyxC:::NYX_OK;
+        }
+    }
+
+    HostCall :: class {
+    public:
+        kind~ HostCallKind = HostCallKind:::Function;
+        name~ string! = "";
+        signature~ string! = "";
+        nameText~ CText*!;
+        signatureText~ CText*!;
+        receiverMutable~ bool = false;
+        hostType~ raw HostType~* = null;
+        userdata~ raw u8~* = null;
+        body~ ((context: CallContext~*) -> void)!;
+
+        HostCall~: (callKind: HostCallKind, callName: string, callSignature: string, callBody: ((context: CallContext~*) -> void)!) {
+            kind = callKind;
+            name += callName;
+            signature += callSignature;
+            nameText = new CText(callName);
+            signatureText = new CText(callSignature);
+            body = callBody!;
+            unsafe {
+                self: raw HostCall~* = this;
+                viewed := reinterpret<raw u8~*>(self);
+                userdata = viewed^*;
+            }
+        }
+
+        !HostCall~: () {
+            delete name;
+            delete signature;
+            delete nameText;
+            delete signatureText;
+            delete body;
+        }
+
+        Userdata :: () -> raw u8~* {
+            return userdata;
+        }
+    }
+
+    CallFromUserdata :: (userdata: raw u8~*) -> raw HostCall~* {
+        unsafe {
+            viewed := reinterpret<raw HostCall~*>(userdata);
+            return viewed^*;
+        }
+    }
+
+    TypeFromUserdata :: (userdata: raw u8~*) -> raw HostType~* {
+        unsafe {
+            viewed := reinterpret<raw HostType~*>(userdata);
+            return viewed^*;
+        }
+    }
+
+    HostCallTrampoline :: (call: raw NyxC:::nyx_call~*, args: raw NyxC:::nyx_value~**, count: usize, outResult: raw NyxC:::nyx_value~*~*, userdata: raw u8~*) -> NyxC:::nyx_status {
+        unsafe {
+            entry: raw HostCall~* = CallFromUserdata(userdata);
+            context := new CallContext(call, NyxC:::nyx_call_runtime(call));
+            if count > MAX_HOST_ARGUMENTS {
+                context->Refuse("a host function takes at most 16 arguments");
+            } else if count > 0 && args != null {
+                lantern:::nyxarguments:::memcpy(context->arguments.borrow().mutable(), args, count * 8);
+                context->argumentCount = count;
+            }
+            context->hostType = entry->hostType;
+            if entry->kind == HostCallKind:::Method || entry->kind == HostCallKind:::Operator {
+                if count == 0 {
+                    message: string! = `'${entry->name}' was called without a receiver`;
+                    context->Refuse(message);
+                    delete message;
+                } else {
+                    instance~ raw u8~* = null;
+                    status: NyxC:::nyx_status = NyxC:::nyx_value_get_host_object(context->Handle(0), NyxC:::nyx_call_host_type(call), instance);
+                    if status != NyxC:::NYX_OK || instance == null {
+                        context->Refuse("the receiver has no instance");
+                    }
+                    context->receiver = instance;
+                }
+                context->firstArgument = 1;
+            }
+            if !context->Refused() {
+                entry->body(context);
+            }
+            status: NyxC:::nyx_status = context->Finish(outResult);
+            delete context;
+            return status;
+        }
+    }
+
+    ReleaseInstanceTrampoline :: (instance: raw u8~*, typeUserdata: raw u8~*) -> void {
+        unsafe {
+            owner: raw HostType~* = TypeFromUserdata(typeUserdata);
+            owner->Release(instance);
+        }
+    }
+}

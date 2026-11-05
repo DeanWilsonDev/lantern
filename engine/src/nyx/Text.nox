@@ -1,0 +1,54 @@
+NyxC :: import NyxC;
+
+lantern:::nyxtext :: foreign "c" {
+    strdup :: (text: string) -> raw u8~*;
+    free :: (memory: raw u8~*) -> void;
+}
+
+lantern:::nyxbytes :: foreign "c" {
+    memcpy :: (destination: Array<u8~>, source: raw u8*, byteCount: usize) -> raw u8~*;
+}
+
+lantern:::nyx :: namespace {
+    CText :: class {
+    public:
+        bytes~ raw u8~* = null;
+        length~ usize = 0;
+
+        CText~: (text: string) {
+            length = text.length();
+            unsafe {
+                bytes = lantern:::nyxtext:::strdup(text);
+            }
+        }
+
+        !CText~: () {
+            unsafe {
+                lantern:::nyxtext:::free(bytes);
+            }
+        }
+
+        Str :: () -> NyxC:::nyx_str {
+            return NyxC:::nyx_str { data_: bytes, length: length };
+        }
+    }
+
+    ReadText :: (text: NyxC:::nyx_str) -> string! {
+        built~ string! = "";
+        if text.length == 0 || text.data_ == null {
+            return built!;
+        }
+        copied~ Array<u8>! = [];
+        for index~ usize = 0; index < text.length; index++ {
+            copied.push(0);
+        }
+        unsafe {
+            lantern:::nyxbytes:::memcpy(copied.borrow().mutable(), text.data_, text.length);
+        }
+        for byte in copied {
+            built.appendByte(byte);
+        }
+        delete copied;
+        return built!;
+    }
+}

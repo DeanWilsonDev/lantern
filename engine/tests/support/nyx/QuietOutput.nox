@@ -1,0 +1,35 @@
+lantern:::quietoutput :: foreign "c" {
+    dup :: (descriptor: i32) -> i32;
+    dup2 :: (descriptor: i32, replaced: i32) -> i32;
+    open :: (path: string, flags: i32) -> i32;
+    close :: (descriptor: i32) -> i32;
+    fflush :: (stream: raw u8~*) -> i32;
+}
+
+lantern:::testing :: namespace {
+    STANDARD_OUTPUT: i32 : 1;
+    WRITE_ONLY: i32 : 1;
+
+    QuietOutput :: class {
+    public:
+        saved~ i32 = -1;
+
+        QuietOutput~: () {
+            unsafe {
+                lantern:::quietoutput:::fflush(null);
+                saved = lantern:::quietoutput:::dup(STANDARD_OUTPUT);
+                silent: i32 = lantern:::quietoutput:::open("/dev/null", WRITE_ONLY);
+                lantern:::quietoutput:::dup2(silent, STANDARD_OUTPUT);
+                lantern:::quietoutput:::close(silent);
+            }
+        }
+
+        !QuietOutput~: () {
+            unsafe {
+                lantern:::quietoutput:::fflush(null);
+                lantern:::quietoutput:::dup2(saved, STANDARD_OUTPUT);
+                lantern:::quietoutput:::close(saved);
+            }
+        }
+    }
+}

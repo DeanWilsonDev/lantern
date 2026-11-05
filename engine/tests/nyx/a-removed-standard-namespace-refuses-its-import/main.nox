@@ -1,0 +1,44 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SOURCE: string : "Math :: import standard:::Math;\nHalf :: () -> f32 { return Math:::sqrt(0.25f); }\n";
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    program := lantern:::testing:::Mount(runtime, SOURCE);
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    half := lantern:::testing:::ValueOrFail(program->CallFunction("Half", noArguments));
+    assert(!half->IsNull(), "Half returns a value");
+    delete half;
+    delete noArguments;
+    delete program;
+    removed := runtime->RemoveStandardNamespace("Math");
+    removedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(removed!);
+    assert(removedStatus == NyxC:::NYX_OK, "Math is removed");
+    source~ string! = "";
+    source += SOURCE;
+    source += "\n";
+    source += lantern:::testing:::EMPTY_APPLICATION;
+    mounted := runtime->MountSource(source, "removed.nyx", "Game");
+    when mounted! {
+        Result:::Ok(refusedProgram) -> {
+            delete refusedProgram;
+            assert(false, "the import is refused");
+        },
+        Result:::Err(error) -> {
+            assert(error->status == NyxC:::NYX_ERROR_REFUSED, "the status is refused");
+            delete error;
+        }
+    }
+    delete source;
+    diagnostics~ Array<lantern:::nyx:::Diagnostic*!>! = runtime->Diagnostics();
+    assert(diagnostics.length() > 0, "there is a diagnostic");
+    assert(diagnostics[0]->code == "NYX0493", "the import is NYX0493");
+    diagnostics.freeAll();
+    unknown := runtime->RemoveStandardNamespace("Teleport");
+    unknownStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(unknown!);
+    assert(unknownStatus == NyxC:::NYX_ERROR_INVALID_ARGUMENT, "an unknown namespace is an invalid argument");
+    delete runtime;
+    print("a removed standard namespace refuses its import");
+    return 0;
+}

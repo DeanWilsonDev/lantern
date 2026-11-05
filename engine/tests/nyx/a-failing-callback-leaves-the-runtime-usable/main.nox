@@ -1,0 +1,60 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+CallCount :: class {
+public:
+    calls~ i32 = 0;
+
+    CallCount~: () { }
+}
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    count := new CallCount();
+    unsafe {
+        counter: raw CallCount~* = count;
+        failed := runtime->RegisterFunction("Risky", "(explode: bool) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [counter] {
+            unsafe {
+                counter->calls += 1;
+            }
+            if context->Bool(0) {
+                context->Fail(lantern:::nyx:::PANIC_VARIANT, "the reactor melted");
+                return;
+            }
+            context->ReturnI32(5);
+        });
+        failedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(failed!);
+        assert(failedStatus == NyxC:::NYX_OK, "Risky registers");
+    }
+    program := lantern:::testing:::Mount(runtime, "Run :: (explode: bool) -> i32 { return Risky(explode); }");
+    explode := runtime->MakeBool(true);
+    explodeArguments: Array<lantern:::nyx:::Value*>! = [explode];
+    quiet := new lantern:::testing:::QuietOutput();
+    error := lantern:::testing:::ErrorOrFail(program->CallFunction("Run", explodeArguments));
+    delete quiet;
+    delete explodeArguments;
+    delete explode;
+    assert(error->IsFailure(), "the call fails");
+    if failure := error->failure {
+        variant: string! = lantern:::testing:::TextOrFail(failure->ErrorVariant());
+        message: string! = lantern:::testing:::TextOrFail(failure->ErrorMessage());
+        assert(variant == lantern:::nyx:::PANIC_VARIANT, "the variant is Error::Unknown");
+        assert(message == "the reactor melted", "the message is the host's");
+        delete variant;
+        delete message;
+    } else {
+        assert(false, "a failure carries its error value");
+    }
+    delete error;
+    calm := runtime->MakeBool(false);
+    calmArguments: Array<lantern:::nyx:::Value*>! = [calm];
+    assert(lantern:::testing:::CallI32(program, "Run", calmArguments) == 5, "the next call works");
+    delete calmArguments;
+    delete calm;
+    assert(count->calls == 2, "the callback ran twice");
+    delete program;
+    delete runtime;
+    delete count;
+    print("a failing callback leaves the runtime usable");
+    return 0;
+}

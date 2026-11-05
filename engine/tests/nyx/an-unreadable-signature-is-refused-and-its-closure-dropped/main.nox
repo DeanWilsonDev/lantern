@@ -1,0 +1,51 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+DropCount :: class {
+public:
+    drops~ i32 = 0;
+
+    DropCount~: () { }
+}
+
+Witness :: class {
+public:
+    count~ raw DropCount~* = null;
+
+    Witness~: (dropCount: raw DropCount~*) {
+        count = dropCount;
+    }
+
+    !Witness~: () {
+        unsafe {
+            count->drops += 1;
+        }
+    }
+}
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    count := new DropCount();
+    unsafe {
+        counter: raw DropCount~* = count;
+        witness := new Witness(counter);
+        failed := runtime->RegisterFunction("Damage", "(amount: ) ->", new (context: lantern:::nyx:::CallContext~*) -> void [witness!] {
+            context->ReturnNull();
+        });
+        refusedStatus~ NyxC:::nyx_status = 0;
+        refusedMessage~ string! = "";
+        if error := failed {
+            refusedStatus = error->status;
+            refusedMessage += error->message;
+        }
+        delete failed;
+        assert(refusedStatus == NyxC:::NYX_ERROR_INVALID_ARGUMENT, "the status is an invalid argument");
+        assert(refusedMessage == "'Damage' has an unreadable signature '(amount: ) ->'", "the message quotes the signature");
+        delete refusedMessage;
+    }
+    assert(runtime->functions.length() == 0, "the runtime doesn't keep the closure");
+    delete runtime;
+    delete count;
+    print("an unreadable signature is refused and its closure dropped");
+    return 0;
+}

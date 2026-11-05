@@ -1,0 +1,111 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+Vector3 :: struct {
+    x~ f32 = 0.0f;
+    y~ f32 = 0.0f;
+    z~ f32 = 0.0f;
+}
+
+BytesOf :: (vector: raw Vector3~*) -> raw u8~* {
+    unsafe {
+        viewed := reinterpret<raw u8~*>(vector);
+        return viewed^*;
+    }
+}
+
+VectorAt :: (bytes: raw u8~*) -> Vector3 {
+    unsafe {
+        viewed := reinterpret<raw Vector3~*>(bytes);
+        pointer: raw Vector3~* = viewed^*;
+        return pointer^*;
+    }
+}
+
+DeclareVectorType :: (name: string, defaults: Vector3) -> lantern:::nyx:::HostType*! {
+    vectors := new lantern:::nyx:::HostType(name);
+    unsafe {
+        defaultValue~ Vector3 = defaults;
+        defaultPointer: raw Vector3~* = defaultValue;
+        vectors->ValueLayout(12, 4, BytesOf(defaultPointer));
+    }
+    vectors->Field("x", NyxC:::NYX_KIND_F32, 0, 4);
+    vectors->Field("y", NyxC:::NYX_KIND_F32, 4, 4);
+    vectors->Field("z", NyxC:::NYX_KIND_F32, 8, 4);
+    return vectors!;
+}
+
+ReturnVector :: (context: lantern:::nyx:::CallContext~*, vector: Vector3) -> void {
+    unsafe {
+        result~ Vector3 = vector;
+        pointer: raw Vector3~* = result;
+        context->ReturnOwnBytes(BytesOf(pointer));
+    }
+}
+
+VectorOf :: (vectors: raw lantern:::nyx:::HostType~*, value: lantern:::nyx:::Value*) -> Vector3 {
+    unsafe {
+        return VectorAt(vectors->BytesOf(value));
+    }
+}
+
+WrapVector :: (vectors: raw lantern:::nyx:::HostType~*, vector: Vector3) -> lantern:::nyx:::Value*! {
+    unsafe {
+        wrapped~ Vector3 = vector;
+        pointer: raw Vector3~* = wrapped;
+        return lantern:::testing:::ValueOrFail(vectors->WrapBytes(BytesOf(pointer)));
+    }
+}
+
+SameVector :: (left: Vector3, right: Vector3) -> bool {
+    return left.x == right.x && left.y == right.y && left.z == right.z;
+}
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    vectors := DeclareVectorType("Vec3", Vector3 { x: 0.0f, y: 0.0f, z: 12.0f });
+    vectorsPointer~ raw lantern:::nyx:::HostType~* = null;
+    unsafe {
+        vectorsPointer = vectors;
+    }
+    vectors->Method("LengthSquared", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+        unsafe {
+            v: Vector3 = VectorAt(context->ReceiverBytes());
+            context->ReturnF32(v.x * v.x + v.y * v.y + v.z * v.z);
+        }
+    });
+    vectors->StaticMethod("Up", "() -> Vec3", new (context: lantern:::nyx:::CallContext~*) -> void {
+        ReturnVector(context, Vector3 { x: 0.0f, y: 1.0f, z: 0.0f });
+    });
+    assert(vectors->isValueType, "Vec3 is a value type");
+    failed := runtime->RegisterType(vectors!);
+    failedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(failed!);
+    assert(failedStatus == NyxC:::NYX_OK, "Vec3 registers");
+    mounted := runtime->MountSource("Game :: class : Application {\npublic:\n    spawn~ Vec3 = Vec3 { x: 1.0f };\n    Run :: () -> void { }\n    Built :: () -> f32 { v := Vec3 { x: 3.0f, y: 4.0f }; return v.LengthSquared(); }\n    Store~: (at: Vec3) -> void { spawn = at; }\n    Spawn :: () -> Vec3 { return spawn; }\n    Up :: () -> Vec3 { return Vec3:::Up(); }\n}\n", "vectors.nyx", "Game");
+    program := lantern:::testing:::ProgramOrFail(mounted!, runtime);
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    built := lantern:::testing:::ValueOrFail(program->CallApplicationMethod("Built", noArguments));
+    assert(lantern:::testing:::F32OrFail(built->F32()) == 169.0f, "braces fill missing fields from the defaults");
+    delete built;
+    at~ Vector3 = Vector3 { x: 7.0f, y: 8.0f, z: 9.0f };
+    argument := WrapVector(vectorsPointer, at);
+    at.x = -1.0f;
+    assert(VectorOf(vectorsPointer, argument).x == 7.0f, "wrapping copies the value");
+    assert(at.x == -1.0f, "the Nox value is its own");
+    storeArguments: Array<lantern:::nyx:::Value*>! = [argument];
+    stored := lantern:::testing:::ValueOrFail(program->CallApplicationMethod("Store", storeArguments));
+    delete stored;
+    delete storeArguments;
+    delete argument;
+    spawn := lantern:::testing:::ValueOrFail(program->CallApplicationMethod("Spawn", noArguments));
+    assert(SameVector(VectorOf(vectorsPointer, spawn), Vector3 { x: 7.0f, y: 8.0f, z: 9.0f }), "Nyx kept the stored value");
+    delete spawn;
+    up := lantern:::testing:::ValueOrFail(program->CallApplicationMethod("Up", noArguments));
+    assert(SameVector(VectorOf(vectorsPointer, up), Vector3 { x: 0.0f, y: 1.0f, z: 0.0f }), "a static method returns a value");
+    delete up;
+    delete noArguments;
+    delete program;
+    delete runtime;
+    print("a value type has fields, braces and copies");
+    return 0;
+}

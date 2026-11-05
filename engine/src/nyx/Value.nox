@@ -1,0 +1,197 @@
+NyxC :: import NyxC;
+
+lantern:::nyx :: namespace {
+    ValueKind :: enum {
+        Null,
+        Bool,
+        I32,
+        I64,
+        F32,
+        F64,
+        String,
+        Array,
+        Dictionary,
+        Object,
+        HostObject,
+        Callable,
+        Module
+    }
+
+    KindFromRaw :: (raw: NyxC:::nyx_kind) -> ValueKind {
+        return when raw {
+            1 -> ValueKind:::Bool,
+            2 -> ValueKind:::I32,
+            3 -> ValueKind:::I64,
+            4 -> ValueKind:::F32,
+            5 -> ValueKind:::F64,
+            6 -> ValueKind:::String,
+            7 -> ValueKind:::Array,
+            8 -> ValueKind:::Dictionary,
+            9 -> ValueKind:::Object,
+            10 -> ValueKind:::HostObject,
+            11 -> ValueKind:::Callable,
+            12 -> ValueKind:::Module,
+            default -> ValueKind:::Null
+        };
+    }
+
+    Value :: class {
+    public:
+        handle~ raw NyxC:::nyx_value~* = null;
+        runtime~ raw NyxC:::nyx_runtime~* = null;
+
+        Value~: (ownedHandle: raw NyxC:::nyx_value~*, owningRuntime: raw NyxC:::nyx_runtime~*) {
+            handle = ownedHandle;
+            runtime = owningRuntime;
+        }
+
+        !Value~: () {
+            unsafe {
+                NyxC:::nyx_value_release(handle);
+            }
+        }
+
+        Retained :: () -> Value*! {
+            unsafe {
+                return new Value(NyxC:::nyx_value_retain(handle), runtime);
+            }
+        }
+
+        Kind :: () -> ValueKind {
+            unsafe {
+                return KindFromRaw(NyxC:::nyx_value_kind(handle));
+            }
+        }
+
+        IsNull :: () -> bool {
+            return Kind() == ValueKind:::Null;
+        }
+
+        Bool :: () -> Result<bool, NyxError*!> {
+            read~ bool = false;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_bool(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<bool, NyxError*!>:::Ok(read);
+            return Result<bool, NyxError*!>:::Err(failed!);
+        }
+
+        I32 :: () -> Result<i32, NyxError*!> {
+            read~ i32 = 0;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_i32(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<i32, NyxError*!>:::Ok(read);
+            return Result<i32, NyxError*!>:::Err(failed!);
+        }
+
+        I64 :: () -> Result<i64, NyxError*!> {
+            read~ i64 = 0;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_i64(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<i64, NyxError*!>:::Ok(read);
+            return Result<i64, NyxError*!>:::Err(failed!);
+        }
+
+        F32 :: () -> Result<f32, NyxError*!> {
+            read~ f32 = 0.0f;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_f32(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<f32, NyxError*!>:::Ok(read);
+            return Result<f32, NyxError*!>:::Err(failed!);
+        }
+
+        F64 :: () -> Result<f64, NyxError*!> {
+            read~ f64 = 0.0f;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_f64(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<f64, NyxError*!>:::Ok(read);
+            return Result<f64, NyxError*!>:::Err(failed!);
+        }
+
+        Text :: () -> Result<string!, NyxError*!> {
+            read~ NyxC:::nyx_str = NyxC:::nyx_str { };
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_get_string(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<string!, NyxError*!>:::Ok(ReadText(read));
+            return Result<string!, NyxError*!>:::Err(failed!);
+        }
+
+        ArrayLength :: () -> Result<usize, NyxError*!> {
+            read~ usize = 0;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_array_length(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<usize, NyxError*!>:::Ok(read);
+            return Result<usize, NyxError*!>:::Err(failed!);
+        }
+
+        ArrayGet :: (index: usize) -> Result<Value*!, NyxError*!> {
+            element~ raw NyxC:::nyx_value~* = null;
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_array_get(handle, index, element);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(element, runtime));
+            return Result<Value*!, NyxError*!>:::Err(failed!);
+        }
+
+        ErrorVariant :: () -> Result<string!, NyxError*!> {
+            read~ NyxC:::nyx_str = NyxC:::nyx_str { };
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_error_variant(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<string!, NyxError*!>:::Ok(ReadText(read));
+            return Result<string!, NyxError*!>:::Err(failed!);
+        }
+
+        ErrorMessage :: () -> Result<string!, NyxError*!> {
+            read~ NyxC:::nyx_str = NyxC:::nyx_str { };
+            status~ NyxC:::nyx_status = 0;
+            unsafe {
+                status = NyxC:::nyx_value_error_message(handle, read);
+            }
+            failed := CheckStatus(runtime, status);
+            guard failed return Result<string!, NyxError*!>:::Ok(ReadText(read));
+            return Result<string!, NyxError*!>:::Err(failed!);
+        }
+
+        ErrorStack :: () -> Array<StackFrame*!>! {
+            frames~ Array<StackFrame*!>! = [];
+            count~ usize = 0;
+            unsafe {
+                if NyxC:::nyx_value_error_frame_count(handle, count) != NyxC:::NYX_OK {
+                    return frames!;
+                }
+                for index~ usize = 0; index < count; index++ {
+                    frame~ NyxC:::nyx_stack_frame = NyxC:::nyx_stack_frame { };
+                    if NyxC:::nyx_value_error_frame(handle, index, frame) == NyxC:::NYX_OK {
+                        frames.push(new StackFrame(frame));
+                    }
+                }
+            }
+            return frames!;
+        }
+    }
+}
