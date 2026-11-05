@@ -1,0 +1,53 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    rig := lantern:::gputest:::Setup();
+    guard rig return lantern:::gputest:::PrintSkipped("released resources leave stale handles");
+    defer delete rig;
+    renderer: lantern:::gpu:::GpuRenderer~* = rig->renderer;
+    cubeData := lantern:::renderer:::Cube(1.0f);
+    defer delete cubeData;
+    sphereData := lantern:::renderer:::Sphere(0.5f, 8, 4);
+    defer delete sphereData;
+    first~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    when renderer->CreateMesh(cubeData) {
+        Result:::Ok(handle) -> {
+            first = handle;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    renderer->RemoveMesh(first);
+    second~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    when renderer->CreateMesh(sphereData) {
+        Result:::Ok(handle) -> {
+            second = handle;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    assert(!(first == second), "the reused slot has a new generation");
+    assert(renderer->MeshCount() == 1, "one mesh is live");
+    world := new lantern:::renderer:::RenderWorld();
+    defer delete world;
+    world->Draw(first, null, Mat4 { }, lantern:::core:::Color:::White());
+    world->Draw(second, null, Mat4 { }, lantern:::core:::Color:::White());
+    when renderer->Render(world) {
+        Result:::Ok(frame) -> {
+            assert(frame.drawsSubmitted + frame.drawsCulled == 1, "the stale handle is skipped");
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    print("released resources leave stale handles");
+    return 0;
+}

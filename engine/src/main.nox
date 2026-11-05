@@ -74,10 +74,24 @@ lantern:::run :: namespace {
     }
 
     RunInWindow :: (window: lantern:::sdl:::SdlWindow*!) -> i32 {
+        when lantern:::stub:::LitScene:::Create(window->Raw()) {
+            Result:::Ok(scene) -> {
+                return RunScene(window!, scene!);
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("renderer", message);
+                delete message;
+                delete window;
+                return 1;
+            }
+        }
+    }
+
+    RunScene :: (window: lantern:::sdl:::SdlWindow*!, scene: lantern:::stub:::LitScene*!) -> i32 {
+        game := new lantern:::stub:::StubGame(FrameLimit(), scene!);
+        defer delete game;
         platform := new lantern:::sdl:::SdlPlatform(window!);
         defer delete platform;
-        game := new lantern:::stub:::StubGame(FrameLimit());
-        defer delete game;
         frameLoop := new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
         defer delete frameLoop;
         script := lantern:::stub:::WindowScript { enabled: ScriptRequested() };
@@ -86,6 +100,18 @@ lantern:::run :: namespace {
         while frameLoop->RunFrame(platform, game) == lantern:::engine:::LoopStatus:::Running {
             frame += 1;
             script.Step(frame, platform);
+        }
+        capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+        defer delete capturePath;
+        if path := capturePath {
+            metrics: lantern:::platform:::WindowMetrics = platform->CurrentWindowMetrics();
+            if game->CaptureLastFrame(path, metrics.pixelWidth, metrics.pixelHeight) {
+                message: string! = `captured the last frame to ${path}`;
+                lantern:::core:::LogInfo("renderer", message);
+                delete message;
+            } else {
+                lantern:::core:::LogError("renderer", "could not capture the last frame");
+            }
         }
         summary := game->Summary();
         lantern:::core:::LogInfo("engine", summary);

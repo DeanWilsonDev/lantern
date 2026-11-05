@@ -1,0 +1,176 @@
+Sdl :: import Sdl;
+
+lantern:::stub :: namespace {
+    Sdl :: import Sdl;
+
+    LitScene :: class {
+    public:
+        renderer~ lantern:::gpu:::GpuRenderer*!;
+        world~ lantern:::renderer:::RenderWorld*!? = null;
+        ground~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        gem~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        groundTexture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
+        atlas~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
+        frames~ u64 = 0;
+        lastReport~ lantern:::gpu:::FrameReport = lantern:::gpu:::FrameReport { };
+
+        LitScene~: (newRenderer: lantern:::gpu:::GpuRenderer*!) {
+            renderer = newRenderer!;
+            world = new lantern:::renderer:::RenderWorld();
+        }
+
+        !LitScene~: () {
+            delete world;
+            delete renderer;
+        }
+
+        static Create :: (window: raw Sdl:::SDL_Window~*) -> Result<LitScene*!, string!> {
+            when lantern:::gpu:::GpuRenderer:::Create(window, lantern:::gpu:::GpuOptions:::FromEnvironment()) {
+                Result:::Ok(renderer) -> {
+                    scene := new LitScene(renderer!);
+                    problem: string!? = scene->Load();
+                    if text := problem {
+                        failure: string! = `${text}`;
+                        delete problem;
+                        delete scene;
+                        return Result<LitScene*!, string!>:::Err(failure!);
+                    }
+                    return Result<LitScene*!, string!>:::Ok(scene!);
+                },
+                Result:::Err(message) -> {
+                    return Result<LitScene*!, string!>:::Err(message!);
+                }
+            }
+        }
+
+        Load~: () -> string!? {
+            groundMesh := lantern:::renderer:::Plane(24.0f, 24.0f);
+            defer delete groundMesh;
+            cubeMesh := lantern:::renderer:::Cube(1.0f);
+            defer delete cubeMesh;
+            atlasData := lantern:::renderer:::FontAtlas();
+            defer delete atlasData;
+            when renderer->CreateMesh(groundMesh) {
+                Result:::Ok(handle) -> {
+                    ground = handle;
+                },
+                Result:::Err(message) -> {
+                    return message!;
+                }
+            }
+            when renderer->CreateMesh(cubeMesh) {
+                Result:::Ok(handle) -> {
+                    cube = handle;
+                },
+                Result:::Err(message) -> {
+                    return message!;
+                }
+            }
+            when lantern:::renderer:::LoadGltfMesh("../assets/models/gem.glb") {
+                Result:::Ok(gemMesh) -> {
+                    when renderer->CreateMesh(gemMesh) {
+                        Result:::Ok(handle) -> {
+                            gem = handle;
+                        },
+                        Result:::Err(message) -> {
+                            delete gemMesh;
+                            return message!;
+                        }
+                    }
+                    delete gemMesh;
+                },
+                Result:::Err(message) -> {
+                    return message!;
+                }
+            }
+            when lantern:::renderer:::TextureData:::LoadPng("../assets/textures/ground.png") {
+                Result:::Ok(texture) -> {
+                    when renderer->CreateTexture(texture) {
+                        Result:::Ok(handle) -> {
+                            groundTexture = handle;
+                        },
+                        Result:::Err(message) -> {
+                            delete texture;
+                            return message!;
+                        }
+                    }
+                    delete texture;
+                },
+                Result:::Err(message) -> {
+                    return message!;
+                }
+            }
+            when renderer->CreateTexture(atlasData) {
+                Result:::Ok(handle) -> {
+                    atlas = handle;
+                },
+                Result:::Err(message) -> {
+                    return message!;
+                }
+            }
+            return null;
+        }
+
+        BuildWorld~: (world: lantern:::renderer:::RenderWorld~*, window: lantern:::platform:::WindowMetrics) -> void {
+            world->Clear();
+            seconds: f32 = f32(frames) / 60.0f;
+            world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 3.0f, z: 7.0f }, Vec3 { x: 0.0f, y: 0.6f, z: 0.0f });
+            world->overlayTexture = atlas;
+            world->Draw(ground, groundTexture, Mat4 { }, lantern:::core:::Color:::White());
+            gemTransform: Mat4 = Mat4:::translation(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }) * Mat4:::rotationY(seconds);
+            world->Draw(gem, null, gemTransform, lantern:::core:::Color:::White());
+            cubeTransform: Mat4 = Mat4:::translation(Vec3 { x: 2.5f, y: 0.5f, z: -0.5f });
+            world->Draw(cube, null, cubeTransform, lantern:::core:::Color:::Rgb(1.0f, 0.55f, 0.2f));
+            cubeBounds := lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { x: 2.5f, y: 0.5f, z: -0.5f }, lantern:::core:::Splat3(0.55f));
+            world->AabbLines(cubeBounds, lantern:::core:::Color:::Yellow());
+            world->CircleLines(Vec3 { x: 0.0f, y: 0.02f, z: 0.0f }, lantern:::core:::WorldUp(), 1.5f, 32, lantern:::core:::Color:::Cyan());
+            density: f32 = window.pixelDensity;
+            titleScale: f32 = lantern:::renderer:::ScaleForDensity(2, density);
+            statusScale: f32 = lantern:::renderer:::ScaleForDensity(1, density);
+            world->overlay->Text("Lantern on Nox", Vec2 { x: 12.0f * density, y: 12.0f * density }, titleScale, lantern:::core:::Color:::White());
+            status: string! = `${renderer->DriverName()}: ${lastReport.drawsSubmitted} draws, ${lastReport.drawsCulled} culled, ${lastReport.triangles} triangles`;
+            world->overlay->Text(status, Vec2 { x: 12.0f * density, y: 34.0f * density }, statusScale, lantern:::core:::Color:::White());
+            delete status;
+        }
+
+        Draw~: (frame: lantern:::engine:::FrameContext) -> void {
+            frames += 1;
+            drawnWorld := world!;
+            world = null;
+            guard drawnWorld return;
+            BuildWorld(drawnWorld, frame.window);
+            when renderer->Render(drawnWorld) {
+                Result:::Ok(report) -> {
+                    lastReport = report;
+                },
+                Result:::Err(message) -> {
+                    lantern:::core:::LogError("renderer", message);
+                    delete message;
+                }
+            }
+            world = drawnWorld!;
+        }
+
+        Capture~: (path: string, width: u32, height: u32) -> bool {
+            capturedWorld := world!;
+            world = null;
+            guard capturedWorld return false;
+            written~ bool = false;
+            when renderer->Capture(capturedWorld, width, height) {
+                Result:::Ok(image) -> {
+                    bytes: Array<u8>! = image->ToPngBytes();
+                    written = lantern:::core:::WriteBytes(path, bytes);
+                    delete bytes;
+                    delete image;
+                },
+                Result:::Err(message) -> {
+                    lantern:::core:::LogError("renderer", message);
+                    delete message;
+                }
+            }
+            world = capturedWorld!;
+            return written;
+        }
+    }
+}

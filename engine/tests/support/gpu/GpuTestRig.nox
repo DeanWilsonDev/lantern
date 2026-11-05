@@ -1,0 +1,83 @@
+Sdl :: import Sdl;
+
+lantern:::gputest :: namespace {
+    Sdl :: import Sdl;
+
+    GpuTestRig :: class {
+    public:
+        context~ lantern:::sdl:::SdlContext*!;
+        window~ lantern:::sdl:::SdlWindow*!;
+        renderer~ lantern:::gpu:::GpuRenderer*!;
+
+        GpuTestRig~: (newContext: lantern:::sdl:::SdlContext*!, newWindow: lantern:::sdl:::SdlWindow*!, newRenderer: lantern:::gpu:::GpuRenderer*!) {
+            context = newContext!;
+            window = newWindow!;
+            renderer = newRenderer!;
+        }
+
+        !GpuTestRig~: () {
+            delete renderer;
+            delete window;
+            delete context;
+        }
+    }
+
+    GpuRequired :: () -> bool {
+        requiredText: string!? = environmentVariable("LANTERN_REQUIRE_GPU");
+        defer delete requiredText;
+        if text := requiredText {
+            return text == "1";
+        }
+        return false;
+    }
+
+    Skip :: (reason: string) -> void {
+        message: string! = `skipping GPU test: ${reason}`;
+        lantern:::core:::LogWarn("test", message);
+        delete message;
+        assert(!GpuRequired(), "LANTERN_REQUIRE_GPU=1 needs a GPU");
+    }
+
+    SkipWithoutRig :: (reason: string) -> GpuTestRig*!? {
+        Skip(reason);
+        return null;
+    }
+
+    SkipReleasingContext :: (reason: string, context: lantern:::sdl:::SdlContext*!) -> GpuTestRig*!? {
+        delete context;
+        return SkipWithoutRig(reason);
+    }
+
+    Setup :: () -> GpuTestRig*!? {
+        context := lantern:::sdl:::SdlContext:::Init();
+        guard context return SkipWithoutRig("SDL could not start");
+        window := lantern:::sdl:::SdlWindow:::Create(context, lantern:::platform:::WindowConfig { title: "capture test", width: 320, height: 240 });
+        guard window return SkipReleasingContext("no window", context!);
+        return CreateRenderer(context!, window!);
+    }
+
+    CreateRenderer :: (context: lantern:::sdl:::SdlContext*!, window: lantern:::sdl:::SdlWindow*!) -> GpuTestRig*!? {
+        when lantern:::gpu:::GpuRenderer:::Create(window->Raw(), lantern:::gpu:::GpuOptions { debug: false, vsync: true }) {
+            Result:::Ok(renderer) -> {
+                return new GpuTestRig(context!, window!, renderer!);
+            },
+            Result:::Err(message) -> {
+                Skip(message);
+                delete message;
+                delete window;
+                delete context;
+                return null;
+            }
+        }
+    }
+
+    PrintSkipped :: (line: string) -> i32 {
+        print(line);
+        return 0;
+    }
+
+    Pixel :: (image: lantern:::renderer:::TextureData*, x: u32, y: u32) -> u8[4] {
+        offset: usize = usize((y * image->width + x) * 4);
+        return [image->rgba8[offset], image->rgba8[offset + 1], image->rgba8[offset + 2], image->rgba8[offset + 3]];
+    }
+}
