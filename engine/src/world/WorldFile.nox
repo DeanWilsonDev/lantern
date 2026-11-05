@@ -1,0 +1,891 @@
+lantern:::world :: namespace {
+    CURRENT_FORMAT_VERSION: u32 : 1;
+
+    BlockKind :: () -> string {
+        return "block";
+    }
+
+    RampKind :: () -> string {
+        return "ramp";
+    }
+
+    MovingPlatformKind :: () -> string {
+        return "moving_platform";
+    }
+
+    GemKind :: () -> string {
+        return "gem";
+    }
+
+    SpawnKind :: () -> string {
+        return "spawn";
+    }
+
+    KillPlaneKind :: () -> string {
+        return "kill_plane";
+    }
+
+    KeyText :: (key: u64) -> string! {
+        return `#${key}`;
+    }
+
+    TransformData :: struct {
+        position~ Vec3 = Vec3 { };
+        rotationDegrees~ Vec3 = Vec3 { };
+        scale~ Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+
+        static FromPosition :: (position: Vec3) -> TransformData {
+            return TransformData { position: position };
+        }
+
+        Rotation :: () -> Quaternion {
+            radiansPerDegree: f32 = Math:::PI / 180.0f;
+            return lantern:::core:::QuaternionFromEulerYxz(rotationDegrees.y * radiansPerDegree, rotationDegrees.x * radiansPerDegree, rotationDegrees.z * radiansPerDegree);
+        }
+
+        Matrix :: () -> Mat4 {
+            return lantern:::core:::MatrixFromScaleRotationTranslation(scale, Rotation(), position);
+        }
+    }
+
+    ShapeKind :: enum {
+        Box,
+        Ramp
+    }
+
+    Shape :: struct {
+        kind~ ShapeKind = ShapeKind:::Box;
+        halfExtents~ Vec3 = Vec3 { };
+        width~ f32 = 0.0f;
+        height~ f32 = 0.0f;
+        length~ f32 = 0.0f;
+
+        static Box :: (halfExtents: Vec3) -> Shape {
+            return Shape { kind: ShapeKind:::Box, halfExtents: halfExtents };
+        }
+
+        static Ramp :: (width: f32, height: f32, length: f32) -> Shape {
+            return Shape { kind: ShapeKind:::Ramp, width: width, height: height, length: length };
+        }
+
+        IsValid :: () -> bool {
+            if kind == ShapeKind:::Box {
+                return IsPositiveSize(halfExtents.x) && IsPositiveSize(halfExtents.y) && IsPositiveSize(halfExtents.z);
+            }
+            return IsPositiveSize(width) && IsPositiveSize(height) && IsPositiveSize(length);
+        }
+    }
+
+    IsPositiveSize :: (value: f32) -> bool {
+        return value > 0.0f && lantern:::core:::IsFinite(value);
+    }
+
+    ColliderKind :: enum {
+        Static,
+        Kinematic
+    }
+
+    PropertyKind :: enum {
+        Boolean,
+        Number,
+        Text,
+        Vector
+    }
+
+    PropertyValue :: struct {
+        kind~ PropertyKind = PropertyKind:::Boolean;
+        boolean~ bool = false;
+        number~ f32 = 0.0f;
+        vector~ Vec3 = Vec3 { };
+
+        static Boolean :: (value: bool) -> PropertyValue {
+            return PropertyValue { kind: PropertyKind:::Boolean, boolean: value };
+        }
+
+        static Number :: (value: f32) -> PropertyValue {
+            return PropertyValue { kind: PropertyKind:::Number, number: value };
+        }
+
+        static Text :: () -> PropertyValue {
+            return PropertyValue { kind: PropertyKind:::Text };
+        }
+
+        static Vector :: (value: Vec3) -> PropertyValue {
+            return PropertyValue { kind: PropertyKind:::Vector, vector: value };
+        }
+    }
+
+    TextBefore :: (left: string, right: string) -> bool {
+        shared~ usize = left.length();
+        if right.length() < shared {
+            shared = right.length();
+        }
+        for index~ usize = 0; index < shared; index++ {
+            leftByte: u8 = left.byteAt(index);
+            rightByte: u8 = right.byteAt(index);
+            if leftByte != rightByte {
+                return leftByte < rightByte;
+            }
+        }
+        return left.length() < right.length();
+    }
+
+    ParseHexColor :: (text: string) -> lantern:::core:::Color? {
+        if !text.startsWith("#") || text.length() != 7 {
+            return null;
+        }
+        value~ u32 = 0;
+        for index~ usize = 1; index < 7; index++ {
+            byte: u8 = text.byteAt(index);
+            if index == 1 && byte == 43 {
+                continue;
+            }
+            parsed: u32? = lantern:::json:::HexDigitValue(byte);
+            guard digit := parsed return null;
+            value = value * 16 + digit;
+        }
+        return lantern:::core:::Color:::FromHex(value);
+    }
+
+    WorldEntity :: class {
+    public:
+        id~ u64 = 0;
+        name~ string!;
+        parent~ u64? = null;
+        kind~ string!;
+        transform~ TransformData = TransformData { };
+        shape~ Shape? = null;
+        material~ string!? = null;
+        tint~ string!? = null;
+        collider~ ColliderKind? = null;
+        propertyKeys~ Array<string!>! = [];
+        propertyValues~ Array<PropertyValue>! = [];
+        propertyTexts~ Array<string!>! = [];
+
+        WorldEntity~: (newId: u64, newName: string, newKind: string) {
+            id = newId;
+            name = `${newName}`;
+            kind = `${newKind}`;
+        }
+
+        !WorldEntity~: () {
+            delete name;
+            delete kind;
+            delete material;
+            delete tint;
+            propertyKeys.freeAll();
+            delete propertyValues;
+            propertyTexts.freeAll();
+        }
+
+        SetMaterial~: (text: string) -> void {
+            delete material;
+            material = `${text}`;
+        }
+
+        SetTint~: (text: string) -> void {
+            delete tint;
+            tint = `${text}`;
+        }
+
+        PropertyIndex :: (key: string) -> usize? {
+            for index~ usize = 0; index < propertyKeys.length(); index++ {
+                if propertyKeys[index] == key {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        SetProperty~: (key: string, value: PropertyValue, text: string) -> void {
+            if index := PropertyIndex(key) {
+                propertyValues[index] = value;
+                propertyTexts.remove(index);
+                propertyTexts.insert(index, `${text}`);
+                return;
+            }
+            position~ usize = 0;
+            while position < propertyKeys.length() && TextBefore(propertyKeys[position], key) {
+                position += 1;
+            }
+            propertyKeys.insert(position, `${key}`);
+            propertyValues.insert(position, value);
+            propertyTexts.insert(position, `${text}`);
+        }
+
+        SetBooleanProperty~: (key: string, value: bool) -> void {
+            SetProperty(key, PropertyValue:::Boolean(value), "");
+        }
+
+        SetNumberProperty~: (key: string, value: f32) -> void {
+            SetProperty(key, PropertyValue:::Number(value), "");
+        }
+
+        SetTextProperty~: (key: string, value: string) -> void {
+            SetProperty(key, PropertyValue:::Text(), value);
+        }
+
+        SetVectorProperty~: (key: string, value: Vec3) -> void {
+            SetProperty(key, PropertyValue:::Vector(value), "");
+        }
+
+        PropertyCount :: () -> usize {
+            return propertyKeys.length();
+        }
+
+        NumberProperty :: (key: string) -> f32? {
+            if index := PropertyIndex(key) {
+                value: PropertyValue = propertyValues[index];
+                if value.kind == PropertyKind:::Number {
+                    return value.number;
+                }
+            }
+            return null;
+        }
+
+        BooleanProperty :: (key: string) -> bool? {
+            if index := PropertyIndex(key) {
+                value: PropertyValue = propertyValues[index];
+                if value.kind == PropertyKind:::Boolean {
+                    return value.boolean;
+                }
+            }
+            return null;
+        }
+
+        VectorProperty :: (key: string) -> Vec3? {
+            if index := PropertyIndex(key) {
+                value: PropertyValue = propertyValues[index];
+                if value.kind == PropertyKind:::Vector {
+                    return value.vector;
+                }
+            }
+            return null;
+        }
+
+        TextProperty :: (key: string) -> string!? {
+            if index := PropertyIndex(key) {
+                if propertyValues[index].kind == PropertyKind:::Text {
+                    return `${propertyTexts[index]}`;
+                }
+            }
+            return null;
+        }
+
+        TintColor :: () -> lantern:::core:::Color {
+            if text := tint {
+                if color := ParseHexColor(text) {
+                    return color;
+                }
+            }
+            return lantern:::core:::Color:::White();
+        }
+
+        Label :: () -> string! {
+            return `entity #${id} '${name}'`;
+        }
+    }
+
+    WorldFile :: class {
+    public:
+        formatVersion~ u32 = CURRENT_FORMAT_VERSION;
+        name~ string!;
+        entities~ Array<WorldEntity*!>! = [];
+
+        WorldFile~: (newName: string) {
+            name = `${newName}`;
+        }
+
+        !WorldFile~: () {
+            delete name;
+            entities.freeAll();
+        }
+
+        Add~: (entity: WorldEntity*!) -> void {
+            entities.push(entity!);
+        }
+
+        IndexOf :: (id: u64) -> usize? {
+            for index~ usize = 0; index < entities.length(); index++ {
+                if entities[index]->id == id {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        IndicesOfKind :: (kind: string) -> Array<usize>! {
+            indices~ Array<usize>! = [];
+            for index~ usize = 0; index < entities.length(); index++ {
+                if entities[index]->kind == kind {
+                    indices.push(index);
+                }
+            }
+            return indices!;
+        }
+
+        CountOfKind :: (kind: string) -> usize {
+            count~ usize = 0;
+            for index~ usize = 0; index < entities.length(); index++ {
+                if entities[index]->kind == kind {
+                    count += 1;
+                }
+            }
+            return count;
+        }
+
+        FirstOfKind :: (kind: string) -> usize? {
+            for index~ usize = 0; index < entities.length(); index++ {
+                if entities[index]->kind == kind {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        NextEntityKey :: () -> u64 {
+            largest~ u64 = 0;
+            for index~ usize = 0; index < entities.length(); index++ {
+                if entities[index]->id > largest {
+                    largest = entities[index]->id;
+                }
+            }
+            return largest + 1;
+        }
+
+        ParentOf :: (id: u64) -> u64? {
+            if index := IndexOf(id) {
+                return entities[index]->parent;
+            }
+            return null;
+        }
+
+        Validate :: () -> Array<string!>! {
+            problems~ Array<string!>! = [];
+            if formatVersion > CURRENT_FORMAT_VERSION {
+                problems.push(`format_version ${formatVersion} is newer than this build understands (${CURRENT_FORMAT_VERSION})`);
+            }
+            for index~ usize = 0; index < entities.length(); index++ {
+                entity: WorldEntity* = entities[index];
+                label: string! = entity->Label();
+                for earlier~ usize = 0; earlier < index; earlier++ {
+                    if entities[earlier]->id == entity->id {
+                        problems.push(`entity id #${entity->id} is used more than once`);
+                        break;
+                    }
+                }
+                if entity->kind.trim().length() == 0 {
+                    problems.push(`${label} has an empty kind`);
+                }
+                transform: TransformData = entity->transform;
+                if !lantern:::core:::IsFinite3(transform.position) || !lantern:::core:::IsFinite3(transform.rotationDegrees) || !lantern:::core:::IsFinite3(transform.scale) {
+                    problems.push(`${label} has a non-finite transform`);
+                }
+                if Math:::abs(transform.scale.x) < 0.000001f || Math:::abs(transform.scale.y) < 0.000001f || Math:::abs(transform.scale.z) < 0.000001f {
+                    problems.push(`${label} has a zero scale`);
+                }
+                if shape := entity->shape {
+                    if !shape.IsValid() {
+                        problems.push(`${label} has a shape with a non-positive size`);
+                    }
+                }
+                if tint := entity->tint {
+                    if ParseHexColor(tint) == null {
+                        problems.push(`${label} has tint '${tint}', expected "#RRGGBB"`);
+                    }
+                }
+                delete label;
+            }
+            for index~ usize = 0; index < entities.length(); index++ {
+                entity: WorldEntity* = entities[index];
+                guard parent := entity->parent continue;
+                label: string! = entity->Label();
+                if IndexOf(parent) == null {
+                    problems.push(`${label} has missing parent #${parent}`);
+                    delete label;
+                    continue;
+                }
+                current~ u64? = parent;
+                steps~ usize = 0;
+                while current != null {
+                    key: u64 = current ?? 0;
+                    steps += 1;
+                    if key == entity->id || steps > entities.length() {
+                        problems.push(`${label} is its own ancestor`);
+                        break;
+                    }
+                    current = ParentOf(key);
+                }
+                delete label;
+            }
+            return problems!;
+        }
+
+        ToDocument :: () -> lantern:::json:::JsonDocument*! {
+            document := new lantern:::json:::JsonDocument();
+            root: u32 = document->NewObject();
+            document->Set(root, "format_version", document->NewInteger(i64(formatVersion)));
+            document->Set(root, "name", document->NewText(name));
+            list: u32 = document->NewList();
+            for entity in entities {
+                document->Append(list, EntityNode(document, entity));
+            }
+            document->Set(root, "entities", list);
+            document->root = root;
+            return document!;
+        }
+
+        ToJson :: () -> string! {
+            document := ToDocument();
+            text~ string! = document->Write(document->root);
+            text += "\n";
+            delete document;
+            return text!;
+        }
+
+        Save :: (path: string) -> string!? {
+            problems~ Array<string!>! = Validate();
+            if problems.length() > 0 {
+                failure: string! = InvalidMessage(path, problems);
+                problems.freeAll();
+                return failure!;
+            }
+            problems.freeAll();
+            text: string! = ToJson();
+            temporaryPath: string! = SavingPath(path);
+            failure~ string!? = null;
+            when writeTextFile(temporaryPath, text) {
+                Result:::Ok(written) -> {
+                    renamed~ i32 = 0;
+                    unsafe {
+                        renamed = lantern:::cfiles:::rename(temporaryPath, path);
+                    }
+                    if renamed != 0 {
+                        failure = `${path}: could not rename ${temporaryPath} over it`;
+                    }
+                },
+                Result:::Err(error) -> {
+                    failure = `${path}: ${error.message()}`;
+                    delete error;
+                }
+            }
+            delete temporaryPath;
+            delete text;
+            return failure!;
+        }
+    }
+
+    SavingPath :: (path: string) -> string! {
+        if path.endsWith(".json") {
+            return `${path.substring(0, path.length() - 5)}.json.saving`;
+        }
+        return `${path}.json.saving`;
+    }
+
+    InvalidMessage :: (path: string, problems: Array<string!>) -> string! {
+        message~ string! = `${path}: ${problems.length()} problem(s): `;
+        for index~ usize = 0; index < problems.length(); index++ {
+            if index > 0 {
+                message += "; ";
+            }
+            message += problems[index];
+        }
+        return message!;
+    }
+
+    EntityNode :: (document: lantern:::json:::JsonDocument~*, entity: WorldEntity*) -> u32 {
+        node: u32 = document->NewObject();
+        document->Set(node, "id", document->NewInteger(i64(entity->id)));
+        document->Set(node, "name", document->NewText(entity->name));
+        if parent := entity->parent {
+            document->Set(node, "parent", document->NewInteger(i64(parent)));
+        }
+        document->Set(node, "kind", document->NewText(entity->kind));
+        transform: u32 = document->NewObject();
+        document->Set(transform, "position", document->NewVector(entity->transform.position));
+        document->Set(transform, "rotation_degrees", document->NewVector(entity->transform.rotationDegrees));
+        document->Set(transform, "scale", document->NewVector(entity->transform.scale));
+        document->Set(node, "transform", transform);
+        if shape := entity->shape {
+            shapeNode: u32 = document->NewObject();
+            if shape.kind == ShapeKind:::Box {
+                document->Set(shapeNode, "type", document->NewText("Box"));
+                document->Set(shapeNode, "half_extents", document->NewVector(shape.halfExtents));
+            } else {
+                document->Set(shapeNode, "type", document->NewText("Ramp"));
+                document->Set(shapeNode, "width", document->NewNumber(f64(shape.width)));
+                document->Set(shapeNode, "height", document->NewNumber(f64(shape.height)));
+                document->Set(shapeNode, "length", document->NewNumber(f64(shape.length)));
+            }
+            document->Set(node, "shape", shapeNode);
+        }
+        if material := entity->material {
+            document->Set(node, "material", document->NewText(material));
+        }
+        if tint := entity->tint {
+            document->Set(node, "tint", document->NewText(tint));
+        }
+        if collider := entity->collider {
+            if collider == ColliderKind:::Static {
+                document->Set(node, "collider", document->NewText("static"));
+            } else {
+                document->Set(node, "collider", document->NewText("kinematic"));
+            }
+        }
+        if entity->propertyKeys.length() > 0 {
+            properties: u32 = document->NewObject();
+            for index~ usize = 0; index < entity->propertyKeys.length(); index++ {
+                value: PropertyValue = entity->propertyValues[index];
+                valueNode~ u32 = 0;
+                if value.kind == PropertyKind:::Boolean {
+                    valueNode = document->NewBoolean(value.boolean);
+                } else if value.kind == PropertyKind:::Number {
+                    valueNode = document->NewNumber(f64(value.number));
+                } else if value.kind == PropertyKind:::Text {
+                    valueNode = document->NewText(entity->propertyTexts[index]);
+                } else {
+                    valueNode = document->NewVector(value.vector);
+                }
+                document->Set(properties, entity->propertyKeys[index], valueNode);
+            }
+            document->Set(node, "properties", properties);
+        }
+        return node;
+    }
+
+    FromJson :: (text: string, path: string) -> Result<WorldFile*!, string!> {
+        when lantern:::json:::Parse(text) {
+            Result:::Ok(document) -> {
+                reader := new WorldReader();
+                parsed: WorldFile*!? = reader->ReadWorld(document);
+                delete document;
+                guard parsed return ReaderFailure(reader!, path);
+                delete reader;
+                problems~ Array<string!>! = parsed->Validate();
+                if problems.length() > 0 {
+                    failure: string! = InvalidMessage(path, problems);
+                    problems.freeAll();
+                    delete parsed;
+                    return Result<WorldFile*!, string!>:::Err(failure!);
+                }
+                problems.freeAll();
+                return Result<WorldFile*!, string!>:::Ok(parsed!);
+            },
+            Result:::Err(message) -> {
+                failure: string! = `${path}: ${message}`;
+                delete message;
+                return Result<WorldFile*!, string!>:::Err(failure!);
+            }
+        }
+    }
+
+    ReaderFailure :: (reader: WorldReader*!, path: string) -> Result<WorldFile*!, string!> {
+        failure~ string! = `${path}: `;
+        if problem := reader->problem {
+            failure += problem;
+        }
+        delete reader;
+        return Result<WorldFile*!, string!>:::Err(failure!);
+    }
+
+    DiscardWorld :: (world: WorldFile*!) -> WorldFile*!? {
+        delete world;
+        return null;
+    }
+
+    Load :: (path: string) -> Result<WorldFile*!, string!> {
+        when readTextFile(path) {
+            Result:::Ok(text) -> {
+                when FromJson(text, path) {
+                    Result:::Ok(world) -> {
+                        delete text;
+                        return Result<WorldFile*!, string!>:::Ok(world!);
+                    },
+                    Result:::Err(message) -> {
+                        delete text;
+                        return Result<WorldFile*!, string!>:::Err(message!);
+                    }
+                }
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${path}: ${error.message()}`;
+                delete error;
+                return Result<WorldFile*!, string!>:::Err(failure!);
+            }
+        }
+    }
+
+    WorldReader :: class {
+    public:
+        problem~ string!? = null;
+
+        WorldReader~: () { }
+
+        !WorldReader~: () {
+            delete problem;
+        }
+
+        Fail~: (message: string) -> void {
+            if problem == null {
+                problem = `${message}`;
+            }
+        }
+
+        Required~: (document: lantern:::json:::JsonDocument*, object: u32, key: string) -> u32? {
+            if member := document->Member(object, key) {
+                return member;
+            }
+            message: string! = `missing field '${key}'`;
+            Fail(message);
+            delete message;
+            return null;
+        }
+
+        Present :: (document: lantern:::json:::JsonDocument*, object: u32, key: string) -> u32? {
+            if member := document->Member(object, key) {
+                if document->Kind(member) != lantern:::json:::JsonKind:::Null {
+                    return member;
+                }
+            }
+            return null;
+        }
+
+        Number~: (document: lantern:::json:::JsonDocument*, node: u32, what: string) -> f32? {
+            if document->Kind(node) != lantern:::json:::JsonKind:::Number {
+                message: string! = `invalid type for ${what}, expected a number`;
+                Fail(message);
+                delete message;
+                return null;
+            }
+            return f32(document->Node(node).number);
+        }
+
+        Unsigned~: (document: lantern:::json:::JsonDocument*, node: u32, what: string) -> u64? {
+            value: lantern:::json:::JsonNode = document->Node(node);
+            if value.kind != lantern:::json:::JsonKind:::Number || !value.isInteger || value.integer < 0 {
+                message: string! = `invalid type for ${what}, expected an unsigned integer`;
+                Fail(message);
+                delete message;
+                return null;
+            }
+            return u64(value.integer);
+        }
+
+        Text~: (document: lantern:::json:::JsonDocument*, node: u32, what: string) -> bool {
+            if document->Kind(node) != lantern:::json:::JsonKind:::Text {
+                message: string! = `invalid type for ${what}, expected a string`;
+                Fail(message);
+                delete message;
+                return false;
+            }
+            return true;
+        }
+
+        Vector~: (document: lantern:::json:::JsonDocument*, node: u32, what: string) -> Vec3? {
+            if document->Kind(node) != lantern:::json:::JsonKind:::List || document->ChildCount(node) != 3 || !document->IsNumberList(node) {
+                message: string! = `invalid value for ${what}, expected an array of 3 numbers`;
+                Fail(message);
+                delete message;
+                return null;
+            }
+            first: u32 = document->FirstChild(node);
+            second: u32 = document->NextSibling(first);
+            third: u32 = document->NextSibling(second);
+            return Vec3 { x: f32(document->Node(first).number), y: f32(document->Node(second).number), z: f32(document->Node(third).number) };
+        }
+
+        ReadWorld~: (document: lantern:::json:::JsonDocument*) -> WorldFile*!? {
+            root: u32 = document->root;
+            if document->Kind(root) != lantern:::json:::JsonKind:::Object {
+                Fail("invalid type, expected struct WorldFile");
+                return null;
+            }
+            versionNode: u32? = Required(document, root, "format_version");
+            guard versionAt := versionNode return null;
+            parsedVersion: u64? = Unsigned(document, versionAt, "format_version");
+            guard version := parsedVersion return null;
+            nameNode: u32? = Required(document, root, "name");
+            guard nameAt := nameNode return null;
+            if !Text(document, nameAt, "name") {
+                return null;
+            }
+            entitiesNode: u32? = Required(document, root, "entities");
+            guard entitiesAt := entitiesNode return null;
+            if document->Kind(entitiesAt) != lantern:::json:::JsonKind:::List {
+                Fail("invalid type for entities, expected a sequence");
+                return null;
+            }
+            world := new WorldFile(document->Text(nameAt));
+            world->formatVersion = u32(version);
+            child~ u32 = document->FirstChild(entitiesAt);
+            while child != lantern:::json:::NO_NODE {
+                parsedEntity: WorldEntity*!? = ReadEntity(document, child);
+                guard parsedEntity return DiscardWorld(world!);
+                world->Add(parsedEntity!);
+                child = document->NextSibling(child);
+            }
+            return world!;
+        }
+
+        ReadEntity~: (document: lantern:::json:::JsonDocument*, node: u32) -> WorldEntity*!? {
+            if document->Kind(node) != lantern:::json:::JsonKind:::Object {
+                Fail("invalid type, expected struct WorldEntity");
+                return null;
+            }
+            idNode: u32? = Required(document, node, "id");
+            guard idAt := idNode return null;
+            parsedId: u64? = Unsigned(document, idAt, "id");
+            guard id := parsedId return null;
+            nameNode: u32? = Required(document, node, "name");
+            guard nameAt := nameNode return null;
+            if !Text(document, nameAt, "name") {
+                return null;
+            }
+            kindNode: u32? = Required(document, node, "kind");
+            guard kindAt := kindNode return null;
+            if !Text(document, kindAt, "kind") {
+                return null;
+            }
+            entity := new WorldEntity(id, document->Text(nameAt), document->Text(kindAt));
+            problemBefore: bool = problem != null;
+            if parentAt := Present(document, node, "parent") {
+                if parent := Unsigned(document, parentAt, "parent") {
+                    entity->parent = parent;
+                }
+            }
+            if transformAt := Present(document, node, "transform") {
+                if transform := ReadTransform(document, transformAt) {
+                    entity->transform = transform;
+                }
+            }
+            if shapeAt := Present(document, node, "shape") {
+                if shape := ReadShape(document, shapeAt) {
+                    entity->shape = shape;
+                }
+            }
+            if materialAt := Present(document, node, "material") {
+                if Text(document, materialAt, "material") {
+                    entity->SetMaterial(document->Text(materialAt));
+                }
+            }
+            if tintAt := Present(document, node, "tint") {
+                if Text(document, tintAt, "tint") {
+                    entity->SetTint(document->Text(tintAt));
+                }
+            }
+            if colliderAt := Present(document, node, "collider") {
+                if Text(document, colliderAt, "collider") {
+                    colliderText: string = document->Text(colliderAt);
+                    if colliderText == "static" {
+                        entity->collider = ColliderKind:::Static;
+                    } else if colliderText == "kinematic" {
+                        entity->collider = ColliderKind:::Kinematic;
+                    } else {
+                        message: string! = `unknown variant '${colliderText}', expected 'static' or 'kinematic'`;
+                        Fail(message);
+                        delete message;
+                    }
+                }
+            }
+            if propertiesAt := Present(document, node, "properties") {
+                ReadProperties(document, propertiesAt, entity);
+            }
+            if !problemBefore && problem != null {
+                delete entity;
+                return null;
+            }
+            return entity!;
+        }
+
+        ReadTransform~: (document: lantern:::json:::JsonDocument*, node: u32) -> TransformData? {
+            if document->Kind(node) != lantern:::json:::JsonKind:::Object {
+                Fail("invalid type, expected struct TransformData");
+                return null;
+            }
+            transform~ TransformData = TransformData { };
+            positionNode: u32? = Required(document, node, "position");
+            guard positionAt := positionNode return null;
+            parsedPosition: Vec3? = Vector(document, positionAt, "position");
+            guard position := parsedPosition return null;
+            transform.position = position;
+            if rotationAt := Present(document, node, "rotation_degrees") {
+                parsedRotation: Vec3? = Vector(document, rotationAt, "rotation_degrees");
+                guard rotation := parsedRotation return null;
+                transform.rotationDegrees = rotation;
+            }
+            if scaleAt := Present(document, node, "scale") {
+                parsedScale: Vec3? = Vector(document, scaleAt, "scale");
+                guard scale := parsedScale return null;
+                transform.scale = scale;
+            }
+            return transform;
+        }
+
+        ReadShape~: (document: lantern:::json:::JsonDocument*, node: u32) -> Shape? {
+            if document->Kind(node) != lantern:::json:::JsonKind:::Object {
+                Fail("invalid type, expected internally tagged enum Shape");
+                return null;
+            }
+            typeNode: u32? = Required(document, node, "type");
+            guard typeAt := typeNode return null;
+            if !Text(document, typeAt, "type") {
+                return null;
+            }
+            shapeType: string = document->Text(typeAt);
+            if shapeType == "Box" {
+                halfExtentsNode: u32? = Required(document, node, "half_extents");
+                guard halfExtentsAt := halfExtentsNode return null;
+                parsedHalfExtents: Vec3? = Vector(document, halfExtentsAt, "half_extents");
+                guard halfExtents := parsedHalfExtents return null;
+                return Shape:::Box(halfExtents);
+            }
+            if shapeType == "Ramp" {
+                widthNode: u32? = Required(document, node, "width");
+                guard widthAt := widthNode return null;
+                heightNode: u32? = Required(document, node, "height");
+                guard heightAt := heightNode return null;
+                lengthNode: u32? = Required(document, node, "length");
+                guard lengthAt := lengthNode return null;
+                parsedWidth: f32? = Number(document, widthAt, "width");
+                guard width := parsedWidth return null;
+                parsedHeight: f32? = Number(document, heightAt, "height");
+                guard height := parsedHeight return null;
+                parsedLength: f32? = Number(document, lengthAt, "length");
+                guard length := parsedLength return null;
+                return Shape:::Ramp(width, height, length);
+            }
+            message: string! = `unknown variant '${shapeType}', expected 'Box' or 'Ramp'`;
+            Fail(message);
+            delete message;
+            return null;
+        }
+
+        ReadProperties~: (document: lantern:::json:::JsonDocument*, node: u32, entity: WorldEntity~*) -> void {
+            if document->Kind(node) != lantern:::json:::JsonKind:::Object {
+                Fail("invalid type for properties, expected a map");
+                return;
+            }
+            child~ u32 = document->FirstChild(node);
+            while child != lantern:::json:::NO_NODE {
+                key: string = document->Key(child);
+                kind: lantern:::json:::JsonKind = document->Kind(child);
+                if kind == lantern:::json:::JsonKind:::Boolean {
+                    entity->SetBooleanProperty(key, document->Node(child).boolean);
+                } else if kind == lantern:::json:::JsonKind:::Number {
+                    entity->SetNumberProperty(key, f32(document->Node(child).number));
+                } else if kind == lantern:::json:::JsonKind:::Text {
+                    entity->SetTextProperty(key, document->Text(child));
+                } else if kind == lantern:::json:::JsonKind:::List && document->ChildCount(child) == 3 && document->IsNumberList(child) {
+                    first: u32 = document->FirstChild(child);
+                    second: u32 = document->NextSibling(first);
+                    third: u32 = document->NextSibling(second);
+                    entity->SetVectorProperty(key, Vec3 { x: f32(document->Node(first).number), y: f32(document->Node(second).number), z: f32(document->Node(third).number) });
+                } else {
+                    Fail("data did not match any variant of untagged enum PropertyValue");
+                    return;
+                }
+                child = document->NextSibling(child);
+            }
+        }
+    }
+}

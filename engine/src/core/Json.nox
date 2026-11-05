@@ -1,0 +1,709 @@
+lantern:::cnumbers :: foreign "c" {
+    strtod :: (text: string, end: raw u8~*~*) -> f64;
+}
+
+lantern:::json :: namespace {
+    NO_NODE: u32 : 4294967295;
+    MAX_DEPTH: u32 : 128;
+
+    JsonKind :: enum {
+        Null,
+        Boolean,
+        Number,
+        Text,
+        List,
+        Object
+    }
+
+    JsonNode :: struct {
+        kind~ JsonKind = JsonKind:::Null;
+        boolean~ bool = false;
+        number~ f64 = 0.0f;
+        isInteger~ bool = false;
+        integer~ i64 = 0;
+        textIndex~ u32 = NO_NODE;
+        keyIndex~ u32 = NO_NODE;
+        firstChild~ u32 = NO_NODE;
+        lastChild~ u32 = NO_NODE;
+        nextSibling~ u32 = NO_NODE;
+        childCount~ u32 = 0;
+    }
+
+    IsDigit :: (byte: u8) -> bool {
+        return byte >= 48 && byte <= 57;
+    }
+
+    IsWhitespace :: (byte: u8) -> bool {
+        return byte == 32 || byte == 9 || byte == 10 || byte == 13;
+    }
+
+    HexDigitValue :: (byte: u8) -> u32? {
+        if IsDigit(byte) {
+            return u32(byte) - 48;
+        }
+        if byte >= 97 && byte <= 102 {
+            return u32(byte) - 87;
+        }
+        if byte >= 65 && byte <= 70 {
+            return u32(byte) - 55;
+        }
+        return null;
+    }
+
+    HexDigit :: (value: u32) -> u8 {
+        if value < 10 {
+            return u8(48 + value);
+        }
+        return u8(87 + value);
+    }
+
+    AppendCodePoint :: (text: string!, codePoint: u32) -> string! {
+        built~ string! = text!;
+        if codePoint < 128 {
+            built.appendByte(u8(codePoint));
+        } else if codePoint < 2048 {
+            built.appendByte(u8(192 | (codePoint >> 6)));
+            built.appendByte(u8(128 | (codePoint & 63)));
+        } else if codePoint < 65536 {
+            built.appendByte(u8(224 | (codePoint >> 12)));
+            built.appendByte(u8(128 | ((codePoint >> 6) & 63)));
+            built.appendByte(u8(128 | (codePoint & 63)));
+        } else {
+            built.appendByte(u8(240 | (codePoint >> 18)));
+            built.appendByte(u8(128 | ((codePoint >> 12) & 63)));
+            built.appendByte(u8(128 | ((codePoint >> 6) & 63)));
+            built.appendByte(u8(128 | (codePoint & 63)));
+        }
+        return built!;
+    }
+
+    QuotedText :: (text: string) -> string! {
+        quoted~ string! = "" + "";
+        quoted.appendByte(34);
+        for index~ usize = 0; index < text.length(); index++ {
+            byte: u8 = text.byteAt(index);
+            if byte == 34 {
+                quoted += "\\\"";
+            } else if byte == 92 {
+                quoted += "\\\\";
+            } else if byte == 10 {
+                quoted += "\\n";
+            } else if byte == 13 {
+                quoted += "\\r";
+            } else if byte == 9 {
+                quoted += "\\t";
+            } else if byte == 8 {
+                quoted += "\\b";
+            } else if byte == 12 {
+                quoted += "\\f";
+            } else if byte < 32 {
+                quoted += "\\u00";
+                quoted.appendByte(HexDigit(u32(byte) >> 4));
+                quoted.appendByte(HexDigit(u32(byte) & 15));
+            } else {
+                quoted.appendByte(byte);
+            }
+        }
+        quoted.appendByte(34);
+        return quoted!;
+    }
+
+    NumberText :: (node: JsonNode) -> string! {
+        if node.isInteger {
+            return `${node.integer}`;
+        }
+        value: f32 = f32(node.number);
+        if value == Math:::floor(value) && Math:::abs(value) < 10000000.0f {
+            return `${i64(value)}`;
+        }
+        return `${value}`;
+    }
+
+    Indent :: (text: string!, depth: u32) -> string! {
+        indented~ string! = text!;
+        for level~ u32 = 0; level < depth; level++ {
+            indented += "  ";
+        }
+        return indented!;
+    }
+
+    JsonDocument :: class {
+    public:
+        nodes~ Array<JsonNode>! = [];
+        texts~ Array<string!>! = [];
+        root~ u32 = NO_NODE;
+        position~ usize = 0;
+        problem~ string!? = null;
+
+        JsonDocument~: () { }
+
+        !JsonDocument~: () {
+            delete nodes;
+            texts.freeAll();
+            delete problem;
+        }
+
+        Node :: (index: u32) -> JsonNode {
+            return nodes[usize(index)];
+        }
+
+        Kind :: (index: u32) -> JsonKind {
+            return nodes[usize(index)].kind;
+        }
+
+        AddNode~: (node: JsonNode) -> u32 {
+            index: u32 = u32(nodes.length());
+            nodes.push(node);
+            return index;
+        }
+
+        AddText~: (text: string) -> u32 {
+            index: u32 = u32(texts.length());
+            texts.push(`${text}`);
+            return index;
+        }
+
+        NewNull~: () -> u32 {
+            return AddNode(JsonNode { });
+        }
+
+        NewBoolean~: (value: bool) -> u32 {
+            return AddNode(JsonNode { kind: JsonKind:::Boolean, boolean: value });
+        }
+
+        NewNumber~: (value: f64) -> u32 {
+            return AddNode(JsonNode { kind: JsonKind:::Number, number: value });
+        }
+
+        NewInteger~: (value: i64) -> u32 {
+            return AddNode(JsonNode { kind: JsonKind:::Number, number: f64(value), isInteger: true, integer: value });
+        }
+
+        NewText~: (value: string) -> u32 {
+            textIndex: u32 = AddText(value);
+            return AddNode(JsonNode { kind: JsonKind:::Text, textIndex: textIndex });
+        }
+
+        NewList~: () -> u32 {
+            return AddNode(JsonNode { kind: JsonKind:::List });
+        }
+
+        NewObject~: () -> u32 {
+            return AddNode(JsonNode { kind: JsonKind:::Object });
+        }
+
+        NewVector~: (vector: Vec3) -> u32 {
+            list: u32 = NewList();
+            Append(list, NewNumber(f64(vector.x)));
+            Append(list, NewNumber(f64(vector.y)));
+            Append(list, NewNumber(f64(vector.z)));
+            return list;
+        }
+
+        Append~: (container: u32, value: u32) -> void {
+            parent~ JsonNode = nodes[usize(container)];
+            if parent.lastChild == NO_NODE {
+                parent.firstChild = value;
+            } else {
+                previous~ JsonNode = nodes[usize(parent.lastChild)];
+                previous.nextSibling = value;
+                nodes[usize(parent.lastChild)] = previous;
+            }
+            parent.lastChild = value;
+            parent.childCount += 1;
+            nodes[usize(container)] = parent;
+        }
+
+        Set~: (object: u32, key: string, value: u32) -> void {
+            keyIndex: u32 = AddText(key);
+            member~ JsonNode = nodes[usize(value)];
+            member.keyIndex = keyIndex;
+            nodes[usize(value)] = member;
+            Append(object, value);
+        }
+
+        Member :: (object: u32, key: string) -> u32? {
+            if nodes[usize(object)].kind != JsonKind:::Object {
+                return null;
+            }
+            child~ u32 = nodes[usize(object)].firstChild;
+            while child != NO_NODE {
+                node: JsonNode = nodes[usize(child)];
+                if texts[usize(node.keyIndex)] == key {
+                    return child;
+                }
+                child = node.nextSibling;
+            }
+            return null;
+        }
+
+        FirstChild :: (container: u32) -> u32 {
+            return nodes[usize(container)].firstChild;
+        }
+
+        NextSibling :: (child: u32) -> u32 {
+            return nodes[usize(child)].nextSibling;
+        }
+
+        ChildCount :: (container: u32) -> u32 {
+            return nodes[usize(container)].childCount;
+        }
+
+        Text :: (index: u32) -> string {
+            return texts[usize(nodes[usize(index)].textIndex)];
+        }
+
+        Key :: (index: u32) -> string {
+            return texts[usize(nodes[usize(index)].keyIndex)];
+        }
+
+        IsNumberList :: (container: u32) -> bool {
+            child~ u32 = nodes[usize(container)].firstChild;
+            while child != NO_NODE {
+                if nodes[usize(child)].kind != JsonKind:::Number {
+                    return false;
+                }
+                child = nodes[usize(child)].nextSibling;
+            }
+            return true;
+        }
+
+        Write :: (index: u32) -> string! {
+            text: string! = "" + "";
+            written: string! = WriteInto(text!, index, 0);
+            return written!;
+        }
+
+        WriteInto :: (text: string!, index: u32, depth: u32) -> string! {
+            built~ string! = text!;
+            node: JsonNode = nodes[usize(index)];
+            if node.kind == JsonKind:::Null {
+                built += "null";
+            } else if node.kind == JsonKind:::Boolean {
+                if node.boolean {
+                    built += "true";
+                } else {
+                    built += "false";
+                }
+            } else if node.kind == JsonKind:::Number {
+                number: string! = NumberText(node);
+                built += number;
+                delete number;
+            } else if node.kind == JsonKind:::Text {
+                quoted: string! = QuotedText(texts[usize(node.textIndex)]);
+                built += quoted;
+                delete quoted;
+            } else if node.childCount == 0 {
+                if node.kind == JsonKind:::List {
+                    built += "[]";
+                } else {
+                    built += "{}";
+                }
+            } else if node.kind == JsonKind:::List && IsNumberList(index) {
+                built += "[";
+                child~ u32 = node.firstChild;
+                while child != NO_NODE {
+                    if child != node.firstChild {
+                        built += ", ";
+                    }
+                    built = WriteInto(built!, child, depth);
+                    child = nodes[usize(child)].nextSibling;
+                }
+                built += "]";
+            } else {
+                isObject: bool = node.kind == JsonKind:::Object;
+                if isObject {
+                    built += "{\n";
+                } else {
+                    built += "[\n";
+                }
+                child~ u32 = node.firstChild;
+                while child != NO_NODE {
+                    built = Indent(built!, depth + 1);
+                    if isObject {
+                        key: string! = QuotedText(texts[usize(nodes[usize(child)].keyIndex)]);
+                        built += key;
+                        built += ": ";
+                        delete key;
+                    }
+                    built = WriteInto(built!, child, depth + 1);
+                    next: u32 = nodes[usize(child)].nextSibling;
+                    if next != NO_NODE {
+                        built += ",\n";
+                    } else {
+                        built += "\n";
+                    }
+                    child = next;
+                }
+                built = Indent(built!, depth);
+                if isObject {
+                    built += "}";
+                } else {
+                    built += "]";
+                }
+            }
+            return built!;
+        }
+
+        Fail~: (source: string, message: string) -> void {
+            if problem != null {
+                return;
+            }
+            line~ usize = 1;
+            column~ usize = 1;
+            for index~ usize = 0; index < position && index < source.length(); index++ {
+                if source.byteAt(index) == 10 {
+                    line += 1;
+                    column = 1;
+                } else {
+                    column += 1;
+                }
+            }
+            delete problem;
+            problem = `${message} at line ${line} column ${column}`;
+        }
+
+        AtEnd :: (source: string) -> bool {
+            return position >= source.length();
+        }
+
+        Peek :: (source: string) -> u8 {
+            if position >= source.length() {
+                return 0;
+            }
+            return source.byteAt(position);
+        }
+
+        SkipWhitespace~: (source: string) -> void {
+            while position < source.length() && IsWhitespace(source.byteAt(position)) {
+                position += 1;
+            }
+        }
+
+        Expect~: (source: string, word: string) -> bool {
+            if position + word.length() > source.length() || source.substring(position, word.length()) != word {
+                Fail(source, "expected value");
+                return false;
+            }
+            position += word.length();
+            return true;
+        }
+
+        ParseDocument~: (source: string) -> bool {
+            position = 0;
+            SkipWhitespace(source);
+            parsed: u32? = ParseValue(source, 0);
+            guard value := parsed return false;
+            SkipWhitespace(source);
+            if !AtEnd(source) {
+                Fail(source, "trailing characters");
+                return false;
+            }
+            root = value;
+            return true;
+        }
+
+        ParseValue~: (source: string, depth: u32) -> u32? {
+            if depth > MAX_DEPTH {
+                Fail(source, "recursion limit exceeded");
+                return null;
+            }
+            byte: u8 = Peek(source);
+            if byte == 123 {
+                return ParseObject(source, depth);
+            }
+            if byte == 91 {
+                return ParseList(source, depth);
+            }
+            if byte == 34 {
+                parsedText: string!? = ParseText(source);
+                if text := parsedText {
+                    index: u32 = NewText(text);
+                    delete parsedText;
+                    return index;
+                }
+                return null;
+            }
+            if byte == 116 {
+                if Expect(source, "true") {
+                    return NewBoolean(true);
+                }
+                return null;
+            }
+            if byte == 102 {
+                if Expect(source, "false") {
+                    return NewBoolean(false);
+                }
+                return null;
+            }
+            if byte == 110 {
+                if Expect(source, "null") {
+                    return NewNull();
+                }
+                return null;
+            }
+            if byte == 45 || IsDigit(byte) {
+                return ParseNumber(source);
+            }
+            if AtEnd(source) {
+                Fail(source, "EOF while parsing a value");
+            } else {
+                Fail(source, "expected value");
+            }
+            return null;
+        }
+
+        ParseDigits~: (source: string) -> usize {
+            start: usize = position;
+            while position < source.length() && IsDigit(source.byteAt(position)) {
+                position += 1;
+            }
+            return position - start;
+        }
+
+        ParseNumber~: (source: string) -> u32? {
+            start: usize = position;
+            negative: bool = Peek(source) == 45;
+            if negative {
+                position += 1;
+            }
+            integerStart: usize = position;
+            integerDigits: usize = ParseDigits(source);
+            if integerDigits == 0 {
+                Fail(source, "invalid number");
+                return null;
+            }
+            if integerDigits > 1 && source.byteAt(integerStart) == 48 {
+                Fail(source, "invalid number");
+                return null;
+            }
+            isInteger~ bool = true;
+            if Peek(source) == 46 {
+                isInteger = false;
+                position += 1;
+                if ParseDigits(source) == 0 {
+                    Fail(source, "invalid number");
+                    return null;
+                }
+            }
+            if Peek(source) == 101 || Peek(source) == 69 {
+                isInteger = false;
+                position += 1;
+                if Peek(source) == 43 || Peek(source) == 45 {
+                    position += 1;
+                }
+                if ParseDigits(source) == 0 {
+                    Fail(source, "invalid number");
+                    return null;
+                }
+            }
+            if isInteger && integerDigits <= 18 {
+                magnitude~ i64 = 0;
+                for index~ usize = integerStart; index < position; index++ {
+                    magnitude = magnitude * 10 + i64(source.byteAt(index)) - 48;
+                }
+                if negative {
+                    return NewInteger(-magnitude);
+                }
+                return NewInteger(magnitude);
+            }
+            numberText: string! = `${source.substring(start, position - start)}`;
+            value~ f64 = 0.0f;
+            unsafe {
+                value = lantern:::cnumbers:::strtod(numberText, null);
+            }
+            delete numberText;
+            return NewNumber(value);
+        }
+
+        ParseHexQuad~: (source: string) -> u32? {
+            if position + 4 > source.length() {
+                Fail(source, "EOF while parsing a string");
+                return null;
+            }
+            value~ u32 = 0;
+            for digit~ usize = 0; digit < 4; digit++ {
+                parsedDigit: u32? = HexDigitValue(source.byteAt(position));
+                guard digitValue := parsedDigit return FailWithNull(source, "invalid escape");
+                value = value * 16 + digitValue;
+                position += 1;
+            }
+            return value;
+        }
+
+        FailWithNull~: (source: string, message: string) -> u32? {
+            Fail(source, message);
+            return null;
+        }
+
+        ParseText~: (source: string) -> string!? {
+            position += 1;
+            text~ string! = "" + "";
+            while true {
+                if AtEnd(source) {
+                    Fail(source, "EOF while parsing a string");
+                    delete text;
+                    return null;
+                }
+                byte: u8 = source.byteAt(position);
+                position += 1;
+                if byte == 34 {
+                    return text!;
+                }
+                if byte < 32 {
+                    position -= 1;
+                    Fail(source, "control character found while parsing a string");
+                    delete text;
+                    return null;
+                }
+                if byte != 92 {
+                    text.appendByte(byte);
+                    continue;
+                }
+                escape: u8 = Peek(source);
+                position += 1;
+                if escape == 34 || escape == 92 || escape == 47 {
+                    text.appendByte(escape);
+                } else if escape == 98 {
+                    text.appendByte(8);
+                } else if escape == 102 {
+                    text.appendByte(12);
+                } else if escape == 110 {
+                    text.appendByte(10);
+                } else if escape == 114 {
+                    text.appendByte(13);
+                } else if escape == 116 {
+                    text.appendByte(9);
+                } else if escape == 117 {
+                    parsedUnit: u32? = ParseHexQuad(source);
+                    if parsedUnit == null {
+                        delete text;
+                        return null;
+                    }
+                    unit: u32 = parsedUnit ?? 0;
+                    codePoint~ u32 = unit;
+                    if unit >= 55296 && unit < 56320 {
+                        if Peek(source) != 92 || position + 1 >= source.length() || source.byteAt(position + 1) != 117 {
+                            Fail(source, "lone leading surrogate in hex escape");
+                            delete text;
+                            return null;
+                        }
+                        position += 2;
+                        parsedLow: u32? = ParseHexQuad(source);
+                        if parsedLow == null {
+                            delete text;
+                            return null;
+                        }
+                        low: u32 = parsedLow ?? 0;
+                        if low < 56320 || low >= 57344 {
+                            Fail(source, "invalid unicode code point");
+                            delete text;
+                            return null;
+                        }
+                        codePoint = 65536 + ((unit - 55296) << 10) + (low - 56320);
+                    } else if unit >= 56320 && unit < 57344 {
+                        Fail(source, "invalid unicode code point");
+                        delete text;
+                        return null;
+                    }
+                    text = AppendCodePoint(text!, codePoint);
+                } else {
+                    position -= 1;
+                    Fail(source, "invalid escape");
+                    delete text;
+                    return null;
+                }
+            }
+            delete text;
+            return null;
+        }
+
+        ParseList~: (source: string, depth: u32) -> u32? {
+            position += 1;
+            list: u32 = NewList();
+            SkipWhitespace(source);
+            if Peek(source) == 93 {
+                position += 1;
+                return list;
+            }
+            while true {
+                SkipWhitespace(source);
+                parsed: u32? = ParseValue(source, depth + 1);
+                guard item := parsed return null;
+                Append(list, item);
+                SkipWhitespace(source);
+                byte: u8 = Peek(source);
+                position += 1;
+                if byte == 93 {
+                    return list;
+                }
+                if byte != 44 {
+                    position -= 1;
+                    Fail(source, "expected `,` or `]`");
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        ParseObject~: (source: string, depth: u32) -> u32? {
+            position += 1;
+            object: u32 = NewObject();
+            SkipWhitespace(source);
+            if Peek(source) == 125 {
+                position += 1;
+                return object;
+            }
+            while true {
+                SkipWhitespace(source);
+                if Peek(source) != 34 {
+                    Fail(source, "key must be a string");
+                    return null;
+                }
+                parsedKey: string!? = ParseText(source);
+                guard key := parsedKey return null;
+                SkipWhitespace(source);
+                if Peek(source) != 58 {
+                    Fail(source, "expected `:`");
+                    delete parsedKey;
+                    return null;
+                }
+                position += 1;
+                SkipWhitespace(source);
+                parsed: u32? = ParseValue(source, depth + 1);
+                if member := parsed {
+                    Set(object, key, member);
+                    delete parsedKey;
+                } else {
+                    delete parsedKey;
+                    return null;
+                }
+                SkipWhitespace(source);
+                byte: u8 = Peek(source);
+                position += 1;
+                if byte == 125 {
+                    return object;
+                }
+                if byte != 44 {
+                    position -= 1;
+                    Fail(source, "expected `,` or `}`");
+                    return null;
+                }
+            }
+            return null;
+        }
+    }
+
+    Parse :: (source: string) -> Result<JsonDocument*!, string!> {
+        document := new JsonDocument();
+        if document->ParseDocument(source) {
+            return Result<JsonDocument*!, string!>:::Ok(document!);
+        }
+        failure~ string! = "" + "";
+        if text := document->problem {
+            failure += text;
+        }
+        delete document;
+        return Result<JsonDocument*!, string!>:::Err(failure!);
+    }
+}

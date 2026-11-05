@@ -14,7 +14,7 @@ the SDL GPU backend (milestone L3), described under "Layout".
 - `nox` on `PATH`, from [nox-systems-language](https://github.com/fearlessgamedev/nox-systems-language) on `proto`:
   `cmake -B build -G Ninja && cmake --build build && cmake --install build --component nox --prefix ~/.local`.
 - `mist` on `PATH`, from [mist-package-manager](https://github.com/fearlessgamedev/mist-package-manager):
-  `cmake -B build -G Ninja && cmake --build build && cmake --install build --component mist --prefix ~/.local`.
+  `git submodule update --init --recursive && cmake -B build -G Ninja && cmake --build build && cmake --install build --component mist --prefix ~/.local`.
 - SDL3 3.2 or later.
 - A checkout of [nyx-scripting-language](https://github.com/fearlessgamedev/nyx-scripting-language) on `proto` beside
   this repository (`../nyx-scripting-language`), or `NYX_SOURCE_DIR` naming one, for the Nyx binding.

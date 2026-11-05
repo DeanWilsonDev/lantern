@@ -1,0 +1,100 @@
+lantern:::world :: namespace {
+    WorldPiece :: class {
+    public:
+        entityIndex~ usize = 0;
+        key~ u64 = 0;
+        parent~ u64? = null;
+        localMatrix~ Mat4 = Mat4 { };
+        worldMatrix~ Mat4 = Mat4 { };
+        mesh~ lantern:::renderer:::MeshData*!? = null;
+        tint~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f, a: 1.0f };
+        collider~ ColliderKind? = null;
+
+        WorldPiece~: () { }
+
+        !WorldPiece~: () {
+            delete mesh;
+        }
+
+        HasMesh :: () -> bool {
+            return mesh != null;
+        }
+
+        WorldTriangles :: () -> Array<lantern:::physics:::Triangle>! {
+            return TrianglesWith(worldMatrix);
+        }
+
+        LocalTriangles :: () -> Array<lantern:::physics:::Triangle>! {
+            return TrianglesWith(Mat4 { });
+        }
+
+        TrianglesWith :: (matrix: Mat4) -> Array<lantern:::physics:::Triangle>! {
+            triangles~ Array<lantern:::physics:::Triangle>! = [];
+            if shapeMesh := mesh {
+                meshTriangles: Array<lantern:::renderer:::Triangle>! = shapeMesh->Triangles();
+                for triangle in meshTriangles {
+                    triangles.push(lantern:::physics:::Triangle:::Create(
+                        lantern:::core:::TransformPoint3(matrix, triangle.first),
+                        lantern:::core:::TransformPoint3(matrix, triangle.second),
+                        lantern:::core:::TransformPoint3(matrix, triangle.third)));
+                }
+                delete meshTriangles;
+            }
+            return triangles!;
+        }
+    }
+
+    ShapeMesh :: (shape: Shape) -> lantern:::renderer:::MeshData*! {
+        if shape.kind == ShapeKind:::Box {
+            return lantern:::renderer:::BoxMesh(shape.halfExtents, true);
+        }
+        return lantern:::renderer:::Ramp(shape.width, shape.height, shape.length);
+    }
+
+    WorldMatrix :: (world: WorldFile*, entityIndex: usize) -> Mat4 {
+        chain~ Array<usize>! = [];
+        chain.push(entityIndex);
+        current~ u64? = world->entities[entityIndex]->parent;
+        while current != null && chain.length() <= world->entities.length() {
+            key: u64 = current ?? 0;
+            found: usize? = world->IndexOf(key);
+            guard parentIndex := found break;
+            chain.push(parentIndex);
+            current = world->entities[parentIndex]->parent;
+        }
+        matrix~ Mat4 = world->entities[chain[chain.length() - 1]]->transform.Matrix();
+        for step~ usize = chain.length() - 1; step > 0; step-- {
+            matrix = matrix * world->entities[chain[step - 1]]->transform.Matrix();
+        }
+        delete chain;
+        return matrix;
+    }
+
+    WorldMatrices :: (world: WorldFile*) -> Array<Mat4>! {
+        matrices~ Array<Mat4>! = [];
+        for index~ usize = 0; index < world->entities.length(); index++ {
+            matrices.push(WorldMatrix(world, index));
+        }
+        return matrices!;
+    }
+
+    BuildPieces :: (world: WorldFile*) -> Array<WorldPiece*!>! {
+        pieces~ Array<WorldPiece*!>! = [];
+        for index~ usize = 0; index < world->entities.length(); index++ {
+            entity: WorldEntity* = world->entities[index];
+            piece := new WorldPiece();
+            piece->entityIndex = index;
+            piece->key = entity->id;
+            piece->parent = entity->parent;
+            piece->localMatrix = entity->transform.Matrix();
+            piece->worldMatrix = WorldMatrix(world, index);
+            if shape := entity->shape {
+                piece->mesh = ShapeMesh(shape);
+            }
+            piece->tint = entity->TintColor();
+            piece->collider = entity->collider;
+            pieces.push(piece!);
+        }
+        return pieces!;
+    }
+}
