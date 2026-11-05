@@ -1,15 +1,32 @@
 AssetCard :: import AssetCard;
-EditorUi :: import EditorUi;
+EditorModel :: import EditorModel;
 TemplateItem :: import TemplateItem;
 
+AssetBrowserUi :: namespace {
+    InitialPreview :: () -> string {
+        current := editorPreviewTemplate();
+        guard current == "" return current;
+        templates := EditorModel:::Templates();
+        guard templates.length() > 0 return "";
+        editorSetPreviewTemplate(templates[0].id);
+        return templates[0].id;
+    }
+}
+
 AssetBrowser :: () -> Penumbra:::Component {
+    @signal preview~ string = AssetBrowserUi:::InitialPreview();
+    Preview := (templateId: string) -> void {
+        preview = templateId;
+        editorSetPreviewTemplate(templateId);
+    };
     return (
         <frame class="asset-browser">
             <scroll ref="asset-scroll" class="asset-scroll" direction="horizontal" horizontalWheelStep={80.0f}>
                 <frame class="asset-cards">
                     <slot>
-                        !{EditorUi:::App().Templates().map((item: TemplateItem) ->
-                            <AssetCard key={item.id} item={item} />)}
+                        !{EditorModel:::Templates().map((item: TemplateItem) ->
+                            <AssetCard key={item.id} item={item} selected={preview == item.id}
+                                       onSelect={() -> Preview(item.id)} />)}
                     </slot>
                 </frame>
             </scroll>
@@ -17,10 +34,10 @@ AssetBrowser :: () -> Penumbra:::Component {
                 <viewport ref="asset-preview-viewport" class="asset-preview-viewport" renderer="preview" />
                 <frame class="asset-preview-actions">
                     <slot>
-                        !{<text class="asset-preview-title">{EditorUi:::App().PreviewTemplate()}</text>}
+                        !{<text class="asset-preview-title">{preview}</text>}
                     </slot>
                     <frame class="small-button-accent"
-                           onRelease={() -> EditorUi:::App().AddEntity(EditorUi:::App().PreviewTemplate())}>
+                           onRelease={() -> editorAddEntity(preview)}>
                         <icon class="small-button-icon-accent" icon="plus" size={12.0f} />
                         <text class="small-button-label-accent">Add to world</text>
                     </frame>

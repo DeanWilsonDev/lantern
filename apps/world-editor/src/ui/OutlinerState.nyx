@@ -1,0 +1,66 @@
+EditorModel :: import EditorModel;
+
+OutlinerState :: class {
+public:
+    @signal filter~ string = "";
+    @signal collapsed~ Dictionary<i64, bool> = {};
+    @signal dragging~ bool = false;
+    @signal dropTarget~ string = "";
+
+    SetFilter~: (text: string) -> void {
+        this.filter = text;
+    }
+
+    ToggleExpanded~: (id: i64) -> void {
+        next~ Dictionary<i64, bool> = this.collapsed;
+        if next.containsKey(id) {
+            next.remove(id);
+        } else {
+            next[id] = true;
+        }
+        this.collapsed = next;
+    }
+
+    BeginDrag~: () -> void {
+        this.dragging = true;
+    }
+
+    EndDrag~: () -> void {
+        this.dragging = false;
+        this.dropTarget = "";
+    }
+
+    EnterDropTarget~: (target: string) -> void {
+        this.dropTarget = target;
+    }
+
+    LeaveDropTarget~: (target: string) -> void {
+        if this.dropTarget == target {
+            this.dropTarget = "";
+        }
+    }
+
+    DropOnEntity:: (payload: string, parent: i64) -> void {
+        child := DraggedEntity(payload);
+        guard child != 0 && child != parent return;
+        editorSetParent(child, parent);
+    }
+
+    DropBeforeEntity:: (payload: string, sibling: i64) -> void {
+        child := DraggedEntity(payload);
+        guard child != 0 && child != sibling return;
+        editorMoveBefore(child, sibling);
+    }
+
+    DraggedEntity :: (payload: string) -> i64 {
+        guard payload.startsWith("entity:") return 0;
+        text := payload.substring(7, payload.length() - 7);
+        value~ i64 = 0;
+        for index~ i32 = 0; index < text.length(); index++ {
+            digit := EditorModel:::HexDigit(text, index);
+            guard digit < 10 return 0;
+            value = value * 10 + i64(digit);
+        }
+        return value;
+    }
+}

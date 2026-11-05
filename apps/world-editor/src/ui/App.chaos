@@ -1,7 +1,8 @@
 BottomPanel :: import BottomPanel;
 CommandPalette :: import CommandPalette;
 ConfirmDialog :: import ConfirmDialog;
-EditorUi :: import EditorUi;
+Editor :: import Editor;
+EditorMenus :: import EditorMenus;
 HelpDialog :: import HelpDialog;
 Inspector :: import Inspector;
 MenuBar :: import MenuBar;
@@ -13,10 +14,12 @@ Toolbar :: import Toolbar;
 ViewportPane :: import ViewportPane;
 
 App :: () -> Penumbra:::Component {
+    @provide editor~ Editor = new Editor();
+    OnTick := (deltaSeconds: f32) -> void { editor.Tick(deltaSeconds); };
     return (
         <frame ref="app-root" class="app-root"
-               onKeyDown={(key: string) -> EditorUi:::App().HandleKey(key)}
-               onKeyUp={(key: string) -> EditorUi:::App().HandleKeyUp(key)}>
+               onKeyDown={(key: string) -> editor.keyboard.KeyDown(key)}
+               onKeyUp={(key: string) -> editor.keyboard.KeyUp(key)}>
             <MenuBar />
             <Toolbar />
             <split ref="root-split" class="app-content" axis="horizontal" ratio={0.18f} minPaneSize={180.0f}
@@ -38,30 +41,32 @@ App :: () -> Penumbra:::Component {
             </split>
             <StatusBar />
             <slot>
-                !{EditorUi:::App().OpenMenu() != ""
-                    ? <MenuPopup x={EditorUi:::App().MenuX()} y={EditorUi:::App().MenuBarHeight()}
-                                 entries={EditorUi:::App().MenuEntries(EditorUi:::App().OpenMenu())}
-                                 onDismiss={() -> EditorUi:::App().CloseMenu()} />
+                !{editor.overlays.openMenu != ""
+                    ? <MenuPopup x={editor.overlays.menuX} y={EditorMenus:::BAR_HEIGHT}
+                                 entries={EditorMenus:::Entries(editor.overlays.openMenu, editor.document.toolbar,
+                                                                editor.document.recentFiles)}
+                                 onDismiss={() -> editor.overlays.CloseMenu()} />
                     : <frame class="nothing" />}
             </slot>
             <slot>
-                !{EditorUi:::App().ContextOpen()
-                    ? <MenuPopup x={EditorUi:::App().ContextX()} y={EditorUi:::App().ContextY()}
-                                 entries={EditorUi:::App().ContextEntries()}
-                                 onDismiss={() -> EditorUi:::App().CloseContextMenu()} />
+                !{editor.overlays.contextOpen
+                    ? <MenuPopup x={editor.overlays.contextX} y={editor.overlays.contextY}
+                                 entries={EditorMenus:::ContextEntries(editorIsHidden(editor.overlays.contextEntity),
+                                                                       editorIsLocked(editor.overlays.contextEntity))}
+                                 onDismiss={() -> editor.overlays.CloseContextMenu()} />
                     : <frame class="nothing" />}
             </slot>
             <slot>
-                !{EditorUi:::App().PaletteOpen() ? <CommandPalette /> : <frame class="nothing" />}
+                !{editor.overlays.paletteOpen ? <CommandPalette /> : <frame class="nothing" />}
             </slot>
             <slot>
-                !{EditorUi:::App().SettingsOpen() ? <SettingsDialog /> : <frame class="nothing" />}
+                !{editor.overlays.settingsOpen ? <SettingsDialog /> : <frame class="nothing" />}
             </slot>
             <slot>
-                !{EditorUi:::App().ConfirmCommand() != "" ? <ConfirmDialog /> : <frame class="nothing" />}
+                !{editor.overlays.confirmCommand != "" ? <ConfirmDialog /> : <frame class="nothing" />}
             </slot>
             <slot>
-                !{EditorUi:::App().HelpPage() != "" ? <HelpDialog /> : <frame class="nothing" />}
+                !{editor.overlays.helpPage != "" ? <HelpDialog /> : <frame class="nothing" />}
             </slot>
         </frame>
     );

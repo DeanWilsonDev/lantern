@@ -1,6 +1,7 @@
+Editor :: import Editor;
 EditorModel :: import EditorModel;
-EditorUi :: import EditorUi;
 OutlineRowItem :: import OutlineRowItem;
+OutlinerState :: import OutlinerState;
 
 OutlinerRowUi :: namespace {
     INDENT_PER_DEPTH: f32 : 14.0f;
@@ -9,8 +10,8 @@ OutlinerRowUi :: namespace {
         return f32(item.depth) * INDENT_PER_DEPTH;
     }
 
-    RowClass :: (item: OutlineRowItem) -> string {
-        if EditorUi:::App().OutlineDropTarget() == RowTarget(item) {
+    RowClass :: (item: OutlineRowItem, outliner: OutlinerState) -> string {
+        if outliner.dropTarget == RowTarget(item) {
             return "outliner-row-drop";
         }
         return item.selected ? "outliner-row-selected" : "outliner-row";
@@ -24,8 +25,8 @@ OutlinerRowUi :: namespace {
         return `gap:${item.id}`;
     }
 
-    GapLineClass :: (item: OutlineRowItem) -> string {
-        return EditorUi:::App().OutlineDropTarget() == GapTarget(item) ? "outliner-gap-line-active" : "outliner-gap-line";
+    GapLineClass :: (item: OutlineRowItem, outliner: OutlinerState) -> string {
+        return outliner.dropTarget == GapTarget(item) ? "outliner-gap-line-active" : "outliner-gap-line";
     }
 
     NameClass :: (item: OutlineRowItem) -> string {
@@ -42,24 +43,26 @@ OutlinerRowProps :: data {
 }
 
 OutlinerRow :: (props: OutlinerRowProps) -> Penumbra:::Component {
+    @context editor~ Editor;
+    @context outliner~ OutlinerState;
     return (
-        <frame ref={`outline-${props.item.key}`} class={OutlinerRowUi:::RowClass(props.item)}
+        <frame ref={`outline-${props.item.key}`} class={OutlinerRowUi:::RowClass(props.item, outliner)}
                dragPayload={`entity:${props.item.id}`}
-               onRelease={() -> EditorUi:::App().SelectEntity(props.item.id)}
-               onHover={() -> EditorUi:::App().HoverEntity(props.item.id)}
-               onHoverEnd={() -> EditorUi:::App().UnhoverEntity(props.item.id)}
-               onDragStart={() -> EditorUi:::App().BeginOutlineDrag()}
-               onDragEnd={() -> EditorUi:::App().EndOutlineDrag()}
-               onDragEnter={() -> EditorUi:::App().EnterOutlineDropTarget(OutlinerRowUi:::RowTarget(props.item))}
-               onDragLeave={() -> EditorUi:::App().LeaveOutlineDropTarget(OutlinerRowUi:::RowTarget(props.item))}
-               onDrop={(payload: string) -> EditorUi:::App().DropOnEntity(payload, props.item.id)}>
+               onRelease={() -> editor.selection.Select(props.item.id)}
+               onHover={() -> editor.selection.Hover(props.item.id)}
+               onHoverEnd={() -> editor.selection.Unhover(props.item.id)}
+               onDragStart={() -> outliner.BeginDrag()}
+               onDragEnd={() -> outliner.EndDrag()}
+               onDragEnter={() -> outliner.EnterDropTarget(OutlinerRowUi:::RowTarget(props.item))}
+               onDragLeave={() -> outliner.LeaveDropTarget(OutlinerRowUi:::RowTarget(props.item))}
+               onDrop={(payload: string) -> outliner.DropOnEntity(payload, props.item.id)}>
             <slot>
-                !{EditorUi:::App().OutlineDragging()
+                !{outliner.dragging
                     ? <frame class="outliner-gap"
-                             onDragEnter={() -> EditorUi:::App().EnterOutlineDropTarget(OutlinerRowUi:::GapTarget(props.item))}
-                             onDragLeave={() -> EditorUi:::App().LeaveOutlineDropTarget(OutlinerRowUi:::GapTarget(props.item))}
-                             onDrop={(payload: string) -> EditorUi:::App().DropBeforeEntity(payload, props.item.id)}>
-                          <frame class={OutlinerRowUi:::GapLineClass(props.item)} />
+                             onDragEnter={() -> outliner.EnterDropTarget(OutlinerRowUi:::GapTarget(props.item))}
+                             onDragLeave={() -> outliner.LeaveDropTarget(OutlinerRowUi:::GapTarget(props.item))}
+                             onDrop={(payload: string) -> outliner.DropBeforeEntity(payload, props.item.id)}>
+                          <frame class={OutlinerRowUi:::GapLineClass(props.item, outliner)} />
                       </frame>
                     : null}
             </slot>
@@ -67,7 +70,7 @@ OutlinerRow :: (props: OutlinerRowProps) -> Penumbra:::Component {
             <frame class="outliner-row-indent" indent={OutlinerRowUi:::Indent(props.item)} />
             <slot>
                 !{props.item.hasChildren
-                    ? <frame class="outliner-chevron" onRelease={() -> EditorUi:::App().ToggleExpanded(props.item.id)}>
+                    ? <frame class="outliner-chevron" onRelease={() -> outliner.ToggleExpanded(props.item.id)}>
                           <icon class="outliner-chevron-icon" icon={OutlinerRowUi:::ChevronIcon(props.item)} size={10.0f} />
                       </frame>
                     : <frame class="outliner-chevron-blank" />}
@@ -76,11 +79,11 @@ OutlinerRow :: (props: OutlinerRowProps) -> Penumbra:::Component {
             <text class={OutlinerRowUi:::NameClass(props.item)}>{props.item.name}</text>
             <text class="outliner-row-kind">{props.item.kind}</text>
             <frame class={props.item.hidden ? "outliner-toggle-on" : "outliner-toggle"}
-                   onRelease={() -> EditorUi:::App().SetEntityHidden(props.item.id, !props.item.hidden)}>
+                   onRelease={() -> editorSetHidden(props.item.id, !props.item.hidden)}>
                 <icon class="outliner-toggle-icon" icon={props.item.hidden ? "eye-off" : "eye"} size={12.0f} />
             </frame>
             <frame class={props.item.locked ? "outliner-toggle-on" : "outliner-toggle"}
-                   onRelease={() -> EditorUi:::App().SetEntityLocked(props.item.id, !props.item.locked)}>
+                   onRelease={() -> editorSetLocked(props.item.id, !props.item.locked)}>
                 <icon class="outliner-toggle-icon" icon={props.item.locked ? "lock" : "unlock"} size={12.0f} />
             </frame>
         </frame>
