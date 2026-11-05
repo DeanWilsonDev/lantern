@@ -842,11 +842,13 @@ gives it more than one responsibility.
   with modifiers, the hovered entity, dropping a template on the viewport) and `EditorLayout` (the bottom panel).
   Their state is `@signal` fields, so a slot that reads one re-renders when it changes.
 - **How components reach them.** `App.chaos` declares `@provide editor~ Editor = new Editor();` and its
-  `OnTick` local calls `editor.Tick`. Every component that needs a service reads
-  `@context editor~ Editor = new Editor();`. The default is never used while App provides one, and the
-  services' constructors have no side effects, so building it is harmless. Chaos's required `@context` (no
-  initialiser, an error when nothing provides it) will replace the defaults once Nyx lets a decorator assign a
-  deferred local (Chaos and Nyx board cards).
+  `OnTick` local calls `editor.Tick`. Every component that needs a service reads `@context editor~ Editor;`,
+  Chaos's required context: it takes App's `Editor`, and Chaos reports CHA0620 if a component renders where
+  nothing provides one. An earlier version gave each `@context` a default (`= new Editor()`), which isn't
+  harmless: a default is evaluated on every render before the provided value replaces it, so every component
+  render built a whole `Editor` (about 25 host calls). That needed Nyx to let a decorator assign a deferred
+  local (nyx-scripting-language #4) and Chaos's required `@context` (chaos-ui-framework #4). `OutlinerRow` and
+  `ConsolePanel` read their panel's `OutlinerState` and `ConsoleFilters` the same way.
 - **Panel state stays in the panel**, or in a small object it provides to its rows: `OutlinerState`
   (filter, collapsed rows, the drag and its drop target), `ConsoleFilters` (provided by `BottomPanel`, so the
   filters survive switching tabs), the inspector's collapsed groups and new-property name, the asset preview,
