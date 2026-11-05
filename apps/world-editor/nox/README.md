@@ -26,6 +26,9 @@ functions from `lantern:::editorbackend`, and draws into an SDL3 window.
 nyx-proto host surface manifest instead of opening the window. `LANTERN_MAX_FRAMES` stops it after
 that many frames.
 
+The host answers the editor's title, size, text input and file dialog requests. It leaves out font
+reloads: the editor never asks for one, and the fonts take the window's DPI scale every frame.
+
 ## What's here
 
 | File | What it does |
