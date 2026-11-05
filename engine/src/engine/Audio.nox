@@ -1,0 +1,117 @@
+lantern:::engine :: namespace {
+    TARGET_QUEUED_SECONDS: f32 : 0.06f;
+    FALLBACK_SAMPLE_RATE: u32 : 48000;
+
+    AudioStats :: struct {
+        hasDevice~ bool = false;
+        activeVoices~ usize = 0;
+        queuedMilliseconds~ f32 = 0.0f;
+        underrunCount~ u32 = 0;
+    }
+
+    AudioSystem :: class {
+    public:
+        mixer~ lantern:::audio:::Mixer*!;
+        sink~ lantern:::platform:::AudioSink*!?;
+        sounds~ lantern:::audio:::SoundBank*!;
+        underrunCount~ u32 = 0;
+        hasPushedAudio~ bool = false;
+
+        AudioSystem~: (deviceSink: lantern:::platform:::AudioSink*!?) {
+            sampleRate~ u32 = FALLBACK_SAMPLE_RATE;
+            if device := deviceSink {
+                sampleRate = device->SampleRate();
+            }
+            mixer = new lantern:::audio:::Mixer(sampleRate);
+            sink = deviceSink!;
+            sounds = new lantern:::audio:::SoundBank();
+        }
+
+        !AudioSystem~: () {
+            delete mixer;
+            delete sink;
+            delete sounds;
+        }
+
+        LoadSound~: (name: string, path: string) -> lantern:::core:::Handle<lantern:::audio:::SoundTag>? {
+            when lantern:::audio:::LoadWav(path) {
+                Result:::Ok(sound) -> {
+                    handle: lantern:::core:::Handle<lantern:::audio:::SoundTag> = mixer->AddSound(sound);
+                    delete sound;
+                    sounds->Insert(name, handle);
+                    return handle;
+                },
+                Result:::Err(failure) -> {
+                    message: string! = `sound '${name}' unavailable: ${failure}`;
+                    lantern:::core:::LogWarn("audio", message);
+                    delete message;
+                    delete failure;
+                    return null;
+                }
+            }
+        }
+
+        HasSound :: (name: string) -> bool {
+            return sounds->Get(name) != null;
+        }
+
+        Play~: (name: string, volume: f32) -> void {
+            if sound := sounds->Get(name) {
+                mixer->Play(sound, volume);
+            }
+        }
+
+        PlayMusic~: (name: string) -> void {
+            if sound := sounds->Get(name) {
+                mixer->PlayMusic(sound);
+            }
+        }
+
+        StopMusic~: () -> void {
+            mixer->StopMusic();
+        }
+
+        Volumes :: () -> lantern:::audio:::Volumes {
+            return mixer->volumes;
+        }
+
+        SetVolumes~: (volumes: lantern:::audio:::Volumes) -> void {
+            mixer->volumes = volumes;
+        }
+
+        Update~: () -> void {
+            if sink == null {
+                return;
+            }
+            targetFrames: usize = usize(TARGET_QUEUED_SECONDS * f32(mixer->SampleRate()));
+            queuedFrames: usize = QueuedFrames();
+            if queuedFrames == 0 && hasPushedAudio {
+                underrunCount += 1;
+            }
+            if queuedFrames >= targetFrames {
+                return;
+            }
+            mixed: Array<f32>! = mixer->Mix(targetFrames - queuedFrames);
+            if device ~= sink {
+                device->PushFrames(mixed);
+            }
+            delete mixed;
+            hasPushedAudio = true;
+        }
+
+        QueuedFrames :: () -> usize {
+            guard device := sink return 0;
+            return device->QueuedFrames();
+        }
+
+        Stats :: () -> AudioStats {
+            queuedFrames: usize = QueuedFrames();
+            return AudioStats {
+                hasDevice: sink != null,
+                activeVoices: mixer->ActiveVoiceCount(),
+                queuedMilliseconds: f32(queuedFrames) * 1000.0f / f32(mixer->SampleRate()),
+                underrunCount: underrunCount
+            };
+        }
+    }
+}

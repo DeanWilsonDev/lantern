@@ -1,0 +1,214 @@
+lantern:::audio :: namespace {
+    SoundData :: class {
+    public:
+        sampleRate~ u32 = 0;
+        samples~ Array<f32>! = [];
+
+        SoundData~: (rate: u32) {
+            sampleRate = rate;
+        }
+
+        !SoundData~: () {
+            delete samples;
+        }
+
+        FrameCount :: () -> usize {
+            return samples.length() / 2;
+        }
+
+        DurationSeconds :: () -> f32 {
+            return f32(FrameCount()) / f32(sampleRate);
+        }
+
+        Copy :: () -> SoundData*! {
+            copied := new SoundData(sampleRate);
+            for sample in samples {
+                copied->samples.push(sample);
+            }
+            return copied!;
+        }
+
+        Resampled :: (targetRate: u32) -> SoundData*! {
+            if targetRate == sampleRate || FrameCount() == 0 {
+                copied := Copy();
+                copied->sampleRate = targetRate;
+                return copied!;
+            }
+            sourceFrames: usize = FrameCount();
+            targetFrames: usize = usize(u64(sourceFrames) * u64(targetRate) / u64(sampleRate));
+            ratio: f64 = f64(sampleRate) / f64(targetRate);
+            resampled := new SoundData(targetRate);
+            for frame~ usize = 0; frame < targetFrames; frame++ {
+                position: f64 = f64(frame) * ratio;
+                index: usize = usize(position);
+                next~ usize = index + 1;
+                if next > sourceFrames - 1 {
+                    next = sourceFrames - 1;
+                }
+                amount: f32 = f32(position - f64(index));
+                for channel~ usize = 0; channel < 2; channel++ {
+                    first: f32 = samples[index * 2 + channel];
+                    second: f32 = samples[next * 2 + channel];
+                    resampled->samples.push(first + (second - first) * amount);
+                }
+            }
+            return resampled!;
+        }
+    }
+
+    ReadU16 :: (bytes: Array<u8>, offset: usize) -> u32? {
+        if offset + 2 > bytes.length() {
+            return null;
+        }
+        return u32(bytes[offset]) | (u32(bytes[offset + 1]) << 8);
+    }
+
+    ReadU32 :: (bytes: Array<u8>, offset: usize) -> u32? {
+        if offset + 4 > bytes.length() {
+            return null;
+        }
+        return u32(bytes[offset]) | (u32(bytes[offset + 1]) << 8) | (u32(bytes[offset + 2]) << 16) | (u32(bytes[offset + 3]) << 24);
+    }
+
+    HasTag :: (bytes: Array<u8>, offset: usize, tag: string) -> bool {
+        if offset + 4 > bytes.length() {
+            return false;
+        }
+        for index~ usize = 0; index < 4; index++ {
+            if bytes[offset + index] != tag.byteAt(index) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    SignedSample :: (low: u8, high: u8) -> f32 {
+        bits: i32 = i32(low) | (i32(high) << 8);
+        signed~ i32 = bits;
+        if bits >= 32768 {
+            signed = bits - 65536;
+        }
+        return f32(signed) / 32768.0f;
+    }
+
+    WavFormat :: struct {
+        tag~ u32 = 0;
+        channels~ u32 = 0;
+        sampleRate~ u32 = 0;
+        bits~ u32 = 0;
+    }
+
+    WavFailure :: (message: string) -> Result<SoundData*!, string!> {
+        return Result<SoundData*!, string!>:::Err(`${message}`);
+    }
+
+    DecodeWav :: (bytes: Array<u8>) -> Result<SoundData*!, string!> {
+        if !HasTag(bytes, 0, "RIFF") || !HasTag(bytes, 8, "WAVE") {
+            return WavFailure("not a RIFF/WAVE file");
+        }
+        offset~ usize = 12;
+        format~ WavFormat? = null;
+        while offset + 8 <= bytes.length() {
+            guard chunkSize := ReadU32(bytes, offset + 4) return WavFailure("truncated chunk header");
+            size: usize = usize(chunkSize);
+            bodyStart: usize = offset + 8;
+            if bodyStart + size > bytes.length() {
+                return WavFailure("truncated chunk");
+            }
+            if HasTag(bytes, offset, "fmt ") {
+                if size < 16 {
+                    return WavFailure("short fmt chunk");
+                }
+                guard tag := ReadU16(bytes, bodyStart) return WavFailure("short fmt chunk");
+                guard channels := ReadU16(bytes, bodyStart + 2) return WavFailure("short fmt chunk");
+                guard rate := ReadU32(bytes, bodyStart + 4) return WavFailure("short fmt chunk");
+                guard bits := ReadU16(bytes, bodyStart + 14) return WavFailure("short fmt chunk");
+                format = WavFormat { tag: tag, channels: channels, sampleRate: rate, bits: bits };
+            } else if HasTag(bytes, offset, "data") {
+                guard found := format return WavFailure("data before fmt");
+                if found.tag != 1 || found.bits != 16 {
+                    return Result<SoundData*!, string!>:::Err(`only 16-bit PCM is supported (format ${found.tag}, ${found.bits} bits)`);
+                }
+                if found.channels != 1 && found.channels != 2 {
+                    return Result<SoundData*!, string!>:::Err(`${found.channels} channels; only mono and stereo are supported`);
+                }
+                sound := new SoundData(found.sampleRate);
+                for pair~ usize = 0; pair + 1 < size; pair += 2 {
+                    value: f32 = SignedSample(bytes[bodyStart + pair], bytes[bodyStart + pair + 1]);
+                    sound->samples.push(value);
+                    if found.channels == 1 {
+                        sound->samples.push(value);
+                    }
+                }
+                return Result<SoundData*!, string!>:::Ok(sound!);
+            }
+            offset = bodyStart + size + (size & 1);
+        }
+        return WavFailure("no data chunk");
+    }
+
+    LoadWav :: (path: string) -> Result<SoundData*!, string!> {
+        text: string!? = tryReadTextFile(path);
+        guard contents := text return Result<SoundData*!, string!>:::Err(`${path}: cannot be read`);
+        bytes~ Array<u8>! = [];
+        defer delete bytes;
+        for index~ usize = 0; index < contents.length(); index++ {
+            bytes.push(contents.byteAt(index));
+        }
+        delete text;
+        when DecodeWav(bytes) {
+            Result:::Ok(sound) -> {
+                return Result<SoundData*!, string!>:::Ok(sound!);
+            },
+            Result:::Err(message) -> {
+                failure: string! = `${path}: ${message}`;
+                delete message;
+                return Result<SoundData*!, string!>:::Err(failure!);
+            }
+        }
+    }
+
+    PushU16 :: (bytes: Array<u8>!~*, value: u32) -> void {
+        bytes->push(u8(value & 255));
+        bytes->push(u8((value >> 8) & 255));
+    }
+
+    PushU32 :: (bytes: Array<u8>!~*, value: u32) -> void {
+        bytes->push(u8(value & 255));
+        bytes->push(u8((value >> 8) & 255));
+        bytes->push(u8((value >> 16) & 255));
+        bytes->push(u8((value >> 24) & 255));
+    }
+
+    PushTag :: (bytes: Array<u8>!~*, tag: string) -> void {
+        for index~ usize = 0; index < tag.length(); index++ {
+            bytes->push(tag.byteAt(index));
+        }
+    }
+
+    EncodeWavMono :: (samples: Array<f32>, sampleRate: u32) -> Array<u8>! {
+        dataSize: u32 = u32(samples.length() * 2);
+        bytes~ Array<u8>! = [];
+        PushTag(bytes, "RIFF");
+        PushU32(bytes, 36 + dataSize);
+        PushTag(bytes, "WAVEfmt ");
+        PushU32(bytes, 16);
+        PushU16(bytes, 1);
+        PushU16(bytes, 1);
+        PushU32(bytes, sampleRate);
+        PushU32(bytes, sampleRate * 2);
+        PushU16(bytes, 2);
+        PushU16(bytes, 16);
+        PushTag(bytes, "data");
+        PushU32(bytes, dataSize);
+        for sample in samples {
+            quantised: i32 = i32(Math:::clamp(sample, -1.0f, 1.0f) * 32767.0f);
+            bits~ i32 = quantised;
+            if quantised < 0 {
+                bits = quantised + 65536;
+            }
+            PushU16(bytes, u32(bits));
+        }
+        return bytes!;
+    }
+}
