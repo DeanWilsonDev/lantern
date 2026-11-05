@@ -1,0 +1,466 @@
+lantern:::physics :: namespace {
+    GRID_CELL_SIZE: f32 : 4.0f;
+    CAST_TOLERANCE: f32 : 0.0001f;
+    MAX_CAST_ITERATIONS: u32 : 24;
+    NO_GRID_ENTRY: u32 : 4294967295;
+
+    Capsule :: struct {
+        radius~ f32 = 0.0f;
+        halfSegment~ f32 = 0.0f;
+
+        static Upright :: (radius: f32, height: f32) -> Capsule {
+            return Capsule { radius: radius, halfSegment: Math:::max(height * 0.5f - radius, 0.0f) };
+        }
+
+        static Sphere :: (radius: f32) -> Capsule {
+            return Capsule { radius: radius, halfSegment: 0.0f };
+        }
+
+        SegmentStart :: (center: Vec3) -> Vec3 {
+            return center - lantern:::core:::WorldUp() * halfSegment;
+        }
+
+        SegmentEnd :: (center: Vec3) -> Vec3 {
+            return center + lantern:::core:::WorldUp() * halfSegment;
+        }
+
+        Bounds :: (center: Vec3) -> lantern:::core:::Aabb {
+            half: Vec3 = Vec3 { x: radius, y: radius + halfSegment, z: radius };
+            return lantern:::core:::Aabb:::Create(center - half, center + half);
+        }
+    }
+
+    KinematicBody :: struct {
+        firstTriangle~ usize = 0;
+        triangleCount~ usize = 0;
+        worldBounds~ lantern:::core:::Aabb = lantern:::core:::Aabb { };
+        transform~ Mat4 = Mat4 { };
+        previousTransform~ Mat4 = Mat4 { };
+
+        Transform :: () -> Mat4 {
+            return transform;
+        }
+    }
+
+    ColliderId :: struct {
+        isStatic~ bool = true;
+        body~ lantern:::core:::Handle<KinematicBody> = lantern:::core:::Handle<KinematicBody> { };
+
+        static Static :: () -> ColliderId {
+            return ColliderId { isStatic: true };
+        }
+
+        static Body :: (handle: lantern:::core:::Handle<KinematicBody>) -> ColliderId {
+            return ColliderId { isStatic: false, body: handle };
+        }
+
+        operator == :: (other: ColliderId) -> bool {
+            if isStatic || other.isStatic {
+                return isStatic == other.isStatic;
+            }
+            return body == other.body;
+        }
+    }
+
+    ShapeHit :: struct {
+        fraction~ f32 = 0.0f;
+        normal~ Vec3 = Vec3 { };
+        point~ Vec3 = Vec3 { };
+        collider~ ColliderId = ColliderId { };
+    }
+
+    Contact :: struct {
+        normal~ Vec3 = Vec3 { };
+        depth~ f32 = 0.0f;
+        point~ Vec3 = Vec3 { };
+        collider~ ColliderId = ColliderId { };
+    }
+
+    RayHit :: struct {
+        distance~ f32 = 0.0f;
+        point~ Vec3 = Vec3 { };
+        normal~ Vec3 = Vec3 { };
+        collider~ ColliderId = ColliderId { };
+    }
+
+    NearTriangle :: struct {
+        triangle~ Triangle = Triangle { };
+        collider~ ColliderId = ColliderId { };
+    }
+
+    TriangleCast :: struct {
+        fraction~ f32 = 0.0f;
+        normal~ Vec3 = Vec3 { };
+        point~ Vec3 = Vec3 { };
+    }
+
+    GridCell :: struct {
+        x~ i64 = 0;
+        y~ i64 = 0;
+        z~ i64 = 0;
+
+        static Containing :: (point: Vec3) -> GridCell {
+            return GridCell {
+                x: i64(Math:::floor(point.x / GRID_CELL_SIZE)),
+                y: i64(Math:::floor(point.y / GRID_CELL_SIZE)),
+                z: i64(Math:::floor(point.z / GRID_CELL_SIZE))
+            };
+        }
+
+        static Key :: (x: i64, y: i64, z: i64) -> u64 {
+            mask: u64 = 2097151;
+            return ((u64(x + 1048576) & mask) << 42) | ((u64(y + 1048576) & mask) << 21) | (u64(z + 1048576) & mask);
+        }
+    }
+
+    BoxCorner :: (center: Vec3, halfExtents: Vec3, x: f32, y: f32, z: f32) -> Vec3 {
+        return center + Vec3 { x: halfExtents.x * x, y: halfExtents.y * y, z: halfExtents.z * z };
+    }
+
+    PushBoxFace :: (triangles: Array<Triangle>!, a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Array<Triangle>! {
+        grown~ Array<Triangle>! = triangles!;
+        grown.push(Triangle:::Create(a, b, c));
+        grown.push(Triangle:::Create(a, c, d));
+        return grown!;
+    }
+
+    BoxTriangles :: (center: Vec3, halfExtents: Vec3) -> Array<Triangle>! {
+        triangles~ Array<Triangle>! = [];
+        triangles = PushBoxFace(triangles!, BoxCorner(center, halfExtents, 1.0f, -1.0f, 1.0f), BoxCorner(center, halfExtents, 1.0f, -1.0f, -1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, -1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, 1.0f));
+        triangles = PushBoxFace(triangles!, BoxCorner(center, halfExtents, -1.0f, -1.0f, -1.0f), BoxCorner(center, halfExtents, -1.0f, -1.0f, 1.0f), BoxCorner(center, halfExtents, -1.0f, 1.0f, 1.0f), BoxCorner(center, halfExtents, -1.0f, 1.0f, -1.0f));
+        triangles = PushBoxFace(triangles!, BoxCorner(center, halfExtents, -1.0f, 1.0f, 1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, 1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, -1.0f), BoxCorner(center, halfExtents, -1.0f, 1.0f, -1.0f));
+        triangles = PushBoxFace(triangles!, BoxCorner(center, halfExtents, -1.0f, -1.0f, -1.0f), BoxCorner(center, halfExtents, 1.0f, -1.0f, -1.0f), BoxCorner(center, halfExtents, 1.0f, -1.0f, 1.0f), BoxCorner(center, halfExtents, -1.0f, -1.0f, 1.0f));
+        triangles = PushBoxFace(triangles!, BoxCorner(center, halfExtents, -1.0f, -1.0f, 1.0f), BoxCorner(center, halfExtents, 1.0f, -1.0f, 1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, 1.0f), BoxCorner(center, halfExtents, -1.0f, 1.0f, 1.0f));
+        triangles = PushBoxFace(triangles!, BoxCorner(center, halfExtents, 1.0f, -1.0f, -1.0f), BoxCorner(center, halfExtents, -1.0f, -1.0f, -1.0f), BoxCorner(center, halfExtents, -1.0f, 1.0f, -1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, -1.0f));
+        return triangles!;
+    }
+
+    TriangleBounds :: (triangle: Triangle) -> lantern:::core:::Aabb {
+        return lantern:::core:::Aabb:::Create(triangle.a, triangle.b).GrownTo(triangle.c);
+    }
+
+    CastAgainstTriangle :: (segmentStart: Vec3, segmentEnd: Vec3, radius: f32, displacement: Vec3, triangle: Triangle) -> TriangleCast? {
+        fraction~ f32 = 0.0f;
+        for iteration~ u32 = 0; iteration < MAX_CAST_ITERATIONS; iteration++ {
+            offset: Vec3 = displacement * fraction;
+            closest: ClosestPair = ClosestPointsSegmentTriangle(segmentStart + offset, segmentEnd + offset, triangle);
+            separation: Vec3 = closest.first - closest.second;
+            distance: f32 = separation.length();
+            normal~ Vec3 = Vec3 { };
+            if distance > 0.000001f {
+                normal = separation * (1.0f / distance);
+            } else {
+                faceNormal: Vec3 = triangle.Normal();
+                normal = faceNormal;
+                if faceNormal.dot(displacement) > 0.0f {
+                    normal = Vec3 { } - faceNormal;
+                }
+            }
+            gap: f32 = distance - radius;
+            closingSpeed: f32 = -displacement.dot(normal);
+            if gap <= CAST_TOLERANCE {
+                if closingSpeed > 0.0000001f {
+                    return TriangleCast { fraction: fraction, normal: normal, point: closest.second };
+                }
+                return null;
+            }
+            if closingSpeed <= 0.000000001f {
+                return null;
+            }
+            fraction += gap / closingSpeed;
+            if fraction > 1.0f {
+                return null;
+            }
+        }
+        offset: Vec3 = displacement * fraction;
+        closest: ClosestPair = ClosestPointsSegmentTriangle(segmentStart + offset, segmentEnd + offset, triangle);
+        return TriangleCast { fraction: fraction, normal: lantern:::core:::NormalizeOr3(closest.first - closest.second, lantern:::core:::WorldUp()), point: closest.second };
+    }
+
+    SortedDeepestFirst :: (contacts: Array<Contact>) -> Array<Contact>! {
+        sorted~ Array<Contact>! = [];
+        for contact in contacts {
+            sorted.push(contact);
+            position~ usize = sorted.length() - 1;
+            while position > 0 && sorted[position - 1].depth < contact.depth {
+                sorted[position] = sorted[position - 1];
+                position -= 1;
+            }
+            sorted[position] = contact;
+        }
+        return sorted!;
+    }
+
+    SameTriangle :: (first: Triangle, second: Triangle) -> bool {
+        return first.a == second.a && first.b == second.b && first.c == second.c;
+    }
+
+    CollisionWorld :: class {
+    public:
+        staticTriangles~ Array<Triangle>! = [];
+        gridHeads~ HashMap<u64, u32>*!;
+        gridEntryTriangles~ Array<u32>! = [];
+        gridEntryNext~ Array<u32>! = [];
+        bodies~ lantern:::core:::Pool<KinematicBody>*!;
+        bodyLocalTriangles~ Array<Triangle>! = [];
+        bodyWorldTriangles~ Array<Triangle>! = [];
+
+        CollisionWorld~: () {
+            gridHeads = new HashMap<u64, u32>();
+            bodies = new lantern:::core:::Pool<KinematicBody>();
+        }
+
+        !CollisionWorld~: () {
+            delete staticTriangles;
+            delete gridHeads;
+            delete gridEntryTriangles;
+            delete gridEntryNext;
+            delete bodies;
+            delete bodyLocalTriangles;
+            delete bodyWorldTriangles;
+        }
+
+        AddStaticTriangle~: (triangle: Triangle) -> void {
+            if triangle.IsDegenerate() {
+                return;
+            }
+            index: u32 = u32(staticTriangles.length());
+            bounds: lantern:::core:::Aabb = TriangleBounds(triangle);
+            minimumCell: GridCell = GridCell:::Containing(bounds.min);
+            maximumCell: GridCell = GridCell:::Containing(bounds.max);
+            for x~ i64 = minimumCell.x; x <= maximumCell.x; x++ {
+                for y~ i64 = minimumCell.y; y <= maximumCell.y; y++ {
+                    for z~ i64 = minimumCell.z; z <= maximumCell.z; z++ {
+                        key: u64 = GridCell:::Key(x, y, z);
+                        entry: u32 = u32(gridEntryTriangles.length());
+                        gridEntryTriangles.push(index);
+                        gridEntryNext.push(gridHeads->getOr(key, NO_GRID_ENTRY));
+                        gridHeads->insert(key, entry);
+                    }
+                }
+            }
+            staticTriangles.push(triangle);
+        }
+
+        AddStaticTriangles~: (triangles: Array<Triangle>) -> void {
+            for triangle in triangles {
+                AddStaticTriangle(triangle);
+            }
+        }
+
+        AddStaticBox~: (center: Vec3, halfExtents: Vec3) -> void {
+            triangles: Array<Triangle>! = BoxTriangles(center, halfExtents);
+            AddStaticTriangles(triangles);
+            delete triangles;
+        }
+
+        StaticTriangleCount :: () -> usize {
+            return staticTriangles.length();
+        }
+
+        AddBody~: (localTriangles: Array<Triangle>, transform: Mat4) -> lantern:::core:::Handle<KinematicBody> {
+            body~ KinematicBody = KinematicBody { firstTriangle: bodyLocalTriangles.length(), triangleCount: localTriangles.length(), transform: transform, previousTransform: transform };
+            for triangle in localTriangles {
+                bodyLocalTriangles.push(triangle);
+                bodyWorldTriangles.push(triangle);
+            }
+            body = RefreshBody(body);
+            return bodies->Insert(body);
+        }
+
+        RemoveBody~: (body: lantern:::core:::Handle<KinematicBody>) -> void {
+            bodies->Remove(body);
+        }
+
+        Body :: (body: lantern:::core:::Handle<KinematicBody>) -> KinematicBody? {
+            return bodies->Get(body);
+        }
+
+        RefreshBody~: (body: KinematicBody) -> KinematicBody {
+            refreshed~ KinematicBody = body;
+            bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
+            for offset~ usize = 0; offset < body.triangleCount; offset++ {
+                slot: usize = body.firstTriangle + offset;
+                moved: Triangle = bodyLocalTriangles[slot].Transformed(body.transform);
+                bodyWorldTriangles[slot] = moved;
+                bounds = bounds.Union(TriangleBounds(moved));
+            }
+            refreshed.worldBounds = bounds;
+            return refreshed;
+        }
+
+        BeginStep~: () -> void {
+            handles: Array<lantern:::core:::Handle<KinematicBody>>! = bodies->LiveHandles();
+            for handle in handles {
+                if body ~= bodies->BorrowMutable(handle) {
+                    body->previousTransform = body->transform;
+                }
+            }
+            delete handles;
+        }
+
+        SetBodyTransform~: (handle: lantern:::core:::Handle<KinematicBody>, transform: Mat4) -> void {
+            if found := bodies->Get(handle) {
+                moved~ KinematicBody = found;
+                moved.transform = transform;
+                moved = RefreshBody(moved);
+                if body ~= bodies->BorrowMutable(handle) {
+                    body->transform = moved.transform;
+                    body->worldBounds = moved.worldBounds;
+                }
+            }
+        }
+
+        BodyStepMotion :: (handle: lantern:::core:::Handle<KinematicBody>) -> Mat4 {
+            if body := bodies->Get(handle) {
+                if inverse := body.previousTransform.inverse() {
+                    return body.transform * inverse;
+                }
+            }
+            return Mat4 { };
+        }
+
+        TrianglesNear :: (bounds: lantern:::core:::Aabb, ignore: ColliderId?) -> Array<NearTriangle>! {
+            near~ Array<NearTriangle>! = [];
+            ignoreStatic~ bool = false;
+            if ignored := ignore {
+                ignoreStatic = ignored.isStatic;
+            }
+            if !ignoreStatic {
+                minimumCell: GridCell = GridCell:::Containing(bounds.min);
+                maximumCell: GridCell = GridCell:::Containing(bounds.max);
+                for x~ i64 = minimumCell.x; x <= maximumCell.x; x++ {
+                    for y~ i64 = minimumCell.y; y <= maximumCell.y; y++ {
+                        for z~ i64 = minimumCell.z; z <= maximumCell.z; z++ {
+                            entry~ u32 = gridHeads->getOr(GridCell:::Key(x, y, z), NO_GRID_ENTRY);
+                            while entry != NO_GRID_ENTRY {
+                                near.push(NearTriangle { triangle: staticTriangles[usize(gridEntryTriangles[usize(entry)])], collider: ColliderId:::Static() });
+                                entry = gridEntryNext[usize(entry)];
+                            }
+                        }
+                    }
+                }
+            }
+            handles: Array<lantern:::core:::Handle<KinematicBody>>! = bodies->LiveHandles();
+            for handle in handles {
+                collider: ColliderId = ColliderId:::Body(handle);
+                skip~ bool = false;
+                if ignored := ignore {
+                    skip = ignored == collider;
+                }
+                if skip {
+                    continue;
+                }
+                if body := bodies->Get(handle) {
+                    if !body.worldBounds.Overlaps(bounds) {
+                        continue;
+                    }
+                    for offset~ usize = 0; offset < body.triangleCount; offset++ {
+                        near.push(NearTriangle { triangle: bodyWorldTriangles[body.firstTriangle + offset], collider: collider });
+                    }
+                }
+            }
+            delete handles;
+            return near!;
+        }
+
+        CapsuleCast :: (capsule: Capsule, center: Vec3, displacement: Vec3, ignore: ColliderId?) -> ShapeHit? {
+            startBounds: lantern:::core:::Aabb = capsule.Bounds(center);
+            sweptBounds: lantern:::core:::Aabb = startBounds.Union(capsule.Bounds(center + displacement)).Expanded(CAST_TOLERANCE * 2.0f);
+            segmentStart: Vec3 = capsule.SegmentStart(center);
+            segmentEnd: Vec3 = capsule.SegmentEnd(center);
+            near: Array<NearTriangle>! = TrianglesNear(sweptBounds, ignore);
+            defer delete near;
+            found~ bool = false;
+            best~ ShapeHit = ShapeHit { };
+            for candidate in near {
+                if cast := CastAgainstTriangle(segmentStart, segmentEnd, capsule.radius, displacement, candidate.triangle) {
+                    better~ bool = !found;
+                    if found {
+                        if Math:::abs(cast.fraction - best.fraction) <= 0.000001f {
+                            better = cast.normal.dot(displacement) < best.normal.dot(displacement);
+                        } else {
+                            better = cast.fraction < best.fraction;
+                        }
+                    }
+                    if better {
+                        best = ShapeHit { fraction: cast.fraction, normal: cast.normal, point: cast.point, collider: candidate.collider };
+                        found = true;
+                    }
+                }
+            }
+            if !found {
+                return null;
+            }
+            return best;
+        }
+
+        CapsuleContacts :: (capsule: Capsule, center: Vec3, ignore: ColliderId?) -> Array<Contact>! {
+            segmentStart: Vec3 = capsule.SegmentStart(center);
+            segmentEnd: Vec3 = capsule.SegmentEnd(center);
+            near: Array<NearTriangle>! = TrianglesNear(capsule.Bounds(center), ignore);
+            defer delete near;
+            contacts~ Array<Contact>! = [];
+            defer delete contacts;
+            for candidate in near {
+                closest: ClosestPair = ClosestPointsSegmentTriangle(segmentStart, segmentEnd, candidate.triangle);
+                separation: Vec3 = closest.first - closest.second;
+                distance: f32 = separation.length();
+                if distance >= capsule.radius {
+                    continue;
+                }
+                normal~ Vec3 = candidate.triangle.Normal();
+                if distance > 0.000001f {
+                    normal = separation * (1.0f / distance);
+                }
+                contacts.push(Contact { normal: normal, depth: capsule.radius - distance, point: closest.second, collider: candidate.collider });
+            }
+            return SortedDeepestFirst(contacts);
+        }
+
+        Raycast :: (origin: Vec3, direction: Vec3, maximumDistance: f32) -> RayHit? {
+            end: Vec3 = origin + direction * maximumDistance;
+            near: Array<NearTriangle>! = TrianglesNear(lantern:::core:::Aabb:::Create(origin, end), null);
+            defer delete near;
+            found~ bool = false;
+            best~ RayHit = RayHit { };
+            for candidate in near {
+                if point := SegmentTriangleIntersection(origin, end, candidate.triangle) {
+                    distance: f32 = (point - origin).length();
+                    if !found || distance < best.distance {
+                        faceNormal: Vec3 = candidate.triangle.Normal();
+                        normal~ Vec3 = faceNormal;
+                        if faceNormal.dot(direction) > 0.0f {
+                            normal = Vec3 { } - faceNormal;
+                        }
+                        best = RayHit { distance: distance, point: point, normal: normal, collider: candidate.collider };
+                        found = true;
+                    }
+                }
+            }
+            if !found {
+                return null;
+            }
+            return best;
+        }
+
+        DebugTrianglesNear :: (bounds: lantern:::core:::Aabb) -> Array<Triangle>! {
+            near: Array<NearTriangle>! = TrianglesNear(bounds, null);
+            defer delete near;
+            unique~ Array<Triangle>! = [];
+            for candidate in near {
+                seen~ bool = false;
+                for kept in unique {
+                    if SameTriangle(kept, candidate.triangle) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if !seen {
+                    unique.push(candidate.triangle);
+                }
+            }
+            return unique!;
+        }
+    }
+}

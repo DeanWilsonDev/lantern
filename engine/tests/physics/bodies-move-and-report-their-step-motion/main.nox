@@ -1,0 +1,28 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    world := new lantern:::physics:::CollisionWorld();
+    defer delete world;
+    boxTriangles: Array<lantern:::physics:::Triangle>! = lantern:::physics:::BoxTriangles(Vec3 { }, lantern:::core:::Splat3(1.0f));
+    body := world->AddBody(boxTriangles, Mat4 { });
+    delete boxTriangles;
+    world->BeginStep();
+    world->SetBodyTransform(body, Mat4:::translation(Vec3 { x: 2.0f, y: 0.0f, z: 0.0f }));
+    motion: Mat4 = world->BodyStepMotion(body);
+    assert(lantern:::physicsrig:::Near3(motion.transformPoint(Vec3 { }), Vec3 { x: 2.0f, y: 0.0f, z: 0.0f }, 0.000001f), "the step moved the body two along x");
+    hit := world->CapsuleCast(lantern:::physics:::Capsule:::Sphere(0.1f), Vec3 { x: 2.0f, y: 5.0f, z: 0.0f }, Vec3 { x: 0.0f, y: -10.0f, z: 0.0f }, null);
+    guard found := hit return 1;
+    assert(found.collider == lantern:::physics:::ColliderId:::Body(body), "casts find the body where it moved to");
+    ignored := world->CapsuleCast(lantern:::physics:::Capsule:::Sphere(0.1f), Vec3 { x: 2.0f, y: 5.0f, z: 0.0f }, Vec3 { x: 0.0f, y: -10.0f, z: 0.0f }, lantern:::physics:::ColliderId:::Body(body));
+    assert(ignored == null, "ignoring the body lets the cast through");
+    world->BeginStep();
+    still: Mat4 = world->BodyStepMotion(body);
+    identity: Mat4 = Mat4 { };
+    index~ usize = 0;
+    while index < 16 {
+        assert(Math:::abs(still.elements[index] - identity.elements[index]) < 0.000001f, "a step without a move is the identity");
+        index += 1;
+    }
+    print("bodies move and report their step motion");
+    return 0;
+}

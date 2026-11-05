@@ -1,0 +1,28 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    world := lantern:::physicsrig:::FloorWorld(20.0f);
+    defer delete world;
+    blockTriangles: Array<lantern:::physics:::Triangle>! = lantern:::physics:::BoxTriangles(Vec3 { }, Vec3 { x: 0.5f, y: 1.0f, z: 0.5f });
+    platform := world->AddBody(blockTriangles, Mat4:::translation(Vec3 { x: -3.0f, y: 1.0f, z: 0.0f }));
+    delete blockTriangles;
+    controller~ lantern:::physics:::CharacterController = lantern:::physicsrig:::ControllerAt(Vec3 { });
+    lantern:::physicsrig:::Settle(controller, world);
+    blockX~ f32 = -3.0f;
+    step~ u32 = 0;
+    while step < 120 {
+        world->BeginStep();
+        blockX += 2.0f * lantern:::physicsrig:::STEP_SECONDS;
+        world->SetBodyTransform(platform, Mat4:::translation(Vec3 { x: blockX, y: 1.0f, z: 0.0f }));
+        controller.Step(world, lantern:::physicsrig:::Idle(), lantern:::physicsrig:::STEP_SECONDS);
+        overlap: Array<lantern:::physics:::Contact>! = world->CapsuleContacts(controller.settings.CapsuleShape(), controller.CapsuleCenter(), null);
+        for contact in overlap {
+            assert(contact.depth < 0.05f, "the block never sinks into the player");
+        }
+        delete overlap;
+        step += 1;
+    }
+    assert(controller.feetPosition.x > blockX + 0.5f + 0.3f, "the block pushed the player ahead of it");
+    print("platforms moving into the player push it out");
+    return 0;
+}

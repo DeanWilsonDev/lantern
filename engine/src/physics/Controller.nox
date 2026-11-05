@@ -1,0 +1,403 @@
+lantern:::physics :: namespace {
+    MAX_SLIDE_ITERATIONS: usize : 4;
+    MAX_DEPENETRATION_ITERATIONS: usize : 4;
+    WALKABLE_FACE_SIDE_OFFSET: f32 : 0.02f;
+    WALKABLE_FACE_START_ABOVE: f32 : 0.05f;
+
+    ControllerSettings :: struct {
+        radius~ f32 = 0.35f;
+        height~ f32 = 1.7f;
+        skinWidth~ f32 = 0.01f;
+        stepHeight~ f32 = 0.3f;
+        maxWalkableSlopeDegrees~ f32 = 46.0f;
+        groundSnapDistance~ f32 = 0.3f;
+        walkSpeed~ f32 = 6.0f;
+        groundAcceleration~ f32 = 50.0f;
+        airAcceleration~ f32 = 20.0f;
+        gravity~ f32 = 28.0f;
+        jumpHeight~ f32 = 1.5f;
+        jumpReleaseGravityMultiplier~ f32 = 2.5f;
+        maxFallSpeed~ f32 = 30.0f;
+        coyoteSeconds~ f32 = 0.1f;
+        jumpBufferSeconds~ f32 = 0.12f;
+
+        JumpSpeed :: () -> f32 {
+            return Math:::sqrt(2.0f * gravity * jumpHeight);
+        }
+
+        CapsuleShape :: () -> Capsule {
+            return Capsule:::Upright(radius, height);
+        }
+
+        MinGroundNormalY :: () -> f32 {
+            return Math:::cos(maxWalkableSlopeDegrees * (Math:::PI / 180.0f));
+        }
+
+        MovementCapsule :: () -> Capsule {
+            return Capsule { radius: radius + skinWidth, halfSegment: CapsuleShape().halfSegment };
+        }
+    }
+
+    ControllerInput :: struct {
+        moveDirection~ Vec3 = Vec3 { };
+        jumpPressed~ bool = false;
+        jumpHeld~ bool = false;
+    }
+
+    ControllerEvents :: struct {
+        jumped~ bool = false;
+        landedWithSpeed~ f32? = null;
+        hitCeiling~ bool = false;
+    }
+
+    GroundProbe :: struct {
+        hit~ ShapeHit = ShapeHit { };
+        normal~ Vec3 = Vec3 { };
+    }
+
+    Horizontal :: (vector: Vec3) -> Vec3 {
+        return Vec3 { x: vector.x, y: 0.0f, z: vector.z };
+    }
+
+    TryNormalize3 :: (vector: Vec3) -> Vec3? {
+        reciprocalLength: f32 = 1.0f / vector.length();
+        if reciprocalLength > 0.0f && reciprocalLength < lantern:::core:::INFINITY {
+            return vector * reciprocalLength;
+        }
+        return null;
+    }
+
+    NormalizeOrZero3 :: (vector: Vec3) -> Vec3 {
+        if normalized := TryNormalize3(vector) {
+            return normalized;
+        }
+        return Vec3 { };
+    }
+
+    ClampLengthMax3 :: (vector: Vec3, maximumLength: f32) -> Vec3 {
+        lengthSquared: f32 = lantern:::core:::LengthSquared3(vector);
+        if lengthSquared > maximumLength * maximumLength {
+            return vector * (maximumLength / Math:::sqrt(lengthSquared));
+        }
+        return vector;
+    }
+
+    MoveTowardsVector :: (current: Vec3, target: Vec3, maxDelta: f32) -> Vec3 {
+        difference: Vec3 = target - current;
+        distance: f32 = difference.length();
+        if distance <= maxDelta || distance < 0.000000001f {
+            return target;
+        }
+        return current + difference * (maxDelta / distance);
+    }
+
+    CharacterController :: struct {
+        settings~ ControllerSettings = ControllerSettings { };
+        feetPosition~ Vec3 = Vec3 { };
+        velocity~ Vec3 = Vec3 { };
+        grounded~ bool = false;
+        groundNormal~ Vec3 = Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+        groundCollider~ ColliderId? = null;
+        secondsSinceGrounded~ f32 = lantern:::core:::INFINITY;
+        jumpBufferRemaining~ f32 = 0.0f;
+        risingFromJump~ bool = false;
+
+        static Create :: (settings: ControllerSettings, feetPosition: Vec3) -> CharacterController {
+            return CharacterController { settings: settings, feetPosition: feetPosition };
+        }
+
+        Teleport~: (newFeetPosition: Vec3) -> void {
+            feetPosition = newFeetPosition;
+            velocity = Vec3 { };
+            grounded = false;
+            groundNormal = lantern:::core:::WorldUp();
+            groundCollider = null;
+            secondsSinceGrounded = lantern:::core:::INFINITY;
+            jumpBufferRemaining = 0.0f;
+            risingFromJump = false;
+        }
+
+        CapsuleCenter :: () -> Vec3 {
+            return feetPosition + lantern:::core:::WorldUp() * (settings.height * 0.5f);
+        }
+
+        SetCapsuleCenter~: (center: Vec3) -> void {
+            feetPosition = center - lantern:::core:::WorldUp() * (settings.height * 0.5f);
+        }
+
+        IsWalkable :: (normal: Vec3) -> bool {
+            return normal.y >= settings.MinGroundNormalY();
+        }
+
+        Step~: (world: CollisionWorld*, input: ControllerInput, deltaSeconds: f32) -> ControllerEvents {
+            events~ ControllerEvents = ControllerEvents { };
+            wasGrounded: bool = grounded;
+
+            if grounded {
+                if ground := groundCollider {
+                    if !ground.isStatic {
+                        motion: Mat4 = world->BodyStepMotion(ground.body);
+                        carried: Vec3 = lantern:::core:::TransformPoint3(motion, feetPosition) - feetPosition;
+                        if lantern:::core:::LengthSquared3(carried) > 0.0f {
+                            MoveWithoutSliding(world, carried, ground);
+                        }
+                    }
+                }
+            }
+
+            if input.jumpPressed {
+                jumpBufferRemaining = settings.jumpBufferSeconds;
+            } else {
+                jumpBufferRemaining = Math:::max(jumpBufferRemaining - deltaSeconds, 0.0f);
+            }
+            if grounded {
+                secondsSinceGrounded = 0.0f;
+            } else {
+                secondsSinceGrounded = secondsSinceGrounded + deltaSeconds;
+            }
+
+            desired: Vec3 = ClampLengthMax3(Horizontal(input.moveDirection), 1.0f) * settings.walkSpeed;
+            acceleration~ f32 = settings.airAcceleration;
+            if grounded {
+                acceleration = settings.groundAcceleration;
+            }
+            planar: Vec3 = MoveTowardsVector(Horizontal(velocity), desired, acceleration * deltaSeconds);
+            velocity.x = planar.x;
+            velocity.z = planar.z;
+
+            if grounded {
+                velocity.y = 0.0f;
+            } else {
+                releasedEarly: bool = risingFromJump && !input.jumpHeld && velocity.y > 0.0f;
+                multiplier~ f32 = 1.0f;
+                if releasedEarly {
+                    multiplier = settings.jumpReleaseGravityMultiplier;
+                }
+                velocity.y = Math:::max(velocity.y - settings.gravity * multiplier * deltaSeconds, -settings.maxFallSpeed);
+            }
+
+            canJump: bool = grounded || secondsSinceGrounded <= settings.coyoteSeconds;
+            if jumpBufferRemaining > 0.0f && canJump {
+                velocity.y = settings.JumpSpeed();
+                jumpBufferRemaining = 0.0f;
+                secondsSinceGrounded = lantern:::core:::INFINITY;
+                grounded = false;
+                groundCollider = null;
+                risingFromJump = true;
+                events.jumped = true;
+            }
+
+            displacement~ Vec3 = velocity * deltaSeconds;
+            if grounded {
+                normal: Vec3 = groundNormal;
+                displacement.y = -(normal.x * displacement.x + normal.z * displacement.z) / Math:::max(normal.y, 0.001f);
+            }
+            fallingSpeed: f32 = -velocity.y;
+            events = MoveAndSlide(world, displacement, events);
+
+            if velocity.y <= 0.0f {
+                risingFromJump = false;
+                reach~ f32 = settings.skinWidth;
+                if wasGrounded {
+                    reach = settings.groundSnapDistance;
+                }
+                ProbeGround(world, reach);
+            } else {
+                grounded = false;
+                groundCollider = null;
+            }
+            if grounded {
+                velocity.y = 0.0f;
+                if !wasGrounded {
+                    events.landedWithSpeed = Math:::max(fallingSpeed, 0.0f);
+                }
+            }
+
+            Depenetrate(world);
+            return events;
+        }
+
+        MoveWithoutSliding~: (world: CollisionWorld*, displacement: Vec3, ignore: ColliderId?) -> void {
+            capsule: Capsule = settings.CapsuleShape();
+            center: Vec3 = CapsuleCenter();
+            if hit := world->CapsuleCast(capsule, center, displacement, ignore) {
+                SetCapsuleCenter(center + displacement * hit.fraction + hit.normal * settings.skinWidth);
+            } else {
+                SetCapsuleCenter(center + displacement);
+            }
+        }
+
+        MoveAndSlide~: (world: CollisionWorld*, displacement: Vec3, incomingEvents: ControllerEvents) -> ControllerEvents {
+            events~ ControllerEvents = incomingEvents;
+            capsule: Capsule = settings.MovementCapsule();
+            center~ Vec3 = CapsuleCenter();
+            remaining~ Vec3 = displacement;
+            firstSlideNormal~ Vec3 = Vec3 { };
+            slideNormalCount~ usize = 0;
+            for iteration~ usize = 0; iteration < MAX_SLIDE_ITERATIONS; iteration++ {
+                if lantern:::core:::LengthSquared3(remaining) < 0.000000000001f {
+                    break;
+                }
+                found: ShapeHit? = world->CapsuleCast(capsule, center, remaining, null);
+                if found == null {
+                    center = center + remaining;
+                    break;
+                }
+                hit: ShapeHit = found ?? ShapeHit { };
+                center = center + remaining * hit.fraction;
+                remaining = remaining * (1.0f - hit.fraction);
+                walkable: bool = IsWalkable(hit.normal);
+
+                if grounded && !walkable {
+                    SetCapsuleCenter(center);
+                    if steppedCenter := TryStepUp(world, Horizontal(remaining)) {
+                        center = steppedCenter;
+                        remaining.x = 0.0f;
+                        remaining.z = 0.0f;
+                        continue;
+                    }
+                }
+                if hit.normal.y < -0.3f && velocity.y > 0.0f {
+                    velocity.y = 0.0f;
+                    events.hitCeiling = true;
+                }
+
+                slideNormal~ Vec3 = hit.normal;
+                if grounded && !walkable {
+                    if flattened := TryNormalize3(Horizontal(hit.normal)) {
+                        slideNormal = flattened;
+                    }
+                }
+                intoSurface: f32 = velocity.dot(slideNormal);
+                if intoSurface < 0.0f && !(walkable && grounded) {
+                    velocity = velocity - slideNormal * intoSurface;
+                }
+                slideNormalCount += 1;
+                if slideNormalCount == 1 {
+                    firstSlideNormal = slideNormal;
+                    remaining = remaining - slideNormal * remaining.dot(slideNormal);
+                } else if slideNormalCount == 2 {
+                    if direction := TryNormalize3(firstSlideNormal.cross(slideNormal)) {
+                        remaining = direction * remaining.dot(direction);
+                    } else {
+                        remaining = remaining - slideNormal * remaining.dot(slideNormal);
+                    }
+                } else {
+                    remaining = Vec3 { };
+                }
+            }
+            SetCapsuleCenter(center);
+            return events;
+        }
+
+        CastFractionOr :: (world: CollisionWorld*, capsule: Capsule, center: Vec3, displacement: Vec3) -> f32 {
+            if hit := world->CapsuleCast(capsule, center, displacement, null) {
+                return hit.fraction;
+            }
+            return 1.0f;
+        }
+
+        TryStepUp :: (world: CollisionWorld*, forwardMotion: Vec3) -> Vec3? {
+            capsule: Capsule = settings.MovementCapsule();
+            forwardLength: f32 = forwardMotion.length();
+            if forwardLength < 0.00001f {
+                return null;
+            }
+            forwardDirection: Vec3 = forwardMotion * (1.0f / forwardLength);
+            forward: Vec3 = forwardDirection * Math:::max(forwardLength, settings.skinWidth * 4.0f);
+            start: Vec3 = CapsuleCenter();
+
+            up: Vec3 = lantern:::core:::WorldUp() * settings.stepHeight;
+            raised: Vec3 = start + up * CastFractionOr(world, capsule, start, up);
+            advanced: Vec3 = raised + forward * CastFractionOr(world, capsule, raised, forward);
+            if Horizontal(advanced - start).length() < settings.skinWidth {
+                return null;
+            }
+            down: Vec3 = lantern:::core:::WorldUp() * -(raised.y - start.y + settings.skinWidth);
+            found: ShapeHit? = world->CapsuleCast(capsule, advanced, down, null);
+            guard found return null;
+            hit: ShapeHit = found!;
+            landsOnWalkable~ bool = IsWalkable(hit.normal);
+            if !landsOnWalkable {
+                landsOnWalkable = WalkableFaceNear(world, hit.point, forwardDirection) != null;
+            }
+            if !landsOnWalkable {
+                return null;
+            }
+            landed: Vec3 = advanced + down * hit.fraction;
+            if landed.y > start.y + settings.skinWidth {
+                return landed;
+            }
+            return null;
+        }
+
+        WalkableFaceNear :: (world: CollisionWorld*, contact: Vec3, direction: Vec3) -> Vec3? {
+            origin: Vec3 = contact + NormalizeOrZero3(Horizontal(direction)) * WALKABLE_FACE_SIDE_OFFSET + lantern:::core:::WorldUp() * WALKABLE_FACE_START_ABOVE;
+            found: RayHit? = world->Raycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, WALKABLE_FACE_START_ABOVE + settings.stepHeight);
+            guard found return null;
+            hit: RayHit = found!;
+            if IsWalkable(hit.normal) {
+                return hit.normal;
+            }
+            return null;
+        }
+
+        FindGround :: (world: CollisionWorld*, center: Vec3, down: Vec3) -> GroundProbe? {
+            found: ShapeHit? = world->CapsuleCast(settings.MovementCapsule(), center, down, null);
+            guard found return null;
+            hit: ShapeHit = found!;
+            if IsWalkable(hit.normal) {
+                return GroundProbe { hit: hit, normal: hit.normal };
+            }
+            alongVelocity: Vec3 = Horizontal(velocity);
+            if lantern:::core:::LengthSquared3(alongVelocity) > 0.00000001f {
+                if faceNormal := WalkableFaceNear(world, hit.point, alongVelocity) {
+                    return GroundProbe { hit: hit, normal: faceNormal };
+                }
+            }
+            towardAxis: Vec3 = Horizontal(center - hit.point);
+            if lantern:::core:::LengthSquared3(towardAxis) > 0.00000001f {
+                if faceNormal := WalkableFaceNear(world, hit.point, towardAxis) {
+                    return GroundProbe { hit: hit, normal: faceNormal };
+                }
+            }
+            return null;
+        }
+
+        ProbeGround~: (world: CollisionWorld*, reach: f32) -> void {
+            center: Vec3 = CapsuleCenter();
+            down: Vec3 = lantern:::core:::WorldUp() * -reach;
+            if ground := FindGround(world, center, down) {
+                SetCapsuleCenter(center + down * ground.hit.fraction);
+                grounded = true;
+                groundNormal = ground.normal;
+                groundCollider = ground.hit.collider;
+            } else {
+                grounded = false;
+                groundCollider = null;
+                groundNormal = lantern:::core:::WorldUp();
+            }
+        }
+
+        Depenetrate~: (world: CollisionWorld*) -> void {
+            capsule: Capsule = settings.CapsuleShape();
+            for iteration~ usize = 0; iteration < MAX_DEPENETRATION_ITERATIONS; iteration++ {
+                contacts: Array<Contact>! = world->CapsuleContacts(capsule, CapsuleCenter(), null);
+                if contacts.length() == 0 {
+                    delete contacts;
+                    break;
+                }
+                deepest: Contact = contacts[0];
+                delete contacts;
+                if deepest.depth <= 0.0001f {
+                    break;
+                }
+                SetCapsuleCenter(CapsuleCenter() + deepest.normal * (deepest.depth + settings.skinWidth * 0.5f));
+                intoSurface: f32 = velocity.dot(deepest.normal);
+                if intoSurface < 0.0f {
+                    velocity = velocity - deepest.normal * intoSurface;
+                }
+            }
+        }
+    }
+}

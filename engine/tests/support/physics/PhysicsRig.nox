@@ -1,0 +1,74 @@
+lantern:::physicsrig :: namespace {
+    STEP_SECONDS: f32 : lantern:::core:::FIXED_STEP_SECONDS;
+
+    Forward :: () -> Vec3 {
+        return Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+    }
+
+    Near3 :: (left: Vec3, right: Vec3, tolerance: f32) -> bool {
+        return Math:::abs(left.x - right.x) <= tolerance && Math:::abs(left.y - right.y) <= tolerance && Math:::abs(left.z - right.z) <= tolerance;
+    }
+
+    Distance3 :: (left: Vec3, right: Vec3) -> f32 {
+        return (left - right).length();
+    }
+
+    FloorWorld :: (halfWidth: f32) -> lantern:::physics:::CollisionWorld*! {
+        world := new lantern:::physics:::CollisionWorld();
+        world->AddStaticBox(Vec3 { x: 0.0f, y: -0.5f, z: 0.0f }, Vec3 { x: halfWidth, y: 0.5f, z: halfWidth });
+        return world!;
+    }
+
+    RampPoint :: (center: Vec3, x: f32, y: f32, z: f32) -> Vec3 {
+        return center + Vec3 { x: x, y: y, z: z };
+    }
+
+    RampTriangles :: (center: Vec3, width: f32, height: f32, length: f32) -> Array<lantern:::physics:::Triangle>! {
+        halfWidth: f32 = width * 0.5f;
+        halfLength: f32 = length * 0.5f;
+        lowLeft: Vec3 = RampPoint(center, -halfWidth, 0.0f, halfLength);
+        lowRight: Vec3 = RampPoint(center, halfWidth, 0.0f, halfLength);
+        backRight: Vec3 = RampPoint(center, halfWidth, 0.0f, -halfLength);
+        backLeft: Vec3 = RampPoint(center, -halfWidth, 0.0f, -halfLength);
+        topRight: Vec3 = RampPoint(center, halfWidth, height, -halfLength);
+        topLeft: Vec3 = RampPoint(center, -halfWidth, height, -halfLength);
+        triangles~ Array<lantern:::physics:::Triangle>! = [];
+        triangles.push(lantern:::physics:::Triangle:::Create(lowLeft, lowRight, topRight));
+        triangles.push(lantern:::physics:::Triangle:::Create(lowLeft, topRight, topLeft));
+        triangles.push(lantern:::physics:::Triangle:::Create(backRight, backLeft, topLeft));
+        triangles.push(lantern:::physics:::Triangle:::Create(backRight, topLeft, topRight));
+        triangles.push(lantern:::physics:::Triangle:::Create(lowRight, backRight, topRight));
+        triangles.push(lantern:::physics:::Triangle:::Create(backLeft, lowLeft, topLeft));
+        return triangles!;
+    }
+
+    ControllerAt :: (feet: Vec3) -> lantern:::physics:::CharacterController {
+        return lantern:::physics:::CharacterController:::Create(lantern:::physics:::ControllerSettings { }, feet);
+    }
+
+    Walk :: (direction: Vec3) -> lantern:::physics:::ControllerInput {
+        return lantern:::physics:::ControllerInput { moveDirection: direction };
+    }
+
+    Idle :: () -> lantern:::physics:::ControllerInput {
+        return lantern:::physics:::ControllerInput { };
+    }
+
+    StepsFor :: (seconds: f32) -> u32 {
+        return u32(Math:::floor(seconds / STEP_SECONDS + 0.5f));
+    }
+
+    Run :: (controller: lantern:::physics:::CharacterController~*, world: lantern:::physics:::CollisionWorld*, input: lantern:::physics:::ControllerInput, seconds: f32) -> void {
+        steps: u32 = StepsFor(seconds);
+        step~ u32 = 0;
+        while step < steps {
+            controller->Step(world, input, STEP_SECONDS);
+            step += 1;
+        }
+    }
+
+    Settle :: (controller: lantern:::physics:::CharacterController~*, world: lantern:::physics:::CollisionWorld*) -> void {
+        Run(controller, world, Idle(), 0.5f);
+        assert(controller->grounded, "the controller settles onto the ground");
+    }
+}
