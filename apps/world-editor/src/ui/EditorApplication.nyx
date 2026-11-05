@@ -8,7 +8,6 @@ OutlineRowItem :: import OutlineRowItem;
 StatusInfo :: import StatusInfo;
 TemplateItem :: import TemplateItem;
 ToolbarState :: import ToolbarState;
-Math :: import standard:::Math;
 
 EditorApplication :: class : Application {
     static MENU_BAR_HEIGHT :: 28.0f;
@@ -16,9 +15,6 @@ EditorApplication :: class : Application {
     static MENU_ENTRY_HEIGHT :: 24.0f;
     static MENU_SEPARATOR_HEIGHT :: 9.0f;
     static MENU_PADDING :: 12.0f;
-    static TOOLTIP_DELAY_SECONDS :: 0.45f;
-    static TOOLTIP_WIDTH :: 260.0f;
-    static TOOLTIP_HEIGHT :: 24.0f;
     static STATUS_REFRESH_SECONDS :: 0.5f;
 
     @signal outlineRows~ Array<OutlineRowItem> = [];
@@ -36,9 +32,6 @@ EditorApplication :: class : Application {
     @signal contextX~ f32 = 0.0f;
     @signal contextY~ f32 = 0.0f;
     @signal contextEntity~ i64 = 0;
-    @signal tooltipText~ string = "";
-    @signal tooltipX~ f32 = 0.0f;
-    @signal tooltipY~ f32 = 0.0f;
     @signal settingsOpen~ bool = false;
     @signal settingsTab~ string = "Viewport";
     @signal paletteOpen~ bool = false;
@@ -61,8 +54,6 @@ EditorApplication :: class : Application {
     shiftHeld~ bool = false;
     shortcutHeld~ bool = false;
     pendingDialog~ string = "";
-    pendingTooltip~ string = "";
-    tooltipTimer~ f32 = 0.0f;
     seenRevision~ i64 = editorRevision();
     revisionFromTyping~ i64 = editorRevision();
     inspectorVersion~ i32 = 0;
@@ -100,7 +91,6 @@ EditorApplication :: class : Application {
         }
         this.PollFileDialog();
         this.PollContextMenu();
-        this.PollTooltip(deltaSeconds);
         this.statusTimer += deltaSeconds;
         if this.statusTimer >= STATUS_REFRESH_SECONDS || this.statusInfo.playing != editorIsPlaying() {
             this.statusTimer = 0.0f;
@@ -169,11 +159,6 @@ EditorApplication :: class : Application {
     ContextEntries:: () -> Array<MenuEntry> {
         return EditorMenus:::ContextEntries(editorIsHidden(this.contextEntity), editorIsLocked(this.contextEntity));
     }
-    TooltipText:: () -> string { return this.tooltipText; }
-    TooltipX:: () -> f32 { return this.tooltipX; }
-    TooltipY:: () -> f32 { return this.tooltipY; }
-    TooltipWidth:: () -> f32 { return TOOLTIP_WIDTH; }
-    TooltipHeight:: () -> f32 { return TOOLTIP_HEIGHT; }
     SettingsOpen:: () -> bool { return this.settingsOpen; }
     SettingsTab:: () -> string { return this.settingsTab; }
     PaletteOpen:: () -> bool { return this.paletteOpen; }
@@ -250,7 +235,6 @@ EditorApplication :: class : Application {
         this.contextOpen = false;
         this.paletteOpen = false;
         this.helpPage = "";
-        this.HideTooltip();
     }
 
     Escape~: () -> void {
@@ -479,7 +463,6 @@ EditorApplication :: class : Application {
             this.contextY = this.GetMouseY();
             this.contextOpen = true;
             this.openMenu = "";
-            this.HideTooltip();
         }
     }
 
@@ -490,27 +473,6 @@ EditorApplication :: class : Application {
         if this.hoveredEntity == id {
             this.hoveredEntity = 0;
         }
-    }
-
-    ShowTooltip~: (text: string) -> void {
-        guard this.pendingTooltip != text return;
-        this.pendingTooltip = text;
-        this.tooltipTimer = 0.0f;
-        this.tooltipText = "";
-    }
-
-    HideTooltip~: () -> void {
-        this.pendingTooltip = "";
-        this.tooltipText = "";
-    }
-
-    PollTooltip~: (deltaSeconds: f32) -> void {
-        guard this.pendingTooltip != "" return;
-        this.tooltipTimer += deltaSeconds;
-        guard this.tooltipTimer >= TOOLTIP_DELAY_SECONDS && this.tooltipText == "" return;
-        this.tooltipText = this.pendingTooltip;
-        this.tooltipX = Math:::min(this.GetMouseX() + 12.0f, this.WindowWidth() - TOOLTIP_WIDTH - 8.0f);
-        this.tooltipY = Math:::min(this.GetMouseY() + 18.0f, this.WindowHeight() - TOOLTIP_HEIGHT - 8.0f);
     }
 
     SetSettingsTab~: (tab: string) -> void { this.settingsTab = tab; }
