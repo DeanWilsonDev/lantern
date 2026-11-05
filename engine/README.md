@@ -151,8 +151,8 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `PlatformBackend` and `AudioSink` interfaces a backend implements.
 - `tests/<module>/<test>/` is one test program each: a `main.nox`, a `nox.json` naming the engine sources it needs,
   and an `expected.txt` with the exit code and output it must produce. They're the Rust tests, one program per test. Code a suite's
-  tests share is in `tests/support/<suite>/`, and `tests/support/games/drop/` is a small game without Chaos that the
-  host tests and the runner check run.
+  tests share is in `tests/support/<suite>/`, `tests/support/games/drop/` is a small game without Chaos that the
+  host tests and the runner check run, and `tests/support/games/broken/` is a game whose hook fails.
 - `tests/world/the-course-matches-the-rust-trace-at-every-display-rate/` runs the jump course the way the Rust
   `course_traversal` test does and compares every fixed step's position, velocity and grounded flag with the Rust run's
   `rust-<hz>hz.trace`, which match bit for bit. Set `LANTERN_TRACE_DIRECTORY` to write the Nox traces there too, and
