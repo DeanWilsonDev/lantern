@@ -219,4 +219,126 @@ lantern:::core :: namespace {
             return xAxis * normal.x + yAxis * normal.y + zAxis * normal.z;
         }
     }
+    Lerp3 :: (from: Vec3, to: Vec3, amount: f32) -> Vec3 {
+        return from * (1.0f - amount) + to * amount;
+    }
+
+    QuaternionFromAxisAngle :: (unitAxis: Vec3, radians: f32) -> Quaternion {
+        sine: f32 = Math:::sin(radians * 0.5f);
+        cosine: f32 = Math:::cos(radians * 0.5f);
+        scaledAxis: Vec3 = unitAxis * sine;
+        return Quaternion { x: scaledAxis.x, y: scaledAxis.y, z: scaledAxis.z, w: cosine };
+    }
+
+    QuaternionDot :: (first: Quaternion, second: Quaternion) -> f32 {
+        return first.x * second.x + first.y * second.y + first.z * second.z + first.w * second.w;
+    }
+
+    ScaleQuaternion :: (rotation: Quaternion, factor: f32) -> Quaternion {
+        return Quaternion { x: rotation.x * factor, y: rotation.y * factor, z: rotation.z * factor, w: rotation.w * factor };
+    }
+
+    AddQuaternions :: (first: Quaternion, second: Quaternion) -> Quaternion {
+        return Quaternion { x: first.x + second.x, y: first.y + second.y, z: first.z + second.z, w: first.w + second.w };
+    }
+
+    NormalizeQuaternion :: (rotation: Quaternion) -> Quaternion {
+        return ScaleQuaternion(rotation, 1.0f / Math:::sqrt(QuaternionDot(rotation, rotation)));
+    }
+
+    AcosApproximation :: (value: f32) -> f32 {
+        nonNegative: bool = value >= 0.0f;
+        magnitude: f32 = Math:::abs(value);
+        oneMinusMagnitude~ f32 = 1.0f - magnitude;
+        if oneMinusMagnitude < 0.0f {
+            oneMinusMagnitude = 0.0f;
+        }
+        root: f32 = Math:::sqrt(oneMinusMagnitude);
+        result~ f32 = ((((((-0.0012624911f * magnitude + 0.00667009f) * magnitude - 0.017088126f) * magnitude + 0.03089188f) * magnitude
+            - 0.050174303f) * magnitude + 0.08897899f) * magnitude - 0.2145988f) * magnitude + 1.5707963f;
+        result *= root;
+        if nonNegative {
+            return result;
+        }
+        return Math:::PI - result;
+    }
+
+    QuaternionSlerp :: (start: Quaternion, end: Quaternion, amount: f32) -> Quaternion {
+        target~ Quaternion = end;
+        dot~ f32 = QuaternionDot(start, end);
+        if dot < 0.0f {
+            target = ScaleQuaternion(end, -1.0f);
+            dot = -dot;
+        }
+        if dot > 1.0f - 0.00000011920929f {
+            return NormalizeQuaternion(AddQuaternions(ScaleQuaternion(start, 1.0f - amount), ScaleQuaternion(target, amount)));
+        }
+        theta: f32 = AcosApproximation(dot);
+        startScale: f32 = Math:::sin(theta * (1.0f - amount));
+        endScale: f32 = Math:::sin(theta * amount);
+        thetaSine: f32 = Math:::sin(theta);
+        return ScaleQuaternion(AddQuaternions(ScaleQuaternion(start, startScale), ScaleQuaternion(target, endScale)), 1.0f / thetaSine);
+    }
+
+    Determinant4 :: (matrix: Mat4) -> f32 {
+        m := matrix.elements;
+        a2323: f32 = m[10] * m[15] - m[11] * m[14];
+        a1323: f32 = m[9] * m[15] - m[11] * m[13];
+        a1223: f32 = m[9] * m[14] - m[10] * m[13];
+        a0323: f32 = m[8] * m[15] - m[11] * m[12];
+        a0223: f32 = m[8] * m[14] - m[10] * m[12];
+        a0123: f32 = m[8] * m[13] - m[9] * m[12];
+        return m[0] * (m[5] * a2323 - m[6] * a1323 + m[7] * a1223)
+            - m[1] * (m[4] * a2323 - m[6] * a0323 + m[7] * a0223)
+            + m[2] * (m[4] * a1323 - m[5] * a0323 + m[7] * a0123)
+            - m[3] * (m[4] * a1223 - m[5] * a0223 + m[6] * a0123);
+    }
+
+    QuaternionFromRotationAxes :: (xAxis: Vec3, yAxis: Vec3, zAxis: Vec3) -> Quaternion {
+        if zAxis.z <= 0.0f {
+            differenceYX: f32 = yAxis.y - xAxis.x;
+            oneMinusZZ: f32 = 1.0f - zAxis.z;
+            if differenceYX <= 0.0f {
+                fourXSquared: f32 = oneMinusZZ - differenceYX;
+                inverseFourX: f32 = 0.5f / Math:::sqrt(fourXSquared);
+                return Quaternion { x: fourXSquared * inverseFourX, y: (xAxis.y + yAxis.x) * inverseFourX, z: (xAxis.z + zAxis.x) * inverseFourX, w: (yAxis.z - zAxis.y) * inverseFourX };
+            }
+            fourYSquared: f32 = oneMinusZZ + differenceYX;
+            inverseFourY: f32 = 0.5f / Math:::sqrt(fourYSquared);
+            return Quaternion { x: (xAxis.y + yAxis.x) * inverseFourY, y: fourYSquared * inverseFourY, z: (yAxis.z + zAxis.y) * inverseFourY, w: (zAxis.x - xAxis.z) * inverseFourY };
+        }
+        sumYX: f32 = yAxis.y + xAxis.x;
+        onePlusZZ: f32 = 1.0f + zAxis.z;
+        if sumYX <= 0.0f {
+            fourZSquared: f32 = onePlusZZ - sumYX;
+            inverseFourZ: f32 = 0.5f / Math:::sqrt(fourZSquared);
+            return Quaternion { x: (xAxis.z + zAxis.x) * inverseFourZ, y: (yAxis.z + zAxis.y) * inverseFourZ, z: fourZSquared * inverseFourZ, w: (xAxis.y - yAxis.x) * inverseFourZ };
+        }
+        fourWSquared: f32 = onePlusZZ + sumYX;
+        inverseFourW: f32 = 0.5f / Math:::sqrt(fourWSquared);
+        return Quaternion { x: (yAxis.z - zAxis.y) * inverseFourW, y: (zAxis.x - xAxis.z) * inverseFourW, z: (xAxis.y - yAxis.x) * inverseFourW, w: fourWSquared * inverseFourW };
+    }
+
+    MatrixParts :: struct {
+        scale~ Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+        rotation~ Quaternion = Quaternion { };
+        translation~ Vec3 = Vec3 { };
+    }
+
+    ColumnLength4 :: (matrix: Mat4, column: usize) -> f32 {
+        m := matrix.elements;
+        start: usize = column * 4;
+        return Math:::sqrt(m[start] * m[start] + m[start + 1] * m[start + 1] + m[start + 2] * m[start + 2] + m[start + 3] * m[start + 3]);
+    }
+
+    DecomposeMatrix :: (matrix: Mat4) -> MatrixParts {
+        determinant: f32 = Determinant4(matrix);
+        scale: Vec3 = Vec3 { x: ColumnLength4(matrix, 0) * Signum(determinant), y: ColumnLength4(matrix, 1), z: ColumnLength4(matrix, 2) };
+        inverseScale: Vec3 = Vec3 { x: 1.0f / scale.x, y: 1.0f / scale.y, z: 1.0f / scale.z };
+        rotation: Quaternion = QuaternionFromRotationAxes(
+            MatrixColumn3(matrix, 0) * inverseScale.x,
+            MatrixColumn3(matrix, 1) * inverseScale.y,
+            MatrixColumn3(matrix, 2) * inverseScale.z);
+        return MatrixParts { scale: scale, rotation: rotation, translation: MatrixColumn3(matrix, 3) };
+    }
 }
