@@ -1,0 +1,39 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+main :: () -> i32 {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, true);
+    platform := new lantern:::testing:::ScriptedPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::AssertNoScriptError(host, "after loading");
+    assert(host->IsRunningScript(), "the platformer loads");
+    farthestZ~ f32 = 1000000.0f;
+    wasResetAfterFalling~ bool = false;
+    for step~ u32 = 0; step < 60; step++ {
+        lantern:::testing:::RunFrames(frameLoop, platform, host, 10);
+        z: f32 = lantern:::testing:::ThirdComponent(lantern:::testing:::DebugText(host, "Player/Position"));
+        if farthestZ < -9.0f && z > 1.0f {
+            wasResetAfterFalling = true;
+        }
+        farthestZ = Math:::min(farthestZ, z);
+    }
+    lantern:::testing:::AssertNoScriptError(host, "after ten seconds of the autopilot");
+    stats: lantern:::host:::HeadlessStats = lantern:::testing:::StatsOf(host);
+    assert(stats.framesRendered >= 590, "every frame renders");
+    assert(stats.lastDrawCount > 10, "the course and the player are drawn");
+    gems: string = lantern:::testing:::DebugText(host, "Game/Gems");
+    assert(gems.endsWith("/ 6"), "six gems in the course");
+    time: f32 = lantern:::testing:::ParseDecimalOrFail(lantern:::testing:::DebugText(host, "Game/Time"), "Game/Time");
+    assert(time > 9.0f, "the simulation ran");
+    assert(farthestZ < -9.0f, "the autopilot ran from the spawn toward the pillars");
+    assert(wasResetAfterFalling, "falling below the kill plane puts the player back at the spawn");
+    assert(!platform->mouseCaptured, "the autopilot never captures the mouse");
+    delete frameLoop;
+    delete platform;
+    delete host;
+    delete manifest;
+    print("the platformer plays under the autopilot");
+    return 0;
+}

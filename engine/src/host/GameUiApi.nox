@@ -1,23 +1,123 @@
 lantern:::host :: namespace {
     CHAOS_MISSING_MESSAGE: string : "GameUi isn't available: Chaos didn't start";
+    APPLICATION_MISSING_MESSAGE: string : "lantern:::ui:::Mount needs the game to be loaded; call it from OnStart";
 
-    RegisterGameUiApi :: (runtime: lantern:::nyx:::Runtime~*) -> lantern:::nyx:::NyxError*!? {
-        ui := new HostNamespace(runtime, "lantern::ui");
-        ui->Function("Mount", "(file: string, component: string) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void {
-            Invalid(context, CHAOS_MISSING_MESSAGE);
+    NavigationActions :: class {
+    public:
+        previous~ string!;
+        next~ string!;
+        confirm~ string!;
+
+        NavigationActions~: (previousAction: string!, nextAction: string!, confirmAction: string!) {
+            previous = previousAction!;
+            next = nextAction!;
+            confirm = confirmAction!;
+        }
+
+        !NavigationActions~: () {
+            delete previous;
+            delete next;
+            delete confirm;
+        }
+    }
+
+    GameUiState :: class {
+    public:
+        chaos~ lantern:::chaosui:::ChaosUi*!? = null;
+        application~ lantern:::nyx:::Value*!? = null;
+        navigation~ NavigationActions*!? = null;
+
+        GameUiState~: () { }
+
+        !GameUiState~: () {
+            Release();
+        }
+
+        Release~: () -> void {
+            delete chaos;
+            chaos = null;
+            delete application;
+            application = null;
+            delete navigation;
+            navigation = null;
+        }
+    }
+
+    MountOnChaos :: (context: lantern:::nyx:::CallContext~*, ui: raw GameUiState~*, file: string, component: string) -> void {
+        unsafe {
+            if ui->chaos == null {
+                Invalid(context, CHAOS_MISSING_MESSAGE);
+                return;
+            }
+            if ui->application == null {
+                Invalid(context, APPLICATION_MISSING_MESSAGE);
+                return;
+            }
+            guard chaos ~= ui->chaos return;
+            guard application := ui->application return;
+            arguments~ Array<lantern:::nyx:::Value*>! = [];
+            arguments.push(application);
+            mounted := chaos->Mount(file, component, arguments);
+            when mounted! {
+                Result:::Ok(number) -> {
+                    context->ReturnI32(i32(number));
+                },
+                Result:::Err(message) -> {
+                    Invalid(context, message);
+                    delete message;
+                }
+            }
+            delete arguments;
+        }
+    }
+
+    RegisterGameUiApi :: (runtime: lantern:::nyx:::Runtime~*, ui: raw GameUiState~*) -> lantern:::nyx:::NyxError*!? {
+        uiNamespace := new HostNamespace(runtime, "lantern::ui");
+        uiNamespace->Function("Mount", "(file: string, component: string) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [ui] {
+            file: string! = context->Text(0);
+            component: string! = context->Text(1);
+            if !Stopped(context) {
+                MountOnChaos(context, ui, file, component);
+            }
+            delete file;
+            delete component;
         });
-        ui->Function("Unmount", "(mount: i32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
+        uiNamespace->Function("Unmount", "(mount: i32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [ui] {
             mount: i32 = context->I32(0);
             if Stopped(context) {
                 return;
             }
-            message: string! = `lantern:::ui:::Unmount: nothing is mounted as ${mount}`;
-            Invalid(context, message);
-            delete message;
+            removed~ bool = false;
+            unsafe {
+                if chaos ~= ui->chaos {
+                    if mount >= 0 {
+                        removed = chaos->Unmount(u32(mount));
+                    }
+                }
+            }
+            if !removed {
+                message: string! = `lantern:::ui:::Unmount: nothing is mounted as ${mount}`;
+                Invalid(context, message);
+                delete message;
+            }
         });
-        ui->Function("SetNavigation", "(previous: string, next: string, confirm: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void { });
-        failure := ui->Finish();
-        delete ui;
+        uiNamespace->Function("SetNavigation", "(previous: string, next: string, confirm: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [ui] {
+            previous: string! = context->Text(0);
+            next: string! = context->Text(1);
+            confirm: string! = context->Text(2);
+            if Stopped(context) {
+                delete previous;
+                delete next;
+                delete confirm;
+                return;
+            }
+            unsafe {
+                delete ui->navigation;
+                ui->navigation = new NavigationActions(previous!, next!, confirm!);
+            }
+        });
+        failure := uiNamespace->Finish();
+        delete uiNamespace;
         return failure!;
     }
 }

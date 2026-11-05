@@ -1,0 +1,179 @@
+lantern:::testing :: namespace {
+    PLATFORMER_DIRECTORY: string : "../games/platformer";
+    PLATFORMER_FRAME_SECONDS: f64 : 0.016666666666666666f;
+
+    NextFrameTime :: (platform: ScriptedPlatform*) -> f64 {
+        return f64(platform->frames.length()) * PLATFORMER_FRAME_SECONDS;
+    }
+
+    QueueFrames :: (platform: ScriptedPlatform~*, count: usize) -> void {
+        for index~ usize = 0; index < count; index++ {
+            platform->AddFrame(NextFrameTime(platform));
+        }
+    }
+
+    QueueEvent :: (platform: ScriptedPlatform~*, event: lantern:::platform:::PlatformEvent) -> void {
+        platform->AddFrameWith(NextFrameTime(platform), event);
+    }
+
+    PressKey :: (platform: ScriptedPlatform~*, key: lantern:::core:::KeyCode) -> void {
+        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(key, false));
+        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(key));
+    }
+
+    HoldKey :: (platform: ScriptedPlatform~*, key: lantern:::core:::KeyCode, frames: usize) -> void {
+        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(key, false));
+        QueueFrames(platform, frames - 1);
+        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(key));
+    }
+
+    Click :: (platform: ScriptedPlatform~*, point: Vec2) -> void {
+        QueueEvent(platform, lantern:::platform:::PlatformEvent:::MouseMoved(0.0f, 0.0f, point.x, point.y));
+        QueueEvent(platform, lantern:::platform:::PlatformEvent:::MouseButtonDown(lantern:::core:::MouseButton:::Left, point.x, point.y));
+        QueueEvent(platform, lantern:::platform:::PlatformEvent:::MouseButtonUp(lantern:::core:::MouseButton:::Left, point.x, point.y));
+    }
+
+    RunQueued :: (frameLoop: lantern:::engine:::FrameLoop~*, platform: ScriptedPlatform~*, host: lantern:::host:::GameHost~*) -> void {
+        while platform->HasFrames() {
+            frameLoop->RunFrame(platform, host);
+        }
+    }
+
+    RunFrames :: (frameLoop: lantern:::engine:::FrameLoop~*, platform: ScriptedPlatform~*, host: lantern:::host:::GameHost~*, count: usize) -> void {
+        QueueFrames(platform, count);
+        RunQueued(frameLoop, platform, host);
+    }
+
+    NewFrameLoop :: () -> lantern:::engine:::FrameLoop*! {
+        return new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
+    }
+
+    DebugText :: (host: lantern:::host:::GameHost*, path: string) -> string {
+        if index := host->state->debugValues->IndexOf(path) {
+            return host->state->debugValues->TextAt(index);
+        }
+        return "";
+    }
+
+    StatsOf :: (host: lantern:::host:::GameHost~*) -> lantern:::host:::HeadlessStats {
+        guard headless ~= host->state->renderer as lantern:::host:::HeadlessRenderer~* return lantern:::host:::HeadlessStats { };
+        headless->UpdateLiveCounts();
+        return headless->Stats();
+    }
+
+    AssertNoScriptError :: (host: lantern:::host:::GameHost*, moment: string) -> void {
+        if error := host->scriptError {
+            print(`script error ${moment}: ${error}`);
+        }
+        assert(host->ScriptErrorCount() == 0, "the game runs without a script error");
+    }
+
+    LoadPlatformerManifest :: () -> lantern:::host:::GameManifest*! {
+        when lantern:::host:::GameManifest:::Load(PLATFORMER_DIRECTORY) {
+            Result:::Ok(manifest) -> {
+                return manifest!;
+            },
+            Result:::Err(message) -> {
+                print(`the platformer's manifest failed to load: ${message}`);
+                delete message;
+                assert(false, "the platformer's manifest loads");
+                return new lantern:::host:::GameManifest("", "", "", "");
+            }
+        }
+    }
+
+    PlatformerState :: (manifest: lantern:::host:::GameManifest*) -> lantern:::host:::EngineState*! {
+        assets: string!? = manifest->AssetsDirectory(PLATFORMER_DIRECTORY);
+        defer delete assets;
+        assetsView~ string? = null;
+        if path := assets {
+            assetsView = path;
+        }
+        when lantern:::host:::EngineState:::Create(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), assetsView) {
+            Result:::Ok(state) -> {
+                return state!;
+            },
+            Result:::Err(message) -> {
+                print(`the engine state failed: ${message}`);
+                delete message;
+                assert(false, "the headless engine state starts");
+                return new lantern:::host:::EngineState(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), null);
+            }
+        }
+    }
+
+    StartPlatformer :: (manifest: lantern:::host:::GameManifest*, autoplay: bool) -> lantern:::host:::GameHost*! {
+        state := PlatformerState(manifest);
+        if autoplay {
+            state->SetFlag("LANTERN_AUTOPLAY", true);
+        }
+        return new lantern:::host:::GameHost(state!, manifest->ScriptSourceFor(PLATFORMER_DIRECTORY));
+    }
+
+    DecimalDigit :: (byte: u8) -> f32? {
+        if byte >= 48 && byte <= 57 {
+            return f32(byte - 48);
+        }
+        return null;
+    }
+
+    ParseDecimal :: (text: string) -> f32? {
+        trimmed: string = text.trim();
+        if trimmed.length() == 0 {
+            return null;
+        }
+        negative~ bool = false;
+        start~ usize = 0;
+        if trimmed.byteAt(0) == 45 {
+            negative = true;
+            start = 1;
+        }
+        whole~ f32 = 0.0f;
+        fraction~ f32 = 0.0f;
+        scale~ f32 = 1.0f;
+        afterPoint~ bool = false;
+        digits~ u32 = 0;
+        for index~ usize = start; index < trimmed.length(); index++ {
+            byte: u8 = trimmed.byteAt(index);
+            if byte == 46 && !afterPoint {
+                afterPoint = true;
+                continue;
+            }
+            guard digit := DecimalDigit(byte) return null;
+            digits += 1;
+            if afterPoint {
+                scale = scale / 10.0f;
+                fraction += digit * scale;
+            } else {
+                whole = whole * 10.0f + digit;
+            }
+        }
+        if digits == 0 {
+            return null;
+        }
+        if negative {
+            return -(whole + fraction);
+        }
+        return whole + fraction;
+    }
+
+    ParseDecimalOrFail :: (text: string, what: string) -> f32 {
+        parsed: f32? = ParseDecimal(text);
+        if parsed == null {
+            print(`${what} isn't a number: '${text}'`);
+        }
+        assert(parsed != null, "the debug value is a number");
+        return parsed ?? 0.0f;
+    }
+
+    ThirdComponent :: (text: string) -> f32 {
+        parts: Array<string>! = text.split(", ");
+        defer delete parts;
+        if parts.length() != 3 {
+            print(`expected three components in '${text}'`);
+            assert(false, "Player/Position has three components");
+            return 0.0f;
+        }
+        return ParseDecimalOrFail(parts[2], "Player/Position's z");
+    }
+}
