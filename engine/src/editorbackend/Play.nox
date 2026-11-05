@@ -1,5 +1,9 @@
 Sdl :: import Sdl;
 
+lantern:::processenvironment :: foreign "SDL3" {
+    SDL_SetPointerProperty :: (properties: Sdl:::SDL_PropertiesID, name: string, value: raw Sdl:::SDL_Environment~*) -> bool;
+}
+
 lantern:::editorbackend :: namespace {
     Sdl :: import Sdl;
 
@@ -156,7 +160,7 @@ lantern:::editorbackend :: namespace {
         arguments~ ProcessArguments = ProcessArguments { };
         process~ raw Sdl:::SDL_Process~* = null;
         unsafe {
-            environment: raw Sdl:::SDL_Environment~* = Sdl:::SDL_GetEnvironment();
+            environment: raw Sdl:::SDL_Environment~* = Sdl:::SDL_CreateEnvironment(true);
             Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_LEVEL", levelPath, true);
             Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_ASSETS", assetsDirectory, true);
             arguments.program = Sdl:::SDL_strdup(runner);
@@ -164,11 +168,13 @@ lantern:::editorbackend :: namespace {
             properties: Sdl:::SDL_PropertiesID = Sdl:::SDL_CreateProperties();
             argumentBytes: u8~* = reinterpret<u8>(arguments);
             Sdl:::SDL_SetPointerProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argumentBytes);
+            lantern:::processenvironment:::SDL_SetPointerProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_ENVIRONMENT_POINTER, environment);
             Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_NULL));
             Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_INHERITED));
             Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_INHERITED));
             process = Sdl:::SDL_CreateProcessWithProperties(properties);
             Sdl:::SDL_DestroyProperties(properties);
+            Sdl:::SDL_DestroyEnvironment(environment);
             Sdl:::SDL_free(arguments.program);
             Sdl:::SDL_free(arguments.gameDirectory);
         }

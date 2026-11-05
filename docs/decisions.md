@@ -728,7 +728,9 @@ and `play.rs`), and `engine/editor-backend/` ports its C API (`ffi.rs` and `ffi_
 - **Rendering off-screen.** `GpuRenderer:::CreateOffscreen` opens the GPU device without a window
   (it initialises SDL's video subsystem itself and quits it when the renderer is destroyed), and
   `RenderOffscreen` draws a `RenderWorld` into a colour target of the requested size, kept per
-  size, and reads it back as RGBA rows, top row first.
+  size, and reads it back as RGBA rows, top row first, into an array the caller lends it. The
+  backend keeps one array for the viewport and one for previews, so a frame of the same size
+  reuses its memory, and the report says the frame was presented, as Rust's did.
 - **Ownership.** The backend's GPU resources, play session and render worlds are owned by the
   backend. A method that needs two of them at once (the session and the render world, say) moves
   one out of its field while it works and puts it back, as the session does with its drag (D-050),
@@ -738,8 +740,13 @@ and `play.rs`), and `engine/editor-backend/` ports its C API (`ffi.rs` and `ffi_
   `engine/shaders/compiled/` when the variable isn't set already.
 - **Play in editor** runs the Nox game runner, chosen as before (`LANTERN_RUNNER`, then `lantern`
   beside the editor, then `engine/build/lantern` in the workspace), as
-  `lantern games/platformer` with `LANTERN_LEVEL` and `LANTERN_ASSETS` set, through SDL's process
-  API.
+  `lantern games/platformer` through SDL's process API. `LANTERN_LEVEL` and `LANTERN_ASSETS` are
+  set on a copy of the editor's environment that only the child gets, so the editor's own
+  environment never changes.
+- **Matching Rust's edges.** A preview of an unknown template fails with Rust's message before
+  the GPU is touched, a preview's size is recorded even when it fails, a preferences path that is a
+  directory is ignored, and the viewport's shape cache compares floats by their bits, as Rust's
+  derived equality on `f32::to_bits` did.
 - **Errors.** Rust caught panics at the C boundary and showed them in the status line. A Nox trap
   ends the process, so the C header's rule now says only that errors show in
   `lantern_editor_status`.

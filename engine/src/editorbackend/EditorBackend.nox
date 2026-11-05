@@ -109,7 +109,7 @@ lantern:::editorbackend :: namespace {
     LoadPreferences :: (path: string!?) -> lantern:::editor:::EditorPreferences*! {
         defer delete path;
         guard file := path return new lantern:::editor:::EditorPreferences();
-        if !pathExists(file) {
+        if !pathExists(file) || directoryExists(file) {
             return new lantern:::editor:::EditorPreferences();
         }
         when lantern:::editor:::EditorPreferences:::Load(file) {
@@ -292,10 +292,8 @@ lantern:::editorbackend :: namespace {
             world~ lantern:::renderer:::RenderWorld*! = renderWorld!;
             lantern:::editor:::BuildViewport(session, active, world);
             outcome~ string!? = null;
-            when active->renderer->RenderOffscreen(world, width, height) {
+            when active->renderer->RenderOffscreen(world, width, height, pixels) {
                 Result:::Ok(report) -> {
-                    delete pixels;
-                    pixels = active->renderer->TakeOffscreenPixels();
                     pixelWidth = width;
                     pixelHeight = height;
                     stats.Record(started, report);
@@ -427,6 +425,9 @@ lantern:::editorbackend :: namespace {
         RenderTemplatePreview~: (templateId: string, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
             width: u32 = ClampSide(requestedWidth, MAXIMUM_PREVIEW_SIDE);
             height: u32 = ClampSide(requestedHeight, MAXIMUM_PREVIEW_SIDE);
+            if session->palette->Template(templateId) == null {
+                return `no template '${templateId}'`;
+            }
             failure: string!? = EnsureGpu();
             if failure != null {
                 return failure!;
@@ -439,17 +440,14 @@ lantern:::editorbackend :: namespace {
             outcome~ string!? = null;
             if template := session->palette->Template(templateId) {
                 BuildTemplatePreview(template, session->palette, active, world, spin);
-                when active->renderer->RenderOffscreen(world, width, height) {
-                    Result:::Ok(report) -> {
-                        delete previewPixels;
-                        previewPixels = active->renderer->TakeOffscreenPixels();
-                        previewWidth = width;
-                        previewHeight = height;
-                    },
+                when active->renderer->RenderOffscreen(world, width, height, previewPixels) {
+                    Result:::Ok(report) -> { },
                     Result:::Err(problem) -> {
                         outcome = problem!;
                     }
                 }
+                previewWidth = width;
+                previewHeight = height;
             } else {
                 outcome = `no template '${templateId}'`;
             }

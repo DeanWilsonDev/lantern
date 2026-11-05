@@ -194,7 +194,6 @@ lantern:::gpu :: namespace {
         offscreenDownload~ raw Sdl:::SDL_GPUTransferBuffer~* = null;
         offscreenWidth~ u32 = 0;
         offscreenHeight~ u32 = 0;
-        offscreenPixels~ Array<u8>! = [];
 
         GpuRenderer~: () {
             driverName = "" + "";
@@ -209,7 +208,6 @@ lantern:::gpu :: namespace {
             delete meshes;
             delete textures;
             delete driverName;
-            delete offscreenPixels;
         }
 
         static CreateOffscreen :: (options: GpuOptions) -> Result<GpuRenderer*!, string!> {
@@ -606,12 +604,6 @@ lantern:::gpu :: namespace {
             return Result<lantern:::renderer:::TextureData*!, string!>:::Ok(captured!);
         }
 
-        TakeOffscreenPixels~: () -> Array<u8>! {
-            taken: Array<u8>! = offscreenPixels!;
-            offscreenPixels = [];
-            return taken!;
-        }
-
         ReleaseOffscreenTarget~: () -> void {
             ReleaseCaptureTarget(offscreenColor, offscreenDepth, offscreenDownload);
             offscreenColor = null;
@@ -647,7 +639,7 @@ lantern:::gpu :: namespace {
             return null;
         }
 
-        RenderOffscreen~: (world: lantern:::renderer:::RenderWorld*, requestedWidth: u32, requestedHeight: u32) -> Result<FrameReport, string!> {
+        RenderOffscreen~: (world: lantern:::renderer:::RenderWorld*, requestedWidth: u32, requestedHeight: u32, pixels: Array<u8>!~*) -> Result<FrameReport, string!> {
             width: u32 = when (requestedWidth == 0) { true -> 1, false -> requestedWidth };
             height: u32 = when (requestedHeight == 0) { true -> 1, false -> requestedHeight };
             targetProblem: string!? = EnsureOffscreenTarget(width, height);
@@ -686,11 +678,11 @@ lantern:::gpu :: namespace {
             if fence == null {
                 return Result<FrameReport, string!>:::Err(SdlFailure("SDL_SubmitGPUCommandBufferAndAcquireFence"));
             }
-            while offscreenPixels.length() < usize(byteCount) {
-                offscreenPixels.push(0);
+            while pixels->length() < usize(byteCount) {
+                pixels->push(0);
             }
-            while offscreenPixels.length() > usize(byteCount) {
-                offscreenPixels.pop();
+            while pixels->length() > usize(byteCount) {
+                pixels->pop();
             }
             mapped~ raw u8~* = null;
             unsafe {
@@ -698,7 +690,7 @@ lantern:::gpu :: namespace {
                 Sdl:::SDL_ReleaseGPUFence(device, fence);
                 mapped = Sdl:::SDL_MapGPUTransferBuffer(device, offscreenDownload, false);
                 if mapped != null {
-                    lantern:::copyreadback:::memcpy(offscreenPixels.borrow().mutable(), mapped, usize(byteCount));
+                    lantern:::copyreadback:::memcpy(pixels->borrow().mutable(), mapped, usize(byteCount));
                     Sdl:::SDL_UnmapGPUTransferBuffer(device, offscreenDownload);
                 }
             }
@@ -707,12 +699,14 @@ lantern:::gpu :: namespace {
             }
             if IsBgra(colorFormat) {
                 for pixelOffset~ usize = 0; pixelOffset < usize(byteCount); pixelOffset += 4 {
-                    blue: u8 = offscreenPixels[pixelOffset];
-                    offscreenPixels[pixelOffset] = offscreenPixels[pixelOffset + 2];
-                    offscreenPixels[pixelOffset + 2] = blue;
+                    blue: u8 = pixels[pixelOffset];
+                    pixels[pixelOffset] = pixels[pixelOffset + 2];
+                    pixels[pixelOffset + 2] = blue;
                 }
             }
-            return Result<FrameReport, string!>:::Ok(report);
+            presentedReport~ FrameReport = report;
+            presentedReport.presented = true;
+            return Result<FrameReport, string!>:::Ok(presentedReport);
         }
 
         ReleaseCaptureTarget :: (color: raw Sdl:::SDL_GPUTexture~*, depth: raw Sdl:::SDL_GPUTexture~*, download: raw Sdl:::SDL_GPUTransferBuffer~*) -> void {
