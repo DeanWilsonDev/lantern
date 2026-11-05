@@ -1,0 +1,50 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Make :: () -> i64 { checker: i64 = lantern:::textures:::Checker(64, 2, \"FF0000\", \"00FF00\"); solid: i64 = lantern:::textures:::Solid(\"FFFFFF\"); cube: i64 = lantern:::meshes:::Cube(1.0f); lantern:::meshes:::Capsule(0.35f, 0.5f, 24, 8); lantern:::meshes:::Sphere(0.5f, 24, 12); lantern:::meshes:::Gem(0.25f, 0.5f); at: lantern:::math:::Vec3 = { }; shown: i64 = lantern:::world:::Spawn(\"shown\", at); lantern:::world:::SetTexturedMesh(shown, cube, checker, \"FFFFFF\"); lantern:::world:::SetTint(shown, \"FF000080\"); lantern:::world:::SetMaterial(\"platform\", solid); return cube; }\nNotPositive :: () -> string { caught~ string = \"no failure\"; when lantern:::textures:::Checker(0, 2, \"FF0000\", \"00FF00\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nMissingTexture :: () -> string { caught~ string = \"no failure\"; when lantern:::textures:::Load(\"textures/missing.png\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nMissingMesh :: () -> string { caught~ string = \"no failure\"; when lantern:::meshes:::Load(\"models/missing.glb\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nDebug :: () -> bool { lantern:::debug:::SetValue(\"Player/Speed\", \"3.5\"); lantern:::debug:::SetHudVisible(true); center: lantern:::math:::Vec3 = { y: 1.0f }; lantern:::debug:::Capsule(center, 0.35f, 0.5f, \"00FF00\"); lantern:::debug:::Sphere(center, 0.5f, \"00FF00\"); lantern:::debug:::Arrow(center, lantern:::math:::Vec3:::Up(), \"FFFF00\"); lantern:::debug:::Line(center, lantern:::math:::Vec3:::Zero(), \"FFFFFF\"); return lantern:::debug:::IsHudVisible(); }\nCollision :: () -> void { lantern:::world:::Load(\"../assets/worlds/course.world.json\"); lantern:::debug:::CollisionNear(lantern:::math:::Vec3:::Zero(), 1.0f, \"FF00FF\"); }";
+
+I64Result :: (program: lantern:::nyx:::Program*, name: string) -> i64 {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: i64 = lantern:::testing:::I64OrFail(value->I64());
+    delete value;
+    return result;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    cube: i64 = I64Result(program, "Make");
+    assert(state->scriptTextures.length() == 2, "the game's textures are tracked");
+    assert(state->scriptMeshes.length() == 4, "the game's meshes are tracked");
+    assert(lantern:::host:::HandleToScript<lantern:::renderer:::MeshTag>(state->scriptMeshes[0]) == cube, "a mesh crosses as its handle");
+    if record := state->world->Get(state->world->FindByName("shown") ?? lantern:::core:::Handle<lantern:::engine:::EntityTag> { }) {
+        if renderer := record.meshRenderer {
+            assert(renderer.texture != null, "the textured mesh has its texture");
+            assert(renderer.color.a > 0.5f && renderer.color.a < 0.51f, "the tint is set");
+        } else {
+            assert(false, "the spawned entity has a mesh");
+        }
+    } else {
+        assert(false, "the spawned entity exists");
+    }
+    assert(state->Material("platform") != null, "SetMaterial records the texture");
+    lantern:::testing:::ExpectText(program, "NotPositive", "Unknown: 0 must be positive");
+    lantern:::testing:::ExpectTextStart(program, "MissingTexture", "NotFound: ");
+    lantern:::testing:::ExpectTextStart(program, "MissingMesh", "NotFound: ");
+    assert(lantern:::testing:::BoolResult(program, "Debug"), "the HUD shows when the game asks");
+    assert(state->debugValues->Length() == 1, "the game's HUD value is stored");
+    drawn: usize = state->renderWorld->lines.length();
+    assert(drawn > 0, "the debug shapes add lines");
+    lantern:::testing:::CallOrFail(program, "Collision");
+    assert(state->renderWorld->lines.length() > drawn, "the collision near the origin is outlined");
+    delete program;
+    delete runtime;
+    delete state;
+    print("assets and debug drawing reach the renderer");
+    return 0;
+}

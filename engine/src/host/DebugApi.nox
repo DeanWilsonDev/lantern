@@ -1,0 +1,102 @@
+lantern:::host :: namespace {
+    RenderTriangles :: (triangles: Array<lantern:::physics:::Triangle>) -> Array<lantern:::renderer:::Triangle>! {
+        converted~ Array<lantern:::renderer:::Triangle>! = [];
+        for triangle in triangles {
+            converted.push(lantern:::renderer:::Triangle { first: triangle.a, second: triangle.b, third: triangle.c });
+        }
+        return converted!;
+    }
+
+    RegisterDebugApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        debug := new HostNamespace(runtime, "lantern::debug");
+        debug->Function("SetValue", "(path: string, value: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            path: string! = context->Text(0);
+            value: string! = context->Text(1);
+            if !Stopped(context) {
+                unsafe {
+                    state->debugValues->SetText(path, value);
+                }
+            }
+            delete value;
+            delete path;
+        });
+        debug->Function("IsHudVisible", "() -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnBool(state->debugHud->visible);
+            }
+        });
+        debug->Function("SetHudVisible", "(visible: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            visible: bool = context->Bool(0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->debugHud->visible = visible;
+            }
+        });
+        debug->Function("Capsule", "(center: lantern:::math:::Vec3, radius: f32, halfSegment: f32, color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            center: Vec3 = Vec3Argument(context, 0, math);
+            radius: f32 = context->F32(1);
+            halfSegment: f32 = context->F32(2);
+            color: lantern:::core:::Color = ColorArgument(context, 3);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                lantern:::debug:::Capsule(state->renderWorld, center, radius, halfSegment, color);
+            }
+        });
+        debug->Function("Sphere", "(center: lantern:::math:::Vec3, radius: f32, color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            center: Vec3 = Vec3Argument(context, 0, math);
+            radius: f32 = context->F32(1);
+            color: lantern:::core:::Color = ColorArgument(context, 2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                lantern:::debug:::Sphere(state->renderWorld, center, radius, color);
+            }
+        });
+        debug->Function("Arrow", "(start: lantern:::math:::Vec3, vector: lantern:::math:::Vec3, color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            start: Vec3 = Vec3Argument(context, 0, math);
+            vector: Vec3 = Vec3Argument(context, 1, math);
+            color: lantern:::core:::Color = ColorArgument(context, 2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                lantern:::debug:::Arrow(state->renderWorld, start, vector, color);
+            }
+        });
+        debug->Function("Line", "(start: lantern:::math:::Vec3, end: lantern:::math:::Vec3, color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            start: Vec3 = Vec3Argument(context, 0, math);
+            end: Vec3 = Vec3Argument(context, 1, math);
+            color: lantern:::core:::Color = ColorArgument(context, 2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->Line(start, end, color);
+            }
+        });
+        debug->Function("CollisionNear", "(center: lantern:::math:::Vec3, halfExtent: f32, color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            center: Vec3 = Vec3Argument(context, 0, math);
+            halfExtent: f32 = context->F32(1);
+            color: lantern:::core:::Color = ColorArgument(context, 2);
+            if Stopped(context) {
+                return;
+            }
+            bounds := lantern:::core:::Aabb:::FromCenterHalfExtents(center, lantern:::core:::Splat3(halfExtent));
+            unsafe {
+                near: Array<lantern:::physics:::Triangle>! = state->collision->DebugTrianglesNear(bounds);
+                triangles: Array<lantern:::renderer:::Triangle>! = RenderTriangles(near);
+                lantern:::debug:::TriangleEdges(state->renderWorld, triangles, color);
+                delete triangles;
+                delete near;
+            }
+        });
+        failure := debug->Finish();
+        delete debug;
+        return failure!;
+    }
+}

@@ -1,0 +1,25 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Fall :: () -> string { lantern:::world:::Load(\"../assets/worlds/course.world.json\"); feet: lantern:::math:::Vec3 = { y: 2.0f }; player~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(0.35f, 1.7f, feet); player.SetWalkSpeed(6.0f); player.SetJumpHeight(1.5f); player.SetGravity(28.0f); landed~ bool = false; for step~ i32 = 0; step < 120; step += 1 { result: lantern:::physics:::ControllerStep = player.Step(lantern:::math:::Vec3:::Zero(), false, false, 1.0f / 60.0f); if result.Landed() && result.LandingSpeed() > 0.0f { landed = true; } } return `${landed} ${player.IsGrounded()} ${player.FeetPosition().y < 0.05f} ${player.Radius()} ${player.Height()} ${player.HalfSegment()} ${player.GroundNormal().y} ${player.Velocity().y}`; }\nJump :: () -> bool { feet: lantern:::math:::Vec3 = { y: 0.0f }; player~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(0.35f, 1.7f, feet); for step~ i32 = 0; step < 30; step += 1 { player.Step(lantern:::math:::Vec3:::Zero(), false, false, 1.0f / 60.0f); } jumped: lantern:::physics:::ControllerStep = player.Step(lantern:::math:::Vec3:::Zero(), true, true, 1.0f / 60.0f); return jumped.Jumped() && !jumped.HitCeiling() && player.CapsuleCenter().y > 0.85f; }\nTeleported :: () -> f32 { feet: lantern:::math:::Vec3 = { y: 5.0f }; player~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(0.35f, 1.7f, feet); target: lantern:::math:::Vec3 = { x: 3.0f, y: 1.0f }; player.Teleport(target); return player.FeetPosition().x; }\nHit :: () -> string { origin: lantern:::math:::Vec3 = { y: 5.0f }; direction: lantern:::math:::Vec3 = { y: -2.0f }; hit: lantern:::physics:::RayHit? = lantern:::physics:::Raycast(origin, direction, 10.0f); if found := hit { return `${found.Distance()} ${found.Point().y} ${found.Normal().y}`; } return \"no hit\"; }\nMiss :: () -> bool { origin: lantern:::math:::Vec3 = { y: 5.0f }; return lantern:::physics:::Raycast(origin, lantern:::math:::Vec3:::Up(), 10.0f) == null; }\nSweep :: () -> f32 { origin: lantern:::math:::Vec3 = { y: 2.0f }; motion: lantern:::math:::Vec3 = { y: -4.0f }; return lantern:::physics:::SphereCast(0.5f, origin, motion) ?? -1.0f; }\nClear :: () -> bool { origin: lantern:::math:::Vec3 = { y: 2.0f }; motion: lantern:::math:::Vec3 = { y: 1.0f }; return lantern:::physics:::SphereCast(0.5f, origin, motion) == null; }";
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    lantern:::testing:::ExpectText(program, "Fall", "true true true 0.35 1.7 0.5 1 0");
+    assert(lantern:::testing:::BoolResult(program, "Jump"), "a grounded controller jumps");
+    assert(lantern:::testing:::F32Result(program, "Teleported") == 3.0f, "Teleport moves the feet");
+    lantern:::testing:::ExpectText(program, "Hit", "5 0 1");
+    assert(lantern:::testing:::BoolResult(program, "Miss"), "a ray that hits nothing is null");
+    sweep: f32 = lantern:::testing:::F32Result(program, "Sweep");
+    assert(sweep > 0.37f && sweep < 0.38f, "a sphere sweep stops at the floor");
+    assert(lantern:::testing:::BoolResult(program, "Clear"), "a clear sweep is null");
+    delete program;
+    delete runtime;
+    delete state;
+    print("a character controller lands on the course");
+    return 0;
+}

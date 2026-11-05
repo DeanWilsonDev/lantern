@@ -1,0 +1,153 @@
+lantern:::host :: namespace {
+    PositiveCount :: (context: lantern:::nyx:::CallContext~*, index: usize) -> u32 {
+        count: i32 = context->I32(index);
+        if Stopped(context) {
+            return 0;
+        }
+        if count <= 0 {
+            message: string! = `${count} must be positive`;
+            Invalid(context, message);
+            delete message;
+            return 0;
+        }
+        return u32(count);
+    }
+
+    CreateScriptTexture :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, texture: lantern:::renderer:::TextureData*!) -> void {
+        defer delete texture;
+        unsafe {
+            created := state->renderer->CreateTexture(texture);
+            when created! {
+                Result:::Ok(handle) -> {
+                    state->scriptTextures.push(handle);
+                    context->ReturnI64(HandleToScript<lantern:::renderer:::TextureTag>(handle));
+                },
+                Result:::Err(message) -> {
+                    Invalid(context, message);
+                    delete message;
+                }
+            }
+        }
+    }
+
+    CreateScriptMesh :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, mesh: lantern:::renderer:::MeshData*!) -> void {
+        defer delete mesh;
+        unsafe {
+            created := state->renderer->CreateMesh(mesh);
+            when created! {
+                Result:::Ok(handle) -> {
+                    state->scriptMeshes.push(handle);
+                    context->ReturnI64(HandleToScript<lantern:::renderer:::MeshTag>(handle));
+                },
+                Result:::Err(message) -> {
+                    Invalid(context, message);
+                    delete message;
+                }
+            }
+        }
+    }
+
+    AssetPathArgument :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, index: usize) -> string! {
+        relative: string! = context->Text(index);
+        defer delete relative;
+        unsafe {
+            return state->AssetPath(relative);
+        }
+    }
+
+    RegisterAssetsApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+        textures := new HostNamespace(runtime, "lantern::textures");
+        textures->Function("Load", "(path: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            path: string! = AssetPathArgument(context, state, 0);
+            defer delete path;
+            if Stopped(context) {
+                return;
+            }
+            loaded := lantern:::renderer:::TextureData:::LoadPng(path);
+            when loaded! {
+                Result:::Ok(texture) -> {
+                    CreateScriptTexture(context, state, texture!);
+                },
+                Result:::Err(message) -> {
+                    NotFound(context, message);
+                    delete message;
+                }
+            }
+        });
+        textures->Function("Checker", "(size: i32, cells: i32, first: string, second: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            size: u32 = PositiveCount(context, 0);
+            cells: u32 = PositiveCount(context, 1);
+            first: lantern:::core:::Color = ColorArgument(context, 2);
+            second: lantern:::core:::Color = ColorArgument(context, 3);
+            if Stopped(context) {
+                return;
+            }
+            CreateScriptTexture(context, state, lantern:::renderer:::TextureData:::Checker(size, cells, first, second));
+        });
+        textures->Function("Solid", "(color: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            color: lantern:::core:::Color = ColorArgument(context, 0);
+            if Stopped(context) {
+                return;
+            }
+            CreateScriptTexture(context, state, lantern:::renderer:::TextureData:::Solid(color));
+        });
+        failure~ lantern:::nyx:::NyxError*!? = textures->Finish();
+        delete textures;
+
+        meshes := new HostNamespace(runtime, "lantern::meshes");
+        meshes->Function("Load", "(path: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            path: string! = AssetPathArgument(context, state, 0);
+            defer delete path;
+            if Stopped(context) {
+                return;
+            }
+            loaded := lantern:::renderer:::LoadGltfMesh(path);
+            when loaded! {
+                Result:::Ok(mesh) -> {
+                    CreateScriptMesh(context, state, mesh!);
+                },
+                Result:::Err(message) -> {
+                    NotFound(context, message);
+                    delete message;
+                }
+            }
+        });
+        meshes->Function("Capsule", "(radius: f32, halfHeight: f32, segments: i32, rings: i32) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            radius: f32 = context->F32(0);
+            halfHeight: f32 = context->F32(1);
+            segments: u32 = PositiveCount(context, 2);
+            rings: u32 = PositiveCount(context, 3);
+            if Stopped(context) {
+                return;
+            }
+            CreateScriptMesh(context, state, lantern:::renderer:::Capsule(radius, halfHeight, segments, rings));
+        });
+        meshes->Function("Sphere", "(radius: f32, segments: i32, rings: i32) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            radius: f32 = context->F32(0);
+            segments: u32 = PositiveCount(context, 1);
+            rings: u32 = PositiveCount(context, 2);
+            if Stopped(context) {
+                return;
+            }
+            CreateScriptMesh(context, state, lantern:::renderer:::Sphere(radius, segments, rings));
+        });
+        meshes->Function("Cube", "(size: f32) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            size: f32 = context->F32(0);
+            if Stopped(context) {
+                return;
+            }
+            CreateScriptMesh(context, state, lantern:::renderer:::Cube(size));
+        });
+        meshes->Function("Gem", "(radius: f32, height: f32) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            radius: f32 = context->F32(0);
+            height: f32 = context->F32(1);
+            if Stopped(context) {
+                return;
+            }
+            CreateScriptMesh(context, state, lantern:::renderer:::Gem(radius, height));
+        });
+        failure = FirstFailure(failure!, meshes->Finish());
+        delete meshes;
+        return failure!;
+    }
+}

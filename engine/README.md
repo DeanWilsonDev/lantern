@@ -112,8 +112,9 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   which registers functions under a namespace path such as `lantern::input`, and the argument helpers: vectors cross
   as `lantern:::math:::Vec3` and `Vec2` value types, handles as `i64`, a failure is `Error:::NotFound` or
   `Error:::Unknown`) and one file per group of the engine API: `MathApi.nox`, `EngineApi.nox` (engine, audio,
-  overlay, camera, renderer and screen), `InputApi.nox` with `DeviceNames.nox`, and `EngineApis.nox`, which registers
-  them all. `docs/game-api.md` lists every call.
+  overlay, camera, renderer and screen), `InputApi.nox` with `DeviceNames.nox`, `WorldApi.nox` (world files and
+  entities), `PhysicsApi.nox` (`RayHit`, `ControllerStep` and `CharacterController` as host object types),
+  `AssetsApi.nox` (textures and meshes), `DebugApi.nox`, and `EngineApis.nox`, which registers them all. `docs/game-api.md` lists every call.
 - `src/runner/GpuRenderBackend.nox` is the `RenderBackend` over `GpuRenderer`, kept out of `src/host` so the host's
   tests build without the GPU code.
 - `src/sdl/` is the Rust `sdl-facade` crate: `SdlContext` (initialises SDL and shuts it down when deleted),

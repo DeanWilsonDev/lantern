@@ -1,0 +1,276 @@
+lantern:::host :: namespace {
+    RAY_HIT_TYPE_NAME: string : "lantern::physics::RayHit";
+    CONTROLLER_STEP_TYPE_NAME: string : "lantern::physics::ControllerStep";
+    CHARACTER_CONTROLLER_TYPE_NAME: string : "lantern::physics::CharacterController";
+
+    ScriptRayHit :: class {
+        implements:
+            lantern:::nyx:::HostObject;
+    public:
+        hit~ lantern:::physics:::RayHit = lantern:::physics:::RayHit { };
+
+        ScriptRayHit~: (rayHit: lantern:::physics:::RayHit) {
+            hit = rayHit;
+        }
+
+        HostTypeName :: () -> string {
+            return RAY_HIT_TYPE_NAME;
+        }
+    }
+
+    ScriptControllerStep :: class {
+        implements:
+            lantern:::nyx:::HostObject;
+    public:
+        events~ lantern:::physics:::ControllerEvents = lantern:::physics:::ControllerEvents { };
+
+        ScriptControllerStep~: (stepEvents: lantern:::physics:::ControllerEvents) {
+            events = stepEvents;
+        }
+
+        HostTypeName :: () -> string {
+            return CONTROLLER_STEP_TYPE_NAME;
+        }
+    }
+
+    ScriptCharacterController :: class {
+        implements:
+            lantern:::nyx:::HostObject;
+    public:
+        controller~ lantern:::physics:::CharacterController = lantern:::physics:::CharacterController { };
+
+        ScriptCharacterController~: (characterController: lantern:::physics:::CharacterController) {
+            controller = characterController;
+        }
+
+        HostTypeName :: () -> string {
+            return CHARACTER_CONTROLLER_TYPE_NAME;
+        }
+    }
+
+    PhysicsTypes :: struct {
+        rayHit~ raw lantern:::nyx:::HostType~* = null;
+        controllerStep~ raw lantern:::nyx:::HostType~* = null;
+    }
+
+    RayHitOf :: (context: lantern:::nyx:::CallContext~*) -> ScriptRayHit~*? {
+        guard object ~= context->ReceiverObject() return null;
+        return object as ScriptRayHit~*;
+    }
+
+    ControllerStepOf :: (context: lantern:::nyx:::CallContext~*) -> ScriptControllerStep~*? {
+        guard object ~= context->ReceiverObject() return null;
+        return object as ScriptControllerStep~*;
+    }
+
+    CharacterControllerOf :: (context: lantern:::nyx:::CallContext~*) -> ScriptCharacterController~*? {
+        guard object ~= context->ReceiverObject() return null;
+        return object as ScriptCharacterController~*;
+    }
+
+    DeclareRayHitType :: (math: MathTypes) -> lantern:::nyx:::HostType*! {
+        rayHits := new lantern:::nyx:::HostType(RAY_HIT_TYPE_NAME);
+        rayHits->Method("Distance", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if hit ~= RayHitOf(context) {
+                context->ReturnF32(hit->hit.distance);
+            }
+        });
+        rayHits->Method("Point", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            if hit ~= RayHitOf(context) {
+                ReturnVec3(context, math, hit->hit.point);
+            }
+        });
+        rayHits->Method("Normal", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            if hit ~= RayHitOf(context) {
+                ReturnVec3(context, math, hit->hit.normal);
+            }
+        });
+        return rayHits!;
+    }
+
+    DeclareControllerStepType :: () -> lantern:::nyx:::HostType*! {
+        steps := new lantern:::nyx:::HostType(CONTROLLER_STEP_TYPE_NAME);
+        steps->Method("Jumped", "() -> bool", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if step ~= ControllerStepOf(context) {
+                context->ReturnBool(step->events.jumped);
+            }
+        });
+        steps->Method("Landed", "() -> bool", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if step ~= ControllerStepOf(context) {
+                context->ReturnBool(step->events.landedWithSpeed != null);
+            }
+        });
+        steps->Method("LandingSpeed", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if step ~= ControllerStepOf(context) {
+                context->ReturnF32(step->events.landedWithSpeed ?? 0.0f);
+            }
+        });
+        steps->Method("HitCeiling", "() -> bool", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if step ~= ControllerStepOf(context) {
+                context->ReturnBool(step->events.hitCeiling);
+            }
+        });
+        return steps!;
+    }
+
+    DeclareCharacterControllerType :: (state: raw EngineState~*, math: MathTypes, physics: PhysicsTypes) -> lantern:::nyx:::HostType*! {
+        controllers := new lantern:::nyx:::HostType(CHARACTER_CONTROLLER_TYPE_NAME);
+        controllers->Constructor("(radius: f32, height: f32, feet: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            settings~ lantern:::physics:::ControllerSettings = lantern:::physics:::ControllerSettings { };
+            settings.radius = context->F32(0);
+            settings.height = context->F32(1);
+            feet: Vec3 = Vec3Argument(context, 2, math);
+            if Stopped(context) {
+                return;
+            }
+            context->ReturnOwnObject(new ScriptCharacterController(lantern:::physics:::CharacterController:::Create(settings, feet)));
+        });
+        controllers->Method("Step", "(moveDirection: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> lantern:::physics:::ControllerStep", true, new (context: lantern:::nyx:::CallContext~*) -> void [state, math, physics] {
+            input~ lantern:::physics:::ControllerInput = lantern:::physics:::ControllerInput { };
+            input.moveDirection = Vec3Argument(context, 0, math);
+            input.jumpPressed = context->Bool(1);
+            input.jumpHeld = context->Bool(2);
+            deltaSeconds: f32 = context->F32(3);
+            if Stopped(context) {
+                return;
+            }
+            if character ~= CharacterControllerOf(context) {
+                unsafe {
+                    events: lantern:::physics:::ControllerEvents = character->controller.Step(state->collision, input, deltaSeconds);
+                    context->ReturnObject(physics.controllerStep, new ScriptControllerStep(events));
+                }
+            }
+        });
+        controllers->Method("Teleport", "(feet: lantern:::math:::Vec3) -> void", true, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            feet: Vec3 = Vec3Argument(context, 0, math);
+            if Stopped(context) {
+                return;
+            }
+            if character ~= CharacterControllerOf(context) {
+                character->controller.Teleport(feet);
+            }
+        });
+        controllers->Method("FeetPosition", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            if character ~= CharacterControllerOf(context) {
+                ReturnVec3(context, math, character->controller.feetPosition);
+            }
+        });
+        controllers->Method("CapsuleCenter", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            if character ~= CharacterControllerOf(context) {
+                ReturnVec3(context, math, character->controller.CapsuleCenter());
+            }
+        });
+        controllers->Method("Velocity", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            if character ~= CharacterControllerOf(context) {
+                ReturnVec3(context, math, character->controller.velocity);
+            }
+        });
+        controllers->Method("GroundNormal", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            if character ~= CharacterControllerOf(context) {
+                ReturnVec3(context, math, character->controller.groundNormal);
+            }
+        });
+        controllers->Method("IsGrounded", "() -> bool", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if character ~= CharacterControllerOf(context) {
+                context->ReturnBool(character->controller.grounded);
+            }
+        });
+        controllers->Method("Radius", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if character ~= CharacterControllerOf(context) {
+                context->ReturnF32(character->controller.settings.radius);
+            }
+        });
+        controllers->Method("Height", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if character ~= CharacterControllerOf(context) {
+                context->ReturnF32(character->controller.settings.height);
+            }
+        });
+        controllers->Method("HalfSegment", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if character ~= CharacterControllerOf(context) {
+                context->ReturnF32(character->controller.settings.CapsuleShape().halfSegment);
+            }
+        });
+        controllers->Method("SetWalkSpeed", "(metresPerSecond: f32) -> void", true, new (context: lantern:::nyx:::CallContext~*) -> void {
+            speed: f32 = context->F32(0);
+            if Stopped(context) {
+                return;
+            }
+            if character ~= CharacterControllerOf(context) {
+                character->controller.settings.walkSpeed = speed;
+            }
+        });
+        controllers->Method("SetJumpHeight", "(metres: f32) -> void", true, new (context: lantern:::nyx:::CallContext~*) -> void {
+            height: f32 = context->F32(0);
+            if Stopped(context) {
+                return;
+            }
+            if character ~= CharacterControllerOf(context) {
+                character->controller.settings.jumpHeight = height;
+            }
+        });
+        controllers->Method("SetGravity", "(metresPerSecondSquared: f32) -> void", true, new (context: lantern:::nyx:::CallContext~*) -> void {
+            gravity: f32 = context->F32(0);
+            if Stopped(context) {
+                return;
+            }
+            if character ~= CharacterControllerOf(context) {
+                character->controller.settings.gravity = gravity;
+            }
+        });
+        return controllers!;
+    }
+
+    RegisterPhysicsApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        physics~ PhysicsTypes = PhysicsTypes { };
+        rayHits := DeclareRayHitType(math);
+        steps := DeclareControllerStepType();
+        unsafe {
+            physics.rayHit = rayHits;
+            physics.controllerStep = steps;
+        }
+        failure~ lantern:::nyx:::NyxError*!? = runtime->RegisterType(rayHits!);
+        failure = FirstFailure(failure!, runtime->RegisterType(steps!));
+        if failure != null {
+            return failure!;
+        }
+        queries := new HostNamespace(runtime, "lantern::physics");
+        queries->Function("Raycast", "(origin: lantern:::math:::Vec3, direction: lantern:::math:::Vec3, maxDistance: f32) -> lantern:::physics:::RayHit?", new (context: lantern:::nyx:::CallContext~*) -> void [state, math, physics] {
+            origin: Vec3 = Vec3Argument(context, 0, math);
+            direction: Vec3 = lantern:::physics:::NormalizeOrZero3(Vec3Argument(context, 1, math));
+            maximumDistance: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                found: lantern:::physics:::RayHit? = state->collision->Raycast(origin, direction, maximumDistance);
+                if hit := found {
+                    context->ReturnObject(physics.rayHit, new ScriptRayHit(hit));
+                } else {
+                    context->ReturnNull();
+                }
+            }
+        });
+        queries->Function("SphereCast", "(radius: f32, origin: lantern:::math:::Vec3, motion: lantern:::math:::Vec3) -> f32?", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            radius: f32 = context->F32(0);
+            origin: Vec3 = Vec3Argument(context, 1, math);
+            motion: Vec3 = Vec3Argument(context, 2, math);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                found: lantern:::physics:::ShapeHit? = state->collision->CapsuleCast(lantern:::physics:::Capsule:::Sphere(radius), origin, motion, null);
+                if hit := found {
+                    context->ReturnF32(hit.fraction);
+                } else {
+                    context->ReturnNull();
+                }
+            }
+        });
+        failure = queries->Finish();
+        delete queries;
+        if failure != null {
+            return failure!;
+        }
+        return runtime->RegisterType(DeclareCharacterControllerType(state, math, physics));
+    }
+}
