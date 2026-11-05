@@ -1,0 +1,128 @@
+lantern:::host :: namespace {
+    DEFAULT_ASSETS_DIRECTORY: string : "assets";
+
+    ScriptSource :: class {
+    public:
+        scriptsDirectory~ string!;
+        entryFile~ string!;
+        applicationClass~ string!;
+
+        ScriptSource~: (directory: string, entry: string, application: string) {
+            scriptsDirectory = `${directory}`;
+            entryFile = `${entry}`;
+            applicationClass = `${application}`;
+        }
+
+        !ScriptSource~: () {
+            delete scriptsDirectory;
+            delete entryFile;
+            delete applicationClass;
+        }
+    }
+
+    GameManifest :: class {
+    public:
+        title~ string!;
+        entry~ string!;
+        applicationClass~ string!;
+        assets~ string!;
+
+        GameManifest~: (gameTitle: string, entryFile: string, application: string, assetsDirectory: string) {
+            title = `${gameTitle}`;
+            entry = `${entryFile}`;
+            applicationClass = `${application}`;
+            assets = `${assetsDirectory}`;
+        }
+
+        !GameManifest~: () {
+            delete title;
+            delete entry;
+            delete applicationClass;
+            delete assets;
+        }
+
+        static Load :: (gameDirectory: string) -> Result<GameManifest*!, string!> {
+            path: string! = `${gameDirectory}/game.json`;
+            defer delete path;
+            when readTextFile(path) {
+                Result:::Ok(text) -> {
+                    defer delete text;
+                    parsed := FromJson(text, path);
+                    when parsed! {
+                        Result:::Ok(manifest) -> {
+                            return Result<GameManifest*!, string!>:::Ok(manifest!);
+                        },
+                        Result:::Err(message) -> {
+                            return Result<GameManifest*!, string!>:::Err(message!);
+                        }
+                    }
+                },
+                Result:::Err(error) -> {
+                    failure: string! = `${path}: ${error.message()}`;
+                    delete error;
+                    return Result<GameManifest*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        static FromJson :: (text: string, path: string) -> Result<GameManifest*!, string!> {
+            when lantern:::json:::Parse(text) {
+                Result:::Ok(document) -> {
+                    defer delete document;
+                    root: u32 = document->root;
+                    if document->Kind(root) != lantern:::json:::JsonKind:::Object {
+                        return Result<GameManifest*!, string!>:::Err(`${path}: the manifest isn't a JSON object`);
+                    }
+                    guard title := ManifestText(document, root, "title") return MissingField(path, "title");
+                    guard entryFile := ManifestText(document, root, "entry") return MissingField(path, "entry");
+                    guard application := ManifestText(document, root, "application_class") return MissingField(path, "application_class");
+                    assetsDirectory: string = ManifestText(document, root, "assets") ?? DEFAULT_ASSETS_DIRECTORY;
+                    return Result<GameManifest*!, string!>:::Ok(new GameManifest(title, entryFile, application, assetsDirectory));
+                },
+                Result:::Err(message) -> {
+                    failure: string! = `${path}: ${message}`;
+                    delete message;
+                    return Result<GameManifest*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        static ManifestText :: (document: lantern:::json:::JsonDocument*, root: u32, key: string) -> string? {
+            guard member := document->Member(root, key) return null;
+            if document->Kind(member) != lantern:::json:::JsonKind:::Text {
+                return null;
+            }
+            return document->Text(member);
+        }
+
+        static MissingField :: (path: string, field: string) -> Result<GameManifest*!, string!> {
+            return Result<GameManifest*!, string!>:::Err(`${path}: missing text field '${field}'`);
+        }
+
+        ScriptSourceFor :: (gameDirectory: string) -> ScriptSource*! {
+            return new ScriptSource(gameDirectory, entry, applicationClass);
+        }
+
+        AssetsDirectory :: (gameDirectory: string) -> string!? {
+            explicit: string!? = environmentVariable("LANTERN_ASSETS");
+            candidate~ string! = "";
+            if text := explicit {
+                candidate += text;
+            } else {
+                candidate += `${gameDirectory}/${assets}`;
+            }
+            delete explicit;
+            if directoryExists(candidate) {
+                message: string! = `assets directory: ${candidate}`;
+                lantern:::core:::LogInfo("assets", message);
+                delete message;
+                return candidate!;
+            }
+            message: string! = `no assets directory at ${candidate}`;
+            lantern:::core:::LogWarn("assets", message);
+            delete message;
+            delete candidate;
+            return null;
+        }
+    }
+}

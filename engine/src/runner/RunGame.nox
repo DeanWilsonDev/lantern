@@ -1,0 +1,92 @@
+lantern:::runner :: namespace {
+    AUDIO_SAMPLE_RATE: u32 : 48000;
+
+    OpenAudioOutput :: (context: lantern:::sdl:::SdlContext~*) -> lantern:::platform:::AudioSink*!? {
+        output := lantern:::sdl:::SdlAudioOutput:::Open(context, AUDIO_SAMPLE_RATE);
+        if output == null {
+            lantern:::core:::LogWarn("audio", "no audio output; continuing without sound");
+        }
+        return output!;
+    }
+
+    ConfigureHost :: (host: lantern:::host:::GameHost~*) -> void {
+        limit: u64 = lantern:::run:::FrameLimit();
+        if limit > 0 {
+            host->maxFrames = limit;
+        }
+        delete host->capturePath;
+        host->capturePath = environmentVariable("LANTERN_CAPTURE_PATH");
+        host->state->debugHud->visible = lantern:::host:::EnvironmentFlag("LANTERN_DEBUG_HUD");
+    }
+
+    RunHost :: (window: lantern:::sdl:::SdlWindow*!, host: lantern:::host:::GameHost*!) -> i32 {
+        platform := new lantern:::sdl:::SdlPlatform(window!);
+        frameLoop := new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
+        frameLoop->Run(platform, host);
+        host->Shutdown();
+        delete host;
+        delete frameLoop;
+        delete platform;
+        return 0;
+    }
+
+    RunGame :: (gameDirectory: string) -> i32 {
+        loaded := lantern:::host:::GameManifest:::Load(gameDirectory);
+        when loaded! {
+            Result:::Ok(manifest) -> {
+                status: i32 = RunManifest(gameDirectory, manifest);
+                delete manifest;
+                return status;
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("game", message);
+                delete message;
+                return 1;
+            }
+        }
+    }
+
+    RunManifest :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*) -> i32 {
+        context := lantern:::sdl:::SdlContext:::Init();
+        guard context return 1;
+        defer delete context;
+        window := lantern:::sdl:::SdlWindow:::Create(context, lantern:::platform:::WindowConfig { title: manifest->title });
+        guard window return 1;
+        return RunInWindow(gameDirectory, manifest, context, window!);
+    }
+
+    RunInWindow :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*, sdl: lantern:::sdl:::SdlContext~*, window: lantern:::sdl:::SdlWindow*!) -> i32 {
+        created := lantern:::gpu:::GpuRenderer:::Create(window->Raw(), lantern:::gpu:::GpuOptions:::FromEnvironment());
+        when created! {
+            Result:::Ok(renderer) -> {
+                assets: string!? = manifest->AssetsDirectory(gameDirectory);
+                defer delete assets;
+                assetsView~ string? = null;
+                if path := assets {
+                    assetsView = path;
+                }
+                audio := new lantern:::engine:::AudioSystem(OpenAudioOutput(sdl));
+                started := lantern:::host:::EngineState:::Create(new GpuRenderBackend(renderer!), audio!, assetsView);
+                when started! {
+                    Result:::Ok(state) -> {
+                        host := new lantern:::host:::GameHost(state!, manifest->ScriptSourceFor(gameDirectory));
+                        ConfigureHost(host);
+                        return RunHost(window!, host!);
+                    },
+                    Result:::Err(message) -> {
+                        lantern:::core:::LogError("game", message);
+                        delete message;
+                        delete window;
+                        return 1;
+                    }
+                }
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("renderer", message);
+                delete message;
+                delete window;
+                return 1;
+            }
+        }
+    }
+}

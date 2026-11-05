@@ -1,0 +1,108 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+GAME_DIRECTORY: string : "tests/support/games/drop";
+
+LoadManifest :: () -> lantern:::host:::GameManifest*! {
+    when lantern:::host:::GameManifest:::Load(GAME_DIRECTORY) {
+        Result:::Ok(manifest) -> {
+            return manifest!;
+        },
+        Result:::Err(message) -> {
+            print(`the manifest failed to load: ${message}`);
+            delete message;
+            assert(false, "the test game's manifest loads");
+            return new lantern:::host:::GameManifest("", "", "", "");
+        }
+    }
+}
+
+StateWithAssets :: (manifest: lantern:::host:::GameManifest*) -> lantern:::host:::EngineState*! {
+    assets: string!? = manifest->AssetsDirectory(GAME_DIRECTORY);
+    defer delete assets;
+    assetsView~ string? = null;
+    if path := assets {
+        assetsView = path;
+    }
+    when lantern:::host:::EngineState:::Create(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), assetsView) {
+        Result:::Ok(state) -> {
+            return state!;
+        },
+        Result:::Err(message) -> {
+            print(`the engine state failed: ${message}`);
+            delete message;
+            assert(false, "the headless engine state starts");
+            return new lantern:::host:::EngineState(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), null);
+        }
+    }
+}
+
+DebugText :: (host: lantern:::host:::GameHost*, path: string) -> string {
+    if index := host->state->debugValues->IndexOf(path) {
+        return host->state->debugValues->TextAt(index);
+    }
+    return "";
+}
+
+RunFrames :: (frameLoop: lantern:::engine:::FrameLoop~*, platform: lantern:::testing:::ScriptedPlatform~*, host: lantern:::host:::GameHost~*) -> void {
+    while platform->HasFrames() {
+        frameLoop->RunFrame(platform, host);
+    }
+}
+
+AddFrames :: (platform: lantern:::testing:::ScriptedPlatform~*, count: usize) -> void {
+    for index~ usize = 0; index < count; index++ {
+        platform->AddFrame(f64(platform->frames.length()) / 60.0f);
+    }
+}
+
+LiveMeshes :: (host: lantern:::host:::GameHost~*) -> usize {
+    guard headless ~= host->state->renderer as lantern:::host:::HeadlessRenderer~* return 0;
+    headless->UpdateLiveCounts();
+    return headless->Stats().liveMeshes;
+}
+
+LoadError :: (state: lantern:::host:::EngineState~*, entry: string, application: string) -> string! {
+    unsafe {
+        statePointer: raw lantern:::host:::EngineState~* = state;
+        when lantern:::host:::ScriptSession:::Load(GAME_DIRECTORY, entry, application, statePointer) {
+            Result:::Ok(session) -> {
+                delete session;
+                return lantern:::host:::OwnedText("loaded");
+            },
+            Result:::Err(message) -> {
+                return message!;
+            }
+        }
+    }
+}
+
+main :: () -> i32 {
+    manifest := LoadManifest();
+    state := StateWithAssets(manifest);
+    missingClass: string! = LoadError(state, "main.nyx", "NoSuchApplication");
+    assert(missingClass != "loaded", "loading a class the game doesn't define fails");
+    missingFile: string! = LoadError(state, "no-such-file.nyx", "DropGame");
+    assert(missingFile.contains("no-such-file.nyx"), "loading a file that doesn't exist fails and names it");
+    loaded: string! = LoadError(state, "main.nyx", "DropGame");
+    if loaded != "loaded" {
+        print(`the game failed to load: ${loaded}`);
+    }
+    assert(loaded == "loaded", "the game loads after failed loads");
+    delete missingClass;
+    delete missingFile;
+    delete loaded;
+    delete state;
+    broken := new lantern:::host:::GameHost(StateWithAssets(manifest), new lantern:::host:::ScriptSource(GAME_DIRECTORY, "main.nyx", "NoSuchApplication"));
+    assert(!broken->IsRunningScript(), "a game that fails to load doesn't run");
+    assert(broken->ScriptErrorCount() == 1, "the failure is reported once");
+    if error := broken->scriptError {
+        assert(error.startsWith("the game failed to load (F5 retries):"), "the window says how to retry");
+    } else {
+        assert(false, "the host keeps the load error");
+    }
+    delete broken;
+    delete manifest;
+    print("a failed load leaves the next load working");
+    return 0;
+}
