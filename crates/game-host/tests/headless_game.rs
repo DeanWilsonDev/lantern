@@ -250,3 +250,65 @@ fn a_hook_error_names_the_nyx_line_and_its_callers() {
     assert!(error.contains("main.nyx:8:9)"), "{error}");
     assert!(error.contains("\n    called from Broken.OnFixedUpdate ("), "{error}");
 }
+
+const TRACED_VALUES: [&str; 7] =
+    ["Player/Position", "Player/Speed", "Player/Grounded", "Camera/Yaw", "Camera/Pitch", "Game/Gems", "Game/Time"];
+
+/// One line per frame: the frame number, the game's own debug values and the draws it submitted.
+fn trace_line(frame: u32, host: &GameHost, stats: &Rc<RefCell<HeadlessStats>>) -> String {
+    let values: Vec<String> = TRACED_VALUES.iter().map(|path| debug_value(host, path)).collect();
+    format!("{frame}\t{}\t{}\n", values.join("\t"), stats.borrow().last_draw_count)
+}
+
+fn run_traced(name: &str, autoplay: bool, script: impl FnOnce(&mut ScriptedPlatform), frames: u32) {
+    let Some(directory) = std::env::var_os("LANTERN_TRACE_DIRECTORY") else { return };
+    let flags: &[(&str, bool)] = if autoplay { &[("LANTERN_AUTOPLAY", true)] } else { &[] };
+    let (mut host, stats) = start_platformer(flags);
+    let mut platform = ScriptedPlatform::default();
+    script(&mut platform);
+    let mut frame_loop = FrameLoop::new(InputRouter::new(Default::default(), Default::default()));
+    let mut text = String::new();
+    for frame in 1..=frames {
+        run_frames(&mut frame_loop, &mut platform, &mut host, 1);
+        text.push_str(&trace_line(frame, &host, &stats));
+    }
+    assert_no_script_error(&host);
+    std::fs::write(PathBuf::from(directory).join(format!("rust-{name}.trace")), text).expect("the trace file");
+}
+
+/// With `LANTERN_TRACE_DIRECTORY` set, writes the frame-by-frame traces the Nox engine's
+/// `the-platformer-matches-the-rust-trace` test compares with.
+#[test]
+fn the_platformer_writes_its_traces() {
+    run_traced("autopilot", true, |_| {}, 600);
+    run_traced(
+        "walking",
+        false,
+        |platform| {
+            platform.press_key_next_frame(KeyCode::Enter);
+            platform.hold_key_for_frames(KeyCode::A, 50);
+            platform.hold_key_for_frames(KeyCode::W, 70);
+        },
+        240,
+    );
+}
+
+/// The Rust half of `engine/benchmarks/headless-platformer`: loads the platformer under the
+/// autopilot and times 600 frames. Run it with `cargo test --release -p lantern-game-host --test
+/// headless_game -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn the_platformer_autopilot_timing() {
+    for _ in 0..5 {
+        let load_started = std::time::Instant::now();
+        let (mut host, _stats) = start_platformer(&[("LANTERN_AUTOPLAY", true)]);
+        let load_seconds = load_started.elapsed().as_secs_f64();
+        let mut platform = ScriptedPlatform::default();
+        let mut frame_loop = FrameLoop::new(InputRouter::new(Default::default(), Default::default()));
+        let frames_started = std::time::Instant::now();
+        run_frames(&mut frame_loop, &mut platform, &mut host, 600);
+        let frames_seconds = frames_started.elapsed().as_secs_f64();
+        assert_no_script_error(&host);
+        println!("load {:.1} ms, 600 frames {:.1} ms, {:.3} ms a frame", load_seconds * 1000.0, frames_seconds * 1000.0, frames_seconds * 1000.0 / 600.0);
+    }
+}

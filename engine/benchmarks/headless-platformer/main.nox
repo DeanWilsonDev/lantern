@@ -1,0 +1,37 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+RUNS: u32 : 5;
+FRAMES: usize : 600;
+
+Milliseconds :: (startNanoseconds: u64) -> f64 {
+    return f64(monotonicNanoseconds() - startNanoseconds) / 1000000.0f;
+}
+
+main :: () -> i32 {
+    for run~ u32 = 0; run < RUNS; run++ {
+        manifest := lantern:::testing:::LoadPlatformerManifest();
+        loadStarted: u64 = monotonicNanoseconds();
+        host := lantern:::testing:::StartPlatformer(manifest, true);
+        loadMilliseconds: f64 = Milliseconds(loadStarted);
+        platform := lantern:::testing:::NewPlatformerPlatform();
+        frameLoop := lantern:::testing:::NewFrameLoop();
+        framesStarted: u64 = monotonicNanoseconds();
+        lantern:::testing:::RunFrames(frameLoop, platform, host, FRAMES);
+        framesMilliseconds: f64 = Milliseconds(framesStarted);
+        lantern:::testing:::AssertNoScriptError(host, "while timing");
+        load: string! = lantern:::core:::FixedDecimals(loadMilliseconds, 1, 0);
+        total: string! = lantern:::core:::FixedDecimals(framesMilliseconds, 1, 0);
+        perFrame: string! = lantern:::core:::FixedDecimals(framesMilliseconds / f64(FRAMES), 3, 0);
+        print(`load ${load} ms, 600 frames ${total} ms, ${perFrame} ms a frame`);
+        delete load;
+        delete total;
+        delete perFrame;
+        delete frameLoop;
+        delete platform;
+        delete host;
+        delete manifest;
+    }
+    return 0;
+}
