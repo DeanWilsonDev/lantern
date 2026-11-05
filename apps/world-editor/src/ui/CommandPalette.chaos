@@ -1,34 +1,54 @@
-EditorUi :: import EditorUi;
+Editor :: import Editor;
+EditorMenus :: import EditorMenus;
 MenuEntry :: import MenuEntry;
+ToolbarState :: import ToolbarState;
 
 CommandPaletteUi :: namespace {
     WIDTH: f32 : 520.0f;
     HEIGHT: f32 : 380.0f;
 
     X :: () -> f32 {
-        return (EditorUi:::App().WindowWidth() - WIDTH) * 0.5f;
+        return (penumbra:::windowWidth() - WIDTH) * 0.5f;
+    }
+
+    Commands :: (toolbar: ToolbarState, query: string) -> Array<MenuEntry> {
+        return EditorMenus:::Matching(EditorMenus:::AllCommands(toolbar), query);
     }
 }
 
 CommandPalette :: () -> Penumbra:::Component {
+    @context editor~ Editor = new Editor();
+    @signal query~ string = "";
+    RunFirst := () -> void {
+        commands := CommandPaletteUi:::Commands(editor.document.toolbar, query);
+        guard commands.length() > 0 return;
+        editor.commands.RunCommand(commands[0].command);
+    };
+    OnKey := (key: string) -> void {
+        when key {
+            "Enter" -> RunFirst(),
+            "Escape" -> editor.overlays.CloseAll(),
+            default -> {}
+        }
+    };
     return (
         <portal ref="command-palette" x={CommandPaletteUi:::X()} y={72.0f} width={CommandPaletteUi:::WIDTH}
                 height={CommandPaletteUi:::HEIGHT} dismissOnOutsideClick={true}
-                onDismiss={() -> EditorUi:::App().CloseOverlays()}>
+                onDismiss={() -> editor.overlays.CloseAll()}>
             <frame class="dialog">
                 <frame class="search-row">
                     <icon class="search-icon" icon="command" size={13.0f} />
-                    <input ref="palette-input" class="search-input" text={EditorUi:::App().PaletteQuery()}
+                    <input ref="palette-input" class="search-input" text={query}
                            preferredWidth={460.0f}
-                           onTextChange={(text: string) -> EditorUi:::App().SetPaletteQuery(text)}
-                           onKeyDown={(key: string) -> EditorUi:::App().PaletteKey(key)} />
+                           onTextChange={(text: string) -> { query = text; }}
+                           onKeyDown={(key: string) -> OnKey(key)} />
                 </frame>
                 <scroll ref="palette-scroll" class="palette-scroll" wheelStep={60.0f}>
                     <frame class="console-rows">
                         <slot>
-                            !{EditorUi:::App().PaletteCommands().map((entry: MenuEntry) ->
+                            !{CommandPaletteUi:::Commands(editor.document.toolbar, query).map((entry: MenuEntry) ->
                                 <frame key={entry.command + entry.label} class={entry.enabled ? "menu-entry" : "menu-entry-disabled"}
-                                       onRelease={() -> { if entry.enabled { EditorUi:::App().RunCommand(entry.command); } }}>
+                                       onRelease={() -> { if entry.enabled { editor.commands.RunCommand(entry.command); } }}>
                                     <text class={entry.enabled ? "menu-entry-label" : "menu-entry-label-disabled"}>{entry.label}</text>
                                     <text class="menu-entry-shortcut">{entry.shortcut}</text>
                                 </frame>)}

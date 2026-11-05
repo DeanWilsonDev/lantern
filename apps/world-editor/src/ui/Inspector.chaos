@@ -1,4 +1,4 @@
-EditorUi :: import EditorUi;
+Editor :: import Editor;
 InspectorField :: import InspectorField;
 InspectorFieldItem :: import InspectorFieldItem;
 InspectorGroupItem :: import InspectorGroupItem;
@@ -7,30 +7,51 @@ InspectorUi :: namespace {
     HasSelection :: () -> bool {
         return editorSelectionCount() > 0;
     }
+
+    Toggled :: (collapsed: Dictionary<string, bool>, group: string) -> Dictionary<string, bool> {
+        next~ Dictionary<string, bool> = collapsed;
+        if next.containsKey(group) {
+            next.remove(group);
+        } else {
+            next[group] = true;
+        }
+        return next;
+    }
+
+    AddProperty :: (name: string) -> bool {
+        trimmed := name.trim();
+        guard trimmed != "" return false;
+        editorCommitField();
+        editorSetField(editorPrimarySelection(), "property:" + trimmed, "0");
+        return true;
+    }
 }
 
 Inspector :: () -> Penumbra:::Component {
+    @context editor~ Editor = new Editor();
+    @signal collapsed~ Dictionary<string, bool> = {};
+    @signal newPropertyName~ string = "";
     return (
         <frame class="inspector">
             <frame class="panel-header">
                 <icon class="panel-header-icon" icon="pencil" size={13.0f} />
                 <slot>
-                    !{<text ref="inspector-title" class="inspector-title">{EditorUi:::App().InspectorTitle()}</text>}
+                    !{<text ref="inspector-title" class="inspector-title">{editor.document.inspectorTitle}</text>}
                 </slot>
             </frame>
             <scroll ref="inspector-scroll" class="inspector-scroll" wheelStep={60.0f}>
                 <frame ref="inspector-fields" class="inspector-fields">
                     <slot>
-                        !{EditorUi:::App().InspectorGroups().map((group: InspectorGroupItem) ->
+                        !{editor.document.inspectorGroups.map((group: InspectorGroupItem) ->
                             <frame key={group.name} class="inspector-group">
                                 <frame class="inspector-group-header"
-                                       onRelease={() -> EditorUi:::App().ToggleGroupCollapsed(group.name)}>
+                                       onRelease={() -> { collapsed = InspectorUi:::Toggled(collapsed, group.name); }}>
                                     <icon class="inspector-group-chevron"
-                                          icon={group.collapsed ? "chevron-right" : "chevron-down"} size={10.0f} />
+                                          icon={collapsed.containsKey(group.name) ? "chevron-right" : "chevron-down"} size={10.0f} />
                                     <text class="inspector-group-title">{group.name}</text>
                                 </frame>
                                 <slot>
-                                    !{group.collapsed
+                                    !{collapsed.containsKey(group.name)
                                         ? <frame class="nothing" />
                                         : <frame class="inspector-group-fields">
                                               <slot>
@@ -46,10 +67,10 @@ Inspector :: () -> Penumbra:::Component {
                             ? <frame class="inspector-add-property">
                                   <text class="inspector-group-title">Add property</text>
                                   <frame class="field-row">
-                                      <input ref="new-property" class="field-input" text={EditorUi:::App().NewPropertyName()}
+                                      <input ref="new-property" class="field-input" text={newPropertyName}
                                              preferredWidth={140.0f}
-                                             onTextChange={(text: string) -> EditorUi:::App().SetNewPropertyName(text)} />
-                                      <frame class="small-button" onRelease={() -> EditorUi:::App().AddProperty()}>
+                                             onTextChange={(text: string) -> { newPropertyName = text; }} />
+                                      <frame class="small-button" onRelease={() -> { if InspectorUi:::AddProperty(newPropertyName) { newPropertyName = ""; } }}>
                                           <icon class="small-button-icon" icon="plus" size={12.0f} />
                                           <text class="small-button-label">Add</text>
                                       </frame>

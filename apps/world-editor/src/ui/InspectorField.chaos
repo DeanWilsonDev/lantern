@@ -1,5 +1,5 @@
 ColorField :: import ColorField;
-EditorUi :: import EditorUi;
+Editor :: import Editor;
 InspectorFieldItem :: import InspectorFieldItem;
 TooltipArea :: import TooltipArea;
 VectorField :: import VectorField;
@@ -16,9 +16,24 @@ InspectorFieldUi :: namespace {
     IsProperty :: (item: InspectorFieldItem) -> bool {
         return item.key.startsWith("property:");
     }
+
+    PickChoice :: (field: string, choice: string) -> void {
+        editorCommitField();
+        if editorSelectionCount() > 1 {
+            editorSetSelectionField(field, choice);
+        } else {
+            editorSetField(editorPrimarySelection(), field, choice);
+        }
+    }
+
+    RemoveProperty :: (key: string) -> void {
+        editorCommitField();
+        editorSetField(editorPrimarySelection(), key, "");
+    }
 }
 
 InspectorField :: (props: InspectorFieldProps) -> Penumbra:::Component {
+    @context editor~ Editor = new Editor();
     return (
         <frame ref={`field-${props.item.key}`} class="field">
             <frame class="field-row">
@@ -27,12 +42,12 @@ InspectorField :: (props: InspectorFieldProps) -> Penumbra:::Component {
                     !{props.item.kind == "choice"
                         ? <select ref={`choice-${props.item.key}`} class="field-select" options={props.item.choices}
                                   selected={props.item.value}
-                                  onSelect={(choice: string) -> EditorUi:::App().PickChoice(props.item.key, choice)} />
+                                  onSelect={(choice: string) -> InspectorFieldUi:::PickChoice(props.item.key, choice)} />
                         : props.item.kind == "bool"
                             ? <checkbox ref={`check-${props.item.key}`} class="field-checkbox"
                                         checked={props.item.value == "true"}
                                         onToggle={(checked: bool) ->
-                                            EditorUi:::App().PickChoice(props.item.key, checked ? "true" : "false")} />
+                                            InspectorFieldUi:::PickChoice(props.item.key, checked ? "true" : "false")} />
                             : props.item.kind == "vector3"
                                 ? <VectorField item={props.item} />
                                 : props.item.kind == "color"
@@ -42,12 +57,12 @@ InspectorField :: (props: InspectorFieldProps) -> Penumbra:::Component {
                                         : <input ref={`input-${props.item.key}`} class="field-input"
                                                  text={props.item.mixed ? "" : props.item.value} preferredWidth={150.0f}
                                                  onTextChange={(text: string) ->
-                                                     EditorUi:::App().EditField(props.item.key, text)} />}
+                                                     editor.document.EditField(props.item.key, text)} />}
                 </slot>
                 <slot>
                     !{InspectorFieldUi:::IsProperty(props.item)
                         ? <TooltipArea text="Remove property" placement="end">
-                              <frame class="field-remove" onRelease={() -> EditorUi:::App().RemoveProperty(props.item.key)}>
+                              <frame class="field-remove" onRelease={() -> InspectorFieldUi:::RemoveProperty(props.item.key)}>
                                   <icon class="field-remove-icon" icon="close" size={10.0f} />
                               </frame>
                           </TooltipArea>
