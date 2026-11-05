@@ -1,0 +1,460 @@
+lantern:::editor :: namespace {
+    CLICK_SLOP_PIXELS: f32 : 4.0f;
+    BOOKMARK_COUNT: usize : 9;
+    RECENT_FILE_LIMIT: usize : 10;
+    LOG_LIMIT: usize : 500;
+    LAST_INDEX: usize : 18446744073709551615;
+
+    PointerButton :: enum {
+        Left,
+        Middle,
+        Right
+    }
+
+    PointerButtonAt :: (index: u32) -> PointerButton? {
+        if index == 0 {
+            return PointerButton:::Left;
+        }
+        if index == 1 {
+            return PointerButton:::Middle;
+        }
+        if index == 2 {
+            return PointerButton:::Right;
+        }
+        return null;
+    }
+
+    PointerButtonIndex :: (button: PointerButton) -> usize {
+        return when button {
+            PointerButton:::Left -> 0,
+            PointerButton:::Middle -> 1,
+            PointerButton:::Right -> 2
+        };
+    }
+
+    MODIFIER_SHIFT: u32 : 1;
+    MODIFIER_COMMAND: u32 : 2;
+    MODIFIER_ALT: u32 : 4;
+
+    Modifiers :: struct {
+        shift~ bool = false;
+        command~ bool = false;
+        alt~ bool = false;
+
+        static FromBits :: (bits: u32) -> Modifiers {
+            return Modifiers { shift: (bits & MODIFIER_SHIFT) != 0, command: (bits & MODIFIER_COMMAND) != 0, alt: (bits & MODIFIER_ALT) != 0 };
+        }
+    }
+
+    EditorKeyKind :: enum {
+        Letter,
+        Digit,
+        Delete,
+        Escape,
+        Home,
+        End
+    }
+
+    EditorKey :: struct {
+        kind~ EditorKeyKind = EditorKeyKind:::Escape;
+        letter~ u8 = 0;
+        digit~ u8 = 0;
+
+        static Of :: (keyKind: EditorKeyKind) -> EditorKey {
+            return EditorKey { kind: keyKind };
+        }
+
+        static Letter :: (character: u8) -> EditorKey {
+            return EditorKey { kind: EditorKeyKind:::Letter, letter: character };
+        }
+
+        static Digit :: (value: u8) -> EditorKey {
+            return EditorKey { kind: EditorKeyKind:::Digit, digit: value };
+        }
+
+        static FromName :: (name: string) -> EditorKey? {
+            if name == "Delete" || name == "Backspace" {
+                return EditorKey:::Of(EditorKeyKind:::Delete);
+            }
+            if name == "Escape" {
+                return EditorKey:::Of(EditorKeyKind:::Escape);
+            }
+            if name == "Home" {
+                return EditorKey:::Of(EditorKeyKind:::Home);
+            }
+            if name == "End" {
+                return EditorKey:::Of(EditorKeyKind:::End);
+            }
+            if name.length() != 1 {
+                return null;
+            }
+            byte: u8 = name.byteAt(0);
+            if byte >= u8(65) && byte <= u8(90) {
+                return EditorKey:::Letter(byte + u8(32));
+            }
+            if byte >= u8(97) && byte <= u8(122) {
+                return EditorKey:::Letter(byte);
+            }
+            if byte >= u8(48) && byte <= u8(57) {
+                return EditorKey:::Digit(byte - u8(48));
+            }
+            return null;
+        }
+
+        IsLetter :: (character: string) -> bool {
+            return kind == EditorKeyKind:::Letter && letter == character.byteAt(0);
+        }
+    }
+
+    OutlineRow :: class {
+    public:
+        key~ u64 = 0;
+        parent~ u64? = null;
+        name~ string!;
+        kind~ string!;
+        depth~ u32 = 0;
+        selected~ bool = false;
+        hidden~ bool = false;
+        locked~ bool = false;
+        hasChildren~ bool = false;
+
+        OutlineRow~: (rowKey: u64, rowName: string, rowKind: string) {
+            key = rowKey;
+            name = `${rowName}`;
+            kind = `${rowKind}`;
+        }
+
+        !OutlineRow~: () {
+            delete name;
+            delete kind;
+        }
+    }
+
+    LogLevel :: enum {
+        Info,
+        Warning,
+        Error
+    }
+
+    LogLevelName :: (level: LogLevel) -> string {
+        return when level {
+            LogLevel:::Info -> "info",
+            LogLevel:::Warning -> "warning",
+            LogLevel:::Error -> "error"
+        };
+    }
+
+    LogEntry :: class {
+    public:
+        level~ LogLevel = LogLevel:::Info;
+        text~ string!;
+
+        LogEntry~: (entryLevel: LogLevel, entryText: string) {
+            level = entryLevel;
+            text = `${entryText}`;
+        }
+
+        !LogEntry~: () {
+            delete text;
+        }
+    }
+
+    ParseFlag :: (value: string) -> Result<bool, string!> {
+        trimmed: string = value.trim();
+        if trimmed == "true" || trimmed == "on" || trimmed == "1" {
+            return Result<bool, string!>:::Ok(true);
+        }
+        if trimmed == "false" || trimmed == "off" || trimmed == "0" {
+            return Result<bool, string!>:::Ok(false);
+        }
+        return Result<bool, string!>:::Err(`'${trimmed}' is not on or off`);
+    }
+
+    ViewOptions :: struct {
+        showGrid~ bool = true;
+        gridSpacing~ f32 = 1.0f;
+        showColliders~ bool = false;
+        showMarkers~ bool = true;
+        wireframe~ bool = false;
+        showLevelBounds~ bool = false;
+        showHidden~ bool = false;
+        showStats~ bool = false;
+
+        static Names :: () -> Array<string>! {
+            names~ Array<string>! = [];
+            names.push("grid");
+            names.push("grid_spacing");
+            names.push("colliders");
+            names.push("markers");
+            names.push("wireframe");
+            names.push("level_bounds");
+            names.push("hidden");
+            names.push("stats");
+            return names!;
+        }
+
+        Get :: (name: string) -> string!? {
+            if name == "grid" {
+                return `${showGrid}`;
+            }
+            if name == "grid_spacing" {
+                return FormatNumber(gridSpacing);
+            }
+            if name == "colliders" {
+                return `${showColliders}`;
+            }
+            if name == "markers" {
+                return `${showMarkers}`;
+            }
+            if name == "wireframe" {
+                return `${wireframe}`;
+            }
+            if name == "level_bounds" {
+                return `${showLevelBounds}`;
+            }
+            if name == "hidden" {
+                return `${showHidden}`;
+            }
+            if name == "stats" {
+                return `${showStats}`;
+            }
+            return null;
+        }
+
+        Set~: (name: string, value: string) -> string!? {
+            if name == "grid_spacing" {
+                parsed: f32? = ParsedNumber(value.trim());
+                guard spacing := parsed return `'${value}' is not a number`;
+                if !(spacing > 0.0f && lantern:::core:::IsFinite(spacing)) {
+                    return "the grid spacing must be positive".copy();
+                }
+                gridSpacing = spacing;
+                return null;
+            }
+            if name != "grid" && name != "colliders" && name != "markers" && name != "wireframe" && name != "level_bounds" && name != "hidden" && name != "stats" {
+                return `unknown view option '${name}'`;
+            }
+            flag~ bool = false;
+            when ParseFlag(value) {
+                Result:::Ok(parsed) -> {
+                    flag = parsed;
+                },
+                Result:::Err(message) -> {
+                    return message!;
+                }
+            }
+            if name == "grid" {
+                showGrid = flag;
+            } else if name == "colliders" {
+                showColliders = flag;
+            } else if name == "markers" {
+                showMarkers = flag;
+            } else if name == "wireframe" {
+                wireframe = flag;
+            } else if name == "level_bounds" {
+                showLevelBounds = flag;
+            } else if name == "hidden" {
+                showHidden = flag;
+            } else {
+                showStats = flag;
+            }
+            return null;
+        }
+    }
+
+    DragOriginal :: class {
+    public:
+        entity~ lantern:::world:::WorldEntity*!;
+        parentWorld~ Mat4 = Mat4 { };
+        worldPosition~ Vec3 = Vec3 { };
+
+        DragOriginal~: (originalEntity: lantern:::world:::WorldEntity*!, originalParentWorld: Mat4, originalWorldPosition: Vec3) {
+            entity = originalEntity!;
+            parentWorld = originalParentWorld;
+            worldPosition = originalWorldPosition;
+        }
+
+        !DragOriginal~: () {
+            delete entity;
+        }
+
+        LocalPosition :: (newWorld: Vec3) -> Vec3 {
+            return InverseOrIdentity(parentWorld).transformPoint(newWorld);
+        }
+
+        ParentRotation :: () -> Quaternion {
+            return lantern:::core:::DecomposeMatrix(parentWorld).rotation;
+        }
+    }
+
+    DragKind :: enum {
+        Pending,
+        Orbit,
+        Pan,
+        Gizmo,
+        Body,
+        RubberBand
+    }
+
+    Drag :: class {
+    public:
+        kind~ DragKind = DragKind:::Orbit;
+        press~ Vec2 = Vec2 { };
+        hit~ u64? = null;
+        additive~ bool = false;
+        tool~ GizmoTool = GizmoTool:::Translate;
+        handle~ Handle = Handle { };
+        frame~ GizmoFrame = GizmoFrame { };
+        start~ f32 = 0.0f;
+        startPoint~ Vec3 = Vec3 { };
+        originals~ Array<DragOriginal*!>! = [];
+
+        Drag~: (dragKind: DragKind) {
+            kind = dragKind;
+        }
+
+        !Drag~: () {
+            originals.freeAll();
+        }
+
+        TakeOriginals~: (dragOriginals: Array<DragOriginal*!>!) -> void {
+            originals.freeAll();
+            originals = dragOriginals!;
+        }
+    }
+
+    InverseOrIdentity :: (matrix: Mat4) -> Mat4 {
+        inverted: Mat4? = matrix.inverse();
+        return inverted ?? Mat4 { };
+    }
+
+    ContainsKeyIn :: (keys: Array<u64>, key: u64) -> bool {
+        for candidate in keys {
+            if candidate == key {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    KeyPosition :: (keys: Array<u64>, key: u64) -> usize? {
+        for index~ usize = 0; index < keys.length(); index++ {
+            if keys[index] == key {
+                return index;
+            }
+        }
+        return null;
+    }
+
+    CopyKeys :: (keys: Array<u64>) -> Array<u64>! {
+        copied~ Array<u64>! = [];
+        for key in keys {
+            copied.push(key);
+        }
+        return copied!;
+    }
+
+    SameOptionalU64 :: (left: u64?, right: u64?) -> bool {
+        return lantern:::world:::SameOptionalKey(left, right);
+    }
+
+    ScaleRatio :: (pivot: Vec3, startPoint: Vec3, point: Vec3) -> f32 {
+        startDistance: f32 = (startPoint - pivot).length();
+        if startDistance < 0.0001f {
+            return 1.0f;
+        }
+        return Math:::max((point - pivot).length() / startDistance, 0.01f);
+    }
+
+    CountEntities :: (count: usize) -> string! {
+        if count == 1 {
+            return "entity".copy();
+        }
+        return `${count} entities`;
+    }
+
+    Capitalise :: (text: string) -> string! {
+        if text.length() == 0 {
+            return "".copy();
+        }
+        first: string! = text.substring(0, 1).toUpper();
+        joined: string! = `${first}${text.substring(1, text.length() - 1)}`;
+        delete first;
+        return joined!;
+    }
+
+    DisplayName :: (path: string) -> string! {
+        if separator := LastSeparator(path) {
+            if separator + 1 < path.length() {
+                return `${path.substring(separator + 1, path.length() - separator - 1)}`;
+            }
+        }
+        return `${path}`;
+    }
+
+    AllDigits :: (text: string) -> bool {
+        if text.length() == 0 {
+            return false;
+        }
+        for index~ usize = 0; index < text.length(); index++ {
+            if !IsAsciiDigit(text.byteAt(index)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    UniqueNameAmong :: (names: Array<string!>, base: string) -> string! {
+        stem~ string = base;
+        lastUnderscore~ usize? = null;
+        for index~ usize = 0; index < base.length(); index++ {
+            if base.byteAt(index) == u8(95) {
+                lastUnderscore = index;
+            }
+        }
+        if underscore := lastUnderscore {
+            if AllDigits(base.substring(underscore + 1, base.length() - underscore - 1)) {
+                stem = base.substring(0, underscore);
+            }
+        }
+        number~ u64 = 1;
+        while true {
+            candidate: string! = `${stem}_${number}`;
+            taken~ bool = false;
+            for name in names {
+                if name == candidate {
+                    taken = true;
+                }
+            }
+            if !taken {
+                return candidate!;
+            }
+            delete candidate;
+            number += 1;
+        }
+        return `${stem}`;
+    }
+
+    EntityNames :: (world: lantern:::world:::WorldFile*) -> Array<string!>! {
+        names~ Array<string!>! = [];
+        for entity in world->entities {
+            names.push(`${entity->name}`);
+        }
+        return names!;
+    }
+
+    UniqueName :: (world: lantern:::world:::WorldFile*, base: string) -> string! {
+        names~ Array<string!>! = EntityNames(world);
+        unique: string! = UniqueNameAmong(names, base);
+        names.freeAll();
+        return unique!;
+    }
+
+    WithAxis :: (vector: Vec3, axis: Axis, value: f32) -> Vec3 {
+        return WithComponent(vector, AxisIndex(axis), value);
+    }
+
+    AlongAxis :: (vector: Vec3, axis: Axis) -> f32 {
+        return AxisComponent(vector, AxisIndex(axis));
+    }
+}
