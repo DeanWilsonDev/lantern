@@ -1,0 +1,273 @@
+ChaosUiC :: import ChaosUiC;
+
+lantern:::chaosui :: namespace {
+    LengthUnit :: enum {
+        Px,
+        Percent,
+        Vw,
+        Vh
+    }
+
+    Length :: struct {
+        value~ f32 = 0.0f;
+        unit~ LengthUnit = LengthUnit:::Px;
+
+        Resolve :: (scale: f32, container: f32?, screen: Vec2) -> f32? {
+            return when unit {
+                LengthUnit:::Px -> value * scale,
+                LengthUnit:::Percent -> PercentOf(container, value),
+                LengthUnit:::Vw -> screen.x * value / 100.0f,
+                LengthUnit:::Vh -> screen.y * value / 100.0f,
+            };
+        }
+    }
+
+    PercentOf :: (container: f32?, percent: f32) -> f32? {
+        if side := container {
+            return side * percent / 100.0f;
+        }
+        return null;
+    }
+
+    Insets :: struct {
+        left~ f32 = 0.0f;
+        top~ f32 = 0.0f;
+        right~ f32 = 0.0f;
+        bottom~ f32 = 0.0f;
+
+        Horizontal :: () -> f32 {
+            return left + right;
+        }
+
+        Vertical :: () -> f32 {
+            return top + bottom;
+        }
+
+        Scaled :: (scale: f32) -> Insets {
+            return Insets { left: left * scale, top: top * scale, right: right * scale, bottom: bottom * scale };
+        }
+    }
+
+    Display :: enum {
+        Stack,
+        Inline
+    }
+
+    Direction :: enum {
+        Row,
+        Column
+    }
+
+    Align :: enum {
+        Start,
+        Center,
+        End,
+        Stretch
+    }
+
+    Justify :: enum {
+        Start,
+        Center,
+        End,
+        SpaceBetween
+    }
+
+    Position :: enum {
+        Static,
+        Relative,
+        Absolute,
+        Fixed,
+        Sticky
+    }
+
+    Gradient :: struct {
+        top~ lantern:::core:::Color = lantern:::core:::Color { };
+        bottom~ lantern:::core:::Color = lantern:::core:::Color { };
+    }
+
+    Shadow :: struct {
+        color~ lantern:::core:::Color = lantern:::core:::Color { };
+        blur~ f32 = 0.0f;
+    }
+
+    Style :: struct {
+        background~ lantern:::core:::Color? = null;
+        gradient~ Gradient? = null;
+        borderColor~ lantern:::core:::Color? = null;
+        borderWidth~ f32 = 0.0f;
+        borderRadius~ f32 = 0.0f;
+        padding~ Insets = Insets { };
+        margin~ Insets = Insets { };
+        textColor~ lantern:::core:::Color? = null;
+        fontSize~ f32? = null;
+        display~ Display? = null;
+        direction~ Direction? = null;
+        gap~ f32 = 0.0f;
+        alignItems~ Align? = null;
+        justifyContent~ Justify = Justify:::Start;
+        width~ Length? = null;
+        height~ Length? = null;
+        minWidth~ Length? = null;
+        maxWidth~ Length? = null;
+        flexGrow~ f32 = 0.0f;
+        opacity~ f32 = 1.0f;
+        position~ Position = Position:::Static;
+        top~ Length? = null;
+        right~ Length? = null;
+        bottom~ Length? = null;
+        left~ Length? = null;
+        zIndex~ i32? = null;
+        shadow~ Shadow? = null;
+
+        StackDirection :: () -> Direction {
+            if chosen := direction {
+                return chosen;
+            }
+            if shown := display {
+                if shown == Display:::Stack {
+                    return Direction:::Row;
+                }
+            }
+            return Direction:::Column;
+        }
+
+        IsOutOfFlow :: () -> bool {
+            return position == Position:::Absolute || position == Position:::Fixed;
+        }
+    }
+
+    ColorFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_color) -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgba(f32(raw.r) / 255.0f, f32(raw.g) / 255.0f, f32(raw.b) / 255.0f, f32(raw.a) / 255.0f);
+    }
+
+    LengthFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_length) -> Length? {
+        return when raw.unit {
+            0 -> Length { value: raw.value, unit: LengthUnit:::Px },
+            1 -> Length { value: raw.value, unit: LengthUnit:::Percent },
+            2 -> Length { value: raw.value, unit: LengthUnit:::Vw },
+            3 -> Length { value: raw.value, unit: LengthUnit:::Vh },
+            override -> null,
+        };
+    }
+
+    InsetsFromRaw :: (raw: f32[4]) -> Insets {
+        return Insets { left: raw[0], top: raw[1], right: raw[2], bottom: raw[3] };
+    }
+
+    StyleHas :: (raw: ChaosUiC:::lantern_chaos_ui_style, bit: u32) -> bool {
+        return (raw.set & u64(bit)) != 0;
+    }
+
+    LengthWhenSet :: (raw: ChaosUiC:::lantern_chaos_ui_style, bit: u32, length: ChaosUiC:::lantern_chaos_ui_length) -> Length? {
+        if StyleHas(raw, bit) {
+            return LengthFromRaw(length);
+        }
+        return null;
+    }
+
+    AlignFromRaw :: (value: i32) -> Align {
+        return when value {
+            1 -> Align:::Center,
+            2 -> Align:::End,
+            3 -> Align:::Stretch,
+            override -> Align:::Start,
+        };
+    }
+
+    JustifyFromRaw :: (value: i32) -> Justify {
+        return when value {
+            1 -> Justify:::Center,
+            2 -> Justify:::End,
+            3 -> Justify:::SpaceBetween,
+            override -> Justify:::Start,
+        };
+    }
+
+    PositionFromRaw :: (value: i32) -> Position {
+        return when value {
+            1 -> Position:::Relative,
+            2 -> Position:::Absolute,
+            3 -> Position:::Fixed,
+            4 -> Position:::Sticky,
+            override -> Position:::Static,
+        };
+    }
+
+    StyleFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_style) -> Style {
+        style~ Style = Style { };
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_BACKGROUND) {
+            style.background = ColorFromRaw(raw.background);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_GRADIENT) {
+            style.gradient = Gradient { top: ColorFromRaw(raw.gradient_top), bottom: ColorFromRaw(raw.gradient_bottom) };
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_BORDER_COLOR) {
+            style.borderColor = ColorFromRaw(raw.border_color);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_BORDER_WIDTH) {
+            style.borderWidth = Math:::max(raw.border_width, 0.0f);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_BORDER_RADIUS) {
+            style.borderRadius = Math:::max(raw.border_radius, 0.0f);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_PADDING) {
+            style.padding = InsetsFromRaw(raw.padding);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_MARGIN) {
+            style.margin = InsetsFromRaw(raw.margin);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_TEXT_COLOR) {
+            style.textColor = ColorFromRaw(raw.text_color);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_FONT_SIZE) {
+            style.fontSize = raw.font_size;
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_DISPLAY) {
+            if raw.display == 1 {
+                style.display = Display:::Inline;
+            } else {
+                style.display = Display:::Stack;
+            }
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_DIRECTION) {
+            if raw.direction == 1 {
+                style.direction = Direction:::Column;
+            } else {
+                style.direction = Direction:::Row;
+            }
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_GAP) {
+            style.gap = raw.gap;
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_ALIGN_ITEMS) {
+            style.alignItems = AlignFromRaw(raw.align_items);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_JUSTIFY_CONTENT) {
+            style.justifyContent = JustifyFromRaw(raw.justify_content);
+        }
+        style.width = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_WIDTH, raw.width);
+        style.height = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_HEIGHT, raw.height);
+        style.minWidth = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_MIN_WIDTH, raw.min_width);
+        style.maxWidth = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_MAX_WIDTH, raw.max_width);
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_FLEX_GROW) {
+            style.flexGrow = Math:::max(raw.flex_grow, 0.0f);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_OPACITY) {
+            style.opacity = Math:::clamp(raw.opacity, 0.0f, 1.0f);
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_POSITION) {
+            style.position = PositionFromRaw(raw.position);
+        }
+        style.top = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_TOP, raw.top);
+        style.right = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_RIGHT, raw.right);
+        style.bottom = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_BOTTOM, raw.bottom);
+        style.left = LengthWhenSet(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_LEFT, raw.left);
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_Z_INDEX) {
+            style.zIndex = raw.z_index;
+        }
+        if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_SHADOW) {
+            style.shadow = Shadow { color: ColorFromRaw(raw.shadow_color), blur: Math:::max(raw.shadow_blur, 0.0f) };
+        }
+        return style;
+    }
+}

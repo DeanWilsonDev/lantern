@@ -42,7 +42,7 @@ From this directory:
 ```sh
 ./tools/bind-sdl.sh
 ./tools/bind-nyx.sh
-./tools/build-nyx.sh
+./tools/build-native.sh
 ./tools/install-dependencies.sh
 LIBRARY_PATH=generated/mist:/opt/homebrew/lib nox run
 ```
@@ -66,11 +66,16 @@ Run it from this directory, since the asset paths are relative to it. The compil
 
 - `bind-sdl.sh` runs `nox bind-c` over SDL3's headers and writes `generated/sdl.nox`. It looks for `SDL3/SDL.h` under
   `/opt/homebrew/include`, `/usr/local/include` and `/usr/include`; pass another include directory as its argument.
-- `bind-nyx.sh` does the same for `include/nyx/nyx.h` and writes `generated/nyx.nox`, which links `libnyx-capi`.
-  The game host (milestone L6) is the first code that calls it.
-- `build-nyx.sh` builds `libnyx-capi` from the same checkout into `generated/nyx-build/` (Release, nothing else) and
-  links it into `generated/nyx/`. A program that links it needs that directory in `LIBRARY_PATH` to build and in
-  `LD_LIBRARY_PATH` (`DYLD_LIBRARY_PATH` on macOS) to start, since Nox doesn't record a run-time search path yet.
+- `bind-nyx.sh` does the same for Nyx's `include/nyx/nyx.h` and writes `generated/nyx.nox`, and for
+  `native/include/lantern_chaos_ui.h` and writes `generated/chaos-ui.nox`. Both link `liblantern-native`.
+- `build-native.sh` builds `native/`, the one library that holds Nyx's C API and the Chaos UI bridge
+  (`native/src/ChaosUiBridge.cpp`, which runs Chaos and Cosmos on the game's own Nyx runtime), into
+  `generated/native-build/` and links `liblantern-native` into `generated/nyx/`. They're one library so there's exactly one
+  copy of Nyx, and it exports only the `nyx_` and `lantern_chaos_ui_` functions. It needs nyx-scripting-language,
+  chaos-ui-framework and cosmos-styling-language checked out on `proto` beside this repository, with their submodules
+  (or `NYX_SOURCE_DIR`, `CHAOS_SOURCE_DIR` and `COSMOS_SOURCE_DIR`). A program that links it needs that directory in
+  `LIBRARY_PATH` to build and in `LD_LIBRARY_PATH` (`DYLD_LIBRARY_PATH` on macOS) to start, since Nox doesn't record a
+  run-time search path yet.
 - `install-dependencies.sh` runs `mist install`, which fetches cgltf and stb_image at the commits in `mist.lock` and
   builds each into a static library with its Nox binding, then links those into `generated/mist/`. It's a stand-in
   until `mist resolve` tells `nox build` where Mist's builds are.
@@ -134,6 +139,11 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `Png.nox`), `GltfLoader.nox` (a `.glb` or `.gltf` flattened into one `MeshData` through cgltf) and the bitmap font: `FontData.nox` holds the glyphs of
   Daniel Hepper's public-domain `font8x8_basic`, and `Text.nox` bakes them into the 128x48 atlas and lays text out into
   the overlay.
+- `src/chaosui/` is the Rust `chaos-ui` crate, `lantern:::chaosui`: `ChaosUi` (starting Chaos on a `Runtime`, mounting
+  components, keyboard, gamepad and mouse navigation that sends focus, press and release to the nodes, and Chaos's
+  messages), `Node.nox` and `Style.nox` (the bridge's snapshot as `UiNode`s with their resolved Cosmos `Style`s),
+  `Layout.nox` (stacks in rows and columns with padding, margins, gaps, alignment, flex-grow and positioned boxes) and
+  `Draw.nox` (rounded and gradient boxes, borders, shadows and text into the overlay). Only one `ChaosUi` runs at a time.
 - `src/gpu/` is the Rust `sdl-gpu` crate: `GpuRenderer` owns the device, the swapchain, the three pipelines
   (`GpuPipelines.nox`, from the shaders `GpuShaders.nox` loads) and every mesh and texture (`GpuResources.nox`), and
   draws a `RenderWorld` to the window (`Render`) or to memory (`Capture`), culling draws against the camera's
@@ -152,7 +162,8 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
 - `tests/<module>/<test>/` is one test program each: a `main.nox`, a `nox.json` naming the engine sources it needs,
   and an `expected.txt` with the exit code and output it must produce. They're the Rust tests, one program per test. Code a suite's
   tests share is in `tests/support/<suite>/`, `tests/support/games/drop/` is a small game without Chaos that the
-  host tests and the runner check run, and `tests/support/games/broken/` is a game whose hook fails.
+  host tests and the runner check run, `tests/support/games/broken/` is a game whose hook fails, and
+  `tests/support/games/menu/` is the menu the `tests/chaosui` programs mount.
 - `tests/world/the-course-matches-the-rust-trace-at-every-display-rate/` runs the jump course the way the Rust
   `course_traversal` test does and compares every fixed step's position, velocity and grounded flag with the Rust run's
   `rust-<hz>hz.trace`, which match bit for bit. Set `LANTERN_TRACE_DIRECTORY` to write the Nox traces there too, and
@@ -169,7 +180,7 @@ runs `nox test` over every suite under `tests/`, and passes its arguments throug
 `nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
 It points `LIBRARY_PATH` at `generated/mist`, which the renderer and asset tests link cgltf and stb_image from, so
 run `./tools/install-dependencies.sh` first. It also puts `generated/nyx` on `LIBRARY_PATH`, `LD_LIBRARY_PATH` and
-`DYLD_LIBRARY_PATH` for the `tests/nyx` and `tests/host` programs, so run `./tools/bind-nyx.sh` and `./tools/build-nyx.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
+`DYLD_LIBRARY_PATH` for the `tests/nyx`, `tests/host` and `tests/chaosui` programs, so run `./tools/bind-nyx.sh` and `./tools/build-native.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
 `generated/sdl.nox`, so run `./tools/bind-sdl.sh` first. Two of the `tests/gpu` programs render with a real GPU device
 and skip (logging why) when there isn't one; set `LANTERN_REQUIRE_GPU=1` to make that a failure. On Linux with no
 display, the script uses SDL's offscreen video driver, which renders with a software Vulkan driver such as lavapipe

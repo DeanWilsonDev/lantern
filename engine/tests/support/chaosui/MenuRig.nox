@@ -1,0 +1,127 @@
+lantern:::testing :: namespace {
+    MENU_GAME_DIRECTORY: string : "tests/support/games/menu";
+    MENU_UI_DIRECTORY: string : "tests/support/games/menu/ui";
+    MENU_ENTRY: string : "tests/support/games/menu/main.nyx";
+    MENU_FILE: string : "ui/Menu.chaos";
+
+    ChaosUiOrFail :: (result: Result<lantern:::chaosui:::ChaosUi*!, string!>) -> lantern:::chaosui:::ChaosUi*! {
+        when result! {
+            Result:::Ok(ui) -> {
+                return ui!;
+            },
+            Result:::Err(message) -> {
+                print(`Chaos didn't start: ${message}`);
+                delete message;
+                assert(false, "Chaos starts on the runtime");
+                return new lantern:::chaosui:::ChaosUi(null);
+            }
+        }
+    }
+
+    MenuGame :: class {
+    public:
+        runtime~ lantern:::nyx:::Runtime*!;
+        ui~ lantern:::chaosui:::ChaosUi*!;
+        program~ lantern:::nyx:::Program*!;
+
+        MenuGame~: () {
+            runtime = new lantern:::nyx:::Runtime();
+            failure: lantern:::nyx:::NyxError*!? = runtime->AddImportSearchPath(MENU_GAME_DIRECTORY);
+            assert(failure == null, "the game directory is a search path");
+            delete failure;
+            uiFailure: lantern:::nyx:::NyxError*!? = runtime->AddImportSearchPath(MENU_UI_DIRECTORY);
+            assert(uiFailure == null, "the ui directory is a search path");
+            delete uiFailure;
+            ui = ChaosUiOrFail(lantern:::chaosui:::ChaosUi:::Create(runtime, MENU_GAME_DIRECTORY, MENU_UI_DIRECTORY));
+            mounted := runtime->MountFile(MENU_ENTRY, "Game");
+            program = ProgramOrFail(mounted!, runtime);
+        }
+
+        !MenuGame~: () {
+            delete program;
+            delete ui;
+            delete runtime;
+        }
+
+        Model :: () -> lantern:::nyx:::Value*! {
+            noArguments: Array<lantern:::nyx:::Value*>! = [];
+            model := ValueOrFail(program->CallApplicationMethod("Model", noArguments));
+            delete noArguments;
+            return model!;
+        }
+
+        MountMenu~: () -> void {
+            model := Model();
+            arguments~ Array<lantern:::nyx:::Value*>! = [];
+            arguments.push(model);
+            mounted := ui->Mount(MENU_FILE, "Menu", arguments);
+            when mounted! {
+                Result:::Ok(mount) -> { },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    assert(false, "the menu mounts");
+                }
+            }
+            delete arguments;
+            delete model;
+            ui->Update();
+        }
+
+        Moves :: () -> i32 {
+            noArguments: Array<lantern:::nyx:::Value*>! = [];
+            result := ValueOrFail(program->CallApplicationMethod("Moves", noArguments));
+            delete noArguments;
+            moves: i32 = I32OrFail(result->I32());
+            delete result;
+            return moves;
+        }
+
+        Chosen :: () -> string! {
+            noArguments: Array<lantern:::nyx:::Value*>! = [];
+            chosen := ValueOrFail(program->CallApplicationMethod("Chosen", noArguments));
+            delete noArguments;
+            text: string! = TextOrFail(chosen->Text());
+            delete chosen;
+            return text!;
+        }
+
+        Texts :: () -> string! {
+            joined~ string! = "";
+            for node in ui->nodes {
+                if node.kind == lantern:::chaosui:::NodeKind:::Text {
+                    if joined.length() > 0 {
+                        joined += ",";
+                    }
+                    joined += node.text;
+                }
+            }
+            return joined!;
+        }
+
+        MessageCount~: () -> usize {
+            messages~ Array<string!>! = ui->TakeMessages();
+            for message in messages {
+                print(`unexpected Chaos message: ${message}`);
+            }
+            count: usize = messages.length();
+            messages.freeAll();
+            return count;
+        }
+    }
+
+    PointerAt :: (position: Vec2, pressed: bool, released: bool, held: bool) -> lantern:::chaosui:::Navigation {
+        return lantern:::chaosui:::Navigation { pointer: lantern:::chaosui:::Pointer { position: position, pressed: pressed, released: released, held: held } };
+    }
+
+    ButtonCentres :: (game: MenuGame~*) -> Array<lantern:::chaosui:::ButtonRect>! {
+        overlay := new lantern:::renderer:::Overlay();
+        game->ui->Draw(overlay, Vec2 { x: 800.0f, y: 600.0f }, 1.0f);
+        delete overlay;
+        return game->ui->ButtonRects();
+    }
+
+    Centre :: (rect: lantern:::chaosui:::Rect) -> Vec2 {
+        return (rect.min + rect.max) * 0.5f;
+    }
+}

@@ -1,0 +1,157 @@
+lantern:::chaosui :: namespace {
+    CORNER_SEGMENTS: usize : 6;
+    SHADOW_LAYERS: usize : 6;
+    HALF_PI: f32 : 1.5707964f;
+
+    RoundedOutline :: (rect: Rect, radius: f32) -> Array<Vec2>! {
+        size: Vec2 = rect.Size();
+        clampedRadius: f32 = Math:::max(Math:::min(Math:::min(radius, size.x / 2.0f), size.y / 2.0f), 0.0f);
+        centres: Vec2[4] = [
+            Vec2 { x: rect.min.x + clampedRadius, y: rect.min.y + clampedRadius },
+            Vec2 { x: rect.max.x - clampedRadius, y: rect.min.y + clampedRadius },
+            Vec2 { x: rect.max.x - clampedRadius, y: rect.max.y - clampedRadius },
+            Vec2 { x: rect.min.x + clampedRadius, y: rect.max.y - clampedRadius }
+        ];
+        startAngles: f32[4] = [Math:::PI, 3.0f * HALF_PI, 0.0f, HALF_PI];
+        points~ Array<Vec2>! = [];
+        for corner~ usize = 0; corner < 4; corner++ {
+            for step~ usize = 0; step <= CORNER_SEGMENTS; step++ {
+                angle: f32 = startAngles[corner] + HALF_PI * f32(step) / f32(CORNER_SEGMENTS);
+                points.push(centres[corner] + Vec2 { x: Math:::cos(angle), y: Math:::sin(angle) } * clampedRadius);
+            }
+        }
+        return points!;
+    }
+
+    Shade :: (rect: Rect, top: lantern:::core:::Color, bottom: lantern:::core:::Color, y: f32) -> lantern:::core:::Color {
+        height: f32 = rect.Size().y;
+        t~ f32 = 0.0f;
+        if height > 0.0f {
+            t = Math:::clamp((y - rect.min.y) / height, 0.0f, 1.0f);
+        }
+        return top.Lerp(bottom, t);
+    }
+
+    FillRounded :: (overlay: lantern:::renderer:::Overlay~*, rect: Rect, radius: f32, top: lantern:::core:::Color, bottom: lantern:::core:::Color) -> void {
+        if rect.Size().x <= 0.0f || rect.Size().y <= 0.0f {
+            return;
+        }
+        if radius <= 0.0f && top == bottom {
+            overlay->Rect(rect.min, rect.max, top);
+            return;
+        }
+        outline: Array<Vec2>! = RoundedOutline(rect, radius);
+        centre: Vec2 = (rect.min + rect.max) / 2.0f;
+        centreColor: lantern:::core:::Color = Shade(rect, top, bottom, centre.y);
+        for index~ usize = 0; index < outline.length(); index++ {
+            first: Vec2 = outline[index];
+            second: Vec2 = outline[(index + 1) % outline.length()];
+            overlay->Triangle(centre, first, second, centreColor, Shade(rect, top, bottom, first.y), Shade(rect, top, bottom, second.y));
+        }
+        delete outline;
+    }
+
+    FillRing :: (overlay: lantern:::renderer:::Overlay~*, outer: Array<Vec2>, inner: Array<Vec2>, outerColor: lantern:::core:::Color, innerColor: lantern:::core:::Color) -> void {
+        for index~ usize = 0; index < outer.length(); index++ {
+            next: usize = (index + 1) % outer.length();
+            overlay->Triangle(outer[index], outer[next], inner[next], outerColor, outerColor, innerColor);
+            overlay->Triangle(outer[index], inner[next], inner[index], outerColor, innerColor, innerColor);
+        }
+    }
+
+    Faded :: (color: lantern:::core:::Color, opacity: f32) -> lantern:::core:::Color {
+        return color.WithAlpha(color.a * opacity);
+    }
+
+    DrawShadow :: (overlay: lantern:::renderer:::Overlay~*, rect: Rect, radius: f32, color: lantern:::core:::Color, blur: f32) -> void {
+        drop: Vec2 = Vec2 { x: 0.0f, y: blur * 0.25f };
+        base: Rect = Rect { min: rect.min + drop, max: rect.max + drop };
+        innerOutline~ Array<Vec2>! = RoundedOutline(base, radius);
+        FillRounded(overlay, base, radius, color, color);
+        for layer~ usize = 1; layer <= SHADOW_LAYERS; layer++ {
+            spread: f32 = blur * f32(layer) / f32(SHADOW_LAYERS);
+            grown: Rect = Rect { min: base.min - Vec2 { x: spread, y: spread }, max: base.max + Vec2 { x: spread, y: spread } };
+            outerOutline: Array<Vec2>! = RoundedOutline(grown, radius + spread);
+            innerT: f32 = 1.0f - f32(layer - 1) / f32(SHADOW_LAYERS);
+            outerT: f32 = 1.0f - f32(layer) / f32(SHADOW_LAYERS);
+            FillRing(overlay, outerOutline, innerOutline, Faded(color, outerT * outerT), Faded(color, innerT * innerT));
+            delete innerOutline;
+            innerOutline = outerOutline!;
+        }
+        delete innerOutline;
+    }
+
+    DrawBox :: (overlay: lantern:::renderer:::Overlay~*, rect: Rect, style: Style, scale: f32, opacity: f32) -> void {
+        radius: f32 = style.borderRadius * scale;
+        if shadow := style.shadow {
+            if shadow.color.a > 0.0f {
+                DrawShadow(overlay, rect, radius, Faded(shadow.color, opacity), shadow.blur * scale);
+            }
+        }
+        border: f32 = style.borderWidth * scale;
+        fillRect~ Rect = rect;
+        if style.borderColor != null && border > 0.0f {
+            fillRect = rect.Inset(border, border, border, border);
+        }
+        fillRadius: f32 = Math:::max(radius - border, 0.0f);
+        if gradient := style.gradient {
+            FillRounded(overlay, fillRect, fillRadius, Faded(gradient.top, opacity), Faded(gradient.bottom, opacity));
+        } else if background := style.background {
+            if background.a > 0.0f {
+                color: lantern:::core:::Color = Faded(background, opacity);
+                FillRounded(overlay, fillRect, fillRadius, color, color);
+            }
+        }
+        if borderColor := style.borderColor {
+            if border > 0.0f {
+                color: lantern:::core:::Color = Faded(borderColor, opacity);
+                outer: Array<Vec2>! = RoundedOutline(rect, radius);
+                inner: Array<Vec2>! = RoundedOutline(fillRect, fillRadius);
+                FillRing(overlay, outer, inner, color, color);
+                delete outer;
+                delete inner;
+            }
+        }
+    }
+
+    DrawNodes :: (nodes: Array<UiNode>, styles: Array<Style>, rects: Array<Rect>, overlay: lantern:::renderer:::Overlay~*, scale: f32) -> void {
+        opacity~ Array<f32>! = [];
+        defer delete opacity;
+        level~ Array<i32>! = [];
+        defer delete level;
+        for index~ usize = 0; index < nodes.length(); index++ {
+            parentOpacity~ f32 = 1.0f;
+            parentLevel~ i32 = 0;
+            if parent := nodes[index].parent {
+                parentOpacity = opacity[parent];
+                parentLevel = level[parent];
+            }
+            opacity.push(parentOpacity * styles[index].opacity);
+            level.push(styles[index].zIndex ?? parentLevel);
+        }
+        order~ Array<usize>! = [];
+        defer delete order;
+        for index~ usize = 0; index < nodes.length(); index++ {
+            insertAt~ usize = order.length();
+            while insertAt > 0 && level[order[insertAt - 1]] > level[index] {
+                insertAt -= 1;
+            }
+            order.insert(insertAt, index);
+        }
+        for index in order {
+            if opacity[index] <= 0.0f {
+                continue;
+            }
+            style: Style = styles[index];
+            rect: Rect = rects[index];
+            DrawBox(overlay, rect, style, scale, opacity[index]);
+            if nodes[index].kind == NodeKind:::Text && nodes[index].text.length() > 0 {
+                border: f32 = style.borderWidth * scale;
+                padding: Insets = style.padding.Scaled(scale);
+                origin: Vec2 = rect.min + Vec2 { x: padding.left + border, y: padding.top + border };
+                color: lantern:::core:::Color = Faded(style.textColor ?? lantern:::core:::Color:::White(), opacity[index]);
+                overlay->Text(nodes[index].text, origin, TextScale(style, scale), color);
+            }
+        }
+    }
+}
