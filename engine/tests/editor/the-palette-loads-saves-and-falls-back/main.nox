@@ -1,0 +1,122 @@
+lantern :: import lantern;
+
+TheGamePaletteLoads :: (palette: lantern:::editor:::Palette*) -> void {
+    assert(palette->templates.length() == 6, "the game offers six templates");
+    assert(palette->materials.length() == 3 && palette->materials[0] == "ground", "the game lists its materials in order");
+    platformFound: lantern:::editor:::EntityTemplate*? = palette->Template("moving_platform");
+    assert(platformFound != null, "the moving platform template is found by id");
+    guard platform := platformFound return;
+    assert(platform->label == "Moving platform", "a template keeps its label");
+    assert(lantern:::world:::SameCollider(platform->prototype->collider, lantern:::world:::ColliderKind:::Kinematic), "a template keeps its collider");
+    assert(platform->prototype->PropertyCount() == 2, "a template keeps its properties");
+    assert(platform->prototype->tint != null, "a template keeps its tint");
+    if tint := platform->prototype->tint {
+        assert(tint == "#FFE0A0", "a template keeps its tint's value");
+    }
+    gemFound: lantern:::editor:::EntityTemplate*? = palette->Template("gem");
+    guard gem := gemFound return;
+    assert(gem->lift == 0.6f, "a template keeps its lift");
+    assert(gem->prototype->shape == null, "a marker template has no shape");
+    gemStyle := palette->MarkerStyleFor("gem");
+    assert(gemStyle->mesh == lantern:::editor:::MarkerMesh:::Gem && gemStyle->color == "#5FE0FF", "a marker kind has its style");
+    delete gemStyle;
+    blockStyle := palette->MarkerStyleFor("block");
+    assert(blockStyle->mesh == lantern:::editor:::MarkerMesh:::Cube && blockStyle->color == "#D0D0E0", "an unlisted kind gets the default marker");
+    delete blockStyle;
+    kinds~ Array<string!>! = palette->Kinds();
+    assert(kinds.length() == 6, "every kind is listed once");
+    assert(kinds[0] == "block" && kinds[1] == "gem" && kinds[5] == "spawn", "kinds are sorted");
+    kinds.freeAll();
+    assert(palette->Template("nothing") == null, "an unknown template id finds nothing");
+}
+
+SavingRoundTrips :: (palette: lantern:::editor:::Palette*) -> void {
+    when createDirectories("build") {
+        Result:::Ok(created) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    path: string = "build/lantern-editor-palette.json";
+    failure: string!? = palette->Save(path);
+    if message := failure {
+        print(message);
+    }
+    assert(failure == null, "the palette saves");
+    delete failure;
+    saved: string! = palette->ToJson();
+    when lantern:::editor:::Palette:::Load(path) {
+        Result:::Ok(reloaded) -> {
+            reloadedText: string! = reloaded->ToJson();
+            assert(reloadedText == saved, "loading the saved palette gives back the same palette");
+            delete reloadedText;
+            delete reloaded;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the saved palette loads");
+        }
+    }
+    delete saved;
+    when removeFile(path) {
+        Result:::Ok(removed) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+}
+
+BrokenPalettesSayWhy :: () -> void {
+    when lantern:::editor:::Palette:::FromJson("{\"templates\": [{\"id\": \"a\", \"label\": \"A\"}]}", "broken.json") {
+        Result:::Ok(palette) -> {
+            delete palette;
+            assert(false, "a template without a kind is refused");
+        },
+        Result:::Err(message) -> {
+            assert(message == "broken.json: missing field 'kind'", "a missing field is named");
+            delete message;
+        }
+    }
+    when lantern:::editor:::Palette:::FromJson("{\"templates\": [], \"markers\": {\"gem\": {\"mesh\": \"cone\"}}}", "broken.json") {
+        Result:::Ok(palette) -> {
+            delete palette;
+            assert(false, "an unknown marker mesh is refused");
+        },
+        Result:::Err(message) -> {
+            assert(message.contains("unknown variant 'cone'"), "an unknown mesh is named");
+            delete message;
+        }
+    }
+}
+
+TheFallbackHasBlocksRampsAndMarkers :: () -> void {
+    fallback := lantern:::editor:::Palette:::Fallback();
+    assert(fallback->templates.length() == 3, "the fallback has three templates");
+    blockFound: lantern:::editor:::EntityTemplate*? = fallback->Template("block");
+    guard block := blockFound return;
+    assert(block->prototype->shape != null && lantern:::world:::SameCollider(block->prototype->collider, lantern:::world:::ColliderKind:::Static), "a fallback block is a static box");
+    markerFound: lantern:::editor:::EntityTemplate*? = fallback->Template("marker");
+    guard marker := markerFound return;
+    assert(marker->prototype->shape == null && marker->prototype->collider == null, "a fallback marker has no shape or collider");
+    delete fallback;
+}
+
+main :: () -> i32 {
+    when lantern:::editor:::Palette:::Load("../assets/editor/palette.json") {
+        Result:::Ok(palette) -> {
+            TheGamePaletteLoads(palette);
+            SavingRoundTrips(palette);
+            delete palette;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    BrokenPalettesSayWhy();
+    TheFallbackHasBlocksRampsAndMarkers();
+    print("the palette loads, saves and falls back");
+    return 0;
+}

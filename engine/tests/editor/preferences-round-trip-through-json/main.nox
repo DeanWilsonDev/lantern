@@ -1,0 +1,50 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    path: string = "build/lantern-editor-preferences/nested/world-editor.json";
+    preferences := new lantern:::editor:::EditorPreferences();
+    firstSet: bool = preferences->Set("window.width", "1600");
+    assert(firstSet, "setting a new key changes the preferences");
+    secondSet: bool = preferences->Set("window.width", "1600");
+    assert(!secondSet, "setting the same value again changes nothing");
+    recent~ Array<string!>! = [];
+    recent.push("a.json".copy());
+    recent.push("b.json".copy());
+    listSet: bool = preferences->SetList("recent", recent);
+    assert(listSet, "setting a list changes the preferences");
+    recent.freeAll();
+    failure: string!? = preferences->Save(path);
+    if message := failure {
+        print(message);
+    }
+    assert(failure == null, "the preferences save, making their directory");
+    delete failure;
+    when lantern:::editor:::EditorPreferences:::Load(path) {
+        Result:::Ok(loaded) -> {
+            assert(loaded->SameAs(preferences), "loading gives back the same preferences");
+            items~ Array<string!>! = loaded->List("recent");
+            assert(items.length() == 2 && items[0] == "a.json" && items[1] == "b.json", "a list reads back item by item");
+            items.freeAll();
+            width: string? = loaded->Get("window.width");
+            assert(width != null && (width ?? "") == "1600", "a value reads back");
+            removed: bool = loaded->Set("window.width", "");
+            assert(removed, "an empty value removes the key");
+            assert(loaded->Get("window.width") == null, "a removed key reads as missing");
+            delete loaded;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the saved preferences load");
+        }
+    }
+    delete preferences;
+    when removeFile(path) {
+        Result:::Ok(removed) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    print("preferences round trip through json");
+    return 0;
+}

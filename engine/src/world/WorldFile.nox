@@ -284,6 +284,100 @@ lantern:::world :: namespace {
         Label :: () -> string! {
             return `entity #${id} '${name}'`;
         }
+
+        Copy :: () -> WorldEntity*! {
+            copied := new WorldEntity(id, name, kind);
+            copied->parent = parent;
+            copied->transform = transform;
+            copied->shape = shape;
+            if text := material {
+                copied->SetMaterial(text);
+            }
+            if text := tint {
+                copied->SetTint(text);
+            }
+            copied->collider = collider;
+            for index~ usize = 0; index < propertyKeys.length(); index++ {
+                copied->SetProperty(propertyKeys[index], propertyValues[index], propertyTexts[index]);
+            }
+            return copied!;
+        }
+
+        SameAs :: (other: WorldEntity*) -> bool {
+            if id != other->id || name != other->name || kind != other->kind || !SameOptionalKey(parent, other->parent) {
+                return false;
+            }
+            if !SameTransform(transform, other->transform) || !SameShape(shape, other->shape) || !SameCollider(collider, other->collider) {
+                return false;
+            }
+            materialMatches~ bool = material == null && other->material == null;
+            if mine := material {
+                if theirs := other->material {
+                    materialMatches = mine == theirs;
+                }
+            }
+            tintMatches~ bool = tint == null && other->tint == null;
+            if mine := tint {
+                if theirs := other->tint {
+                    tintMatches = mine == theirs;
+                }
+            }
+            if !materialMatches || !tintMatches {
+                return false;
+            }
+            if propertyKeys.length() != other->propertyKeys.length() {
+                return false;
+            }
+            for index~ usize = 0; index < propertyKeys.length(); index++ {
+                if propertyKeys[index] != other->propertyKeys[index] || propertyTexts[index] != other->propertyTexts[index] {
+                    return false;
+                }
+                if !SamePropertyValue(propertyValues[index], other->propertyValues[index]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    SameTransform :: (left: TransformData, right: TransformData) -> bool {
+        return left.position == right.position && left.rotationDegrees == right.rotationDegrees && left.scale == right.scale;
+    }
+
+    SameShape :: (left: Shape?, right: Shape?) -> bool {
+        guard leftShape := left return right == null;
+        guard rightShape := right return false;
+        if leftShape.kind != rightShape.kind {
+            return false;
+        }
+        if leftShape.kind == ShapeKind:::Box {
+            return leftShape.halfExtents == rightShape.halfExtents;
+        }
+        return leftShape.width == rightShape.width && leftShape.height == rightShape.height && leftShape.length == rightShape.length;
+    }
+
+    SameOptionalKey :: (left: u64?, right: u64?) -> bool {
+        guard leftKey := left return right == null;
+        guard rightKey := right return false;
+        return leftKey == rightKey;
+    }
+
+    SameCollider :: (left: ColliderKind?, right: ColliderKind?) -> bool {
+        guard leftKind := left return right == null;
+        guard rightKind := right return false;
+        return leftKind == rightKind;
+    }
+
+    SamePropertyValue :: (left: PropertyValue, right: PropertyValue) -> bool {
+        if left.kind != right.kind {
+            return false;
+        }
+        return when left.kind {
+            PropertyKind:::Boolean -> left.boolean == right.boolean,
+            PropertyKind:::Number -> left.number == right.number,
+            PropertyKind:::Text -> true,
+            PropertyKind:::Vector -> left.vector == right.vector,
+        };
     }
 
     WorldFile :: class {
@@ -507,17 +601,7 @@ lantern:::world :: namespace {
         document->Set(transform, "scale", document->NewVector(entity->transform.scale));
         document->Set(node, "transform", transform);
         if shape := entity->shape {
-            shapeNode: u32 = document->NewObject();
-            if shape.kind == ShapeKind:::Box {
-                document->Set(shapeNode, "type", document->NewText("Box"));
-                document->Set(shapeNode, "half_extents", document->NewVector(shape.halfExtents));
-            } else {
-                document->Set(shapeNode, "type", document->NewText("Ramp"));
-                document->Set(shapeNode, "width", document->NewNumber(f64(shape.width)));
-                document->Set(shapeNode, "height", document->NewNumber(f64(shape.height)));
-                document->Set(shapeNode, "length", document->NewNumber(f64(shape.length)));
-            }
-            document->Set(node, "shape", shapeNode);
+            document->Set(node, "shape", ShapeNode(document, shape));
         }
         if material := entity->material {
             document->Set(node, "material", document->NewText(material));
@@ -526,31 +610,52 @@ lantern:::world :: namespace {
             document->Set(node, "tint", document->NewText(tint));
         }
         if collider := entity->collider {
-            if collider == ColliderKind:::Static {
-                document->Set(node, "collider", document->NewText("static"));
-            } else {
-                document->Set(node, "collider", document->NewText("kinematic"));
-            }
+            document->Set(node, "collider", document->NewText(ColliderText(collider)));
         }
         if entity->propertyKeys.length() > 0 {
-            properties: u32 = document->NewObject();
-            for index~ usize = 0; index < entity->propertyKeys.length(); index++ {
-                value: PropertyValue = entity->propertyValues[index];
-                valueNode~ u32 = 0;
-                if value.kind == PropertyKind:::Boolean {
-                    valueNode = document->NewBoolean(value.boolean);
-                } else if value.kind == PropertyKind:::Number {
-                    valueNode = document->NewNumber(f64(value.number));
-                } else if value.kind == PropertyKind:::Text {
-                    valueNode = document->NewText(entity->propertyTexts[index]);
-                } else {
-                    valueNode = document->NewVector(value.vector);
-                }
-                document->Set(properties, entity->propertyKeys[index], valueNode);
-            }
-            document->Set(node, "properties", properties);
+            document->Set(node, "properties", PropertiesNode(document, entity));
         }
         return node;
+    }
+
+    ColliderText :: (collider: ColliderKind) -> string {
+        if collider == ColliderKind:::Static {
+            return "static";
+        }
+        return "kinematic";
+    }
+
+    ShapeNode :: (document: lantern:::json:::JsonDocument~*, shape: Shape) -> u32 {
+        shapeNode: u32 = document->NewObject();
+        if shape.kind == ShapeKind:::Box {
+            document->Set(shapeNode, "type", document->NewText("Box"));
+            document->Set(shapeNode, "half_extents", document->NewVector(shape.halfExtents));
+        } else {
+            document->Set(shapeNode, "type", document->NewText("Ramp"));
+            document->Set(shapeNode, "width", document->NewNumber(f64(shape.width)));
+            document->Set(shapeNode, "height", document->NewNumber(f64(shape.height)));
+            document->Set(shapeNode, "length", document->NewNumber(f64(shape.length)));
+        }
+        return shapeNode;
+    }
+
+    PropertiesNode :: (document: lantern:::json:::JsonDocument~*, entity: WorldEntity*) -> u32 {
+        properties: u32 = document->NewObject();
+        for index~ usize = 0; index < entity->propertyKeys.length(); index++ {
+            value: PropertyValue = entity->propertyValues[index];
+            valueNode~ u32 = 0;
+            if value.kind == PropertyKind:::Boolean {
+                valueNode = document->NewBoolean(value.boolean);
+            } else if value.kind == PropertyKind:::Number {
+                valueNode = document->NewNumber(f64(value.number));
+            } else if value.kind == PropertyKind:::Text {
+                valueNode = document->NewText(entity->propertyTexts[index]);
+            } else {
+                valueNode = document->NewVector(value.vector);
+            }
+            document->Set(properties, entity->propertyKeys[index], valueNode);
+        }
+        return properties;
     }
 
     FromJson :: (text: string, path: string) -> Result<WorldFile*!, string!> {

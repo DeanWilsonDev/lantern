@@ -1,0 +1,214 @@
+lantern:::editor :: namespace {
+    EditorPreferences :: class {
+    public:
+        keys~ Array<string!>! = [];
+        values~ Array<string!>! = [];
+
+        EditorPreferences~: () { }
+
+        !EditorPreferences~: () {
+            keys.freeAll();
+            values.freeAll();
+        }
+
+        static DefaultPath :: () -> string!? {
+            configHome: string!? = environmentVariable("XDG_CONFIG_HOME");
+            if base := configHome {
+                joined: string! = `${base}/lantern/world-editor.json`;
+                delete configHome;
+                return joined!;
+            }
+            applicationData: string!? = environmentVariable("APPDATA");
+            if base := applicationData {
+                joined: string! = `${base}/lantern/world-editor.json`;
+                delete applicationData;
+                return joined!;
+            }
+            home: string!? = environmentVariable("HOME");
+            if directory := home {
+                joined: string! = `${directory}/.config/lantern/world-editor.json`;
+                delete home;
+                return joined!;
+            }
+            userProfile: string!? = environmentVariable("USERPROFILE");
+            if directory := userProfile {
+                joined: string! = `${directory}/.config/lantern/world-editor.json`;
+                delete userProfile;
+                return joined!;
+            }
+            return null;
+        }
+
+        static Load :: (path: string) -> Result<EditorPreferences*!, string!> {
+            when readTextFile(path) {
+                Result:::Ok(text) -> {
+                    when lantern:::json:::Parse(text) {
+                        Result:::Ok(document) -> {
+                            delete text;
+                            root: u32 = document->root;
+                            if document->Kind(root) != lantern:::json:::JsonKind:::Object {
+                                delete document;
+                                return Result<EditorPreferences*!, string!>:::Err(`${path}: invalid type, expected a map`);
+                            }
+                            preferences := new EditorPreferences();
+                            child~ u32 = document->FirstChild(root);
+                            while child != lantern:::json:::NO_NODE {
+                                if document->Kind(child) != lantern:::json:::JsonKind:::Text {
+                                    delete preferences;
+                                    delete document;
+                                    return Result<EditorPreferences*!, string!>:::Err(`${path}: invalid type, expected a string`);
+                                }
+                                preferences->Set(document->Key(child), document->Text(child));
+                                child = document->NextSibling(child);
+                            }
+                            delete document;
+                            return Result<EditorPreferences*!, string!>:::Ok(preferences!);
+                        },
+                        Result:::Err(message) -> {
+                            failure: string! = `${path}: ${message}`;
+                            delete message;
+                            delete text;
+                            return Result<EditorPreferences*!, string!>:::Err(failure!);
+                        }
+                    }
+                },
+                Result:::Err(error) -> {
+                    failure: string! = `${path}: ${error.message()}`;
+                    delete error;
+                    return Result<EditorPreferences*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        Save :: (path: string) -> string!? {
+            if separator := LastSeparator(path) {
+                directory: string! = `${path.substring(0, separator)}`;
+                when createDirectories(directory) {
+                    Result:::Ok(created) -> { },
+                    Result:::Err(error) -> {
+                        failure: string! = `${directory}: ${error.message()}`;
+                        delete error;
+                        delete directory;
+                        return failure!;
+                    }
+                }
+                delete directory;
+            }
+            document := new lantern:::json:::JsonDocument();
+            root: u32 = document->NewObject();
+            for index~ usize = 0; index < keys.length(); index++ {
+                document->Set(root, keys[index], document->NewText(values[index]));
+            }
+            document->root = root;
+            text~ string! = document->Write(root);
+            text += "\n";
+            delete document;
+            failure~ string!? = null;
+            when writeTextFile(path, text) {
+                Result:::Ok(written) -> { },
+                Result:::Err(error) -> {
+                    failure = `${path}: ${error.message()}`;
+                    delete error;
+                }
+            }
+            delete text;
+            return failure!;
+        }
+
+        KeyIndex :: (key: string) -> usize? {
+            for index~ usize = 0; index < keys.length(); index++ {
+                if keys[index] == key {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        Get :: (key: string) -> string? {
+            if index := KeyIndex(key) {
+                return values[index];
+            }
+            return null;
+        }
+
+        Set~: (key: string, value: string) -> bool {
+            found: usize? = KeyIndex(key);
+            if value.length() == 0 {
+                if index := found {
+                    removedKey := keys.remove(index);
+                    delete removedKey;
+                    removedValue := values.remove(index);
+                    delete removedValue;
+                    return true;
+                }
+                return false;
+            }
+            if index := found {
+                if values[index] == value {
+                    return false;
+                }
+                previous := values.remove(index);
+                delete previous;
+                values.insert(index, `${value}`);
+                return true;
+            }
+            position~ usize = 0;
+            while position < keys.length() && lantern:::world:::TextBefore(keys[position], key) {
+                position += 1;
+            }
+            keys.insert(position, `${key}`);
+            values.insert(position, `${value}`);
+            return true;
+        }
+
+        List :: (key: string) -> Array<string!>! {
+            items~ Array<string!>! = [];
+            stored: string? = Get(key);
+            guard text := stored return items!;
+            lines: Array<string>! = text.split("\n");
+            for line in lines {
+                if line.length() > 0 {
+                    items.push(`${line}`);
+                }
+            }
+            delete lines;
+            return items!;
+        }
+
+        SetList~: (key: string, items: Array<string!>) -> bool {
+            joined~ string! = "";
+            for index~ usize = 0; index < items.length(); index++ {
+                if index > 0 {
+                    joined += "\n";
+                }
+                joined += items[index];
+            }
+            changed: bool = Set(key, joined);
+            delete joined;
+            return changed;
+        }
+
+        SameAs :: (other: EditorPreferences*) -> bool {
+            if keys.length() != other->keys.length() {
+                return false;
+            }
+            for index~ usize = 0; index < keys.length(); index++ {
+                if keys[index] != other->keys[index] || values[index] != other->values[index] {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    LastSeparator :: (path: string) -> usize? {
+        found~ usize? = null;
+        for index~ usize = 0; index < path.length(); index++ {
+            byte: u8 = path.byteAt(index);
+            if byte == u8(47) || byte == u8(92) {
+                found = index;
+            }
+        }
+        return found;
+    }
+}
