@@ -33,6 +33,7 @@ FetchContent_MakeAvailable(cosmos)
 
 add_library(lantern-native SHARED src/ChaosUiBridge.cpp)
 target_include_directories(lantern-native PUBLIC include)
+set_target_properties(lantern-native PROPERTIES INSTALL_NAME_DIR "${CMAKE_CURRENT_BINARY_DIR}" BUILD_WITH_INSTALL_NAME_DIR ON)
 target_link_libraries(lantern-native PRIVATE chaos cosmos "$<LINK_LIBRARY:WHOLE_ARCHIVE,nyx-capi-static>")
 if(APPLE)
     target_link_options(lantern-native PRIVATE "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/lantern-native.exports")
