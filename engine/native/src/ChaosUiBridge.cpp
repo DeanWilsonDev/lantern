@@ -1,4 +1,3 @@
-
 #include "lantern_chaos_ui.h"
 
 #include "chaos/ChaosNyxDriver.h"
