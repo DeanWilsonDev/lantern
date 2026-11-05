@@ -10,7 +10,7 @@ the core module (milestone L1), the window and frame loop (milestone L2), the re
 the SDL GPU backend (milestone L3), collision and the world file (milestone L4), and the entity world, audio and debug
 drawing (milestone L5), and most of the game host (milestone L6): the Nox wrapper over Nyx's C API, the engine state a
 game runs against, the whole engine API, the script session and the host that runs a game, described under "Layout".
-`build/lantern <game-directory>` runs a game whose UI doesn't use Chaos; the platformer needs the game UI (milestone L7).
+`build/lantern <game-directory>` runs a game, the platformer (`../games/platformer`) included.
 
 ## What you need
 
@@ -74,8 +74,9 @@ Run it from this directory, since the asset paths are relative to it. The compil
   copy of Nyx, and it exports only the `nyx_` and `lantern_chaos_ui_` functions. It needs nyx-scripting-language,
   chaos-ui-framework and cosmos-styling-language checked out on `proto` beside this repository, with their submodules
   (or `NYX_SOURCE_DIR`, `CHAOS_SOURCE_DIR` and `COSMOS_SOURCE_DIR`). A program that links it needs that directory in
-  `LIBRARY_PATH` to build and in `LD_LIBRARY_PATH` (`DYLD_LIBRARY_PATH` on macOS) to start, since Nox doesn't record a
-  run-time search path yet.
+  `LIBRARY_PATH` to build. On Linux it also needs it in `LD_LIBRARY_PATH` to start, since Nox doesn't record a
+  run-time search path yet. On macOS the library's install name is its full path in `generated/native-build/`, so a
+  program finds it without `DYLD_LIBRARY_PATH`, which macOS drops for programs a shell script starts.
 - `install-dependencies.sh` runs `mist install`, which fetches cgltf and stb_image at the commits in `mist.lock` and
   builds each into a static library with its Nox binding, then links those into `generated/mist/`. It's a stand-in
   until `mist resolve` tells `nox build` where Mist's builds are.
