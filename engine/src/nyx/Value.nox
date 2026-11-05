@@ -39,21 +39,27 @@ lantern:::nyx :: namespace {
     public:
         handle~ raw NyxC:::nyx_value~* = null;
         runtime~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ raw RuntimeLedger~* = null;
 
-        Value~: (ownedHandle: raw NyxC:::nyx_value~*, owningRuntime: raw NyxC:::nyx_runtime~*) {
+        Value~: (ownedHandle: raw NyxC:::nyx_value~*, owningLedger: raw RuntimeLedger~*) {
             handle = ownedHandle;
-            runtime = owningRuntime;
+            ledger = owningLedger;
+            unsafe {
+                runtime = owningLedger->handle;
+                owningLedger->liveValues += 1;
+            }
         }
 
         !Value~: () {
             unsafe {
                 NyxC:::nyx_value_release(handle);
+                ledger->liveValues -= 1;
             }
         }
 
         Retained :: () -> Value*! {
             unsafe {
-                return new Value(NyxC:::nyx_value_retain(handle), runtime);
+                return new Value(NyxC:::nyx_value_retain(handle), ledger);
             }
         }
 
@@ -151,7 +157,7 @@ lantern:::nyx :: namespace {
                 status = NyxC:::nyx_value_array_get(handle, index, element);
             }
             failed := CheckStatus(runtime, status);
-            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(element, runtime));
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(element, ledger));
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 

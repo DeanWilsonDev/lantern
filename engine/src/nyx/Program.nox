@@ -32,15 +32,21 @@ lantern:::nyx :: namespace {
     public:
         handle~ raw NyxC:::nyx_program~* = null;
         runtime~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ raw RuntimeLedger~* = null;
 
-        Program~: (programHandle: raw NyxC:::nyx_program~*, owningRuntime: raw NyxC:::nyx_runtime~*) {
+        Program~: (programHandle: raw NyxC:::nyx_program~*, owningLedger: raw RuntimeLedger~*) {
             handle = programHandle;
-            runtime = owningRuntime;
+            ledger = owningLedger;
+            unsafe {
+                runtime = owningLedger->handle;
+                owningLedger->livePrograms += 1;
+            }
         }
 
         !Program~: () {
             unsafe {
                 NyxC:::nyx_program_release(handle);
+                ledger->livePrograms -= 1;
             }
         }
 
@@ -51,7 +57,7 @@ lantern:::nyx :: namespace {
                 status = NyxC:::nyx_program_application(handle, instance);
             }
             failed := CheckStatus(runtime, status);
-            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(instance, runtime));
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(instance, ledger));
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
@@ -128,7 +134,7 @@ lantern:::nyx :: namespace {
                 message += "the call failed";
                 error := new NyxError(status, "");
                 if result != null {
-                    failure := new Value(result, runtime);
+                    failure := new Value(result, ledger);
                     variant: string! = TextOr(failure->ErrorVariant(), "an error");
                     text: string! = TextOr(failure->ErrorMessage(), "");
                     delete message;
@@ -143,7 +149,7 @@ lantern:::nyx :: namespace {
                 return Result<Value*!, NyxError*!>:::Err(error!);
             }
             failed := CheckStatus(runtime, status);
-            guard failed return Result<Value*!, NyxError*!>:::Ok(AdoptOrNull(runtime, result));
+            guard failed return Result<Value*!, NyxError*!>:::Ok(AdoptOrNull(ledger, result));
             if result != null {
                 unsafe {
                     NyxC:::nyx_value_release(result);
@@ -165,14 +171,14 @@ lantern:::nyx :: namespace {
         }
     }
 
-    AdoptOrNull :: (runtime: raw NyxC:::nyx_runtime~*, handle: raw NyxC:::nyx_value~*) -> Value*! {
+    AdoptOrNull :: (ledger: raw RuntimeLedger~*, handle: raw NyxC:::nyx_value~*) -> Value*! {
         if handle != null {
-            return new Value(handle, runtime);
+            return new Value(handle, ledger);
         }
         made~ raw NyxC:::nyx_value~* = null;
         unsafe {
-            NyxC:::nyx_value_new_null(runtime, made);
+            NyxC:::nyx_value_new_null(ledger->handle, made);
         }
-        return new Value(made, runtime);
+        return new Value(made, ledger);
     }
 }

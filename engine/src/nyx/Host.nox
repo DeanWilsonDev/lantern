@@ -41,6 +41,7 @@ lantern:::nyx :: namespace {
     public:
         call~ raw NyxC:::nyx_call~* = null;
         runtime~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ raw RuntimeLedger~* = null;
         hostType~ raw HostType~* = null;
         arguments~ u64[16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         argumentCount~ usize = 0;
@@ -49,9 +50,10 @@ lantern:::nyx :: namespace {
         result~ raw NyxC:::nyx_value~* = null;
         outcome~ CallOutcome = CallOutcome:::Returned;
 
-        CallContext~: (callHandle: raw NyxC:::nyx_call~*, callRuntime: raw NyxC:::nyx_runtime~*) {
+        CallContext~: (callHandle: raw NyxC:::nyx_call~*, callRuntime: raw NyxC:::nyx_runtime~*, callLedger: raw RuntimeLedger~*) {
             call = callHandle;
             runtime = callRuntime;
+            ledger = callLedger;
         }
 
         !CallContext~: () {
@@ -91,9 +93,9 @@ lantern:::nyx :: namespace {
                 if handle == null {
                     made~ raw NyxC:::nyx_value~* = null;
                     NyxC:::nyx_value_new_null(runtime, made);
-                    return new Value(made, runtime);
+                    return new Value(made, ledger);
                 }
-                return new Value(NyxC:::nyx_value_retain(handle), runtime);
+                return new Value(NyxC:::nyx_value_retain(handle), ledger);
             }
         }
 
@@ -404,6 +406,8 @@ lantern:::nyx :: namespace {
         signatureText~ CText*!;
         receiverMutable~ bool = false;
         hostType~ raw HostType~* = null;
+        ledger~ raw RuntimeLedger~* = null;
+        released~ bool = false;
         userdata~ raw u8~* = null;
         body~ ((context: CallContext~*) -> void)!;
 
@@ -451,7 +455,11 @@ lantern:::nyx :: namespace {
     HostCallTrampoline :: (call: raw NyxC:::nyx_call~*, args: raw NyxC:::nyx_value~**, count: usize, outResult: raw NyxC:::nyx_value~*~*, userdata: raw u8~*) -> NyxC:::nyx_status {
         unsafe {
             entry: raw HostCall~* = CallFromUserdata(userdata);
-            context := new CallContext(call, NyxC:::nyx_call_runtime(call));
+            callLedger~ raw RuntimeLedger~* = entry->ledger;
+            if entry->hostType != null {
+                callLedger = entry->hostType->ledger;
+            }
+            context := new CallContext(call, NyxC:::nyx_call_runtime(call), callLedger);
             if count > MAX_HOST_ARGUMENTS {
                 context->Refuse("a host function takes at most 16 arguments");
             } else if count > 0 && args != null {
@@ -459,7 +467,7 @@ lantern:::nyx :: namespace {
                 context->argumentCount = count;
             }
             context->hostType = entry->hostType;
-            if entry->kind == HostCallKind:::Method || entry->kind == HostCallKind:::Operator {
+            if !context->Refused() && (entry->kind == HostCallKind:::Method || entry->kind == HostCallKind:::Operator) {
                 if count == 0 {
                     message: string! = `'${entry->name}' was called without a receiver`;
                     context->Refuse(message);
@@ -480,6 +488,20 @@ lantern:::nyx :: namespace {
             status: NyxC:::nyx_status = context->Finish(outResult);
             delete context;
             return status;
+        }
+    }
+
+    FreeHostCallTrampoline :: (userdata: raw u8~*) -> void {
+        unsafe {
+            entry: raw HostCall~* = CallFromUserdata(userdata);
+            entry->released = true;
+        }
+    }
+
+    FreeHostTypeTrampoline :: (userdata: raw u8~*) -> void {
+        unsafe {
+            owner: raw HostType~* = TypeFromUserdata(userdata);
+            owner->released = true;
         }
     }
 

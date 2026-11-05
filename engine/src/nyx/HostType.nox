@@ -54,6 +54,7 @@ lantern:::nyx :: namespace {
         nameText~ CText*!;
         handle~ raw NyxC:::nyx_host_type~* = null;
         runtime~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ raw RuntimeLedger~* = null;
         isValueType~ bool = false;
         valueSize~ usize = 0;
         valueAlignment~ usize = 0;
@@ -66,6 +67,7 @@ lantern:::nyx :: namespace {
         objects~ Array<HostObject*!>! = [];
         freeSlots~ Array<usize>! = [];
         liveObjectCount~ usize = 0;
+        released~ bool = false;
         layoutError~ string! = "";
         userdata~ raw u8~* = null;
 
@@ -187,8 +189,11 @@ lantern:::nyx :: namespace {
             return records!;
         }
 
-        Register~: (owningRuntime: raw NyxC:::nyx_runtime~*) -> NyxError*!? {
-            runtime = owningRuntime;
+        Register~: (owningLedger: raw RuntimeLedger~*) -> NyxError*!? {
+            ledger = owningLedger;
+            unsafe {
+                runtime = owningLedger->handle;
+            }
             if layoutError.length() > 0 {
                 return new NyxError(NyxC:::NYX_ERROR_INVALID_ARGUMENT, layoutError);
             }
@@ -247,7 +252,7 @@ lantern:::nyx :: namespace {
                 } else {
                     table.release_instance = ReleaseInstanceTrampoline;
                 }
-                status = NyxC:::nyx_runtime_register_type(runtime, nameText->Str(), table, Userdata(), null, handle);
+                status = NyxC:::nyx_runtime_register_type(runtime, nameText->Str(), table, Userdata(), FreeHostTypeTrampoline, handle);
             }
             delete fieldRecords;
             delete methodRecords;
@@ -260,8 +265,8 @@ lantern:::nyx :: namespace {
             slot~ usize = objects.length();
             if freed := freeSlots.pop() {
                 slot = freed;
-                released := objects.remove(slot);
-                delete released;
+                releasedObject := objects.remove(slot);
+                delete releasedObject;
                 objects.insert(slot, object!);
             } else {
                 objects.push(object!);
@@ -284,7 +289,7 @@ lantern:::nyx :: namespace {
                 status = WrapHandle(object!, made);
             }
             failed := CheckStatus(runtime, status);
-            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(made, runtime));
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(made, ledger));
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
@@ -295,7 +300,7 @@ lantern:::nyx :: namespace {
                 status = NyxC:::nyx_value_new_host_object(handle, bytes, made);
             }
             failed := CheckStatus(runtime, status);
-            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(made, runtime));
+            guard failed return Result<Value*!, NyxError*!>:::Ok(new Value(made, ledger));
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
@@ -341,8 +346,8 @@ lantern:::nyx :: namespace {
         }
 
         ReleaseSlot~: (slot: usize) -> void {
-            released := objects.remove(slot);
-            delete released;
+            releasedObject := objects.remove(slot);
+            delete releasedObject;
             objects.insert(slot, new ReleasedHostObject());
             freeSlots.push(slot);
             liveObjectCount -= 1;
@@ -352,6 +357,12 @@ lantern:::nyx :: namespace {
             objectId: u64 = InstanceToObjectId(instance);
             if objectId == 0 || objectId > u64(objects.length()) {
                 return;
+            }
+            slot: usize = usize(objectId - 1);
+            for freeSlot in freeSlots {
+                if freeSlot == slot {
+                    return;
+                }
             }
             ReleaseSlot(usize(objectId - 1));
         }

@@ -9,9 +9,30 @@ lantern:::nyx :: namespace {
 
     HEADER_VERSION: i32 : 4;
 
+    RuntimeLedger :: class {
+    public:
+        handle~ raw NyxC:::nyx_runtime~* = null;
+        liveValues~ usize = 0;
+        livePrograms~ usize = 0;
+
+        RuntimeLedger~: (runtimeHandle: raw NyxC:::nyx_runtime~*) {
+            handle = runtimeHandle;
+        }
+
+        IsEmpty :: () -> bool {
+            return liveValues == 0 && livePrograms == 0;
+        }
+
+        Remaining :: () -> string! {
+            return `${liveValues} values and ${livePrograms} programs`;
+        }
+    }
+
     Runtime :: class {
     public:
         handle~ raw NyxC:::nyx_runtime~* = null;
+        ledger~ RuntimeLedger*!;
+        ledgerPointer~ raw RuntimeLedger~* = null;
         functions~ Array<HostCall*!>! = [];
         types~ Array<HostType*!>! = [];
 
@@ -19,14 +40,46 @@ lantern:::nyx :: namespace {
             unsafe {
                 NyxC:::nyx_runtime_create(handle);
             }
+            ledger = new RuntimeLedger(handle);
+            unsafe {
+                ledgerPointer = ledger;
+            }
         }
 
         !Runtime~: () {
+            if !ledger->IsEmpty() {
+                remaining: string! = ledger->Remaining();
+                message: string! = `a Nyx runtime was deleted while ${remaining} from it were still alive; delete them before the runtime\n`;
+                delete remaining;
+                unsafe {
+                    lantern:::nyxoutput:::write(2, message, message.length());
+                }
+                delete message;
+                panic("a Nyx runtime was deleted before its values and programs");
+            }
             unsafe {
                 NyxC:::nyx_runtime_destroy(handle);
             }
+            if !CallbacksReleased() {
+                panic("Nyx still holds a host function or type after its runtime was destroyed");
+            }
             functions.freeAll();
             types.freeAll();
+            delete ledger;
+        }
+
+        CallbacksReleased :: () -> bool {
+            for function in functions {
+                if !function->released {
+                    return false;
+                }
+            }
+            for hostType in types {
+                if !hostType->released {
+                    return false;
+                }
+            }
+            return true;
         }
 
         IsUsable :: () -> bool {
@@ -60,7 +113,7 @@ lantern:::nyx :: namespace {
             delete nameText;
             delete classText;
             failed := Check(status);
-            guard failed return Result<Program*!, NyxError*!>:::Ok(new Program(mounted, handle));
+            guard failed return Result<Program*!, NyxError*!>:::Ok(new Program(mounted, ledgerPointer));
             return Result<Program*!, NyxError*!>:::Err(failed!);
         }
 
@@ -75,7 +128,7 @@ lantern:::nyx :: namespace {
             delete pathText;
             delete classText;
             failed := Check(status);
-            guard failed return Result<Program*!, NyxError*!>:::Ok(new Program(mounted, handle));
+            guard failed return Result<Program*!, NyxError*!>:::Ok(new Program(mounted, ledgerPointer));
             return Result<Program*!, NyxError*!>:::Err(failed!);
         }
 
@@ -99,7 +152,7 @@ lantern:::nyx :: namespace {
                 if made == null {
                     return Result<string!, NyxError*!>:::Ok("");
                 }
-                text := new Value(made, handle);
+                text := new Value(made, ledgerPointer);
                 read := text->Text();
                 when read! {
                     Result:::Ok(contents) -> {
@@ -145,7 +198,7 @@ lantern:::nyx :: namespace {
         }
 
         Adopt :: (made: raw NyxC:::nyx_value~*) -> Value*! {
-            return new Value(made, handle);
+            return new Value(made, ledgerPointer);
         }
 
         MakeNull :: () -> Value*! {
@@ -239,9 +292,10 @@ lantern:::nyx :: namespace {
 
         RegisterFunction~: (name: string, signature: string, body: ((context: CallContext~*) -> void)!) -> NyxError*!? {
             entry := new HostCall(HostCallKind:::Function, name, signature, body!);
+            entry->ledger = ledgerPointer;
             status~ NyxC:::nyx_status = 0;
             unsafe {
-                status = NyxC:::nyx_runtime_register_function(handle, entry->nameText->Str(), entry->signatureText->Str(), HostCallTrampoline, entry->Userdata(), null);
+                status = NyxC:::nyx_runtime_register_function(handle, entry->nameText->Str(), entry->signatureText->Str(), HostCallTrampoline, entry->Userdata(), FreeHostCallTrampoline);
             }
             failed := Check(status);
             if failed == null {
@@ -253,7 +307,7 @@ lantern:::nyx :: namespace {
         }
 
         RegisterType~: (hostType: HostType*!) -> NyxError*!? {
-            failed := hostType->Register(handle);
+            failed := hostType->Register(ledgerPointer);
             if failed == null {
                 types.push(hostType!);
                 return null;
