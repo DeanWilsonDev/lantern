@@ -849,6 +849,10 @@ gives it more than one responsibility.
   render built a whole `Editor` (about 25 host calls). That needed Nyx to let a decorator assign a deferred
   local (nyx-scripting-language #4) and Chaos's required `@context` (chaos-ui-framework #4). `OutlinerRow` and
   `ConsolePanel` read their panel's `OutlinerState` and `ConsoleFilters` the same way.
+  Measured with penumbra-bridge's `nox/tools/measure-editor.sh` (headless, 600 frames, a change every 30):
+  host function calls were 9,484 / 36,844 on nox-proto at 29 / 200 entities, 31,665 / 150,168 with the
+  defaults, and 9,690 / 38,418 with the required context; a frame after a change took 28 / 101 ms, 34 / 126 ms
+  and 29 / 86 ms (means, one run each, noisy).
 - **Panel state stays in the panel**, or in a small object it provides to its rows: `OutlinerState`
   (filter, collapsed rows, the drag and its drop target), `ConsoleFilters` (provided by `BottomPanel`, so the
   filters survive switching tabs), the inspector's collapsed groups and new-property name, the asset preview,
