@@ -1,0 +1,86 @@
+lantern :: import lantern;
+
+CountingResources :: class {
+    implements:
+        lantern:::editor:::ViewportResources;
+public:
+    shapeRequests~ usize = 0;
+    markerRequests~ usize = 0;
+
+    CountingResources~: () { }
+
+    ShapeMesh~: (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+        shapeRequests += 1;
+        return lantern:::core:::HandleFromBits<lantern:::renderer:::MeshTag>(1);
+    }
+
+    MaterialTexture~: (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
+        return null;
+    }
+
+    MarkerMeshHandle~: (mesh: lantern:::editor:::MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+        markerRequests += 1;
+        return lantern:::core:::HandleFromBits<lantern:::renderer:::MeshTag>(2);
+    }
+}
+
+FallbackSession :: () -> lantern:::editor:::EditorSession*!? {
+    when lantern:::world:::Load("../assets/worlds/course.world.json") {
+        Result:::Ok(world) -> {
+            return lantern:::editor:::EditorSession:::Create(world!, null, lantern:::editor:::Palette:::Fallback());
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return null;
+        }
+    }
+}
+
+TheCourseDrawsEveryShapeAndMarker :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = FallbackSession();
+    guard session return;
+    defer delete session;
+    shapes~ usize = 0;
+    for entity in session->World()->entities {
+        if entity->shape != null {
+            shapes += 1;
+        }
+    }
+    resources := new CountingResources();
+    defer delete resources;
+    renderWorld := new lantern:::renderer:::RenderWorld();
+    defer delete renderWorld;
+    lantern:::editor:::BuildViewport(session, resources, renderWorld);
+    assert(resources->shapeRequests == shapes, "every shape asks for its mesh");
+    assert(renderWorld->draws.length() == session->World()->entities.length(), "with the fallback palette every shapeless entity is a cube marker");
+    assert(renderWorld->lines.length() > 0, "the grid is drawn");
+}
+
+ViewOptionsChangeWhatIsDrawn :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = FallbackSession();
+    guard session return;
+    defer delete session;
+    first: u64 = session->World()->entities[0]->id;
+    all: usize = session->World()->entities.length();
+    resources := new CountingResources();
+    defer delete resources;
+    renderWorld := new lantern:::renderer:::RenderWorld();
+    defer delete renderWorld;
+    session->SetHidden(first, true);
+    lantern:::editor:::BuildViewport(session, resources, renderWorld);
+    assert(renderWorld->draws.length() == all - 1, "a hidden entity isn't drawn");
+    session->SetHidden(first, false);
+    session->SetViewOption("wireframe", "on");
+    session->SetViewOption("grid", "off");
+    lantern:::editor:::BuildViewport(session, resources, renderWorld);
+    assert(renderWorld->draws.length() == 0, "wireframe draws outlines only");
+    assert(renderWorld->lines.length() > 0, "wireframe still draws lines");
+}
+
+main :: () -> i32 {
+    TheCourseDrawsEveryShapeAndMarker();
+    ViewOptionsChangeWhatIsDrawn();
+    print("the viewport draws the course and follows view options");
+    return 0;
+}

@@ -1,0 +1,2010 @@
+lantern:::editor :: namespace {
+    EditorSession :: class {
+    public:
+        document~ EditorDocument*!;
+        palette~ Palette*!;
+        palettePath~ string!? = null;
+        selection~ Array<u64>! = [];
+        camera~ OrbitCamera = OrbitCamera { };
+        tool~ GizmoTool = GizmoTool:::Translate;
+        space~ GizmoSpace = GizmoSpace:::World;
+        pivotMode~ PivotMode = PivotMode:::Primary;
+        snap~ SnapSettings = SnapSettings { };
+        view~ ViewOptions = ViewOptions { };
+        hidden~ Array<u64>! = [];
+        locked~ Array<u64>! = [];
+        bookmarkSet~ Array<bool>! = [];
+        bookmarkCameras~ Array<OrbitCamera>! = [];
+        geometry~ SceneGeometry*!;
+        viewportSize~ Vec2 = Vec2 { x: 1280.0f, y: 720.0f };
+        pointer~ Vec2 = Vec2 { };
+        drag~ Drag*!? = null;
+        hoveredHandle~ Handle? = null;
+        hoveredEntity~ u64? = null;
+        leftDown~ bool = false;
+        middleDown~ bool = false;
+        rightDown~ bool = false;
+        keysHeld~ Array<u8>! = [];
+        status~ string!;
+        log~ Array<LogEntry*!>! = [];
+        recentFiles~ Array<string!>! = [];
+        paletteRevision~ u64 = 0;
+        localRevision~ u64 = 0;
+
+        EditorSession~: (sessionDocument: EditorDocument*!, sessionPalette: Palette*!) {
+            document = sessionDocument!;
+            palette = sessionPalette!;
+            status = "".copy();
+            geometry = SceneGeometry:::Build(document->world, document->Revision());
+            for slot~ usize = 0; slot < BOOKMARK_COUNT; slot++ {
+                bookmarkSet.push(false);
+                bookmarkCameras.push(OrbitCamera { });
+            }
+            FrameAll();
+        }
+
+        !EditorSession~: () {
+            delete drag;
+            delete geometry;
+            delete document;
+            delete palette;
+            delete palettePath;
+            delete selection;
+            delete hidden;
+            delete locked;
+            delete bookmarkSet;
+            delete bookmarkCameras;
+            delete keysHeld;
+            delete status;
+            log.freeAll();
+            recentFiles.freeAll();
+        }
+
+        static Create :: (world: lantern:::world:::WorldFile*!, path: string?, sessionPalette: Palette*!) -> EditorSession*! {
+            ownedPath~ string!? = null;
+            if given := path {
+                ownedPath = `${given}`;
+            }
+            return new EditorSession(new EditorDocument(world!, ownedPath!), sessionPalette!);
+        }
+
+        static Open :: (path: string, sessionPalette: Palette*!) -> Result<EditorSession*!, string!> {
+            when EditorDocument:::Open(path) {
+                Result:::Ok(opened) -> {
+                    session := new EditorSession(opened!, sessionPalette!);
+                    session->RememberRecentFile(path);
+                    name: string! = DisplayName(path);
+                    session->SetStatus(`Opened ${name}`);
+                    delete name;
+                    return Result<EditorSession*!, string!>:::Ok(session!);
+                },
+                Result:::Err(message) -> {
+                    delete sessionPalette;
+                    return Result<EditorSession*!, string!>:::Err(message!);
+                }
+            }
+        }
+
+        SetPalettePath~: (path: string?) -> void {
+            delete palettePath;
+            palettePath = null;
+            if given := path {
+                palettePath = `${given}`;
+            }
+        }
+
+        World :: () -> lantern:::world:::WorldFile* {
+            return document->world;
+        }
+
+        UiRevision :: () -> u64 {
+            return document->Revision() + localRevision;
+        }
+
+        RefreshGeometry~: () -> void {
+            if geometry->revision != document->Revision() {
+                delete geometry;
+                geometry = SceneGeometry:::Build(document->world, document->Revision());
+            }
+        }
+
+        PrimarySelection :: () -> u64? {
+            if selection.length() == 0 {
+                return null;
+            }
+            return selection[selection.length() - 1];
+        }
+
+        IsSelected :: (key: u64) -> bool {
+            return ContainsKeyIn(selection, key);
+        }
+
+        IsHidden :: (key: u64) -> bool {
+            return ContainsKeyIn(hidden, key);
+        }
+
+        IsLocked :: (key: u64) -> bool {
+            return ContainsKeyIn(locked, key);
+        }
+
+        HasBookmark :: (slot: usize) -> bool {
+            return slot < bookmarkSet.length() && bookmarkSet[slot];
+        }
+
+        HoveredHandle :: () -> Handle? {
+            if current := drag {
+                if current->kind == DragKind:::Gizmo {
+                    return current->handle;
+                }
+            }
+            return hoveredHandle;
+        }
+
+        IsRubberBanding :: () -> bool {
+            if current := drag {
+                return current->kind == DragKind:::RubberBand;
+            }
+            return false;
+        }
+
+        RubberBandStart :: () -> Vec2 {
+            if current := drag {
+                return current->press;
+            }
+            return pointer;
+        }
+
+        Projection :: () -> ViewportProjection {
+            return ViewportProjection:::Create(camera.RenderCamera(), viewportSize);
+        }
+
+        Title :: () -> string! {
+            name~ string! = "untitled".copy();
+            if own := document->path {
+                delete name;
+                name = DisplayName(own);
+            }
+            if document->IsDirty() {
+                name += " *";
+            }
+            return name!;
+        }
+
+        CameraDescription :: () -> string! {
+            position: Vec3 = camera.Position();
+            mode: string = when camera.orthographic { true -> "ortho", false -> "persp" };
+            x: string! = FormatNumber(position.x);
+            y: string! = FormatNumber(position.y);
+            z: string! = FormatNumber(position.z);
+            yaw: string! = FormatNumber(camera.yaw * (180.0f / Math:::PI));
+            pitch: string! = FormatNumber(camera.pitch * (180.0f / Math:::PI));
+            description: string! = `${mode} at ${x}, ${y}, ${z}  yaw ${yaw}  pitch ${pitch}`;
+            delete x;
+            delete y;
+            delete z;
+            delete yaw;
+            delete pitch;
+            return description!;
+        }
+
+        ShownParent :: (entity: lantern:::world:::WorldEntity*) -> u64? {
+            guard parent := entity->parent return null;
+            if document->world->IndexOf(parent) == null {
+                return null;
+            }
+            return parent;
+        }
+
+        Outline :: () -> Array<OutlineRow*!>! {
+            world: lantern:::world:::WorldFile* = document->world;
+            rows~ Array<OutlineRow*!>! = [];
+            stackKeys~ Array<u64>! = [];
+            stackDepths~ Array<u32>! = [];
+            index~ usize = world->entities.length();
+            while index > 0 {
+                index -= 1;
+                if ShownParent(world->entities[index]) == null {
+                    stackKeys.push(world->entities[index]->id);
+                    stackDepths.push(0);
+                }
+            }
+            while stackKeys.length() > 0 {
+                key: u64 = stackKeys.remove(stackKeys.length() - 1);
+                depth: u32 = stackDepths.remove(stackDepths.length() - 1);
+                found: usize? = world->IndexOf(key);
+                guard entityIndex := found continue;
+                entity: lantern:::world:::WorldEntity* = world->entities[entityIndex];
+                children~ Array<u64>! = [];
+                for child in world->entities {
+                    if SameOptionalU64(ShownParent(child), key) {
+                        children.push(child->id);
+                    }
+                }
+                row := new OutlineRow(key, entity->name, entity->kind);
+                row->parent = ShownParent(entity);
+                row->depth = depth;
+                row->selected = IsSelected(key);
+                row->hidden = IsHidden(key);
+                row->locked = IsLocked(key);
+                row->hasChildren = children.length() > 0;
+                rows.push(row!);
+                if rows.length() > world->entities.length() {
+                    delete children;
+                    break;
+                }
+                childIndex~ usize = children.length();
+                while childIndex > 0 {
+                    childIndex -= 1;
+                    stackKeys.push(children[childIndex]);
+                    stackDepths.push(depth + 1);
+                }
+                delete children;
+            }
+            delete stackKeys;
+            delete stackDepths;
+            return rows!;
+        }
+
+        Inspector :: () -> Array<InspectorField*!>! {
+            primaryFound: u64? = PrimarySelection();
+            guard key := primaryFound return [];
+            world: lantern:::world:::WorldFile* = document->world;
+            found: usize? = world->IndexOf(key);
+            guard primaryIndex := found return [];
+            others~ Array<lantern:::world:::WorldEntity*>! = [];
+            for other in selection {
+                if other != key {
+                    if otherIndex := world->IndexOf(other) {
+                        others.push(world->entities[otherIndex]);
+                    }
+                }
+            }
+            fields: Array<InspectorField*!>! = FieldsForSelection(world->entities[primaryIndex], others, world, palette);
+            delete others;
+            return fields!;
+        }
+
+        SetStatus~: (text: string!) -> void {
+            delete status;
+            status = `${text}`;
+            LogLine(LogLevel:::Info, text);
+            delete text;
+            localRevision += 1;
+        }
+
+        LogLine~: (level: LogLevel, text: string) -> void {
+            if text.length() == 0 {
+                return;
+            }
+            log.push(new LogEntry(level, text));
+            if log.length() > LOG_LIMIT {
+                oldest := log.remove(0);
+                delete oldest;
+            }
+        }
+
+        Note~: (level: LogLevel, text: string) -> void {
+            if level != LogLevel:::Info {
+                delete status;
+                status = `${text}`;
+            }
+            LogLine(level, text);
+            localRevision += 1;
+        }
+
+        ClearLog~: () -> void {
+            log.freeAll();
+            log = [];
+            localRevision += 1;
+        }
+
+        Report~: (failure: string!?) -> bool {
+            guard message := failure return true;
+            lantern:::core:::LogWarn("editor", message);
+            delete status;
+            status = `${message}`;
+            LogLine(LogLevel:::Error, message);
+            delete failure;
+            localRevision += 1;
+            return false;
+        }
+
+        Refuse~: (message: string!) -> bool {
+            return Report(message!);
+        }
+
+        Save~: () -> bool {
+            when document->Save(null) {
+                Result:::Ok(savedPath) -> {
+                    return FinishSave(savedPath!);
+                },
+                Result:::Err(message) -> {
+                    return Refuse(message!);
+                }
+            }
+        }
+
+        SaveAs~: (path: string) -> bool {
+            when document->Save(path) {
+                Result:::Ok(savedPath) -> {
+                    return FinishSave(savedPath!);
+                },
+                Result:::Err(message) -> {
+                    return Refuse(message!);
+                }
+            }
+        }
+
+        FinishSave~: (path: string!) -> bool {
+            RememberRecentFile(path);
+            name: string! = DisplayName(path);
+            SetStatus(`Saved ${name}`);
+            delete name;
+            delete path;
+            return true;
+        }
+
+        Load~: (path: string) -> bool {
+            when EditorDocument:::Open(path) {
+                Result:::Ok(opened) -> {
+                    ReplaceDocument(opened!);
+                    RememberRecentFile(path);
+                    name: string! = DisplayName(path);
+                    SetStatus(`Opened ${name}`);
+                    delete name;
+                    return true;
+                },
+                Result:::Err(message) -> {
+                    return Refuse(message!);
+                }
+            }
+        }
+
+        NewWorld~: (name: string) -> void {
+            ReplaceDocument(new EditorDocument(new lantern:::world:::WorldFile(name), null));
+            SetStatus(`New world '${name}'`);
+        }
+
+        ReplaceDocument~: (replacement: EditorDocument*!) -> void {
+            carriedRevision: u64 = UiRevision() + 1;
+            delete document;
+            document = replacement!;
+            localRevision = carriedRevision;
+            selection.clear();
+            hidden.clear();
+            locked.clear();
+            delete drag;
+            drag = null;
+            delete geometry;
+            geometry = SceneGeometry:::Build(document->world, document->Revision());
+            FrameAll();
+        }
+
+        RememberRecentFile~: (path: string) -> void {
+            index~ usize = 0;
+            while index < recentFiles.length() {
+                if recentFiles[index] == path {
+                    removed := recentFiles.remove(index);
+                    delete removed;
+                } else {
+                    index += 1;
+                }
+            }
+            recentFiles.insert(0, `${path}`);
+            while recentFiles.length() > RECENT_FILE_LIMIT {
+                removed := recentFiles.remove(recentFiles.length() - 1);
+                delete removed;
+            }
+        }
+
+        SetRecentFiles~: (paths: Array<string!>) -> void {
+            recentFiles.freeAll();
+            recentFiles = [];
+            for path in paths {
+                if recentFiles.length() < RECENT_FILE_LIMIT {
+                    recentFiles.push(`${path}`);
+                }
+            }
+            localRevision += 1;
+        }
+
+        SelectionChanged~: () -> void {
+            document->SealHistory();
+            localRevision += 1;
+        }
+
+        SetSelection~: (keys: Array<u64>!) -> void {
+            delete selection;
+            selection = keys!;
+            SelectionChanged();
+        }
+
+        SelectOnly~: (key: u64) -> void {
+            if document->world->IndexOf(key) != null {
+                only~ Array<u64>! = [];
+                only.push(key);
+                SetSelection(only!);
+            }
+        }
+
+        ToggleSelected~: (key: u64) -> void {
+            if position := KeyPosition(selection, key) {
+                selection.remove(position);
+            } else if document->world->IndexOf(key) != null {
+                selection.push(key);
+            }
+            SelectionChanged();
+        }
+
+        ClearSelection~: () -> void {
+            if selection.length() > 0 {
+                selection.clear();
+                SelectionChanged();
+            }
+        }
+
+        SelectAll~: () -> void {
+            keys~ Array<u64>! = [];
+            for entity in document->world->entities {
+                keys.push(entity->id);
+            }
+            SetSelection(keys!);
+        }
+
+        InvertSelection~: () -> void {
+            keys~ Array<u64>! = [];
+            for entity in document->world->entities {
+                if !IsSelected(entity->id) {
+                    keys.push(entity->id);
+                }
+            }
+            SetSelection(keys!);
+        }
+
+        SelectKind~: (kind: string) -> void {
+            keys~ Array<u64>! = [];
+            for entity in document->world->entities {
+                if entity->kind == kind {
+                    keys.push(entity->id);
+                }
+            }
+            SetSelection(keys!);
+        }
+
+        Descendants :: (roots: Array<u64>) -> Array<u64>! {
+            keys~ Array<u64>! = CopyKeys(roots);
+            index~ usize = 0;
+            while index < keys.length() {
+                parent: u64 = keys[index];
+                for entity in document->world->entities {
+                    if SameOptionalU64(entity->parent, parent) && !ContainsKeyIn(keys, entity->id) {
+                        keys.push(entity->id);
+                    }
+                }
+                index += 1;
+            }
+            return keys!;
+        }
+
+        SelectChildren~: () -> void {
+            SetSelection(Descendants(selection));
+        }
+
+        Exists :: (key: u64) -> bool {
+            return document->world->IndexOf(key) != null;
+        }
+
+        Pruned :: (keys: Array<u64>) -> Array<u64>! {
+            kept~ Array<u64>! = [];
+            for key in keys {
+                if Exists(key) {
+                    kept.push(key);
+                }
+            }
+            return kept!;
+        }
+
+        PruneSelection~: () -> void {
+            before: usize = selection.length();
+            prunedSelection: Array<u64>! = Pruned(selection);
+            delete selection;
+            selection = prunedSelection!;
+            prunedHidden: Array<u64>! = Pruned(hidden);
+            delete hidden;
+            hidden = prunedHidden!;
+            prunedLocked: Array<u64>! = Pruned(locked);
+            delete locked;
+            locked = prunedLocked!;
+            if selection.length() != before {
+                localRevision += 1;
+            }
+        }
+
+        MovableSelection :: () -> Array<u64>! {
+            keys~ Array<u64>! = [];
+            for key in selection {
+                if !IsLocked(key) {
+                    keys.push(key);
+                }
+            }
+            return keys!;
+        }
+
+        SetHidden~: (key: u64, shouldHide: bool) -> void {
+            position: usize? = KeyPosition(hidden, key);
+            if shouldHide && position == null {
+                hidden.push(key);
+                localRevision += 1;
+            } else if !shouldHide {
+                if index := position {
+                    hidden.remove(index);
+                    localRevision += 1;
+                }
+            }
+        }
+
+        SetLocked~: (key: u64, shouldLock: bool) -> void {
+            position: usize? = KeyPosition(locked, key);
+            if shouldLock && position == null {
+                locked.push(key);
+                localRevision += 1;
+            } else if !shouldLock {
+                if index := position {
+                    locked.remove(index);
+                    localRevision += 1;
+                }
+            }
+        }
+
+        HideSelection~: () -> void {
+            keys: Array<u64>! = CopyKeys(selection);
+            for key in keys {
+                if !IsHidden(key) {
+                    hidden.push(key);
+                }
+            }
+            delete keys;
+            count: string! = CountEntities(selection.length());
+            SetStatus(`Hid ${count}`);
+            delete count;
+        }
+
+        UnhideAll~: () -> void {
+            count: string! = CountEntities(hidden.length());
+            hidden.clear();
+            SetStatus(`Showed ${count}`);
+            delete count;
+        }
+
+        LockSelection~: (shouldLock: bool) -> void {
+            keys: Array<u64>! = CopyKeys(selection);
+            for key in keys {
+                SetLocked(key, shouldLock);
+            }
+            delete keys;
+            verb: string = when shouldLock { true -> "Locked", false -> "Unlocked" };
+            count: string! = CountEntities(selection.length());
+            SetStatus(`${verb} ${count}`);
+            delete count;
+        }
+
+        SetTool~: (newTool: GizmoTool) -> void {
+            if tool != newTool {
+                tool = newTool;
+                localRevision += 1;
+            }
+        }
+
+        SetSpace~: (newSpace: GizmoSpace) -> void {
+            if space != newSpace {
+                space = newSpace;
+                localRevision += 1;
+            }
+        }
+
+        SetPivotMode~: (mode: PivotMode) -> void {
+            if pivotMode != mode {
+                pivotMode = mode;
+                localRevision += 1;
+            }
+        }
+
+        SetSnapEnabled~: (enabled: bool) -> void {
+            if snap.enabled != enabled {
+                snap.enabled = enabled;
+                localRevision += 1;
+            }
+        }
+
+        SetSnapStep~: (name: string, value: f32) -> bool {
+            if !(value > 0.0f && lantern:::core:::IsFinite(value)) {
+                shown: string! = FormatNumber(value);
+                message: string! = `a snap step must be positive, not ${shown}`;
+                delete shown;
+                return Refuse(message!);
+            }
+            if name == "translate" {
+                snap.translateStep = value;
+            } else if name == "rotate" {
+                snap.rotateStepDegrees = value;
+            } else if name == "scale" {
+                snap.scaleStep = value;
+            } else {
+                return Refuse(`unknown snap step '${name}'`);
+            }
+            localRevision += 1;
+            return true;
+        }
+
+        SnapStep :: (name: string) -> f32? {
+            if name == "translate" {
+                return snap.translateStep;
+            }
+            if name == "rotate" {
+                return snap.rotateStepDegrees;
+            }
+            if name == "scale" {
+                return snap.scaleStep;
+            }
+            return null;
+        }
+
+        SetViewOption~: (name: string, value: string) -> bool {
+            failure: string!? = view.Set(name, value);
+            succeeded: bool = Report(failure!);
+            localRevision += 1;
+            return succeeded;
+        }
+
+        CancelDragState~: () -> void {
+            delete drag;
+            drag = null;
+        }
+
+        Undo~: () -> bool {
+            CancelDragState();
+            label~ string! = "drag".copy();
+            if given := document->UndoLabel() {
+                delete label;
+                label = given.toLower();
+            }
+            undone: bool = document->Undo();
+            if undone {
+                PruneSelection();
+                SetStatus(`Undid ${label}`);
+            }
+            delete label;
+            return undone;
+        }
+
+        Redo~: () -> bool {
+            label~ string! = "".copy();
+            if given := document->RedoLabel() {
+                delete label;
+                label = given.toLower();
+            }
+            redone: bool = document->Redo();
+            if redone {
+                PruneSelection();
+                SetStatus(`Redid ${label}`);
+            }
+            delete label;
+            return redone;
+        }
+
+        JumpHistory~: (position: usize) -> bool {
+            CancelDragState();
+            moved: bool = document->JumpHistory(position);
+            if moved {
+                PruneSelection();
+                SetStatus(`Went to history step ${position}`);
+            }
+            return moved;
+        }
+
+        EntityCopy :: (key: u64) -> lantern:::world:::WorldEntity*!? {
+            found: usize? = document->world->IndexOf(key);
+            guard index := found return null;
+            return document->world->entities[index]->Copy();
+        }
+
+        ExecuteEdits~: (label: string, edits: Array<Edit*!>!) -> bool {
+            return Report(document->Execute(label, edits!));
+        }
+
+        SetField~: (key: u64, field: string, text: string) -> bool {
+            found: usize? = document->world->IndexOf(key);
+            guard index := found return Refuse(`no entity ${key}`);
+            entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+            when ApplyField(entity, field, text) {
+                Result:::Ok(edited) -> {
+                    if edited->SameAs(entity) {
+                        delete edited;
+                        return true;
+                    }
+                    fieldName: string = when field.startsWith("property:") { true -> field.substring(9, field.length() - 9), false -> field };
+                    label: string! = `Edit ${fieldName}`;
+                    edits~ Array<Edit*!>! = [];
+                    edits.push(Edit:::Replace(edited!));
+                    failure: string!? = document->ExecuteCoalescing(label, edits!, key, field);
+                    delete label;
+                    return Report(failure!);
+                },
+                Result:::Err(message) -> {
+                    return Refuse(message!);
+                }
+            }
+        }
+
+        SetFieldOnSelection~: (field: string, text: string) -> bool {
+            if selection.length() <= 1 || field == "name" {
+                primaryFound: u64? = PrimarySelection();
+                guard primary := primaryFound return false;
+                return SetField(primary, field, text);
+            }
+            document->SealHistory();
+            edits~ Array<Edit*!>! = [];
+            for key in selection {
+                found: usize? = document->world->IndexOf(key);
+                guard index := found continue;
+                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                when ApplyField(entity, field, text) {
+                    Result:::Ok(edited) -> {
+                        if edited->SameAs(entity) {
+                            delete edited;
+                        } else {
+                            edits.push(Edit:::Replace(edited!));
+                        }
+                    },
+                    Result:::Err(message) -> {
+                        edits.freeAll();
+                        return Refuse(message!);
+                    }
+                }
+            }
+            if edits.length() == 0 {
+                edits.freeAll();
+                return true;
+            }
+            fieldName: string = when field.startsWith("property:") { true -> field.substring(9, field.length() - 9), false -> field };
+            count: string! = CountEntities(edits.length());
+            label: string! = `Edit ${fieldName} on ${count}`;
+            delete count;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        CommitField~: () -> void {
+            document->SealHistory();
+        }
+
+        RenameProperty~: (oldName: string, requestedName: string) -> bool {
+            newName: string = requestedName.trim();
+            if newName.length() == 0 {
+                return Refuse("a property needs a name".copy());
+            }
+            edits~ Array<Edit*!>! = [];
+            for key in selection {
+                found: usize? = document->world->IndexOf(key);
+                guard index := found continue;
+                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                propertyFound: usize? = entity->PropertyIndex(oldName);
+                guard propertyIndex := propertyFound continue;
+                value: lantern:::world:::PropertyValue = entity->propertyValues[propertyIndex];
+                text: string! = `${entity->propertyTexts[propertyIndex]}`;
+                edited := entity->Copy();
+                edited->RemoveProperty(oldName);
+                edited->SetProperty(newName, value, text);
+                delete text;
+                edits.push(Edit:::Replace(edited!));
+            }
+            if edits.length() == 0 {
+                edits.freeAll();
+                return false;
+            }
+            label: string! = `Rename ${oldName} to ${newName}`;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        AddEntity~: (templateId: string, atCursor: bool) -> u64? {
+            templateFound: EntityTemplate*? = palette->Template(templateId);
+            if templateFound == null {
+                Refuse(`no template '${templateId}'`);
+                return null;
+            }
+            pixel: Vec2 = when atCursor { true -> pointer, false -> viewportSize * 0.5f };
+            ray: Ray = Projection().RayThrough(pixel);
+            RefreshGeometry();
+            placed: Vec3? = geometry->PlacementPoint(ray);
+            surface: Vec3 = placed ?? camera.target;
+            step: f32 = when snap.enabled { true -> snap.translateStep, false -> 0.0f };
+            position~ Vec3 = Vec3 { x: Snap(surface.x, step), y: surface.y, z: Snap(surface.z, step) };
+            guard template := palette->Template(templateId) return null;
+            if shape := template->prototype->shape {
+                if shape.kind == lantern:::world:::ShapeKind:::Box {
+                    position.y += shape.halfExtents.y;
+                }
+            }
+            position.y += template->lift;
+            key: u64 = document->world->NextEntityKey();
+            entity := template->prototype->Copy();
+            entity->id = key;
+            name: string! = UniqueName(document->world, template->id);
+            entity->SetName(name);
+            delete name;
+            entity->transform = lantern:::world:::TransformData:::FromPosition(position);
+            label: string! = `Add ${template->label}`;
+            lowered: string! = template->label.toLower();
+            edits~ Array<Edit*!>! = [];
+            edits.push(Edit:::Insert(document->world->entities.length(), entity!));
+            added: bool = ExecuteEdits(label, edits!);
+            if !added {
+                delete label;
+                delete lowered;
+                return null;
+            }
+            delete label;
+            SelectOnly(key);
+            SetStatus(`Added ${lowered}`);
+            delete lowered;
+            return key;
+        }
+
+        DeleteSelection~: () -> bool {
+            if selection.length() == 0 {
+                return false;
+            }
+            doomed: Array<u64>! = Descendants(selection);
+            positions~ Array<usize>! = [];
+            for key in doomed {
+                if index := document->world->IndexOf(key) {
+                    positions.push(index);
+                }
+            }
+            delete doomed;
+            edits~ Array<Edit*!>! = [];
+            while positions.length() > 0 {
+                largestAt~ usize = 0;
+                for index~ usize = 1; index < positions.length(); index++ {
+                    if positions[index] > positions[largestAt] {
+                        largestAt = index;
+                    }
+                }
+                position: usize = positions.remove(largestAt);
+                edits.push(Edit:::Remove(document->world->entities[position]->id));
+            }
+            delete positions;
+            count: usize = edits.length();
+            countText: string! = CountEntities(count);
+            label: string! = `Delete ${countText}`;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            if !succeeded {
+                delete countText;
+                return false;
+            }
+            selection.clear();
+            SelectionChanged();
+            SetStatus(`Deleted ${countText}`);
+            delete countText;
+            return true;
+        }
+
+        DuplicateSelection~: () -> bool {
+            offset: f32 = when snap.enabled { true -> Math:::max(snap.translateStep, 0.25f) * 4.0f, false -> 1.0f };
+            return DuplicateWithOffset(Vec3 { x: offset, y: 0.0f, z: 0.0f }, "Duplicate");
+        }
+
+        DuplicateSelectionAlong~: (axis: Axis) -> bool {
+            RefreshGeometry();
+            bounds: lantern:::core:::Aabb = geometry->BoundsOf(selection);
+            extent: f32 = when bounds.IsEmpty() { true -> 1.0f, false -> Math:::max(AlongAxis(bounds.max - bounds.min, axis), 0.25f) };
+            step: f32 = when snap.enabled { true -> Math:::max(Snap(extent, snap.translateStep), snap.translateStep), false -> extent };
+            verb: string! = `Duplicate along ${AxisUpperName(axis)}`;
+            duplicated: bool = DuplicateWithOffset(AxisUnit(axis) * step, verb);
+            delete verb;
+            return duplicated;
+        }
+
+        DuplicateWithOffset~: (worldOffset: Vec3, verb: string) -> bool {
+            if selection.length() == 0 {
+                return false;
+            }
+            keys: Array<u64>! = CopyKeys(selection);
+            originals~ Array<DragOriginal*!>! = DragOriginalsFor(keys);
+            delete keys;
+            nextKey~ u64 = document->world->NextEntityKey();
+            names~ Array<string!>! = EntityNames(document->world);
+            edits~ Array<Edit*!>! = [];
+            copies~ Array<u64>! = [];
+            for original in originals {
+                copy := original->entity->Copy();
+                copy->id = nextKey;
+                nextKey += 1;
+                name: string! = UniqueNameAmong(names, original->entity->name);
+                copy->SetName(name);
+                names.push(name!);
+                copy->transform.position = original->LocalPosition(original->worldPosition + worldOffset);
+                copies.push(copy->id);
+                edits.push(Edit:::Insert(LAST_INDEX, copy!));
+            }
+            names.freeAll();
+            originals.freeAll();
+            count: string! = CountEntities(copies.length());
+            label: string! = `${verb} ${count}`;
+            delete count;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            if !succeeded {
+                delete copies;
+                return false;
+            }
+            SetSelection(copies!);
+            return true;
+        }
+
+        MirrorSelection~: (axis: Axis) -> bool {
+            movable: Array<u64>! = MovableSelection();
+            if movable.length() == 0 {
+                delete movable;
+                return false;
+            }
+            centerFound: Vec3? = PivotPoint(PivotMode:::Center);
+            center: Vec3 = centerFound ?? Vec3 { };
+            originals~ Array<DragOriginal*!>! = DragOriginalsFor(movable);
+            delete movable;
+            edits~ Array<Edit*!>! = [];
+            for original in originals {
+                entity := original->entity->Copy();
+                newWorld: Vec3 = WithAxis(original->worldPosition, axis, 2.0f * AlongAxis(center, axis) - AlongAxis(original->worldPosition, axis));
+                entity->transform.position = original->LocalPosition(newWorld);
+                rotation~ Vec3 = entity->transform.rotationDegrees;
+                rotation = WithAxis(rotation, FirstOtherAxis(axis), -AlongAxis(rotation, FirstOtherAxis(axis)));
+                rotation = WithAxis(rotation, SecondOtherAxis(axis), -AlongAxis(rotation, SecondOtherAxis(axis)));
+                entity->transform.rotationDegrees = rotation;
+                edits.push(Edit:::Replace(entity!));
+            }
+            originals.freeAll();
+            count: string! = CountEntities(edits.length());
+            label: string! = `Mirror ${count} across ${AxisUpperName(axis)}`;
+            delete count;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        SnapSelectionToGround~: () -> bool {
+            movable: Array<u64>! = MovableSelection();
+            if movable.length() == 0 {
+                delete movable;
+                return false;
+            }
+            originals~ Array<DragOriginal*!>! = DragOriginalsFor(movable);
+            delete movable;
+            RefreshGeometry();
+            edits~ Array<Edit*!>! = [];
+            for original in originals {
+                placedFound: EntityGeometry*? = geometry->Find(original->entity->id);
+                guard placed := placedFound continue;
+                bottom: f32 = placed->bounds.min.y;
+                ray := Ray { origin: Vec3 { x: original->worldPosition.x, y: bottom + 0.001f, z: original->worldPosition.z }, direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f } };
+                hit: PickHit? = geometry->PickExcluding(ray, selection);
+                surfaceY~ f32 = 0.0f;
+                if below := hit {
+                    surfaceY = below.point.y;
+                }
+                delta: f32 = surfaceY - bottom;
+                if Math:::abs(delta) < 0.0001f {
+                    continue;
+                }
+                entity := original->entity->Copy();
+                entity->transform.position = original->LocalPosition(original->worldPosition + Vec3 { x: 0.0f, y: delta, z: 0.0f });
+                edits.push(Edit:::Replace(entity!));
+            }
+            originals.freeAll();
+            if edits.length() == 0 {
+                edits.freeAll();
+                SetStatus("Already on the ground".copy());
+                return true;
+            }
+            count: string! = CountEntities(edits.length());
+            label: string! = `Snap ${count} to ground`;
+            delete count;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        WorldMatrixOf~: (key: u64?) -> Mat4 {
+            guard present := key return Mat4 { };
+            RefreshGeometry();
+            found: EntityGeometry*? = geometry->Find(present);
+            guard placed := found return Mat4 { };
+            return placed->worldMatrix;
+        }
+
+        WorldOriginOf~: (key: u64) -> Vec3 {
+            RefreshGeometry();
+            found: EntityGeometry*? = geometry->Find(key);
+            guard placed := found return Vec3 { };
+            return placed->Origin();
+        }
+
+        SetParent~: (child: u64, parent: u64?) -> bool {
+            entityFound: lantern:::world:::WorldEntity*!? = EntityCopy(child);
+            guard entityFound return false;
+            if SameOptionalU64(entityFound->parent, parent) {
+                delete entityFound;
+                return true;
+            }
+            if newParent := parent {
+                current~ u64? = newParent;
+                steps~ usize = 0;
+                while current != null && steps <= document->world->entities.length() {
+                    key: u64 = current ?? 0;
+                    if key == child {
+                        delete entityFound;
+                        return Refuse("an entity cannot be parented under itself".copy());
+                    }
+                    found: usize? = document->world->IndexOf(key);
+                    current = null;
+                    if index := found {
+                        current = document->world->entities[index]->parent;
+                    }
+                    steps += 1;
+                }
+            }
+            worldPosition: Vec3 = WorldOriginOf(child);
+            newParentWorld: Mat4 = WorldMatrixOf(parent);
+            entityFound->parent = parent;
+            entityFound->transform.position = InverseOrIdentity(newParentWorld).transformPoint(worldPosition);
+            edits~ Array<Edit*!>! = [];
+            edits.push(Edit:::Replace(entityFound!));
+            return ExecuteEdits("Change parent", edits!);
+        }
+
+        GroupSelection~: () -> bool {
+            if selection.length() == 0 {
+                return false;
+            }
+            keys: Array<u64>! = CopyKeys(selection);
+            centerFound: Vec3? = PivotPoint(PivotMode:::Center);
+            center: Vec3 = centerFound ?? Vec3 { };
+            world: lantern:::world:::WorldFile* = document->world;
+            firstParent~ u64? = null;
+            if firstIndex := world->IndexOf(keys[0]) {
+                firstParent = world->entities[firstIndex]->parent;
+            }
+            shared~ bool = true;
+            for key in keys {
+                if index := world->IndexOf(key) {
+                    if !SameOptionalU64(world->entities[index]->parent, firstParent) {
+                        shared = false;
+                    }
+                } else {
+                    shared = false;
+                }
+            }
+            commonParent: u64? = when shared { true -> firstParent, false -> null };
+            groupKey: u64 = world->NextEntityKey();
+            parentWorld: Mat4 = WorldMatrixOf(commonParent);
+            name: string! = UniqueName(document->world, "group");
+            group := new lantern:::world:::WorldEntity(groupKey, name, "group");
+            delete name;
+            group->parent = commonParent;
+            group->transform = lantern:::world:::TransformData:::FromPosition(InverseOrIdentity(parentWorld).transformPoint(center));
+            edits~ Array<Edit*!>! = [];
+            edits.push(Edit:::Insert(LAST_INDEX, group!));
+            groupInverse: Mat4 = InverseOrIdentity(Mat4:::translation(center));
+            for key in keys {
+                editedFound: lantern:::world:::WorldEntity*!? = EntityCopy(key);
+                guard editedFound continue;
+                editedFound->parent = groupKey;
+                editedFound->transform.position = groupInverse.transformPoint(WorldOriginOf(key));
+                edits.push(Edit:::Replace(editedFound!));
+            }
+            count: string! = CountEntities(keys.length());
+            delete keys;
+            label: string! = `Group ${count}`;
+            grouped: bool = ExecuteEdits(label, edits!);
+            if !grouped {
+                delete label;
+                delete count;
+                return false;
+            }
+            delete label;
+            only~ Array<u64>! = [];
+            only.push(groupKey);
+            SetSelection(only!);
+            SetStatus(`Grouped ${count}`);
+            delete count;
+            return true;
+        }
+
+        AlignSelection~: (axis: Axis) -> bool {
+            primaryFound: u64? = PrimarySelection();
+            guard primary := primaryFound return false;
+            movable~ Array<u64>! = [];
+            all: Array<u64>! = MovableSelection();
+            for key in all {
+                if key != primary {
+                    movable.push(key);
+                }
+            }
+            delete all;
+            if movable.length() == 0 {
+                delete movable;
+                return false;
+            }
+            target: f32 = AlongAxis(WorldOriginOf(primary), axis);
+            originals~ Array<DragOriginal*!>! = DragOriginalsFor(movable);
+            edits~ Array<Edit*!>! = [];
+            for original in originals {
+                entity := original->entity->Copy();
+                entity->transform.position = original->LocalPosition(WithAxis(original->worldPosition, axis, target));
+                edits.push(Edit:::Replace(entity!));
+            }
+            originals.freeAll();
+            count: string! = CountEntities(movable.length());
+            delete movable;
+            label: string! = `Align ${count} on ${AxisUpperName(axis)}`;
+            delete count;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        DistributeSelection~: (axis: Axis) -> bool {
+            movable: Array<u64>! = MovableSelection();
+            if movable.length() < 3 {
+                delete movable;
+                return Refuse("distributing needs at least three entities".copy());
+            }
+            unsorted~ Array<DragOriginal*!>! = DragOriginalsFor(movable);
+            originals~ Array<DragOriginal*!>! = [];
+            while unsorted.length() > 0 {
+                smallestAt~ usize = 0;
+                for index~ usize = 1; index < unsorted.length(); index++ {
+                    if AlongAxis(unsorted[index]->worldPosition, axis) < AlongAxis(unsorted[smallestAt]->worldPosition, axis) {
+                        smallestAt = index;
+                    }
+                }
+                taken := unsorted.remove(smallestAt);
+                originals.push(taken!);
+            }
+            unsorted.freeAll();
+            first: f32 = AlongAxis(originals[0]->worldPosition, axis);
+            last: f32 = AlongAxis(originals[originals.length() - 1]->worldPosition, axis);
+            step: f32 = (last - first) / f32(originals.length() - 1);
+            edits~ Array<Edit*!>! = [];
+            for index~ usize = 0; index < originals.length(); index++ {
+                original: DragOriginal* = originals[index];
+                entity := original->entity->Copy();
+                entity->transform.position = original->LocalPosition(WithAxis(original->worldPosition, axis, first + step * f32(index)));
+                edits.push(Edit:::Replace(entity!));
+            }
+            originals.freeAll();
+            count: string! = CountEntities(movable.length());
+            delete movable;
+            label: string! = `Distribute ${count} along ${AxisUpperName(axis)}`;
+            delete count;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        TemplateForKind :: (kind: string) -> EntityTemplate*? {
+            for template in palette->templates {
+                if template->Kind() == kind {
+                    return template;
+                }
+            }
+            return null;
+        }
+
+        RevertSelectionToTemplate~: () -> bool {
+            edits~ Array<Edit*!>! = [];
+            for key in selection {
+                found: usize? = document->world->IndexOf(key);
+                guard index := found continue;
+                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                templateFound: EntityTemplate*? = TemplateForKind(entity->kind);
+                guard template := templateFound continue;
+                edited := template->prototype->Copy();
+                edited->id = entity->id;
+                edited->SetName(entity->name);
+                edited->SetKind(entity->kind);
+                edited->parent = entity->parent;
+                edited->transform = entity->transform;
+                if edited->SameAs(entity) {
+                    delete edited;
+                } else {
+                    edits.push(Edit:::Replace(edited!));
+                }
+            }
+            if edits.length() == 0 {
+                edits.freeAll();
+                SetStatus("Nothing to revert".copy());
+                return false;
+            }
+            count: string! = CountEntities(edits.length());
+            label: string! = `Revert ${count} to template`;
+            delete count;
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            return succeeded;
+        }
+
+        ApplyPrimaryToTemplate~: () -> bool {
+            primaryFound: u64? = PrimarySelection();
+            guard key := primaryFound return false;
+            entityFound: lantern:::world:::WorldEntity*!? = EntityCopy(key);
+            guard entityFound return false;
+            templateIndex~ usize? = null;
+            for index~ usize = 0; index < palette->templates.length(); index++ {
+                if templateIndex == null && palette->templates[index]->Kind() == entityFound->kind {
+                    templateIndex = index;
+                }
+            }
+            if templateIndex == null {
+                refusal: string! = `no template has the kind '${entityFound->kind}'`;
+                return RefuseAndDelete(entityFound!, refusal!);
+            }
+            index: usize = templateIndex ?? 0;
+            template: EntityTemplate~* = palette->templates[index];
+            prototype := entityFound->Copy();
+            prototype->id = 0;
+            prototype->SetName(template->label);
+            prototype->parent = null;
+            prototype->transform = lantern:::world:::TransformData { };
+            replaced := template->prototype!;
+            template->prototype = prototype!;
+            delete replaced;
+            label: string! = `${template->label}`;
+            entityName: string! = `${entityFound->name}`;
+            delete entityFound;
+            paletteRevision += 1;
+            if path := palettePath {
+                if !Report(palette->Save(path)) {
+                    delete label;
+                    delete entityName;
+                    return false;
+                }
+                SetStatus(`Applied ${entityName} to the ${label} template`);
+            } else {
+                SetStatus(`Applied ${entityName} to the ${label} template (palette not saved: no path)`);
+            }
+            delete label;
+            delete entityName;
+            return true;
+        }
+
+        RefuseAndDelete~: (entity: lantern:::world:::WorldEntity*!, message: string!) -> bool {
+            delete entity;
+            return Refuse(message!);
+        }
+
+        FrameSelection~: () -> void {
+            if selection.length() == 0 {
+                FrameAll();
+                return;
+            }
+            RefreshGeometry();
+            camera.Frame(geometry->BoundsOf(selection));
+        }
+
+        FrameAll~: () -> void {
+            RefreshGeometry();
+            bounds: lantern:::core:::Aabb = geometry->LevelBounds();
+            if !bounds.IsEmpty() {
+                camera.Frame(bounds);
+                camera.distance *= 0.8f;
+            }
+        }
+
+        CameraPreset~: (name: string) -> bool {
+            if !camera.ApplyPreset(name) {
+                return Refuse(`unknown camera preset '${name}'`);
+            }
+            capitalised: string! = Capitalise(name);
+            SetStatus(`${capitalised} view`);
+            delete capitalised;
+            return true;
+        }
+
+        SetOrthographic~: (orthographic: bool) -> void {
+            if camera.orthographic != orthographic {
+                camera.orthographic = orthographic;
+                localRevision += 1;
+            }
+        }
+
+        SetBookmark~: (slot: usize) -> bool {
+            if slot >= BOOKMARK_COUNT {
+                return false;
+            }
+            bookmarkSet[slot] = true;
+            bookmarkCameras[slot] = camera;
+            SetStatus(`Saved camera bookmark ${slot + 1}`);
+            return true;
+        }
+
+        GoToBookmark~: (slot: usize) -> bool {
+            if !HasBookmark(slot) {
+                return Refuse(`camera bookmark ${slot + 1} is empty`);
+            }
+            camera = bookmarkCameras[slot];
+            SetStatus(`Camera bookmark ${slot + 1}`);
+            return true;
+        }
+
+        AlignCameraToSelection~: () -> bool {
+            primaryFound: u64? = PrimarySelection();
+            guard primary := primaryFound return false;
+            RefreshGeometry();
+            placedFound: EntityGeometry*? = geometry->Find(primary);
+            guard placed := placedFound return false;
+            forward: Vec3 = placed->worldMatrix.transformDirection(Vec3 { x: 0.0f, y: 0.0f, z: -1.0f });
+            eye: Vec3 = placed->Origin() + Vec3 { x: 0.0f, y: 1.6f, z: 0.0f };
+            camera.orthographic = false;
+            camera.LookFrom(eye, forward);
+            SetStatus("Camera aligned to the selection".copy());
+            return true;
+        }
+
+        AlignSelectionToCamera~: () -> bool {
+            primaryFound: u64? = PrimarySelection();
+            guard primary := primaryFound return false;
+            only~ Array<u64>! = [];
+            only.push(primary);
+            originals~ Array<DragOriginal*!>! = DragOriginalsFor(only);
+            delete only;
+            if originals.length() == 0 {
+                originals.freeAll();
+                return false;
+            }
+            original: DragOriginal* = originals[0];
+            edited := original->entity->Copy();
+            edited->transform.position = original->LocalPosition(camera.Position());
+            worldRotation: Quaternion = lantern:::core:::QuaternionFromRotationY(camera.yaw) * Quaternion:::fromAxisAngle(Vec3 { x: 1.0f, y: 0.0f, z: 0.0f }, -camera.pitch);
+            edited->transform.rotationDegrees = EulerDegrees(original->ParentRotation().conjugate() * worldRotation);
+            originals.freeAll();
+            edits~ Array<Edit*!>! = [];
+            edits.push(Edit:::Replace(edited!));
+            return ExecuteEdits("Align to camera", edits!);
+        }
+
+        SetViewportSize~: (size: Vec2) -> void {
+            viewportSize = lantern:::core:::ComponentMax2(size, Vec2 { x: 1.0f, y: 1.0f });
+        }
+
+        PivotPoint~: (mode: PivotMode) -> Vec3? {
+            primaryFound: u64? = PrimarySelection();
+            guard primary := primaryFound return null;
+            RefreshGeometry();
+            placedFound: EntityGeometry*? = geometry->Find(primary);
+            guard placed := placedFound return null;
+            if mode == PivotMode:::Center {
+                bounds: lantern:::core:::Aabb = geometry->BoundsOf(selection);
+                if !bounds.IsEmpty() {
+                    return bounds.Center();
+                }
+            }
+            return placed->Origin();
+        }
+
+        PrimaryOrientation~: () -> Quaternion {
+            primaryFound: u64? = PrimarySelection();
+            guard primary := primaryFound return Quaternion { };
+            return lantern:::core:::DecomposeMatrix(WorldMatrixOf(primary)).rotation;
+        }
+
+        CurrentGizmoFrame~: () -> GizmoFrame? {
+            pivotFound: Vec3? = PivotPoint(pivotMode);
+            guard pivot := pivotFound return null;
+            return GizmoFrame:::Create(tool, space, pivot, PrimaryOrientation(), Projection());
+        }
+
+        VisibleGizmo~: () -> GizmoFrame? {
+            if current := drag {
+                if current->kind == DragKind:::Gizmo {
+                    frame~ GizmoFrame = current->frame;
+                    if pivot := PivotPoint(pivotMode) {
+                        frame.pivot = pivot;
+                    }
+                    return frame;
+                }
+            }
+            return CurrentGizmoFrame();
+        }
+
+        DragOriginalsFor~: (keys: Array<u64>) -> Array<DragOriginal*!>! {
+            RefreshGeometry();
+            originals~ Array<DragOriginal*!>! = [];
+            for key in keys {
+                entityFound: lantern:::world:::WorldEntity*!? = EntityCopy(key);
+                guard entityFound continue;
+                parentWorld: Mat4 = WorldMatrixOf(entityFound->parent);
+                originals.push(new DragOriginal(entityFound!, parentWorld, WorldOriginOf(key)));
+            }
+            return originals!;
+        }
+
+        MovableDragOriginals~: () -> Array<DragOriginal*!>! {
+            movable: Array<u64>! = MovableSelection();
+            originals: Array<DragOriginal*!>! = DragOriginalsFor(movable);
+            delete movable;
+            return originals!;
+        }
+
+        PointerMoved~: (position: Vec2) -> void {
+            delta: Vec2 = position - pointer;
+            pointer = position;
+            if drag == null {
+                UpdateHover();
+                return;
+            }
+            activeFound~ Drag*!? = drag!;
+            drag = null;
+            guard activeFound return;
+            if activeFound->kind == DragKind:::Orbit {
+                camera.Orbit(delta);
+            } else if activeFound->kind == DragKind:::Pan {
+                camera.Pan(delta, viewportSize.y);
+            } else if activeFound->kind == DragKind:::Pending {
+                moved: Vec2 = position - activeFound->press;
+                if Math:::sqrt(Dot2(moved, moved)) > CLICK_SLOP_PIXELS {
+                    if hit := activeFound->hit {
+                        if tool == GizmoTool:::Translate && !ContainsKeyIn(locked, hit) {
+                            if !ContainsKeyIn(selection, hit) {
+                                if activeFound->additive {
+                                    selection.push(hit);
+                                } else {
+                                    delete selection;
+                                    selection = [];
+                                    selection.push(hit);
+                                }
+                                SelectionChanged();
+                            }
+                            if BeginBodyDrag(activeFound->press) {
+                                delete activeFound;
+                                return;
+                            }
+                        }
+                    } else {
+                        activeFound->kind = DragKind:::RubberBand;
+                        localRevision += 1;
+                    }
+                }
+            } else if activeFound->kind == DragKind:::Gizmo {
+                UpdateGizmoDrag(activeFound);
+            } else if activeFound->kind == DragKind:::Body {
+                UpdateBodyDrag(activeFound);
+            }
+            drag = activeFound!;
+        }
+
+        UpdateHover~: () -> void {
+            projection: ViewportProjection = Projection();
+            handleFound~ Handle? = null;
+            if frame := CurrentGizmoFrame() {
+                handleFound = frame.HitTest(tool, projection, pointer);
+            }
+            hoveredHandle = handleFound;
+            if handleFound != null {
+                hoveredEntity = null;
+            } else {
+                hoveredEntity = Pick(projection.RayThrough(pointer));
+            }
+        }
+
+        Pick~: (ray: Ray) -> u64? {
+            RefreshGeometry();
+            excluded~ Array<u64>! = CopyKeys(hidden);
+            for key in locked {
+                excluded.push(key);
+            }
+            if !view.showMarkers {
+                for entity in geometry->entities {
+                    if entity->IsMarker() {
+                        excluded.push(entity->key);
+                    }
+                }
+            }
+            hit: PickHit? = geometry->PickExcluding(ray, excluded);
+            delete excluded;
+            guard found := hit return null;
+            return found.key;
+        }
+
+        SetPointerButton~: (button: PointerButton, down: bool, modifiers: Modifiers) -> void {
+            if button == PointerButton:::Left {
+                leftDown = down;
+            } else if button == PointerButton:::Middle {
+                middleDown = down;
+            } else {
+                rightDown = down;
+            }
+            if down {
+                PointerPressed(button, modifiers);
+            } else {
+                PointerReleased(button, modifiers);
+            }
+        }
+
+        PointerPressed~: (button: PointerButton, modifiers: Modifiers) -> void {
+            if drag != null {
+                return;
+            }
+            if button == PointerButton:::Right {
+                if modifiers.shift {
+                    drag = new Drag(DragKind:::Pan);
+                } else {
+                    drag = new Drag(DragKind:::Orbit);
+                }
+                return;
+            }
+            if button == PointerButton:::Middle {
+                drag = new Drag(DragKind:::Pan);
+                return;
+            }
+            if modifiers.alt {
+                drag = new Drag(DragKind:::Orbit);
+                return;
+            }
+            projection: ViewportProjection = Projection();
+            if frame := CurrentGizmoFrame() {
+                if handle := frame.HitTest(tool, projection, pointer) {
+                    ray: Ray = projection.RayThrough(pointer);
+                    start~ f32? = 0.0f;
+                    if handle.kind == HandleKind:::Axis {
+                        if tool == GizmoTool:::Rotate {
+                            start = frame.RingAngle(handle.axis, ray);
+                        } else {
+                            start = frame.AxisParameter(handle.axis, ray);
+                        }
+                    }
+                    startPoint: Vec3 = frame.PlanePoint(handle, ray) ?? frame.pivot;
+                    if startValue := start {
+                        originals~ Array<DragOriginal*!>! = MovableDragOriginals();
+                        if originals.length() > 0 {
+                            gizmoDrag := new Drag(DragKind:::Gizmo);
+                            gizmoDrag->tool = tool;
+                            gizmoDrag->handle = handle;
+                            gizmoDrag->frame = frame;
+                            gizmoDrag->start = startValue;
+                            gizmoDrag->startPoint = startPoint;
+                            gizmoDrag->TakeOriginals(originals!);
+                            drag = gizmoDrag!;
+                            return;
+                        }
+                        originals.freeAll();
+                    }
+                }
+            }
+            hit: u64? = Pick(projection.RayThrough(pointer));
+            pending := new Drag(DragKind:::Pending);
+            pending->press = pointer;
+            pending->hit = hit;
+            pending->additive = modifiers.shift || modifiers.command;
+            drag = pending!;
+        }
+
+        PointerReleased~: (button: PointerButton, modifiers: Modifiers) -> void {
+            if drag == null {
+                return;
+            }
+            activeFound~ Drag*!? = drag!;
+            drag = null;
+            guard activeFound return;
+            kind: DragKind = activeFound->kind;
+            keep~ bool = false;
+            if button == PointerButton:::Left {
+                if kind == DragKind:::Pending {
+                    if key := activeFound->hit {
+                        if activeFound->additive {
+                            ToggleSelected(key);
+                        } else {
+                            SelectOnly(key);
+                        }
+                    } else if !activeFound->additive {
+                        ClearSelection();
+                    }
+                } else if kind == DragKind:::Gizmo || kind == DragKind:::Body {
+                    verb~ string = "Move";
+                    if kind == DragKind:::Gizmo && activeFound->tool == GizmoTool:::Rotate {
+                        verb = "Rotate";
+                    } else if kind == DragKind:::Gizmo && activeFound->tool == GizmoTool:::Scale {
+                        verb = "Scale";
+                    }
+                    count: string! = CountEntities(activeFound->originals.length());
+                    label: string! = `${verb} ${count}`;
+                    document->CommitPreview(label);
+                    delete label;
+                    delete count;
+                } else if kind == DragKind:::RubberBand {
+                    FinishRubberBand(activeFound->press, activeFound->additive || modifiers.shift);
+                } else if kind == DragKind:::Pan {
+                    keep = true;
+                }
+            } else if kind != DragKind:::Orbit && kind != DragKind:::Pan {
+                keep = true;
+            }
+            if keep {
+                drag = activeFound!;
+            } else {
+                delete activeFound;
+            }
+            UpdateHover();
+        }
+
+        FinishRubberBand~: (press: Vec2, additive: bool) -> void {
+            projection: ViewportProjection = Projection();
+            RefreshGeometry();
+            picked~ Array<u64>! = [];
+            for entity in geometry->entities {
+                if ContainsKeyIn(hidden, entity->key) || ContainsKeyIn(locked, entity->key) {
+                    continue;
+                }
+                if !view.showMarkers && entity->IsMarker() {
+                    continue;
+                }
+                if pixel := projection.Project(entity->Origin()) {
+                    if ViewportProjection:::PixelInRect(pixel, press, pointer) {
+                        picked.push(entity->key);
+                    }
+                }
+            }
+            if additive {
+                for key in picked {
+                    if !ContainsKeyIn(selection, key) {
+                        selection.push(key);
+                    }
+                }
+                delete picked;
+            } else {
+                delete selection;
+                selection = picked!;
+            }
+            SelectionChanged();
+            if selection.length() > 0 {
+                count: string! = CountEntities(selection.length());
+                SetStatus(`Selected ${count}`);
+                delete count;
+            }
+        }
+
+        CancelDrag~: () -> bool {
+            if drag == null {
+                return false;
+            }
+            activeFound~ Drag*!? = drag!;
+            drag = null;
+            guard activeFound return false;
+            previewing: bool = activeFound->kind == DragKind:::Gizmo || activeFound->kind == DragKind:::Body;
+            delete activeFound;
+            if previewing {
+                document->CancelPreview();
+            } else {
+                localRevision += 1;
+            }
+            return true;
+        }
+
+        Wheel~: (notches: f32) -> void {
+            camera.Dolly(notches);
+        }
+
+        ReleaseKeys~: () -> void {
+            delete keysHeld;
+            keysHeld = [];
+        }
+
+        HeldPosition :: (letter: u8) -> usize? {
+            for index~ usize = 0; index < keysHeld.length(); index++ {
+                if keysHeld[index] == letter {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        Held :: (letter: string) -> f32 {
+            if HeldPosition(letter.byteAt(0)) != null {
+                return 1.0f;
+            }
+            return 0.0f;
+        }
+
+        Key~: (key: EditorKey, down: bool, modifiers: Modifiers) -> bool {
+            if key.kind == EditorKeyKind:::Letter {
+                position: usize? = HeldPosition(key.letter);
+                if down && position == null {
+                    keysHeld.push(key.letter);
+                }
+                if !down {
+                    if index := position {
+                        keysHeld.swapRemove(index);
+                    }
+                }
+            }
+            if !down {
+                return false;
+            }
+            if key.kind == EditorKeyKind:::Escape {
+                if CancelDrag() {
+                    return true;
+                }
+                ClearSelection();
+                return true;
+            }
+            if key.kind == EditorKeyKind:::Delete {
+                return DeleteSelection();
+            }
+            if key.kind == EditorKeyKind:::End {
+                return SnapSelectionToGround();
+            }
+            if key.kind == EditorKeyKind:::Home {
+                FrameAll();
+                return true;
+            }
+            if key.kind == EditorKeyKind:::Digit {
+                if key.digit == u8(0) {
+                    return false;
+                }
+                slot: usize = usize(key.digit) - 1;
+                if modifiers.command {
+                    return SetBookmark(slot);
+                }
+                return GoToBookmark(slot);
+            }
+            return LetterKey(key, modifiers);
+        }
+
+        LetterKey~: (key: EditorKey, modifiers: Modifiers) -> bool {
+            if modifiers.command {
+                if key.IsLetter("z") && modifiers.shift {
+                    return Redo();
+                }
+                if key.IsLetter("z") {
+                    return Undo();
+                }
+                if key.IsLetter("y") {
+                    return Redo();
+                }
+                if key.IsLetter("d") {
+                    return DuplicateSelection();
+                }
+                if key.IsLetter("s") {
+                    return Save();
+                }
+                if key.IsLetter("g") {
+                    return GroupSelection();
+                }
+                if key.IsLetter("a") {
+                    SelectAll();
+                    return true;
+                }
+            }
+            if key.IsLetter("h") && modifiers.shift {
+                UnhideAll();
+                return true;
+            }
+            if rightDown {
+                return true;
+            }
+            if key.IsLetter("w") {
+                SetTool(GizmoTool:::Translate);
+                return true;
+            }
+            if key.IsLetter("e") {
+                SetTool(GizmoTool:::Rotate);
+                return true;
+            }
+            if key.IsLetter("r") {
+                SetTool(GizmoTool:::Scale);
+                return true;
+            }
+            if key.IsLetter("f") {
+                FrameSelection();
+                return true;
+            }
+            if key.IsLetter("x") {
+                SetSpace(ToggledSpace(space));
+                return true;
+            }
+            if key.IsLetter("z") {
+                SetPivotMode(ToggledPivot(pivotMode));
+                return true;
+            }
+            if key.IsLetter("g") {
+                view.showGrid = !view.showGrid;
+                localRevision += 1;
+                return true;
+            }
+            if key.IsLetter("h") {
+                if selection.length() == 0 {
+                    return false;
+                }
+                HideSelection();
+                ClearSelection();
+                return true;
+            }
+            return false;
+        }
+
+        Update~: (seconds: f32) -> void {
+            if !rightDown {
+                return;
+            }
+            direction: Vec3 = Vec3 { x: Held("d") - Held("a"), y: Held("e") - Held("q"), z: Held("w") - Held("s") };
+            if direction.x != 0.0f || direction.y != 0.0f || direction.z != 0.0f {
+                camera.Fly(direction, seconds);
+            }
+        }
+
+        BeginBodyDrag~: (press: Vec2) -> bool {
+            if PrimarySelection() == null {
+                return false;
+            }
+            pivotFound: Vec3? = PivotPoint(pivotMode);
+            guard pivot := pivotFound return false;
+            ray: Ray = Projection().RayThrough(press);
+            startFound: Vec3? = ray.IntersectPlane(pivot, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+            guard startPoint := startFound return false;
+            originals~ Array<DragOriginal*!>! = MovableDragOriginals();
+            if originals.length() == 0 {
+                originals.freeAll();
+                return false;
+            }
+            bodyDrag := new Drag(DragKind:::Body);
+            bodyDrag->startPoint = startPoint;
+            bodyDrag->TakeOriginals(originals!);
+            UpdateBodyDrag(bodyDrag);
+            drag = bodyDrag!;
+            return true;
+        }
+
+        UpdateBodyDrag~: (active: Drag*) -> void {
+            count: usize = active->originals.length();
+            if count == 0 {
+                return;
+            }
+            primary: DragOriginal* = active->originals[count - 1];
+            ray: Ray = Projection().RayThrough(pointer);
+            pointFound: Vec3? = ray.IntersectPlane(active->startPoint, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+            guard point := pointFound return;
+            delta~ Vec3 = point - active->startPoint;
+            delta.y = 0.0f;
+            if snap.enabled {
+                step: f32 = snap.translateStep;
+                target: Vec3 = primary->worldPosition + delta;
+                delta.x = Snap(target.x, step) - primary->worldPosition.x;
+                delta.z = Snap(target.z, step) - primary->worldPosition.z;
+            }
+            PreviewWorldTranslation(active, delta);
+        }
+
+        PreviewWorldTranslation~: (active: Drag*, worldDelta: Vec3) -> void {
+            for original in active->originals {
+                entity := original->entity->Copy();
+                entity->transform.position = original->LocalPosition(original->worldPosition + worldDelta);
+                document->PreviewReplace(entity!);
+            }
+        }
+
+        SnappedAlong :: (primary: DragOriginal*, delta: Vec3, direction: Vec3) -> Vec3 {
+            component: f32 = primary->worldPosition.dot(direction);
+            along: f32 = delta.dot(direction);
+            return direction * (Snap(component + along, snap.translateStep) - component);
+        }
+
+        SnappedTranslation :: (primary: DragOriginal*, delta: Vec3, frame: GizmoFrame, handle: Handle) -> Vec3 {
+            if !snap.enabled {
+                return delta;
+            }
+            step: f32 = snap.translateStep;
+            if handle.kind == HandleKind:::Uniform {
+                target: Vec3 = primary->worldPosition + delta;
+                return Vec3 { x: Snap(target.x, step), y: Snap(target.y, step), z: Snap(target.z, step) } - primary->worldPosition;
+            }
+            if handle.kind == HandleKind:::Plane {
+                first: Vec3 = SnappedAlong(primary, delta, frame.AxisVector(FirstOtherAxis(handle.axis)));
+                second: Vec3 = SnappedAlong(primary, delta, frame.AxisVector(SecondOtherAxis(handle.axis)));
+                return Vec3 { } + first + second;
+            }
+            return SnappedAlong(primary, delta, frame.AxisVector(handle.axis));
+        }
+
+        UpdateGizmoDrag~: (active: Drag*) -> void {
+            ray: Ray = Projection().RayThrough(pointer);
+            count: usize = active->originals.length();
+            if count == 0 {
+                return;
+            }
+            primary: DragOriginal* = active->originals[count - 1];
+            frame: GizmoFrame = active->frame;
+            handle: Handle = active->handle;
+            start: f32 = active->start;
+            if active->tool == GizmoTool:::Translate {
+                if handle.kind == HandleKind:::Axis {
+                    parameterFound: f32? = frame.AxisParameter(handle.axis, ray);
+                    guard parameter := parameterFound return;
+                    delta: Vec3 = frame.AxisVector(handle.axis) * (parameter - start);
+                    PreviewWorldTranslation(active, SnappedTranslation(primary, delta, frame, handle));
+                    return;
+                }
+                pointFound: Vec3? = frame.PlanePoint(handle, ray);
+                guard point := pointFound return;
+                PreviewWorldTranslation(active, SnappedTranslation(primary, point - active->startPoint, frame, handle));
+                return;
+            }
+            if active->tool == GizmoTool:::Rotate {
+                if handle.kind != HandleKind:::Axis {
+                    return;
+                }
+                angleFound: f32? = frame.RingAngle(handle.axis, ray);
+                guard angle := angleFound return;
+                turn~ f32 = lantern:::core:::WrapAngle(angle - start);
+                if snap.enabled {
+                    turn = Snap(turn * 57.29578f, snap.rotateStepDegrees) * 0.017453292f;
+                }
+                worldTurn: Quaternion = Quaternion:::fromAxisAngle(frame.AxisVector(handle.axis), turn);
+                for original in active->originals {
+                    entity := original->entity->Copy();
+                    parentRotation: Quaternion = original->ParentRotation();
+                    localTurn: Quaternion = parentRotation.conjugate() * worldTurn * parentRotation;
+                    entity->transform.rotationDegrees = EulerDegrees(localTurn * original->entity->transform.Rotation());
+                    newWorld: Vec3 = frame.pivot + worldTurn.rotate(original->worldPosition - frame.pivot);
+                    entity->transform.position = original->LocalPosition(newWorld);
+                    document->PreviewReplace(entity!);
+                }
+                return;
+            }
+            if handle.kind == HandleKind:::Axis {
+                parameterFound: f32? = frame.AxisParameter(handle.axis, ray);
+                guard parameter := parameterFound return;
+                if Math:::abs(start) < 0.0001f {
+                    return;
+                }
+                PreviewScale(active, WithAxis(Vec3 { x: 1.0f, y: 1.0f, z: 1.0f }, handle.axis, parameter / start));
+                return;
+            }
+            pointFound: Vec3? = frame.PlanePoint(handle, ray);
+            guard point := pointFound return;
+            ratio: f32 = ScaleRatio(frame.pivot, active->startPoint, point);
+            if handle.kind == HandleKind:::Plane {
+                factors~ Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+                factors = WithAxis(factors, FirstOtherAxis(handle.axis), ratio);
+                factors = WithAxis(factors, SecondOtherAxis(handle.axis), ratio);
+                PreviewScale(active, factors);
+                return;
+            }
+            PreviewScale(active, Vec3 { x: ratio, y: ratio, z: ratio });
+        }
+
+        TidyScale :: (value: f32) -> f32 {
+            tidied~ f32 = value;
+            if snap.enabled {
+                tidied = Snap(tidied, snap.scaleStep);
+            }
+            if Math:::abs(tidied) < 0.01f {
+                negative: bool = tidied < 0.0f || (tidied == 0.0f && 1.0f / tidied < 0.0f);
+                tidied = when negative { true -> -0.01f, false -> 0.01f };
+            }
+            return tidied;
+        }
+
+        PreviewScale~: (active: Drag*, factors: Vec3) -> void {
+            for original in active->originals {
+                entity := original->entity->Copy();
+                scale: Vec3 = original->entity->transform.scale;
+                entity->transform.scale = Vec3 { x: TidyScale(scale.x * factors.x), y: TidyScale(scale.y * factors.y), z: TidyScale(scale.z * factors.z) };
+                document->PreviewReplace(entity!);
+            }
+        }
+    }
+}

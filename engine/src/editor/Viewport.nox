@@ -174,4 +174,117 @@ lantern:::editor :: namespace {
         renderWorld->Line(pointC, pointD, RubberBandColor());
         renderWorld->Line(pointD, pointA, RubberBandColor());
     }
+
+    OutlineColorFor :: (selected: bool, hovered: bool, hidden: bool, wireframe: bool) -> lantern:::core:::Color? {
+        if selected {
+            return SelectionColor();
+        }
+        if hovered {
+            return HoverOutlineColor();
+        }
+        if hidden {
+            return HiddenOutlineColor();
+        }
+        if wireframe {
+            return WireframeColor();
+        }
+        return null;
+    }
+
+    BuildViewport :: (session: EditorSession~*, resources: ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
+        renderWorld->Clear();
+        renderWorld->camera = session->camera.RenderCamera();
+        renderWorld->clearColor = EditorSkyColor();
+        renderWorld->fogStart = 150.0f;
+        renderWorld->fogEnd = 500.0f;
+        view: ViewOptions = session->view;
+        if view.showGrid {
+            DrawGrid(renderWorld, session->camera.target, view.gridSpacing);
+        }
+        session->RefreshGeometry();
+        geometry: SceneGeometry* = session->geometry;
+        hoveredKey: u64? = session->hoveredEntity;
+        for entity in session->document->world->entities {
+            placedFound: EntityGeometry*? = geometry->Find(entity->id);
+            guard placed := placedFound continue;
+            hidden: bool = session->IsHidden(entity->id);
+            if hidden && !view.showHidden {
+                continue;
+            }
+            if entity->shape == null && !view.showMarkers {
+                continue;
+            }
+            selected: bool = session->IsSelected(entity->id);
+            hovered: bool = SameOptionalU64(hoveredKey, entity->id);
+            outlineColor: lantern:::core:::Color? = OutlineColorFor(selected, hovered, hidden, view.wireframe);
+            drawSolid: bool = !hidden && !view.wireframe;
+            if shape := entity->shape {
+                if drawSolid {
+                    if mesh := resources->ShapeMesh(shape) {
+                        materialName~ string? = null;
+                        if material := entity->material {
+                            materialName = material;
+                        }
+                        texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = resources->MaterialTexture(materialName);
+                        renderWorld->Draw(mesh, texture, placed->worldMatrix, entity->TintColor());
+                    }
+                }
+                if outline := outlineColor {
+                    OrientedBoxLines(renderWorld, ShapeLocalBounds(shape), placed->worldMatrix, outline);
+                }
+                if view.showColliders && outlineColor == null {
+                    if collider := entity->collider {
+                        colliderColor: lantern:::core:::Color = when (collider == lantern:::world:::ColliderKind:::Kinematic) { true -> KinematicColliderColor(), false -> StaticColliderColor() };
+                        OrientedBoxLines(renderWorld, ShapeLocalBounds(shape), placed->worldMatrix, colliderColor);
+                    }
+                }
+            } else {
+                style: MarkerStyle*! = session->palette->MarkerStyleFor(entity->kind);
+                color: lantern:::core:::Color = lantern:::world:::ParseHexColor(style->color) ?? lantern:::core:::Color:::White();
+                markerMesh: MarkerMesh = style->mesh;
+                delete style;
+                if markerMesh == MarkerMesh:::Plane {
+                    DrawPlaneMarker(renderWorld, placed->Origin().y, color);
+                } else if drawSolid {
+                    if mesh := resources->MarkerMeshHandle(markerMesh) {
+                        renderWorld->Draw(mesh, null, placed->worldMatrix * MarkerLocalMatrix(markerMesh), color);
+                    }
+                }
+                if outline := outlineColor {
+                    OrientedBoxLines(renderWorld, MarkerLocalBounds(markerMesh), placed->worldMatrix, outline);
+                }
+                if entity->kind == "spawn" {
+                    origin: Vec3 = placed->Origin();
+                    backward: Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+                    facing: Vec3 = lantern:::core:::NormalizeOr3(placed->worldMatrix.transformDirection(backward), backward);
+                    lift: Vec3 = Vec3 { x: 0.0f, y: 0.2f, z: 0.0f };
+                    DrawArrow(renderWorld, origin + lift, origin + lift + facing * 1.5f, color);
+                }
+            }
+            if selected {
+                for value in entity->propertyValues {
+                    if value.kind == lantern:::world:::PropertyKind:::Vector {
+                        start: Vec3 = placed->Origin();
+                        DrawArrow(renderWorld, start, start + value.vector, VectorPropertyColor());
+                        if shape := entity->shape {
+                            moved: Mat4 = Mat4:::translation(value.vector) * placed->worldMatrix;
+                            OrientedBoxLines(renderWorld, ShapeLocalBounds(shape), moved, VectorPropertyColor());
+                        }
+                    }
+                }
+            }
+        }
+        if view.showLevelBounds {
+            bounds: lantern:::core:::Aabb = geometry->LevelBounds();
+            if !bounds.IsEmpty() {
+                renderWorld->AabbLines(bounds.Expanded(0.05f), LevelBoundsColor());
+            }
+        }
+        if session->IsRubberBanding() {
+            DrawRubberBand(renderWorld, session->Projection(), session->RubberBandStart(), session->pointer);
+        }
+        if frame := session->VisibleGizmo() {
+            frame.Draw(session->tool, session->hoveredHandle, renderWorld);
+        }
+    }
 }

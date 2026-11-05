@@ -1,0 +1,655 @@
+lantern :: import lantern;
+
+CourseSession :: () -> lantern:::editor:::EditorSession*!? {
+    when lantern:::editor:::Palette:::Load("../assets/editor/palette.json") {
+        Result:::Ok(palette) -> {
+            when lantern:::editor:::EditorSession:::Open("../assets/worlds/course.world.json", palette!) {
+                Result:::Ok(session) -> {
+                    session->SetViewportSize(Vec2 { x: 1280.0f, y: 720.0f });
+                    return session!;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return null;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return null;
+        }
+    }
+}
+
+NoModifiers :: () -> lantern:::editor:::Modifiers {
+    return lantern:::editor:::Modifiers { };
+}
+
+Command :: () -> lantern:::editor:::Modifiers {
+    return lantern:::editor:::Modifiers:::FromBits(lantern:::editor:::MODIFIER_COMMAND);
+}
+
+Letter :: (letter: string) -> lantern:::editor:::EditorKey {
+    return lantern:::editor:::EditorKey:::Letter(letter.byteAt(0));
+}
+
+KeyNamed :: (session: lantern:::editor:::EditorSession*, name: string) -> u64 {
+    for entity in session->World()->entities {
+        if entity->name == name {
+            return entity->id;
+        }
+    }
+    assert(false, "the course has the named entity");
+    return 0;
+}
+
+EntityOf :: (session: lantern:::editor:::EditorSession*, key: u64) -> lantern:::world:::WorldEntity*? {
+    guard index := session->World()->IndexOf(key) return null;
+    return session->World()->entities[index];
+}
+
+PositionOf :: (session: lantern:::editor:::EditorSession*, key: u64) -> Vec3 {
+    guard entity := EntityOf(session, key) return Vec3 { };
+    return entity->transform.position;
+}
+
+PixelOf :: (session: lantern:::editor:::EditorSession*, point: Vec3) -> Vec2 {
+    return session->Projection().Project(point) ?? Vec2 { };
+}
+
+Click :: (session: lantern:::editor:::EditorSession~*, pixel: Vec2, modifiers: lantern:::editor:::Modifiers) -> void {
+    session->PointerMoved(pixel);
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, true, modifiers);
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, false, modifiers);
+}
+
+DragAcross :: (session: lantern:::editor:::EditorSession~*, from: Vec2, to: Vec2) -> void {
+    session->PointerMoved(from);
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, true, NoModifiers());
+    for step~ i32 = 1; step <= 10; step++ {
+        session->PointerMoved(from + (to - from) * (f32(step) / 10.0f));
+    }
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, false, NoModifiers());
+}
+
+OnlySelected :: (session: lantern:::editor:::EditorSession*, key: u64) -> bool {
+    return session->selection.length() == 1 && session->selection[0] == key;
+}
+
+WorldFrame :: (session: lantern:::editor:::EditorSession*, tool: lantern:::editor:::GizmoTool, pivot: Vec3) -> lantern:::editor:::GizmoFrame {
+    return lantern:::editor:::GizmoFrame:::Create(tool, lantern:::editor:::GizmoSpace:::World, pivot, Quaternion { }, session->Projection());
+}
+
+UpY :: () -> Vec3 {
+    return Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
+}
+
+UnitX :: () -> Vec3 {
+    return Vec3 { x: 1.0f, y: 0.0f, z: 0.0f };
+}
+
+ClickingSelectsAndClickingEmptySpaceClears :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pillar: u64 = KeyNamed(session, "pillar_3");
+    top: Vec3 = PositionOf(session, pillar) + UpY() * 4.0f;
+    Click(session, PixelOf(session, top), NoModifiers());
+    assert(OnlySelected(session, pillar), "clicking a pillar selects it");
+    fields~ Array<lantern:::editor:::InspectorField*!>! = session->Inspector();
+    assert(fields.length() > 0 && fields[0]->value == "pillar_3", "the inspector shows the pillar's name first");
+    fields.freeAll();
+    Click(session, Vec2 { x: 640.0f, y: 2.0f }, NoModifiers());
+    assert(session->selection.length() == 0, "clicking the sky clears the selection");
+}
+
+DraggingTheXArrowMovesBySnappedStepsAndUndoesInOneStep :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pillar: u64 = KeyNamed(session, "pillar_2");
+    session->SelectOnly(pillar);
+    start: Vec3 = PositionOf(session, pillar);
+    frame: lantern:::editor:::GizmoFrame = WorldFrame(session, lantern:::editor:::GizmoTool:::Translate, start);
+    grab: Vec2 = PixelOf(session, start + UnitX() * (frame.size * 0.8f));
+    release: Vec2 = PixelOf(session, start + UnitX() * (frame.size * 0.8f + 3.1f));
+    DragAcross(session, grab, release);
+    moved: Vec3 = PositionOf(session, pillar);
+    assert(Math:::abs(moved.x - (start.x + 3.0f)) < 0.0001f, "the arrow drag snaps to 0.25 m steps");
+    assert(moved.y == start.y && moved.z == start.z, "the arrow drag moves along x only");
+    assert(session->document->IsDirty(), "the drag dirties the document");
+    labelFound: string? = session->document->UndoLabel();
+    assert(labelFound != null, "the drag is one undo step");
+    if label := labelFound {
+        assert(label == "Move entity", "the drag's undo step is named");
+    }
+    undone: bool = session->Undo();
+    assert(undone, "the drag undoes");
+    assert(PositionOf(session, pillar) == start, "undo puts the pillar back");
+    assert(!session->document->IsDirty(), "undo clears dirty");
+    redone: bool = session->Redo();
+    assert(redone, "the drag redoes");
+    assert(Math:::abs(PositionOf(session, pillar).x - (start.x + 3.0f)) < 0.0001f, "redo moves it again");
+}
+
+DraggingASelectedBodySlidesItOnTheGroundPlane :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    gem: u64 = KeyNamed(session, "gem_0");
+    start: Vec3 = PositionOf(session, gem);
+    offset: Vec3 = Vec3 { x: 1.0f, y: 0.0f, z: -2.0f };
+    DragAcross(session, PixelOf(session, start), PixelOf(session, start + offset));
+    assert(OnlySelected(session, gem), "dragging a body selects it");
+    moved: Vec3 = PositionOf(session, gem);
+    assert((moved - (start + offset)).length() < 0.26f, "the body follows the pointer on the ground plane");
+    assert(moved.y == start.y, "the body stays at its height");
+}
+
+EscapeCancelsADrag :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pillar: u64 = KeyNamed(session, "pillar_1");
+    session->SelectOnly(pillar);
+    start: Vec3 = PositionOf(session, pillar);
+    frame: lantern:::editor:::GizmoFrame = WorldFrame(session, lantern:::editor:::GizmoTool:::Translate, start);
+    grab: Vec2 = PixelOf(session, start + UpY() * (frame.size * 0.8f));
+    session->PointerMoved(grab);
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, true, NoModifiers());
+    session->PointerMoved(grab - Vec2 { x: 0.0f, y: 80.0f });
+    assert(PositionOf(session, pillar) != start, "the drag previews a move");
+    cancelled: bool = session->Key(lantern:::editor:::EditorKey:::Of(lantern:::editor:::EditorKeyKind:::Escape), true, NoModifiers());
+    assert(cancelled, "escape is handled");
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, false, NoModifiers());
+    assert(PositionOf(session, pillar) == start, "escape puts the pillar back");
+    assert(!session->document->CanUndo(), "a cancelled drag leaves no undo step");
+}
+
+RotateAndScaleTools :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    ramp: u64 = KeyNamed(session, "gentle_ramp");
+    session->SelectOnly(ramp);
+    switched: bool = session->Key(Letter("e"), true, NoModifiers());
+    assert(switched && session->tool == lantern:::editor:::GizmoTool:::Rotate, "E picks the rotate tool");
+    pivot: Vec3 = PositionOf(session, ramp);
+    frame: lantern:::editor:::GizmoFrame = WorldFrame(session, lantern:::editor:::GizmoTool:::Rotate, pivot);
+    tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(UpY());
+    bitangent: Vec3 = UpY().cross(tangent);
+    radius: f32 = frame.size * 0.85f;
+    grabAngle: f32 = 45.0f * (Math:::PI / 180.0f);
+    releaseAngle: f32 = 135.0f * (Math:::PI / 180.0f);
+    grab: Vec2 = PixelOf(session, pivot + (tangent * Math:::cos(grabAngle) + bitangent * Math:::sin(grabAngle)) * radius);
+    hit: lantern:::editor:::Handle? = frame.HitTest(lantern:::editor:::GizmoTool:::Rotate, session->Projection(), grab);
+    assert(lantern:::editor:::SameOptionalHandle(hit, lantern:::editor:::Handle:::OnAxis(lantern:::editor:::Axis:::Y)), "the grab lands on the yaw ring");
+    release: Vec2 = PixelOf(session, pivot + (tangent * Math:::cos(releaseAngle) + bitangent * Math:::sin(releaseAngle)) * radius);
+    DragAcross(session, grab, release);
+    if entity := EntityOf(session, ramp) {
+        assert(Math:::abs(Math:::abs(entity->transform.rotationDegrees.y) - 90.0f) < 0.001f, "the ring drag turns a quarter");
+    }
+    session->Key(Letter("r"), true, NoModifiers());
+    assert(session->tool == lantern:::editor:::GizmoTool:::Scale, "R picks the scale tool");
+    session->SetField(ramp, "rotation.y", "0");
+    session->CommitField();
+    scaleFrame: lantern:::editor:::GizmoFrame = WorldFrame(session, lantern:::editor:::GizmoTool:::Scale, pivot);
+    scaleGrab: Vec2 = PixelOf(session, pivot + UnitX() * (scaleFrame.size * 0.8f));
+    scaleRelease: Vec2 = PixelOf(session, pivot + UnitX() * (scaleFrame.size * 1.6f));
+    DragAcross(session, scaleGrab, scaleRelease);
+    if entity := EntityOf(session, ramp) {
+        assert(Math:::abs(entity->transform.scale.x - 2.0f) < 0.001f, "the x handle doubles the scale");
+        assert(entity->transform.scale.y == 1.0f, "the x handle leaves y alone");
+    }
+}
+
+TypingIntoAFieldIsOneUndoStep :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    floor: u64 = KeyNamed(session, "start_floor");
+    session->SelectOnly(floor);
+    first: bool = session->SetField(floor, "position.y", "-1");
+    second: bool = session->SetField(floor, "position.y", "-1.");
+    third: bool = session->SetField(floor, "position.y", "-1.5");
+    assert(first && second && third, "each keystroke's value is taken");
+    refused: bool = session->SetField(floor, "position.y", "-1.5x");
+    assert(!refused, "bad input is refused");
+    assert(session->status.indexOf("not a number", 0) != null, "the status says why");
+    assert(PositionOf(session, floor).y == -1.5f, "the last good value stays");
+    session->CommitField();
+    renamed: bool = session->SetField(floor, "name", "floor");
+    assert(renamed, "the name field takes text");
+    session->Undo();
+    if entity := EntityOf(session, floor) {
+        assert(entity->name == "start_floor", "undo restores the name");
+    }
+    session->Undo();
+    assert(PositionOf(session, floor).y == -0.5f, "one undo restores the typed field");
+    assert(!session->document->IsDirty(), "both undos leave it clean");
+}
+
+AddDuplicateAndDelete :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    count: usize = session->World()->entities.length();
+    addedFound: u64? = session->AddEntity("block", false);
+    guard added := addedFound return;
+    assert(session->World()->entities.length() == count + 1, "adding inserts one entity");
+    assert(OnlySelected(session, added), "the new entity is selected");
+    if block := EntityOf(session, added) {
+        assert(block->kind == "block" && block->name == "block_1", "the new block is named after its template");
+    }
+    duplicated: bool = session->Key(Letter("d"), true, Command());
+    assert(duplicated && session->World()->entities.length() == count + 2, "command D duplicates");
+    copy: u64 = session->PrimarySelection() ?? 0;
+    if entity := EntityOf(session, copy) {
+        assert(entity->name == "block_2", "the copy gets the next name");
+    }
+    session->SelectOnly(added);
+    session->ToggleSelected(copy);
+    deleted: bool = session->Key(lantern:::editor:::EditorKey:::Of(lantern:::editor:::EditorKeyKind:::Delete), true, NoModifiers());
+    assert(deleted && session->World()->entities.length() == count, "delete removes both");
+    session->Undo();
+    assert(session->World()->entities.length() == count + 2, "undo brings both back");
+    assert(EntityOf(session, added) != null && EntityOf(session, copy) != null, "both keys come back");
+}
+
+DeletingAParentTakesItsChildrenAndOutlineNestsThem :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    floor: u64 = KeyNamed(session, "start_floor");
+    post: u64 = KeyNamed(session, "canopy_post_1");
+    parented: bool = session->SetParent(post, floor);
+    assert(parented, "the post takes the floor as its parent");
+    local: Vec3 = PositionOf(session, post);
+    expected: Vec3 = Vec3 { x: 0.6f, y: 1.0f, z: 2.6f } - Vec3 { x: 0.0f, y: -0.5f, z: 0.0f };
+    assert((local - expected).length() < 0.0001f, "re-parenting keeps the post where it is in the world");
+    outline~ Array<lantern:::editor:::OutlineRow*!>! = session->Outline();
+    floorRow~ usize = 0;
+    for index~ usize = 0; index < outline.length(); index++ {
+        if outline[index]->key == floor {
+            floorRow = index;
+        }
+    }
+    assert(outline[floorRow + 1]->key == post && outline[floorRow + 1]->depth == 1, "the post nests under the floor");
+    assert(outline.length() == session->World()->entities.length(), "the outline lists every entity once");
+    outline.freeAll();
+    cycle: bool = session->SetParent(floor, post);
+    assert(!cycle, "no cycles");
+    session->SelectOnly(floor);
+    count: usize = session->World()->entities.length();
+    session->DeleteSelection();
+    assert(session->World()->entities.length() == count - 2, "deleting the floor takes the post");
+    session->Undo();
+    if entity := EntityOf(session, post) {
+        assert(lantern:::editor:::SameOptionalU64(entity->parent, floor), "undo restores the parent");
+    }
+}
+
+SameWorld :: (left: lantern:::world:::WorldFile*, right: lantern:::world:::WorldFile*) -> bool {
+    if left->entities.length() != right->entities.length() {
+        return false;
+    }
+    for index~ usize = 0; index < left->entities.length(); index++ {
+        if !left->entities[index]->SameAs(right->entities[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+SavingRoundTripsAndClearsDirty :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    when createDirectories("build") {
+        Result:::Ok(created) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    path: string = "build/lantern-editor-session-copy.world.json";
+    gem: u64 = KeyNamed(session, "gem_3");
+    session->SetField(gem, "property:value", "5");
+    dirtyTitle: string! = session->Title();
+    assert(dirtyTitle.endsWith("*"), "an unsaved title ends with a star");
+    delete dirtyTitle;
+    saved: bool = session->SaveAs(path);
+    assert(saved && !session->document->IsDirty(), "saving clears dirty");
+    title: string! = session->Title();
+    assert(title == "lantern-editor-session-copy.world.json", "the title is the saved file's name");
+    delete title;
+    when lantern:::world:::Load(path) {
+        Result:::Ok(reloaded) -> {
+            assert(SameWorld(reloaded, session->World()), "the saved world reads back the same");
+            if index := reloaded->IndexOf(gem) {
+                value: f32? = reloaded->entities[index]->NumberProperty("value");
+                assert(value != null && (value ?? 0.0f) == 5.0f, "the edited property is saved");
+            }
+            delete reloaded;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the saved world loads");
+        }
+    }
+}
+
+CameraControls :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    before: lantern:::editor:::OrbitCamera = session->camera;
+    session->PointerMoved(Vec2 { x: 600.0f, y: 300.0f });
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Right, true, NoModifiers());
+    session->PointerMoved(Vec2 { x: 650.0f, y: 300.0f });
+    assert(session->camera.yaw != before.yaw, "a right drag orbits");
+    session->Key(Letter("w"), true, NoModifiers());
+    assert(session->tool == lantern:::editor:::GizmoTool:::Translate, "W flies instead of switching tools while orbiting");
+    target: Vec3 = session->camera.target;
+    session->Update(0.5f);
+    assert((session->camera.target - target).length() > 1.0f, "holding W flies forward");
+    session->Key(Letter("w"), false, NoModifiers());
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Right, false, NoModifiers());
+    distance: f32 = session->camera.distance;
+    session->Wheel(2.0f);
+    assert(session->camera.distance < distance, "the wheel dollies in");
+    session->SelectOnly(KeyNamed(session, "goal"));
+    session->Key(Letter("f"), true, NoModifiers());
+    assert((session->camera.target - Vec3 { x: 0.0f, y: -2.0f, z: -31.0f }).length() < 0.001f, "F frames the selection");
+}
+
+DraggingTheXzPlaneHandleMovesInBothAxes :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pillar: u64 = KeyNamed(session, "pillar_2");
+    session->SelectOnly(pillar);
+    start: Vec3 = PositionOf(session, pillar);
+    frame: lantern:::editor:::GizmoFrame = WorldFrame(session, lantern:::editor:::GizmoTool:::Translate, start);
+    onPlane: Vec3 = start + Vec3 { x: 1.0f, y: 0.0f, z: 1.0f } * (frame.size * 0.47f);
+    grab: Vec2 = PixelOf(session, onPlane);
+    hit: lantern:::editor:::Handle? = frame.HitTest(lantern:::editor:::GizmoTool:::Translate, session->Projection(), grab);
+    assert(lantern:::editor:::SameOptionalHandle(hit, lantern:::editor:::Handle:::InPlane(lantern:::editor:::Axis:::Y)), "the grab lands on the xz plane handle");
+    offset: Vec3 = Vec3 { x: 2.0f, y: 0.0f, z: -1.0f };
+    DragAcross(session, grab, PixelOf(session, onPlane + offset));
+    moved: Vec3 = PositionOf(session, pillar);
+    assert((moved - (start + offset)).length() < 0.3f, "the plane drag moves in x and z");
+    assert(moved.y == start.y, "the plane drag keeps y");
+}
+
+ARubberBandOverEmptySpaceSelectsWhatItCovers :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    gem: u64 = KeyNamed(session, "gem_0");
+    gemPixel: Vec2 = PixelOf(session, PositionOf(session, gem));
+    session->PointerMoved(Vec2 { x: gemPixel.x - 40.0f, y: 2.0f });
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, true, NoModifiers());
+    session->PointerMoved(gemPixel + Vec2 { x: 40.0f, y: 20.0f });
+    assert(session->IsRubberBanding(), "dragging from empty space draws a rubber band");
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, false, NoModifiers());
+    assert(!session->IsRubberBanding(), "releasing ends the rubber band");
+    assert(lantern:::editor:::ContainsKeyIn(session->selection, gem), "the band selects the gem it covers");
+}
+
+HiddenAndLockedEntitiesStayOutOfTheViewportsWay :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pillar: u64 = KeyNamed(session, "pillar_3");
+    pixel: Vec2 = PixelOf(session, PositionOf(session, pillar) + UpY() * 4.0f);
+    session->SetLocked(pillar, true);
+    Click(session, pixel, NoModifiers());
+    assert(!lantern:::editor:::ContainsKeyIn(session->selection, pillar), "a locked entity can't be clicked");
+    session->SetLocked(pillar, false);
+    session->SetHidden(pillar, true);
+    Click(session, pixel, NoModifiers());
+    assert(!lantern:::editor:::ContainsKeyIn(session->selection, pillar), "a hidden entity can't be clicked");
+    outline~ Array<lantern:::editor:::OutlineRow*!>! = session->Outline();
+    shownHidden~ bool = false;
+    for row in outline {
+        if row->key == pillar && row->hidden {
+            shownHidden = true;
+        }
+    }
+    outline.freeAll();
+    assert(shownHidden, "the outline marks the hidden pillar");
+    session->UnhideAll();
+    assert(!session->IsHidden(pillar), "unhide all shows it again");
+    session->SelectOnly(pillar);
+    session->LockSelection(true);
+    before: Vec3 = PositionOf(session, pillar);
+    session->Key(lantern:::editor:::EditorKey:::Of(lantern:::editor:::EditorKeyKind:::End), true, NoModifiers());
+    assert(PositionOf(session, pillar) == before, "a locked entity isn't moved");
+}
+
+GroupingAligningDistributingAndMirroring :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    keys~ Array<u64>! = [];
+    keys.push(KeyNamed(session, "pillar_1"));
+    keys.push(KeyNamed(session, "pillar_2"));
+    keys.push(KeyNamed(session, "pillar_3"));
+    lastHeight: f32 = PositionOf(session, keys[2]).y;
+    session->SelectOnly(keys[0]);
+    session->ToggleSelected(keys[1]);
+    session->ToggleSelected(keys[2]);
+    aligned: bool = session->AlignSelection(lantern:::editor:::Axis:::Y);
+    assert(aligned, "the pillars align");
+    for key in keys {
+        assert(PositionOf(session, key).y == lastHeight, "aligning matches the primary's height");
+    }
+    distributed: bool = session->DistributeSelection(lantern:::editor:::Axis:::X);
+    assert(distributed, "the pillars distribute");
+    first: f32 = PositionOf(session, keys[0]).x;
+    second: f32 = PositionOf(session, keys[1]).x;
+    third: f32 = PositionOf(session, keys[2]).x;
+    low: f32 = Math:::min(first, Math:::min(second, third));
+    high: f32 = Math:::max(first, Math:::max(second, third));
+    middle: f32 = first + second + third - low - high;
+    assert(Math:::abs((middle - low) - (high - middle)) < 0.001f, "distributing spaces them evenly");
+    mirrored: bool = session->MirrorSelection(lantern:::editor:::Axis:::X);
+    assert(mirrored, "the pillars mirror");
+    grouped: bool = session->Key(Letter("g"), true, Command());
+    assert(grouped, "command G groups");
+    group: u64 = session->PrimarySelection() ?? 0;
+    if entity := EntityOf(session, group) {
+        assert(entity->kind == "group", "the group is a group entity");
+    }
+    for key in keys {
+        if entity := EntityOf(session, key) {
+            assert(lantern:::editor:::SameOptionalU64(entity->parent, group), "each pillar joins the group");
+        }
+    }
+    session->Undo();
+    assert(EntityOf(session, group) == null, "undo removes the group");
+    if entity := EntityOf(session, keys[0]) {
+        assert(entity->parent == null, "undo restores the pillar's parent");
+    }
+    delete keys;
+}
+
+SnapToGroundRestsTheBottomOnTheSurfaceBelow :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    blockFound: u64? = session->AddEntity("block", false);
+    guard block := blockFound return;
+    session->SetField(block, "position.y", "12");
+    session->SetField(block, "position.x", "0");
+    session->SetField(block, "position.z", "2");
+    session->CommitField();
+    snapped: bool = session->SnapSelectionToGround();
+    assert(snapped, "the block snaps to the ground");
+    landed: Vec3 = PositionOf(session, block);
+    halfHeight~ f32 = 0.0f;
+    if entity := EntityOf(session, block) {
+        if shape := entity->shape {
+            halfHeight = shape.halfExtents.y;
+        }
+    }
+    assert(Math:::abs(landed.y - halfHeight) < 0.001f, "the block's bottom rests on the floor at y = 0");
+}
+
+HistoryIsAListYouCanJumpAlong :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    floor: u64 = KeyNamed(session, "start_floor");
+    session->SetField(floor, "position.y", "1");
+    session->CommitField();
+    session->SetField(floor, "position.y", "2");
+    session->CommitField();
+    session->SetField(floor, "position.y", "3");
+    session->CommitField();
+    labels~ Array<string!>! = session->document->HistoryLabels();
+    assert(labels.length() == 3, "three edits make three steps");
+    for label in labels {
+        assert(label == "Edit position.y", "each step is named after its field");
+    }
+    labels.freeAll();
+    assert(session->document->HistoryPosition() == 3, "the history is at its end");
+    jumped: bool = session->JumpHistory(1);
+    assert(jumped && PositionOf(session, floor).y == 1.0f, "jumping back undoes to that step");
+    stillListed~ Array<string!>! = session->document->HistoryLabels();
+    assert(stillListed.length() == 3, "undone steps stay listed");
+    stillListed.freeAll();
+    forward: bool = session->JumpHistory(3);
+    assert(forward && PositionOf(session, floor).y == 3.0f, "jumping forward redoes");
+    logged~ bool = false;
+    for entry in session->log {
+        if entry->text.indexOf("history step", 0) != null {
+            logged = true;
+        }
+    }
+    assert(logged, "the jump is logged");
+}
+
+SameCamera :: (left: lantern:::editor:::OrbitCamera, right: lantern:::editor:::OrbitCamera) -> bool {
+    return left.target == right.target && left.yaw == right.yaw && left.pitch == right.pitch && left.distance == right.distance && left.verticalFieldOfViewRadians == right.verticalFieldOfViewRadians && left.flySpeed == right.flySpeed && left.orthographic == right.orthographic;
+}
+
+BookmarksPresetsAndSpaces :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    home: lantern:::editor:::OrbitCamera = session->camera;
+    marked: bool = session->Key(lantern:::editor:::EditorKey:::Digit(1), true, Command());
+    assert(marked && session->HasBookmark(0), "command 1 sets a bookmark");
+    empty: bool = session->Key(lantern:::editor:::EditorKey:::Digit(2), true, NoModifiers());
+    assert(!empty, "an empty bookmark does nothing");
+    session->CameraPreset("top");
+    assert(session->camera.orthographic, "the top preset is orthographic");
+    restored: bool = session->Key(lantern:::editor:::EditorKey:::Digit(1), true, NoModifiers());
+    assert(restored && SameCamera(session->camera, home), "1 goes back to the bookmark");
+    spaced: bool = session->Key(Letter("x"), true, NoModifiers());
+    assert(spaced && session->space == lantern:::editor:::GizmoSpace:::Local, "X toggles the space");
+    pivoted: bool = session->Key(Letter("z"), true, NoModifiers());
+    assert(pivoted && session->pivotMode == lantern:::editor:::PivotMode:::Center, "Z toggles the pivot");
+    accepted: bool = session->SetViewOption("grid_spacing", "0.5");
+    rejected: bool = session->SetViewOption("grid_spacing", "-1");
+    assert(accepted && !rejected, "grid spacing takes positive numbers only");
+    spacing: string!? = session->view.Get("grid_spacing");
+    if text := spacing {
+        assert(text == "0.5", "the spacing reads back");
+    } else {
+        assert(false, "grid spacing is a view option");
+    }
+    delete spacing;
+}
+
+EditingAFieldOnAMultiSelectionChangesThemAll :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    first: u64 = KeyNamed(session, "pillar_1");
+    second: u64 = KeyNamed(session, "pillar_2");
+    session->SelectOnly(first);
+    session->ToggleSelected(second);
+    fields~ Array<lantern:::editor:::InspectorField*!>! = session->Inspector();
+    mixed~ bool = false;
+    for field in fields {
+        if field->key == "position.x" && field->mixed {
+            mixed = true;
+        }
+    }
+    fields.freeAll();
+    assert(mixed, "differing x positions show as mixed");
+    material: bool = session->SetFieldOnSelection("material", "wall");
+    assert(material, "the material is set on both");
+    for key in [first, second] {
+        if entity := EntityOf(session, key) {
+            if name := entity->material {
+                assert(name == "wall", "each pillar gets the material");
+            } else {
+                assert(false, "each pillar has a material");
+            }
+        }
+    }
+    speed: bool = session->SetFieldOnSelection("property:speed", "3");
+    renamed: bool = session->RenameProperty("speed", "pace");
+    assert(speed && renamed, "a property is added and renamed on both");
+    if entity := EntityOf(session, second) {
+        assert((entity->NumberProperty("pace") ?? 0.0f) == 3.0f, "the renamed property keeps its value");
+    }
+    session->Undo();
+    session->Undo();
+    if entity := EntityOf(session, second) {
+        assert(entity->PropertyCount() == 0, "two undos remove the property");
+    }
+}
+
+RevertingToTheTemplateRestoresItsLook :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    blockFound: u64? = session->AddEntity("block", false);
+    guard block := blockFound return;
+    session->SetField(block, "tint", "#FF0000");
+    session->CommitField();
+    reverted: bool = session->RevertSelectionToTemplate();
+    assert(reverted, "the block reverts");
+    guard entity := EntityOf(session, block) return;
+    guard template := session->TemplateForKind("block") return;
+    if tint := entity->tint {
+        if templateTint := template->prototype->tint {
+            assert(tint == templateTint, "the tint is the template's");
+        } else {
+            assert(false, "the template has no tint, so the block shouldn't either");
+        }
+    } else {
+        assert(template->prototype->tint == null, "the tint is the template's");
+    }
+}
+
+main :: () -> i32 {
+    ClickingSelectsAndClickingEmptySpaceClears();
+    DraggingTheXArrowMovesBySnappedStepsAndUndoesInOneStep();
+    DraggingASelectedBodySlidesItOnTheGroundPlane();
+    EscapeCancelsADrag();
+    RotateAndScaleTools();
+    TypingIntoAFieldIsOneUndoStep();
+    AddDuplicateAndDelete();
+    DeletingAParentTakesItsChildrenAndOutlineNestsThem();
+    SavingRoundTripsAndClearsDirty();
+    CameraControls();
+    DraggingTheXzPlaneHandleMovesInBothAxes();
+    ARubberBandOverEmptySpaceSelectsWhatItCovers();
+    HiddenAndLockedEntitiesStayOutOfTheViewportsWay();
+    GroupingAligningDistributingAndMirroring();
+    SnapToGroundRestsTheBottomOnTheSurfaceBelow();
+    HistoryIsAListYouCanJumpAlong();
+    BookmarksPresetsAndSpaces();
+    EditingAFieldOnAMultiSelectionChangesThemAll();
+    RevertingToTheTemplateRestoresItsLook();
+    print("the session drives clicks, drags, keys and edits");
+    return 0;
+}

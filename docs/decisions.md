@@ -686,3 +686,28 @@ and the drawing half of `viewport.rs`.
   plane marker, arrows and the rubber band.
 
 Story: `engine-on-nox/l8-editor/port-editor-core-s-interaction-viewport-picking-gizmos-and-the-inspector`.
+
+## D-050 The Nox editor session takes its drag out of the session while it works on it
+
+`engine/src/editor/SessionTypes.nox` and `Session.nox` port `session.rs`, and `Viewport.nox`
+gains `BuildViewport`, the half of `viewport.rs` that reads the session.
+
+- **Drags.** Rust's `Drag` enum carries different fields in each variant. In Nox it's one `Drag`
+  class with a `DragKind`, owned by the session as `drag`. While a pointer move or release works on
+  a drag, the session moves it out of `drag` and puts it back afterwards, so previewing an edit on
+  the document doesn't borrow the session twice. A drag's `originals` (each entity's copy, parent
+  matrix and world position) are owned by the drag and freed with it.
+- **Keys and buttons.** `EditorKey` is a struct with a kind, a letter and a digit, since Nox enums
+  carry no payload. Held letters are a small array of bytes. The pointer button method is
+  `SetPointerButton`, because a method can't share its name with the `PointerButton` enum.
+- **Scaling.** Rust passes a closure that changes the scale array. Nox passes the factor for each
+  component (1 for the axes left alone), which gives the same values, since multiplying by 1 is
+  exact.
+- **Viewport.** `BuildViewport` takes the session, a `ViewportResources` and a `RenderWorld`, and
+  draws the same things in the same order as `build_viewport`.
+- **Tests.** `tests/editor/the-session-drives-clicks-drags-keys-and-edits` ports the 19 tests in
+  `editor-core/tests/session.rs`, and `the-viewport-draws-the-course-and-follows-view-options`
+  ports `viewport.rs`'s two. Both pass on the native and C backends, and the session test runs
+  under valgrind with no leaks.
+
+Story: `engine-on-nox/l8-editor/port-editor-core-s-session-and-its-tests`.
