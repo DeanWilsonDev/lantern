@@ -6,16 +6,20 @@ functions from `lantern:::editorbackend`, and draws into an SDL3 window.
 
 ## Building and running
 
-1. Build lantern-native, which now carries penumbra-bridge's C API beside Nyx's and the Chaos UI
+1. Prepare the engine as `engine/README.md` describes, from `engine/`: `tools/bind-sdl.sh`,
+   `tools/bind-nyx.sh`, `tools/install-dependencies.sh` and `tools/build-shaders.sh`. The host
+   reads `generated/sdl.nox`, `generated/nyx.nox` and the cgltf and stb_image bindings, and the
+   level view loads its shaders from `engine/shaders/compiled`.
+2. Build lantern-native, which now carries penumbra-bridge's C API beside Nyx's and the Chaos UI
    bridge: `engine/tools/build-native.sh` (needs nyx-scripting-language, chaos-ui-framework and
    cosmos-styling-language on `proto` and penumbra-bridge on `main` beside lantern).
-2. `tools/setup.sh` links `external/penumbra-nox` to a penumbra-ui-engine checkout on `nox-proto`
+3. `tools/setup.sh` links `external/penumbra-nox` to a penumbra-ui-engine checkout on `nox-proto`
    (`PENUMBRA_NOX_DIR`, default `../penumbra-ui-engine` beside lantern), copies penumbra-bridge's Nox
    sources into `generated/penumbra-bridge` so they call lantern-native, and writes
    `generated/HostPaths.nox` with the UI, font, assets and shader directories.
-3. Build: `LIBRARY_PATH=../../../engine/generated/mist:../../../engine/generated/nyx nox build --release`
+4. Build: `LIBRARY_PATH=../../../engine/generated/mist:../../../engine/generated/nyx nox build --release`
    (on macOS add `/opt/homebrew/lib`).
-4. Run: `LD_LIBRARY_PATH=../../../engine/generated/nyx ./build/lantern-world-editor [world.json]`
+5. Run: `LD_LIBRARY_PATH=../../../engine/generated/nyx ./build/lantern-world-editor [world.json]`
    (`DYLD_LIBRARY_PATH` on macOS).
 
 `./build/lantern-world-editor --host-surface OUTPUT` writes the host functions it registers as a
