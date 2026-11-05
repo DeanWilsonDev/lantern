@@ -1,0 +1,194 @@
+NyxC :: import NyxC;
+
+lantern:::host :: namespace {
+    VEC3_SIGNATURE_RESULT: string : "lantern:::math:::Vec3";
+
+    Vec3Length :: (vector: Vec3) -> f32 {
+        return Math:::sqrt(vector.dot(vector));
+    }
+
+    ClampLengthMax3 :: (vector: Vec3, maximumLength: f32) -> Vec3 {
+        lengthSquared: f32 = vector.dot(vector);
+        if lengthSquared > maximumLength * maximumLength {
+            return vector / Math:::sqrt(lengthSquared) * maximumLength;
+        }
+        return vector;
+    }
+
+    ClampVec3 :: (vector: Vec3, minimum: Vec3, maximum: Vec3) -> Vec3 {
+        return lantern:::core:::ComponentMin3(lantern:::core:::ComponentMax3(vector, minimum), maximum);
+    }
+
+    DeclareVec3Type :: () -> lantern:::nyx:::HostType*! {
+        vectors := new lantern:::nyx:::HostType("lantern::math::Vec3");
+        unsafe {
+            zero~ Vec3 = Vec3 { };
+            zeroPointer: raw Vec3~* = zero;
+            vectors->ValueLayout(12, 4, Vec3Bytes(zeroPointer));
+        }
+        vectors->Field("x", NyxC:::NYX_KIND_F32, 0, 4);
+        vectors->Field("y", NyxC:::NYX_KIND_F32, 4, 4);
+        vectors->Field("z", NyxC:::NYX_KIND_F32, 8, 4);
+        return vectors!;
+    }
+
+    DeclareVec2Type :: () -> lantern:::nyx:::HostType*! {
+        vectors := new lantern:::nyx:::HostType("lantern::math::Vec2");
+        unsafe {
+            zero~ Vec2 = Vec2 { };
+            zeroPointer: raw Vec2~* = zero;
+            vectors->ValueLayout(8, 4, Vec2Bytes(zeroPointer));
+        }
+        vectors->Field("x", NyxC:::NYX_KIND_F32, 0, 4);
+        vectors->Field("y", NyxC:::NYX_KIND_F32, 4, 4);
+        return vectors!;
+    }
+
+    AddVec3Members :: (vectors: lantern:::nyx:::HostType~*, math: MathTypes) -> void {
+        vectors->StaticMethod("Zero", "() -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec3(context, math, Vec3 { });
+        });
+        vectors->StaticMethod("Up", "() -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec3(context, math, Vec3 { y: 1.0f });
+        });
+        vectors->StaticMethod("Down", "() -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec3(context, math, Vec3 { y: -1.0f });
+        });
+        vectors->StaticMethod("FromYaw", "(yaw: f32) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            yaw: f32 = context->F32(0);
+            ReturnVec3(context, math, lantern:::core:::DirectionFromYaw(yaw));
+        });
+        vectors->Operator("+", "(other: lantern:::math:::Vec3) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec3 = Vec3Argument(context, 0, math);
+            ReturnVec3(context, math, ReceiverVec3(context) + other);
+        });
+        vectors->Operator("-", "(other: lantern:::math:::Vec3) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec3 = Vec3Argument(context, 0, math);
+            ReturnVec3(context, math, ReceiverVec3(context) - other);
+        });
+        vectors->Operator("*", "(scalar: f32) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            scalar: f32 = context->F32(0);
+            ReturnVec3(context, math, ReceiverVec3(context) * scalar);
+        });
+        vectors->Operator("/", "(scalar: f32) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            scalar: f32 = context->F32(0);
+            ReturnVec3(context, math, ReceiverVec3(context) / scalar);
+        });
+        vectors->Operator("-", "() -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec3(context, math, -ReceiverVec3(context));
+        });
+        vectors->Method("Cross", "(other: lantern:::math:::Vec3) -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec3 = Vec3Argument(context, 0, math);
+            ReturnVec3(context, math, ReceiverVec3(context).cross(other));
+        });
+        vectors->Method("Normalized", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec3(context, math, lantern:::core:::NormalizeOr3(ReceiverVec3(context), Vec3 { }));
+        });
+        vectors->Method("Horizontal", "() -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            vector: Vec3 = ReceiverVec3(context);
+            ReturnVec3(context, math, Vec3 { x: vector.x, y: 0.0f, z: vector.z });
+        });
+        vectors->Method("WithX", "(x: f32) -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            vector: Vec3 = ReceiverVec3(context);
+            ReturnVec3(context, math, Vec3 { x: context->F32(0), y: vector.y, z: vector.z });
+        });
+        vectors->Method("WithY", "(y: f32) -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            vector: Vec3 = ReceiverVec3(context);
+            ReturnVec3(context, math, Vec3 { x: vector.x, y: context->F32(0), z: vector.z });
+        });
+        vectors->Method("WithZ", "(z: f32) -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            vector: Vec3 = ReceiverVec3(context);
+            ReturnVec3(context, math, Vec3 { x: vector.x, y: vector.y, z: context->F32(0) });
+        });
+        vectors->Method("ClampLength", "(maximum: f32) -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            maximum: f32 = context->F32(0);
+            ReturnVec3(context, math, ClampLengthMax3(ReceiverVec3(context), maximum));
+        });
+        vectors->Method("Lerp", "(other: lantern:::math:::Vec3, t: f32) -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec3 = Vec3Argument(context, 0, math);
+            amount: f32 = context->F32(1);
+            ReturnVec3(context, math, lantern:::core:::Lerp3(ReceiverVec3(context), other, amount));
+        });
+        vectors->Method("Clamp", "(minimum: lantern:::math:::Vec3, maximum: lantern:::math:::Vec3) -> lantern:::math:::Vec3", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            minimum: Vec3 = Vec3Argument(context, 0, math);
+            maximum: Vec3 = Vec3Argument(context, 1, math);
+            ReturnVec3(context, math, ClampVec3(ReceiverVec3(context), minimum, maximum));
+        });
+        vectors->Method("Dot", "(other: lantern:::math:::Vec3) -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec3 = Vec3Argument(context, 0, math);
+            context->ReturnF32(ReceiverVec3(context).dot(other));
+        });
+        vectors->Method("Length", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            context->ReturnF32(Vec3Length(ReceiverVec3(context)));
+        });
+        vectors->Method("LengthSquared", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            vector: Vec3 = ReceiverVec3(context);
+            context->ReturnF32(vector.dot(vector));
+        });
+        vectors->Method("DistanceTo", "(other: lantern:::math:::Vec3) -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec3 = Vec3Argument(context, 0, math);
+            context->ReturnF32(Vec3Length(ReceiverVec3(context) - other));
+        });
+        vectors->Method("Yaw", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            context->ReturnF32(lantern:::core:::YawFromDirection(ReceiverVec3(context)));
+        });
+    }
+
+    AddVec2Members :: (vectors: lantern:::nyx:::HostType~*, math: MathTypes) -> void {
+        vectors->StaticMethod("Zero", "() -> lantern:::math:::Vec2", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec2(context, math, Vec2 { });
+        });
+        vectors->Operator("-", "() -> lantern:::math:::Vec2", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec2(context, math, -ReceiverVec2(context));
+        });
+        vectors->Operator("+", "(other: lantern:::math:::Vec2) -> lantern:::math:::Vec2", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec2 = Vec2Argument(context, 0, math);
+            ReturnVec2(context, math, ReceiverVec2(context) + other);
+        });
+        vectors->Operator("-", "(other: lantern:::math:::Vec2) -> lantern:::math:::Vec2", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            other: Vec2 = Vec2Argument(context, 0, math);
+            ReturnVec2(context, math, ReceiverVec2(context) - other);
+        });
+        vectors->Operator("*", "(scalar: f32) -> lantern:::math:::Vec2", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            scalar: f32 = context->F32(0);
+            ReturnVec2(context, math, ReceiverVec2(context) * scalar);
+        });
+        vectors->Operator("/", "(scalar: f32) -> lantern:::math:::Vec2", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            scalar: f32 = context->F32(0);
+            ReturnVec2(context, math, ReceiverVec2(context) / scalar);
+        });
+        vectors->Method("Length", "() -> f32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            context->ReturnF32(lantern:::core:::Vec2Length(ReceiverVec2(context)));
+        });
+        vectors->Method("ClampLength", "(maximum: f32) -> lantern:::math:::Vec2", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            maximum: f32 = context->F32(0);
+            ReturnVec2(context, math, lantern:::core:::ClampLengthMax2(ReceiverVec2(context), maximum));
+        });
+        vectors->Method("Normalized", "() -> lantern:::math:::Vec2", false, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            ReturnVec2(context, math, lantern:::core:::NormalizeOrZero2(ReceiverVec2(context)));
+        });
+    }
+
+    RegisterMathApi :: (runtime: lantern:::nyx:::Runtime~*, math: MathTypes~*) -> lantern:::nyx:::NyxError*!? {
+        vec3 := DeclareVec3Type();
+        vec2 := DeclareVec2Type();
+        unsafe {
+            math->vec3 = vec3;
+            math->vec2 = vec2;
+        }
+        AddVec3Members(vec3, math^*);
+        AddVec2Members(vec2, math^*);
+        failure~ lantern:::nyx:::NyxError*!? = runtime->RegisterType(vec3!);
+        failure = FirstFailure(failure!, runtime->RegisterType(vec2!));
+        angles := new HostNamespace(runtime, "lantern::angle");
+        angles->Function("Wrap", "(radians: f32) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void {
+            context->ReturnF32(lantern:::core:::WrapAngle(context->F32(0)));
+        });
+        angles->Function("ToDegrees", "(radians: f32) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void {
+            context->ReturnF32(context->F32(0) * (180.0f / Math:::PI));
+        });
+        failure = FirstFailure(failure!, angles->Finish());
+        delete angles;
+        return failure!;
+    }
+}

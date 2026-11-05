@@ -1,0 +1,197 @@
+lantern:::host :: namespace {
+    RegisterEngineApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+        engine := new HostNamespace(runtime, "lantern::engine");
+        engine->Function("Log", "(text: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
+            text: string! = context->Text(0);
+            lantern:::core:::LogInfo("game", text);
+            delete text;
+        });
+        engine->Function("Warn", "(text: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
+            text: string! = context->Text(0);
+            lantern:::core:::LogWarn("game", text);
+            delete text;
+        });
+        engine->Function("Quit", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                state->requests.quit = true;
+            }
+        });
+        engine->Function("Flag", "(name: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            unsafe {
+                context->ReturnBool(state->Flag(name));
+            }
+            delete name;
+        });
+        engine->Function("Setting", "(name: string) -> string", new (context: lantern:::nyx:::CallContext~*) -> void {
+            name: string! = context->Text(0);
+            value: string!? = environmentVariable(name);
+            if text := value {
+                context->ReturnText(text);
+            } else {
+                context->ReturnText("");
+            }
+            delete value;
+            delete name;
+        });
+        failure := engine->Finish();
+        delete engine;
+        return failure!;
+    }
+
+    RegisterAudioApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+        audio := new HostNamespace(runtime, "lantern::audio");
+        audio->Function("Load", "(name: string, path: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            relative: string! = context->Text(1);
+            if !context->Refused() {
+                unsafe {
+                    path: string! = state->AssetPath(relative);
+                    state->audio->LoadSound(name, path);
+                    delete path;
+                }
+            }
+            delete relative;
+            delete name;
+        });
+        audio->Function("Play", "(name: string, volume: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            volume: f32 = context->F32(1);
+            if !context->Refused() {
+                unsafe {
+                    state->audio->Play(name, volume);
+                }
+            }
+            delete name;
+        });
+        audio->Function("PlayMusic", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            if !context->Refused() {
+                unsafe {
+                    state->audio->PlayMusic(name);
+                }
+            }
+            delete name;
+        });
+        audio->Function("StopMusic", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                state->audio->StopMusic();
+            }
+        });
+        failure := audio->Finish();
+        delete audio;
+        return failure!;
+    }
+
+    RegisterOverlayApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+        overlay := new HostNamespace(runtime, "lantern::overlay");
+        overlay->Function("Rect", "(x: f32, y: f32, width: f32, height: f32, color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            minimum := Vec2 { x: context->F32(0), y: context->F32(1) };
+            size := Vec2 { x: context->F32(2), y: context->F32(3) };
+            color: lantern:::core:::Color = ColorArgument(context, 4);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->overlay->Rect(minimum, minimum + size, color);
+            }
+        });
+        overlay->Function("Text", "(text: string, x: f32, y: f32, scale: f32, color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            text: string! = context->Text(0);
+            topLeft := Vec2 { x: context->F32(1), y: context->F32(2) };
+            scale: f32 = context->F32(3);
+            color: lantern:::core:::Color = ColorArgument(context, 4);
+            if !Stopped(context) {
+                unsafe {
+                    state->renderWorld->overlay->Text(text, topLeft, scale, color);
+                }
+            }
+            delete text;
+        });
+        overlay->Function("TextWidth", "(text: string, scale: f32) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void {
+            text: string! = context->Text(0);
+            scale: f32 = context->F32(1);
+            context->ReturnF32(lantern:::renderer:::MeasureText(text, scale).x);
+            delete text;
+        });
+        overlay->Function("TextHeight", "(text: string, scale: f32) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void {
+            text: string! = context->Text(0);
+            scale: f32 = context->F32(1);
+            context->ReturnF32(lantern:::renderer:::MeasureText(text, scale).y);
+            delete text;
+        });
+        overlay->Function("GlyphSize", "() -> f32", new (context: lantern:::nyx:::CallContext~*) -> void {
+            context->ReturnF32(f32(lantern:::renderer:::GLYPH_SIZE));
+        });
+        failure := overlay->Finish();
+        delete overlay;
+        return failure!;
+    }
+
+    RegisterRenderingApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        camera := new HostNamespace(runtime, "lantern::camera");
+        camera->Function("LookAt", "(eye: lantern:::math:::Vec3, target: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            eye: Vec3 = Vec3Argument(context, 0, math);
+            target: Vec3 = Vec3Argument(context, 1, math);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->camera = lantern:::renderer:::Camera:::LookAt(eye, target);
+            }
+        });
+        failure~ lantern:::nyx:::NyxError*!? = camera->Finish();
+        delete camera;
+        renderer := new HostNamespace(runtime, "lantern::renderer");
+        renderer->Function("SetClearColor", "(color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            color: lantern:::core:::Color = ColorArgument(context, 0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->clearColor = color;
+            }
+        });
+        renderer->Function("SetFog", "(start: f32, end: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            start: f32 = context->F32(0);
+            end: f32 = context->F32(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->fogStart = start;
+                state->renderWorld->fogEnd = end;
+            }
+        });
+        failure = FirstFailure(failure!, renderer->Finish());
+        delete renderer;
+        screen := new HostNamespace(runtime, "lantern::screen");
+        screen->Function("Width", "() -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnF32(state->screenSize.x);
+            }
+        });
+        screen->Function("Height", "() -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnF32(state->screenSize.y);
+            }
+        });
+        screen->Function("UiScale", "() -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnF32(state->uiScale);
+            }
+        });
+        screen->Function("SetMouseCaptured", "(captured: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            captured: bool = context->Bool(0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->requests.mouseCaptured = captured;
+            }
+        });
+        failure = FirstFailure(failure!, screen->Finish());
+        delete screen;
+        return failure!;
+    }
+}

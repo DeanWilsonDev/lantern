@@ -1,0 +1,383 @@
+lantern:::host :: namespace {
+    GAME_SCENE_VALUE: u32 : 1;
+    ENGINE_RELOAD_ACTION_NAME: string : "engine_reload_scripts";
+    ENGINE_TOGGLE_HUD_ACTION_NAME: string : "engine_toggle_debug_hud";
+
+    GameScene :: () -> lantern:::engine:::SceneId {
+        return lantern:::engine:::SceneId { value: GAME_SCENE_VALUE };
+    }
+
+    EngineReloadAction :: () -> lantern:::core:::ActionId {
+        return lantern:::core:::ActionId { value: 0 };
+    }
+
+    EngineToggleHudAction :: () -> lantern:::core:::ActionId {
+        return lantern:::core:::ActionId { value: 1 };
+    }
+
+    IsEngineAction :: (action: lantern:::core:::ActionId) -> bool {
+        return action == EngineReloadAction() || action == EngineToggleHudAction();
+    }
+
+    EngineActions :: () -> lantern:::core:::ActionSet*! {
+        actions := new lantern:::core:::ActionSet();
+        actions->Register(ENGINE_RELOAD_ACTION_NAME, lantern:::core:::ActionKind:::Button);
+        actions->Register(ENGINE_TOGGLE_HUD_ACTION_NAME, lantern:::core:::ActionKind:::Button);
+        return actions!;
+    }
+
+    EngineBindings :: () -> lantern:::core:::Bindings*! {
+        bindings := new lantern:::core:::Bindings();
+        bindings->Bind(EngineReloadAction(), lantern:::core:::Binding:::Key(lantern:::core:::KeyCode:::F5));
+        bindings->Bind(EngineToggleHudAction(), lantern:::core:::Binding:::Key(lantern:::core:::KeyCode:::F1));
+        bindings->Bind(EngineToggleHudAction(), lantern:::core:::Binding:::Key(lantern:::core:::KeyCode:::Backquote));
+        bindings->Bind(EngineToggleHudAction(), lantern:::core:::Binding:::Gamepad(lantern:::core:::GamepadButton:::Back));
+        return bindings!;
+    }
+
+    InputState :: class {
+    public:
+        actions~ lantern:::core:::ActionSet*!;
+        bindings~ lantern:::core:::Bindings*!;
+        configurationChanged~ bool = true;
+        snapshot~ lantern:::core:::InputSnapshot*!;
+
+        InputState~: () {
+            actions = EngineActions();
+            bindings = EngineBindings();
+            snapshot = new lantern:::core:::InputSnapshot();
+        }
+
+        !InputState~: () {
+            delete actions;
+            delete bindings;
+            delete snapshot;
+        }
+
+        Reset~: () -> void {
+            delete actions;
+            delete bindings;
+            actions = EngineActions();
+            bindings = EngineBindings();
+            configurationChanged = true;
+            SetSnapshot(new lantern:::core:::InputSnapshot());
+        }
+
+        SetSnapshot~: (newSnapshot: lantern:::core:::InputSnapshot*!) -> void {
+            delete snapshot;
+            snapshot = newSnapshot!;
+        }
+
+        Pressed :: (name: string) -> bool? {
+            if action := actions->Find(name) {
+                return snapshot->Pressed(action);
+            }
+            return null;
+        }
+    }
+
+    EntityTags :: class {
+    public:
+        entity~ lantern:::core:::Handle<lantern:::engine:::EntityTag> = lantern:::core:::Handle<lantern:::engine:::EntityTag> { };
+        kind~ string!;
+        propertyKeys~ Array<string!>! = [];
+        propertyValues~ Array<lantern:::world:::PropertyValue>! = [];
+        propertyTexts~ Array<string!>! = [];
+
+        EntityTags~: (taggedEntity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, entityKind: string) {
+            entity = taggedEntity;
+            kind = `${entityKind}`;
+        }
+
+        !EntityTags~: () {
+            delete kind;
+            propertyKeys.freeAll();
+            delete propertyValues;
+            propertyTexts.freeAll();
+        }
+
+        PropertyIndex :: (key: string) -> usize? {
+            for index~ usize = 0; index < propertyKeys.length(); index++ {
+                if propertyKeys[index] == key {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        AddProperty~: (key: string, value: lantern:::world:::PropertyValue, text: string) -> void {
+            propertyKeys.push(`${key}`);
+            propertyValues.push(value);
+            propertyTexts.push(`${text}`);
+        }
+    }
+
+    EntityBody :: struct {
+        entity~ lantern:::core:::Handle<lantern:::engine:::EntityTag> = lantern:::core:::Handle<lantern:::engine:::EntityTag> { };
+        body~ lantern:::core:::Handle<lantern:::physics:::KinematicBody> = lantern:::core:::Handle<lantern:::physics:::KinematicBody> { };
+    }
+
+    PlatformRequests :: struct {
+        quit~ bool = false;
+        mouseCaptured~ bool? = null;
+    }
+
+    FlagOverride :: struct {
+        value~ bool = false;
+    }
+
+    EngineState :: class {
+    public:
+        assetsDirectory~ string!? = null;
+        world~ lantern:::engine:::World*!;
+        collision~ lantern:::physics:::CollisionWorld*!;
+        renderer~ RenderBackend*!;
+        audio~ lantern:::engine:::AudioSystem*!;
+        renderWorld~ lantern:::renderer:::RenderWorld*!;
+        debugValues~ lantern:::core:::DebugValues*!;
+        debugHud~ lantern:::debug:::DebugHud*!;
+        input~ InputState*!;
+        requests~ PlatformRequests = PlatformRequests { };
+        screenSize~ Vec2 = Vec2 { x: 1280.0f, y: 720.0f };
+        uiScale~ f32 = 2.0f;
+        materialNames~ Array<string!>! = [];
+        materialTextures~ Array<lantern:::core:::Handle<lantern:::renderer:::TextureTag>>! = [];
+        scriptMeshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
+        scriptTextures~ Array<lantern:::core:::Handle<lantern:::renderer:::TextureTag>>! = [];
+        worldMeshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
+        entityTags~ Array<EntityTags*!>! = [];
+        entityBodies~ Array<EntityBody>! = [];
+        fontAtlas~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
+        flagNames~ Array<string!>! = [];
+        flagValues~ Array<bool>! = [];
+
+        EngineState~: (backend: RenderBackend*!, audioSystem: lantern:::engine:::AudioSystem*!, assets: string?) {
+            if directory := assets {
+                assetsDirectory = `${directory}`;
+            }
+            world = new lantern:::engine:::World();
+            collision = new lantern:::physics:::CollisionWorld();
+            renderer = backend!;
+            audio = audioSystem!;
+            renderWorld = new lantern:::renderer:::RenderWorld();
+            debugValues = new lantern:::core:::DebugValues();
+            debugHud = new lantern:::debug:::DebugHud();
+            debugHud->visible = false;
+            input = new InputState();
+        }
+
+        !EngineState~: () {
+            delete assetsDirectory;
+            delete world;
+            delete collision;
+            delete renderWorld;
+            delete renderer;
+            delete audio;
+            delete debugValues;
+            delete debugHud;
+            delete input;
+            materialNames.freeAll();
+            delete materialTextures;
+            delete scriptMeshes;
+            delete scriptTextures;
+            delete worldMeshes;
+            entityTags.freeAll();
+            delete entityBodies;
+            flagNames.freeAll();
+            delete flagValues;
+        }
+
+        static Create :: (backend: RenderBackend*!, audioSystem: lantern:::engine:::AudioSystem*!, assets: string?) -> Result<EngineState*!, string!> {
+            state := new EngineState(backend!, audioSystem!, assets);
+            atlas := lantern:::renderer:::FontAtlas();
+            defer delete atlas;
+            created := state->renderer->CreateTexture(atlas);
+            when created! {
+                Result:::Ok(texture) -> {
+                    state->fontAtlas = texture;
+                    state->renderWorld->overlayTexture = texture;
+                    return Result<EngineState*!, string!>:::Ok(state!);
+                },
+                Result:::Err(message) -> {
+                    delete state;
+                    return Result<EngineState*!, string!>:::Err(message!);
+                }
+            }
+        }
+
+        AssetPath :: (relative: string) -> string! {
+            if directory := assetsDirectory {
+                if relative.length() > 0 && relative.byteAt(0) == u8(47) {
+                    return `${relative}`;
+                }
+                return `${directory}/${relative}`;
+            }
+            return `${relative}`;
+        }
+
+        SetFlag~: (name: string, value: bool) -> void {
+            for index~ usize = 0; index < flagNames.length(); index++ {
+                if flagNames[index] == name {
+                    flagValues[index] = value;
+                    return;
+                }
+            }
+            flagNames.push(`${name}`);
+            flagValues.push(value);
+        }
+
+        Flag :: (name: string) -> bool {
+            for index~ usize = 0; index < flagNames.length(); index++ {
+                if flagNames[index] == name {
+                    return flagValues[index];
+                }
+            }
+            return EnvironmentFlag(name);
+        }
+
+        SetMaterial~: (name: string, texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>) -> void {
+            for index~ usize = 0; index < materialNames.length(); index++ {
+                if materialNames[index] == name {
+                    materialTextures[index] = texture;
+                    return;
+                }
+            }
+            materialNames.push(`${name}`);
+            materialTextures.push(texture);
+        }
+
+        Material :: (name: string) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
+            for index~ usize = 0; index < materialNames.length(); index++ {
+                if materialNames[index] == name {
+                    return materialTextures[index];
+                }
+            }
+            return null;
+        }
+
+        TagsIndex :: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> usize? {
+            for index~ usize = 0; index < entityTags.length(); index++ {
+                if entityTags[index]->entity == entity {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        Tags :: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> EntityTags*? {
+            if index := TagsIndex(entity) {
+                return entityTags[index];
+            }
+            return null;
+        }
+
+        SetTags~: (tags: EntityTags*!) -> void {
+            RemoveTags(tags->entity);
+            entityTags.push(tags!);
+        }
+
+        RemoveTags~: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> void {
+            if index := TagsIndex(entity) {
+                removed := entityTags.remove(index);
+                delete removed;
+            }
+        }
+
+        Body :: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> lantern:::core:::Handle<lantern:::physics:::KinematicBody>? {
+            for entry in entityBodies {
+                if entry.entity == entity {
+                    return entry.body;
+                }
+            }
+            return null;
+        }
+
+        SetBody~: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, body: lantern:::core:::Handle<lantern:::physics:::KinematicBody>) -> void {
+            for index~ usize = 0; index < entityBodies.length(); index++ {
+                if entityBodies[index].entity == entity {
+                    entityBodies[index] = EntityBody { entity: entity, body: body };
+                    return;
+                }
+            }
+            entityBodies.push(EntityBody { entity: entity, body: body });
+        }
+
+        ClearWorld~: () -> void {
+            world->DespawnScene(GameScene());
+            for mesh in worldMeshes {
+                renderer->RemoveMesh(mesh);
+            }
+            worldMeshes.clear();
+            delete collision;
+            collision = new lantern:::physics:::CollisionWorld();
+            entityTags.freeAll();
+            entityTags = [];
+            entityBodies.clear();
+        }
+
+        ResetForNewSession~: () -> void {
+            ClearWorld();
+            for mesh in scriptMeshes {
+                renderer->RemoveMesh(mesh);
+            }
+            scriptMeshes.clear();
+            for texture in scriptTextures {
+                renderer->RemoveTexture(texture);
+            }
+            scriptTextures.clear();
+            materialNames.freeAll();
+            materialNames = [];
+            materialTextures.clear();
+            audio->StopMusic();
+            debugValues->Clear();
+            input->Reset();
+            requests.mouseCaptured = false;
+            overlayTexture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = renderWorld->overlayTexture;
+            delete renderWorld;
+            renderWorld = new lantern:::renderer:::RenderWorld();
+            renderWorld->overlayTexture = overlayTexture;
+        }
+    }
+
+    EnvironmentFlag :: (name: string) -> bool {
+        value: string!? = environmentVariable(name);
+        defer delete value;
+        if text := value {
+            return text.length() > 0 && text != "0";
+        }
+        return false;
+    }
+
+    HexDigit :: (byte: u8) -> u32? {
+        if byte >= u8(48) && byte <= u8(57) {
+            return u32(byte) - 48;
+        }
+        if byte >= u8(97) && byte <= u8(102) {
+            return u32(byte) - 87;
+        }
+        if byte >= u8(65) && byte <= u8(70) {
+            return u32(byte) - 55;
+        }
+        return null;
+    }
+
+    ParseColor :: (text: string) -> lantern:::core:::Color? {
+        start~ usize = 0;
+        if text.length() > 0 && text.byteAt(0) == u8(35) {
+            start = 1;
+        }
+        digits: usize = text.length() - start;
+        if digits != 6 && digits != 8 {
+            return null;
+        }
+        value~ u32 = 0;
+        for index~ usize = start; index < text.length(); index++ {
+            guard digit := HexDigit(text.byteAt(index)) return null;
+            value = (value << 4) | digit;
+        }
+        if digits == 6 {
+            return lantern:::core:::Color:::FromHex(value);
+        }
+        return lantern:::core:::Color:::FromHex(value >> 8).WithAlpha(f32(value & 255) / 255.0f);
+    }
+}

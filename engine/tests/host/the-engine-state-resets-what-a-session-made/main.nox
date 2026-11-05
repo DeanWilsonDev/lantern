@@ -1,0 +1,93 @@
+lantern :: import lantern;
+
+SameColor :: (parsed: lantern:::core:::Color?, expected: lantern:::core:::Color) -> bool {
+    if color := parsed {
+        return color == expected;
+    }
+    return false;
+}
+
+IsTexture :: (texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?, expected: lantern:::core:::Handle<lantern:::renderer:::TextureTag>) -> bool {
+    if found := texture {
+        return found == expected;
+    }
+    return false;
+}
+
+main :: () -> i32 {
+    renderer := new lantern:::host:::HeadlessRenderer();
+    rendererPointer~ raw lantern:::host:::HeadlessRenderer~* = null;
+    unsafe {
+        rendererPointer = renderer;
+    }
+    created := lantern:::host:::EngineState:::Create(renderer!, new lantern:::engine:::AudioSystem(null), "/games/demo/assets");
+    state~ lantern:::host:::EngineState*!? = null;
+    when created! {
+        Result:::Ok(made) -> {
+            state = made!;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+        }
+    }
+    guard engine ~= state return 1;
+    unsafe {
+        assert(rendererPointer->Stats().liveTextures == 1, "the font atlas is the first texture");
+        assert(IsTexture(engine->renderWorld->overlayTexture, engine->fontAtlas), "the overlay draws with the font atlas");
+        assert(engine->input->actions->Length() == 2, "only the engine's actions to begin with");
+        assert(engine->input->actions->Name(lantern:::host:::EngineReloadAction()) == "engine_reload_scripts", "reload is action 0");
+        assert(engine->input->actions->Name(lantern:::host:::EngineToggleHudAction()) == "engine_toggle_debug_hud", "the HUD toggle is action 1");
+        assert(engine->input->bindings->entries.length() == 4, "F5, F1, the backquote and the pad's Back");
+        assert(!engine->debugHud->visible, "the HUD starts hidden");
+        path: string! = engine->AssetPath("sounds/jump.wav");
+        assert(path == "/games/demo/assets/sounds/jump.wav", "asset paths are under the assets directory");
+        delete path;
+        mesh := new lantern:::renderer:::MeshData();
+        when engine->renderer->CreateMesh(mesh) {
+            Result:::Ok(handle) -> {
+                engine->scriptMeshes.push(handle);
+            },
+            Result:::Err(message) -> {
+                delete message;
+            }
+        }
+        when engine->renderer->CreateMesh(mesh) {
+            Result:::Ok(handle) -> {
+                engine->worldMeshes.push(handle);
+            },
+            Result:::Err(message) -> {
+                delete message;
+            }
+        }
+        delete mesh;
+        assert(rendererPointer->Stats().liveMeshes == 2, "two meshes are live");
+        entity := engine->world->Spawn("gem", lantern:::host:::GameScene(), lantern:::engine:::Transform:::Identity());
+        engine->world->Spawn("sun", lantern:::engine:::PersistentScene(), lantern:::engine:::Transform:::Identity());
+        engine->SetTags(new lantern:::host:::EntityTags(entity, "gem"));
+        engine->input->actions->Register("jump", lantern:::core:::ActionKind:::Button);
+        engine->debugValues->SetText("Game/Score", "12");
+        engine->SetMaterial("ground", engine->fontAtlas);
+        engine->ClearWorld();
+        assert(engine->world->Length() == 1, "clearing the world keeps entities outside the game's scene");
+        assert(engine->Tags(entity) == null, "clearing the world drops the tags");
+        assert(rendererPointer->Stats().liveMeshes == 1, "clearing the world releases the world-file meshes");
+        engine->ResetForNewSession();
+        assert(rendererPointer->Stats().liveMeshes == 0, "a new session releases the script's meshes");
+        assert(rendererPointer->Stats().liveTextures == 1, "the font atlas stays");
+        assert(engine->input->actions->Length() == 2, "a new session drops the game's actions");
+        assert(engine->debugValues->Length() == 0, "a new session drops the game's debug values");
+        assert(engine->Material("ground") == null, "a new session drops the materials");
+        assert(IsTexture(engine->renderWorld->overlayTexture, engine->fontAtlas), "the overlay keeps the font atlas");
+    }
+    assert(SameColor(lantern:::host:::ParseColor("#FF8000"), lantern:::core:::Color:::FromHex(16744448)), "six digits with a hash");
+    if translucent := lantern:::host:::ParseColor("00000099") {
+        assert(translucent.a > 0.5999f && translucent.a < 0.6001f, "eight digits carry the alpha");
+    } else {
+        assert(false, "eight digits parse");
+    }
+    assert(lantern:::host:::ParseColor("nope") == null, "anything else is not a colour");
+    delete state;
+    print("the engine state resets what a session made");
+    return 0;
+}

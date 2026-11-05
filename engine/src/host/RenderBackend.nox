@@ -1,0 +1,98 @@
+lantern:::host :: namespace {
+    OwnedText :: (text: string) -> string! {
+        return `${text}`;
+    }
+
+    RenderReport :: struct {
+        presented~ bool = false;
+        drawsSubmitted~ u32 = 0;
+        drawsCulled~ u32 = 0;
+        triangles~ u64 = 0;
+        lineCount~ u32 = 0;
+    }
+
+    RenderBackend :: interface {
+        DriverName : () -> string : 0;
+        CreateMesh~ (mesh: lantern:::renderer:::MeshData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!> : 0;
+        RemoveMesh~ (mesh: lantern:::core:::Handle<lantern:::renderer:::MeshTag>) -> void : 0;
+        CreateTexture~ (texture: lantern:::renderer:::TextureData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, string!> : 0;
+        RemoveTexture~ (texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>) -> void : 0;
+        Render~ (world: lantern:::renderer:::RenderWorld*) -> Result<RenderReport, string!> : 0;
+        Capture~ (world: lantern:::renderer:::RenderWorld*, width: u32, height: u32) -> Result<lantern:::renderer:::TextureData*!, string!> : 0;
+    }
+
+    MeshSlot :: struct { }
+
+    TextureSlot :: struct { }
+
+    HeadlessStats :: struct {
+        liveMeshes~ usize = 0;
+        liveTextures~ usize = 0;
+        framesRendered~ u64 = 0;
+        lastDrawCount~ usize = 0;
+    }
+
+    HeadlessRenderer :: class {
+        implements:
+            RenderBackend;
+    public:
+        meshes~ lantern:::core:::Pool<MeshSlot>*!;
+        textures~ lantern:::core:::Pool<TextureSlot>*!;
+        stats~ HeadlessStats = HeadlessStats { };
+
+        HeadlessRenderer~: () {
+            meshes = new lantern:::core:::Pool<MeshSlot>();
+            textures = new lantern:::core:::Pool<TextureSlot>();
+        }
+
+        !HeadlessRenderer~: () {
+            delete meshes;
+            delete textures;
+        }
+
+        Stats :: () -> HeadlessStats {
+            return stats;
+        }
+
+        UpdateLiveCounts~: () -> void {
+            stats.liveMeshes = meshes->Length();
+            stats.liveTextures = textures->Length();
+        }
+
+        DriverName :: () -> string {
+            return "headless";
+        }
+
+        CreateMesh~: (mesh: lantern:::renderer:::MeshData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!> {
+            slot: lantern:::core:::Handle<MeshSlot> = meshes->Insert(MeshSlot { });
+            UpdateLiveCounts();
+            return Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!>:::Ok(lantern:::core:::CastHandle<MeshSlot, lantern:::renderer:::MeshTag>(slot));
+        }
+
+        RemoveMesh~: (mesh: lantern:::core:::Handle<lantern:::renderer:::MeshTag>) -> void {
+            meshes->Remove(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, MeshSlot>(mesh));
+            UpdateLiveCounts();
+        }
+
+        CreateTexture~: (texture: lantern:::renderer:::TextureData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, string!> {
+            slot: lantern:::core:::Handle<TextureSlot> = textures->Insert(TextureSlot { });
+            UpdateLiveCounts();
+            return Result<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, string!>:::Ok(lantern:::core:::CastHandle<TextureSlot, lantern:::renderer:::TextureTag>(slot));
+        }
+
+        RemoveTexture~: (texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>) -> void {
+            textures->Remove(lantern:::core:::CastHandle<lantern:::renderer:::TextureTag, TextureSlot>(texture));
+            UpdateLiveCounts();
+        }
+
+        Render~: (world: lantern:::renderer:::RenderWorld*) -> Result<RenderReport, string!> {
+            stats.framesRendered += 1;
+            stats.lastDrawCount = world->draws.length();
+            return Result<RenderReport, string!>:::Ok(RenderReport { presented: true, drawsSubmitted: u32(world->draws.length()) });
+        }
+
+        Capture~: (world: lantern:::renderer:::RenderWorld*, width: u32, height: u32) -> Result<lantern:::renderer:::TextureData*!, string!> {
+            return Result<lantern:::renderer:::TextureData*!, string!>:::Err(OwnedText("the headless renderer cannot capture"));
+        }
+    }
+}

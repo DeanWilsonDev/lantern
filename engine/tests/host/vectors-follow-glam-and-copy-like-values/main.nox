@@ -1,0 +1,52 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Length :: () -> f32 { v: lantern:::math:::Vec3 = { x: 3.0f, y: 4.0f }; return v.Length(); }\nArithmetic :: () -> lantern:::math:::Vec3 { a: lantern:::math:::Vec3 = { x: 1.0f, y: 2.0f, z: 3.0f }; b: lantern:::math:::Vec3 = { x: 0.5f }; return -(a + b * 2.0f - lantern:::math:::Vec3:::Up()) / 2.0f; }\nCopies :: () -> f32 { a: lantern:::math:::Vec3 = { x: 1.0f }; b~ lantern:::math:::Vec3 = a; b.x = 5.0f; return a.x; }\nClamped :: () -> f32 { v: lantern:::math:::Vec3 = { x: 30.0f, z: 40.0f }; return v.ClampLength(5.0f).Length(); }\nNormalized :: () -> lantern:::math:::Vec3 { v: lantern:::math:::Vec3 = { }; return v.Normalized(); }\nFacing :: () -> f32 { return lantern:::math:::Vec3:::FromYaw(1.0f).Yaw(); }\nPlanar :: () -> f32 { v: lantern:::math:::Vec2 = { x: 6.0f, y: 8.0f }; return (v.Normalized() * 2.0f + lantern:::math:::Vec2:::Zero()).Length(); }\nWrapped :: () -> f32 { return lantern:::angle:::Wrap(7.0f); }";
+
+SameVector :: (left: Vec3, right: Vec3) -> bool {
+    return left.x == right.x && left.y == right.y && left.z == right.z;
+}
+
+VectorResult :: (program: lantern:::nyx:::Program*, math: lantern:::host:::MathTypes, name: string) -> Vec3 {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    vector~ Vec3 = Vec3 { };
+    unsafe {
+        vector = lantern:::host:::Vec3At(math.vec3->BytesOf(value));
+    }
+    delete value;
+    return vector;
+}
+
+F32Result :: (program: lantern:::nyx:::Program*, name: string) -> f32 {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: f32 = lantern:::testing:::F32OrFail(value->F32());
+    delete value;
+    return result;
+}
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    failed := lantern:::host:::RegisterMathApi(runtime, math);
+    failedStatus: NyxC:::nyx_status = lantern:::testing:::StatusOf(failed!);
+    assert(failedStatus == NyxC:::NYX_OK, "the math API registers");
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    assert(F32Result(program, "Length") == 5.0f, "a vector's length");
+    assert(SameVector(VectorResult(program, math, "Arithmetic"), Vec3 { x: -1.0f, y: -0.5f, z: -1.5f }), "the operators run in Nyx's order");
+    assert(F32Result(program, "Copies") == 1.0f, "a vector copies on binding");
+    assert(F32Result(program, "Clamped") == 5.0f, "ClampLength shortens a long vector");
+    assert(SameVector(VectorResult(program, math, "Normalized"), Vec3 { }), "a zero vector normalises to zero");
+    facing: f32 = F32Result(program, "Facing");
+    assert(facing > 0.9999f && facing < 1.0001f, "FromYaw and Yaw are inverses");
+    assert(F32Result(program, "Planar") == 2.0f, "Vec2 normalises and scales");
+    wrapped: f32 = F32Result(program, "Wrapped");
+    assert(wrapped > 0.7168f && wrapped < 0.7169f, "angles wrap into (-pi, pi]");
+    delete program;
+    delete runtime;
+    print("vectors follow glam and copy like values");
+    return 0;
+}

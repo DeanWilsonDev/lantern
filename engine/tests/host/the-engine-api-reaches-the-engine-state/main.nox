@@ -1,0 +1,77 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Configure :: () -> void { lantern:::input:::DefineButton(\"jump\"); lantern:::input:::BindKey(\"jump\", \"Space\"); lantern:::input:::DefineVector(\"move\"); lantern:::input:::BindKeys(\"move\", \"W\", \"S\", \"A\", \"D\"); lantern:::input:::BindStick(\"move\", \"Left\", 1.0f); }\nDefineTwice :: () -> string { caught~ string = \"no failure\"; when lantern:::input:::DefineButton(\"jump\") { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nBindUnknown :: () -> string { caught~ string = \"no failure\"; when lantern:::input:::BindKey(\"dash\", \"X\") { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nBindEngine :: () -> string { caught~ string = \"no failure\"; when lantern:::input:::BindKey(\"engine_reload_scripts\", \"R\") { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nBindBadKey :: () -> string { caught~ string = \"no failure\"; when lantern:::input:::BindKey(\"jump\", \"space\") { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nAskUnknown :: () -> string { caught~ string = \"no failure\"; when lantern:::input:::IsPressed(\"dash\") { (answer) -> { caught = \"no failure\"; }, Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nJumping :: () -> bool { return lantern:::input:::IsPressed(\"jump\"); }\nDraw :: () -> void { lantern:::overlay:::Rect(0.0f, 0.0f, 10.0f, 10.0f, \"#FF000080\"); lantern:::overlay:::Text(\"hi\", 4.0f, 4.0f, 2.0f, \"FFFFFF\"); lantern:::renderer:::SetClearColor(\"102030\"); lantern:::renderer:::SetFog(5.0f, 50.0f); eye: lantern:::math:::Vec3 = { z: 5.0f }; lantern:::camera:::LookAt(eye, lantern:::math:::Vec3:::Zero()); }\nBadColor :: () -> string { caught~ string = \"no failure\"; when lantern:::renderer:::SetClearColor(\"teal\") { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, Error:::NotFound(message) -> { caught = `NotFound: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }\nSettings :: () -> bool { lantern:::screen:::SetMouseCaptured(true); lantern:::engine:::Quit(); return lantern:::engine:::Flag(\"LANTERN_TEST_FLAG\") && lantern:::screen:::Width() == 1280.0f && lantern:::overlay:::GlyphSize() == 8.0f; }\nSilent :: () -> void { lantern:::audio:::Load(\"jump\", \"sounds/missing.wav\"); lantern:::audio:::Play(\"jump\", 1.0f); lantern:::audio:::PlayMusic(\"theme\"); lantern:::audio:::StopMusic(); }";
+
+BoolResult :: (program: lantern:::nyx:::Program*, name: string) -> bool {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: bool = lantern:::testing:::BoolOrFail(value->Bool());
+    delete value;
+    return result;
+}
+
+TextResult :: (program: lantern:::nyx:::Program*, name: string) -> string! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: string! = lantern:::testing:::TextOrFail(value->Text());
+    delete value;
+    return result!;
+}
+
+ExpectFailure :: (program: lantern:::nyx:::Program*, name: string, expected: string) -> void {
+    failure: string! = TextResult(program, name);
+    if failure != expected {
+        print(`${name} failed with '${failure}'`);
+    }
+    assert(failure == expected, "the call fails with the engine's message");
+    delete failure;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    state->input->configurationChanged = false;
+    lantern:::testing:::CallOrFail(program, "Configure");
+    assert(state->input->configurationChanged, "defining actions changes the configuration");
+    assert(state->input->actions->Length() == 4, "two engine actions and the game's two");
+    assert(state->input->bindings->entries.length() == 7, "four engine bindings and the game's three");
+    ExpectFailure(program, "DefineTwice", "Unknown: the action 'jump' is defined twice");
+    ExpectFailure(program, "BindUnknown", "NotFound: no action named 'dash'; define it first");
+    ExpectFailure(program, "BindEngine", "Unknown: 'engine_reload_scripts' is an engine action");
+    ExpectFailure(program, "BindBadKey", "Unknown: 'space' is not a key name");
+    ExpectFailure(program, "AskUnknown", "NotFound: no action named 'dash'");
+    assert(!BoolResult(program, "Jumping"), "nothing is pressed yet");
+    pressed := new lantern:::core:::InputSnapshot();
+    pressed->states.push(lantern:::core:::ActionState { });
+    pressed->states.push(lantern:::core:::ActionState { });
+    pressed->states.push(lantern:::core:::ActionState { held: true, pressed: true });
+    state->input->SetSnapshot(pressed!);
+    assert(BoolResult(program, "Jumping"), "the script reads the snapshot the engine set");
+    lantern:::testing:::CallOrFail(program, "Draw");
+    assert(state->renderWorld->overlay->vertices.length() > 6, "the overlay has the rectangle and the text");
+    assert(state->renderWorld->clearColor == lantern:::core:::Color:::FromHex(1056816), "the clear colour is set");
+    assert(state->renderWorld->fogStart == 5.0f && state->renderWorld->fogEnd == 50.0f, "the fog is set");
+    assert(state->renderWorld->camera.position.z == 5.0f, "the camera looks from the eye");
+    ExpectFailure(program, "BadColor", "Unknown: 'teal' is not a colour; write \"RRGGBB\" or \"RRGGBBAA\"");
+    state->SetFlag("LANTERN_TEST_FLAG", true);
+    assert(BoolResult(program, "Settings"), "flags, screen size and glyph size reach the script");
+    assert(state->requests.quit, "Quit asks the engine to quit");
+    if captured := state->requests.mouseCaptured {
+        assert(captured, "the mouse capture request is recorded");
+    } else {
+        assert(false, "the mouse capture request is recorded");
+    }
+    lantern:::testing:::CallOrFail(program, "Silent");
+    assert(state->audio->Stats().activeVoices == 0, "a missing sound stays silent");
+    delete program;
+    delete runtime;
+    delete state;
+    print("the engine API reaches the engine state");
+    return 0;
+}

@@ -8,8 +8,8 @@ So far it has the scaffold (milestone L0): a Nox project, its C dependencies thr
 the shaders in GLSL and an entry point that links SDL3, cgltf and stb_image and reads one asset with each. It also has
 the core module (milestone L1), the window and frame loop (milestone L2), the renderer, with PNG and glTF loading and
 the SDL GPU backend (milestone L3), collision and the world file (milestone L4), and the entity world, audio and debug
-drawing (milestone L5), and the first half of the game host (milestone L6): the Nox wrapper over Nyx's C API,
-described under "Layout".
+drawing (milestone L5), and the start of the game host (milestone L6): the Nox wrapper over Nyx's C API, the engine
+state a game runs against and the first engine API namespaces, described under "Layout".
 
 ## What you need
 
@@ -105,6 +105,17 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   one trampoline that finds its `HostCall` from the C userdata pointer. Delete values and programs before their
   runtime: each one counts itself in the runtime's `RuntimeLedger`, and deleting a runtime while any is alive stops
   the program with a message naming what's left.
+- `src/host/` is the Rust `game-host` crate, `lantern:::host`, so far without the script session and the host itself:
+  `EngineState.nox` (everything the engine owns while a game runs, the engine's own F5 and F1 actions, the tags world
+  files give entities, `ParseColor`), `RenderBackend.nox` (the `RenderBackend` interface and `HeadlessRenderer`, which
+  hands out handles and counts what's live so a game runs in a test without a GPU), `HostApi.nox` (`HostNamespace`,
+  which registers functions under a namespace path such as `lantern::input`, and the argument helpers: vectors cross
+  as `lantern:::math:::Vec3` and `Vec2` value types, handles as `i64`, a failure is `Error:::NotFound` or
+  `Error:::Unknown`) and one file per group of the engine API: `MathApi.nox`, `EngineApi.nox` (engine, audio,
+  overlay, camera, renderer and screen), `InputApi.nox` with `DeviceNames.nox`, and `EngineApis.nox`, which registers
+  them all. `docs/game-api.md` lists every call.
+- `src/runner/GpuRenderBackend.nox` is the `RenderBackend` over `GpuRenderer`, kept out of `src/host` so the host's
+  tests build without the GPU code.
 - `src/sdl/` is the Rust `sdl-facade` crate: `SdlContext` (initialises SDL and shuts it down when deleted),
   `SdlWindow`, `SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
   `SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `SdlAudioOutput` (an `AudioSink` on
@@ -150,7 +161,7 @@ runs `nox test` over every suite under `tests/`, and passes its arguments throug
 `nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
 It points `LIBRARY_PATH` at `generated/mist`, which the renderer and asset tests link cgltf and stb_image from, so
 run `./tools/install-dependencies.sh` first. It also puts `generated/nyx` on `LIBRARY_PATH`, `LD_LIBRARY_PATH` and
-`DYLD_LIBRARY_PATH` for the `tests/nyx` programs, so run `./tools/bind-nyx.sh` and `./tools/build-nyx.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
+`DYLD_LIBRARY_PATH` for the `tests/nyx` and `tests/host` programs, so run `./tools/bind-nyx.sh` and `./tools/build-nyx.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
 `generated/sdl.nox`, so run `./tools/bind-sdl.sh` first. Two of the `tests/gpu` programs render with a real GPU device
 and skip (logging why) when there isn't one; set `LANTERN_REQUIRE_GPU=1` to make that a failure. On Linux with no
 display, the script uses SDL's offscreen video driver, which renders with a software Vulkan driver such as lavapipe
