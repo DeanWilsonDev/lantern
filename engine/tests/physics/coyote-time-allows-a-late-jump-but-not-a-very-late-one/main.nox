@@ -1,0 +1,27 @@
+lantern :: import lantern;
+
+WalkOffLedgeThenJump :: (delaySteps: u32) -> bool {
+    world := new lantern:::physics:::CollisionWorld();
+    defer delete world;
+    world->AddStaticBox(Vec3 { x: 0.0f, y: -0.5f, z: 0.0f }, Vec3 { x: 2.0f, y: 0.5f, z: 2.0f });
+    controller~ lantern:::physics:::CharacterController = lantern:::physicsrig:::ControllerAt(Vec3 { x: 0.0f, y: 0.0f, z: -1.0f });
+    lantern:::physicsrig:::Settle(controller, world);
+    while controller.grounded {
+        controller.Step(world, lantern:::physicsrig:::Walk(lantern:::physicsrig:::Forward()), lantern:::physicsrig:::STEP_SECONDS);
+    }
+    step~ u32 = 0;
+    while step < delaySteps {
+        controller.Step(world, lantern:::physicsrig:::Walk(lantern:::physicsrig:::Forward()), lantern:::physicsrig:::STEP_SECONDS);
+        step += 1;
+    }
+    events := controller.Step(world, lantern:::physics:::ControllerInput { moveDirection: lantern:::physicsrig:::Forward(), jumpPressed: true, jumpHeld: true }, lantern:::physicsrig:::STEP_SECONDS);
+    return events.jumped;
+}
+
+main :: () -> i32 {
+    assert(WalkOffLedgeThenJump(0), "a jump on the step the ground is lost works");
+    assert(WalkOffLedgeThenJump(4), "a jump 67 ms after leaving the ground works");
+    assert(!WalkOffLedgeThenJump(12), "a jump 200 ms after leaving the ground doesn't");
+    print("coyote time allows a late jump but not a very late one");
+    return 0;
+}

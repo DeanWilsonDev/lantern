@@ -96,6 +96,10 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   (`GpuPipelines.nox`, from the shaders `GpuShaders.nox` loads) and every mesh and texture (`GpuResources.nox`), and
   draws a `RenderWorld` to the window (`Render`) or to memory (`Capture`), culling draws against the camera's
   `Frustum`.
+- `src/physics/` is the Rust `physics` crate: `Geometry.nox` (triangles and closest points between points, segments
+  and triangles), `World.nox` (`CollisionWorld`: static triangles in a uniform grid, kinematic bodies, capsule casts,
+  contacts and raycasts) and `Controller.nox` (`CharacterController`: walking, jumping with coyote time and a jump
+  buffer, sliding along walls, stepping up stairs, snapping to the ground and riding moving platforms).
 - `src/stub/` is the stub game `main` runs until the game host can: it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the

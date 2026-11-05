@@ -1,0 +1,38 @@
+lantern :: import lantern;
+
+TraverseGapAtDisplayRate :: (displayHz: f64) -> Vec3 {
+    world := new lantern:::physics:::CollisionWorld();
+    defer delete world;
+    world->AddStaticBox(Vec3 { x: 0.0f, y: -0.5f, z: 0.0f }, Vec3 { x: 2.0f, y: 0.5f, z: 2.0f });
+    world->AddStaticBox(Vec3 { x: 0.0f, y: -0.5f, z: -17.0f }, Vec3 { x: 2.0f, y: 0.5f, z: 13.0f });
+    controller~ lantern:::physics:::CharacterController = lantern:::physicsrig:::ControllerAt(Vec3 { x: 0.0f, y: 0.0f, z: 1.0f });
+    clock~ lantern:::core:::FixedStepClock = lantern:::core:::FixedStepClock:::Create(f64(lantern:::physicsrig:::STEP_SECONDS), lantern:::core:::MAX_STEPS_PER_FRAME);
+    jumpSent~ bool = false;
+    frames: u32 = u32(3.0f * displayHz);
+    frame~ u32 = 0;
+    while frame < frames {
+        plan := clock.Advance(1.0f / displayHz);
+        jumpNow: bool = !jumpSent && controller.grounded && controller.feetPosition.z < -1.4f;
+        step~ u32 = 0;
+        while step < plan.stepCount {
+            input := lantern:::physics:::ControllerInput { moveDirection: lantern:::physicsrig:::Forward(), jumpPressed: jumpNow && step == 0, jumpHeld: true };
+            controller.Step(world, input, lantern:::physicsrig:::STEP_SECONDS);
+            step += 1;
+        }
+        jumpSent = jumpSent || (jumpNow && plan.stepCount > 0);
+        frame += 1;
+    }
+    return controller.feetPosition;
+}
+
+main :: () -> i32 {
+    reference: Vec3 = TraverseGapAtDisplayRate(60.0f);
+    rates: f64[5] = [30.0f, 60.0f, 75.0f, 144.0f, 240.0f];
+    for displayHz in rates {
+        finalPosition: Vec3 = TraverseGapAtDisplayRate(displayHz);
+        assert(Math:::abs(finalPosition.y) < 0.05f && finalPosition.z < -5.0f, "the player clears the gap and lands");
+        assert(lantern:::physicsrig:::Distance3(finalPosition, reference) < 0.25f, "within a step's travel of the 60 Hz run");
+    }
+    print("the gap is cleared at every display rate");
+    return 0;
+}
