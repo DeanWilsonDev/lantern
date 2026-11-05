@@ -116,7 +116,76 @@ lantern:::json :: namespace {
         if value == Math:::floor(value) && Math:::abs(value) < 10000000.0f {
             return `${i64(value)}`;
         }
-        return `${value}`;
+        return PlainDecimal(`${value}`);
+    }
+
+    PlainDecimal :: (text: string!) -> string! {
+        exponentIndex~ usize = text.length();
+        for index~ usize = 0; index < text.length(); index++ {
+            if text.byteAt(index) == 101 {
+                exponentIndex = index;
+            }
+        }
+        if exponentIndex == text.length() {
+            return text!;
+        }
+        plain~ string! = "";
+        firstDigitIndex~ usize = 0;
+        if text.byteAt(0) == 45 {
+            plain.appendByte(45);
+            firstDigitIndex = 1;
+        }
+        digits~ string! = "";
+        integerDigitCount~ i64 = 0;
+        seenPoint~ bool = false;
+        for index~ usize = firstDigitIndex; index < exponentIndex; index++ {
+            byte: u8 = text.byteAt(index);
+            if byte == 46 {
+                seenPoint = true;
+            } else {
+                digits.appendByte(byte);
+                if !seenPoint {
+                    integerDigitCount += 1;
+                }
+            }
+        }
+        exponent~ i64 = 0;
+        negativeExponent~ bool = false;
+        for index~ usize = exponentIndex + 1; index < text.length(); index++ {
+            byte: u8 = text.byteAt(index);
+            if byte == 45 {
+                negativeExponent = true;
+            } else if byte != 43 {
+                exponent = exponent * 10 + i64(byte - 48);
+            }
+        }
+        delete text;
+        if negativeExponent {
+            exponent = -exponent;
+        }
+        pointPosition: i64 = integerDigitCount + exponent;
+        digitCount: i64 = i64(digits.length());
+        if pointPosition <= 0 {
+            plain += "0.";
+            for zero~ i64 = 0; zero < -pointPosition; zero++ {
+                plain.appendByte(48);
+            }
+            plain += digits;
+        } else if pointPosition >= digitCount {
+            plain += digits;
+            for zero~ i64 = digitCount; zero < pointPosition; zero++ {
+                plain.appendByte(48);
+            }
+        } else {
+            for index~ i64 = 0; index < digitCount; index++ {
+                if index == pointPosition {
+                    plain.appendByte(46);
+                }
+                plain.appendByte(digits.byteAt(usize(index)));
+            }
+        }
+        delete digits;
+        return plain!;
     }
 
     Indent :: (text: string!, depth: u32) -> string! {
