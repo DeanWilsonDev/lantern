@@ -4,7 +4,7 @@
 /* Lantern's backend for Chaos components and Cosmos stylesheets.
  *
  * The bridge runs Chaos on the game's own Nyx runtime, keeps the mounted components as plain
- * nodes that implement the widget interface Chaos reconciles against (the contract Chaos reconciles against), and resolves each
+ * nodes that implement the widget interface Chaos reconciles against, and resolves each
  * node's Cosmos style. It does no layout and no drawing: the engine reads a snapshot of the nodes
  * with their resolved styles (lantern_chaos_ui_snapshot), lays them out and draws them, and sends
  * events back by node id (lantern_chaos_ui_dispatch).

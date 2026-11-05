@@ -2,6 +2,7 @@ lantern:::testing :: namespace {
     ScriptedFrame :: struct {
         time~ f64 = 0.0f;
         event~ lantern:::platform:::PlatformEvent? = null;
+        sameFrameAsPrevious~ bool = false;
     }
 
     ScriptedPlatform :: class {
@@ -13,6 +14,8 @@ lantern:::testing :: namespace {
         now~ f64 = 0.0f;
         minimized~ bool = false;
         mouseCaptured~ bool = false;
+        width~ u32 = 640;
+        height~ u32 = 360;
 
         ScriptedPlatform~: () { }
 
@@ -28,13 +31,33 @@ lantern:::testing :: namespace {
             frames.push(ScriptedFrame { time: time, event: event });
         }
 
+        AddEventToLastFrame~: (event: lantern:::platform:::PlatformEvent) -> void {
+            time~ f64 = 0.0f;
+            if frames.length() > 0 {
+                time = frames[frames.length() - 1].time;
+            }
+            frames.push(ScriptedFrame { time: time, event: event, sameFrameAsPrevious: true });
+        }
+
+        FrameCount :: () -> usize {
+            count~ usize = 0;
+            for frame in frames {
+                if !frame.sameFrameAsPrevious {
+                    count += 1;
+                }
+            }
+            return count;
+        }
+
         HasFrames :: () -> bool {
             return nextFrame < frames.length();
         }
 
         PumpEvents~: () -> Array<lantern:::platform:::PlatformEvent>! {
             events~ Array<lantern:::platform:::PlatformEvent>! = [];
-            if nextFrame < frames.length() {
+            first~ bool = true;
+            while nextFrame < frames.length() && (first || frames[nextFrame].sameFrameAsPrevious) {
+                first = false;
                 frame := frames[nextFrame];
                 nextFrame += 1;
                 now = frame.time;
@@ -60,9 +83,9 @@ lantern:::testing :: namespace {
 
         CurrentWindowMetrics :: () -> lantern:::platform:::WindowMetrics {
             if minimized {
-                return lantern:::platform:::WindowMetrics { logicalWidth: 640, logicalHeight: 360, minimized: true };
+                return lantern:::platform:::WindowMetrics { logicalWidth: width, logicalHeight: height, minimized: true };
             }
-            return lantern:::platform:::WindowMetrics { logicalWidth: 640, logicalHeight: 360, pixelWidth: 640, pixelHeight: 360 };
+            return lantern:::platform:::WindowMetrics { logicalWidth: width, logicalHeight: height, pixelWidth: width, pixelHeight: height };
         }
 
         SetMouseCaptured~: (captured: bool) -> void {

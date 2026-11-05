@@ -166,6 +166,13 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   host tests and the runner check run, `tests/support/games/broken/` is a game whose hook fails, and
   `tests/support/games/menu/` is the menu the `tests/chaosui` programs mount. `tests/support/platformer/` runs
   `games/platformer` headless for the `tests/host` programs that play it, as the Rust `headless_game` tests did.
+- `tests/host/the-platformer-matches-the-rust-trace/` plays the platformer under the autopilot for 600 frames and
+  walks it from the menu for 240 frames, and compares every frame's player, camera and game debug values and draw
+  count with `rust-autopilot.trace` and `rust-walking.trace`. They match exactly. The Rust test
+  `the_platformer_writes_its_traces` writes those files when `LANTERN_TRACE_DIRECTORY` is set, and the Nox test writes
+  `nox-*.trace` there too.
+- `benchmarks/headless-platformer/` times the same autopilot run against the Rust build; `benchmarks/results.md` records
+  the numbers and how to run both.
 - `tests/world/the-course-matches-the-rust-trace-at-every-display-rate/` runs the jump course the way the Rust
   `course_traversal` test does and compares every fixed step's position, velocity and grounded flag with the Rust run's
   `rust-<hz>hz.trace`, which match bit for bit. Set `LANTERN_TRACE_DIRECTORY` to write the Nox traces there too, and

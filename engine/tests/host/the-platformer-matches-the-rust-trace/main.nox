@@ -1,0 +1,105 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+TRACE_DIRECTORY: string : "tests/host/the-platformer-matches-the-rust-trace";
+AUTOPILOT_FRAMES: u32 : 600;
+WALKING_FRAMES: u32 : 240;
+
+TraceLine :: (frame: u32, host: lantern:::host:::GameHost~*) -> string! {
+    paths: string[7] = ["Player/Position", "Player/Speed", "Player/Grounded", "Camera/Yaw", "Camera/Pitch", "Game/Gems", "Game/Time"];
+    line~ string! = `${frame}`;
+    for path in paths {
+        line += "\t";
+        line += lantern:::testing:::DebugText(host, path);
+    }
+    drawCount: usize = lantern:::testing:::StatsOf(host).lastDrawCount;
+    line += "\t";
+    line += `${drawCount}`;
+    line += "\n";
+    return line!;
+}
+
+WriteNoxTrace :: (name: string, trace: string) -> void {
+    directory: string!? = environmentVariable("LANTERN_TRACE_DIRECTORY");
+    if text := directory {
+        path: string! = `${text}/nox-${name}.trace`;
+        when writeTextFile(path, trace) {
+            Result:::Ok(written) -> { },
+            Result:::Err(error) -> {
+                print(error.message());
+                delete error;
+            }
+        }
+        delete path;
+    }
+    delete directory;
+}
+
+RunTraced :: (autoplay: bool, walking: bool, frames: u32) -> string! {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, autoplay);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+    if walking {
+        lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Enter);
+        lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::A, 50);
+        lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::W, 70);
+    }
+    trace~ string! = "";
+    for frame~ u32 = 1; frame <= frames; frame++ {
+        if !platform->HasFrames() {
+            lantern:::testing:::QueueFrames(platform, 1);
+        }
+        frameLoop->RunFrame(platform, host);
+        line: string! = TraceLine(frame, host);
+        trace += line;
+        delete line;
+    }
+    lantern:::testing:::AssertNoScriptError(host, "while tracing");
+    delete frameLoop;
+    delete platform;
+    delete host;
+    delete manifest;
+    return trace!;
+}
+
+MatchesRust :: (name: string, trace: string) -> bool {
+    WriteNoxTrace(name, trace);
+    rustPath: string! = `${TRACE_DIRECTORY}/rust-${name}.trace`;
+    loaded: string!? = tryReadTextFile(rustPath);
+    delete rustPath;
+    guard rustTrace := loaded return false;
+    rustLines: Array<string>! = rustTrace.split("\n");
+    noxLines: Array<string>! = trace.split("\n");
+    matches~ bool = rustLines.length() == noxLines.length();
+    if !matches {
+        print(`${name}: ${noxLines.length()} lines against Rust's ${rustLines.length()}`);
+    }
+    for index~ usize = 0; index < rustLines.length() && index < noxLines.length(); index++ {
+        if rustLines[index] != noxLines[index] {
+            print(`${name}: first difference at line ${index + 1}`);
+            print(`  rust: ${rustLines[index]}`);
+            print(`  nox:  ${noxLines[index]}`);
+            matches = false;
+            break;
+        }
+    }
+    delete rustLines;
+    delete noxLines;
+    delete loaded;
+    return matches;
+}
+
+main :: () -> i32 {
+    autopilot: string! = RunTraced(true, false, AUTOPILOT_FRAMES);
+    walking: string! = RunTraced(false, true, WALKING_FRAMES);
+    autopilotMatches: bool = MatchesRust("autopilot", autopilot);
+    walkingMatches: bool = MatchesRust("walking", walking);
+    assert(autopilotMatches, "every frame of the autopilot run matches the Rust engine's");
+    assert(walkingMatches, "every frame of the walking run matches the Rust engine's");
+    delete autopilot;
+    delete walking;
+    print("the platformer matches the rust trace");
+    return 0;
+}
