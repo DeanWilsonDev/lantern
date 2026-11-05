@@ -1,0 +1,67 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+COMMITTED_SURFACE: string : "../games/platformer/engine-host-surface.json";
+
+ComesFromChaos :: (document: lantern:::json:::JsonDocument*, row: u32) -> bool {
+    guard name := document->Member(row, "name") return false;
+    text: string = document->Text(name);
+    return text == "lantern::ui::Element" || text == "Component" || text.startsWith("__chaos_");
+}
+
+ParseOrFail :: (text: string, what: string) -> lantern:::json:::JsonDocument*! {
+    when lantern:::json:::Parse(text) {
+        Result:::Ok(document) -> {
+            return document!;
+        },
+        Result:::Err(message) -> {
+            print(`${what} isn't JSON: ${message}`);
+            delete message;
+            assert(false, "the host surface parses");
+            return new lantern:::json:::JsonDocument();
+        }
+    }
+}
+
+main :: () -> i32 {
+    written: string! = lantern:::testing:::TextFromResult(lantern:::host:::EngineHostSurface());
+    committedText: string!? = tryReadTextFile(COMMITTED_SURFACE);
+    assert(committedText != null, "the committed host surface is readable");
+    guard committedSource := committedText return 1;
+    ours := ParseOrFail(written, "the engine's host surface");
+    theirs := ParseOrFail(committedSource, COMMITTED_SURFACE);
+    oursRows: u32 = ours->Member(ours->root, "rows") ?? 0;
+    theirsRows: u32 = theirs->Member(theirs->root, "rows") ?? 0;
+    ourRow~ u32 = ours->FirstChild(oursRows);
+    theirRow~ u32 = theirs->FirstChild(theirsRows);
+    compared~ u32 = 0;
+    skipped~ u32 = 0;
+    while theirRow != lantern:::json:::NO_NODE {
+        if ComesFromChaos(theirs, theirRow) {
+            skipped += 1;
+            theirRow = theirs->NextSibling(theirRow);
+            continue;
+        }
+        assert(ourRow != lantern:::json:::NO_NODE, "the engine registers every row the Rust host did");
+        ourText: string! = ours->Write(ourRow);
+        theirText: string! = theirs->Write(theirRow);
+        if ourText != theirText {
+            print(`row ${compared} differs: ${ourText} against ${theirText}`);
+        }
+        assert(ourText == theirText, "each row matches the Rust host's, in order");
+        delete ourText;
+        delete theirText;
+        compared += 1;
+        ourRow = ours->NextSibling(ourRow);
+        theirRow = theirs->NextSibling(theirRow);
+    }
+    assert(ourRow == lantern:::json:::NO_NODE, "the engine registers nothing the Rust host didn't");
+    assert(compared == 149, "every engine row is compared");
+    assert(skipped == 4, "only Chaos's rows are left for L7");
+    delete ours;
+    delete theirs;
+    delete committedText;
+    delete written;
+    print("the engine API matches the committed host surface");
+    return 0;
+}

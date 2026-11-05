@@ -1,0 +1,53 @@
+DropGame :: class : Application {
+public:
+    fixedSteps~ i32 = 0;
+    updates~ i32 = 0;
+    renders~ i32 = 0;
+    player~ i64 = 0;
+    controller~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(0.35f, 1.7f, lantern:::math:::Vec3:::Zero());
+
+    Run :: () -> void { }
+
+    OnStart~: () -> void {
+        lantern:::input:::DefineButton("jump");
+        lantern:::input:::BindKey("jump", "Space");
+        lantern:::world:::Load("worlds/course.world.json");
+        start: lantern:::math:::Vec3 = { y: 2.0f };
+        controller = new lantern:::physics:::CharacterController(0.35f, 1.7f, start);
+        player = lantern:::world:::Spawn("player", start);
+        lantern:::world:::SetMesh(player, lantern:::meshes:::Capsule(0.35f, 0.5f, 16, 4), "FFFFFF");
+        lantern:::renderer:::SetClearColor("87B5E0");
+    }
+
+    OnFixedUpdate~: (dt: f32) -> void {
+        step: lantern:::physics:::ControllerStep = controller.Step(lantern:::math:::Vec3:::Zero(), lantern:::input:::IsPressed("jump"), lantern:::input:::IsHeld("jump"), dt);
+        lantern:::world:::SetPosition(player, controller.FeetPosition());
+        fixedSteps += 1;
+        if step.Landed() {
+            lantern:::debug:::SetValue("Drop/Landed", "yes");
+        }
+    }
+
+    OnUpdate~: (frameSeconds: f32) -> void {
+        updates += 1;
+        lantern:::debug:::SetValue("Drop/Steps", `${fixedSteps}`);
+        lantern:::debug:::SetValue("Drop/Grounded", `${controller.IsGrounded()}`);
+        if lantern:::engine:::Flag("DROP_FAIL") {
+            lantern:::engine:::Log(lantern:::world:::Kind(-1));
+        }
+        if updates == 90 && lantern:::engine:::Flag("DROP_QUIT") {
+            lantern:::engine:::Quit();
+        }
+    }
+
+    OnRender~: (alpha: f32, frameSeconds: f32) -> void {
+        renders += 1;
+        eye: lantern:::math:::Vec3 = { y: 4.0f, z: 8.0f };
+        lantern:::camera:::LookAt(eye, lantern:::world:::InterpolatedPosition(player, alpha));
+        lantern:::overlay:::Text("drop", 8.0f, 8.0f, 2.0f, "FFFFFF");
+    }
+
+    OnExit~: () -> void {
+        lantern:::engine:::Log("drop: exit");
+    }
+}

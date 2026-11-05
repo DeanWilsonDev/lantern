@@ -1,0 +1,325 @@
+lantern:::host :: namespace {
+    SCRIPT_ERROR_HEADING: string : "script error (F1 for details, F5 to reload):";
+    SCRIPT_ERROR_LINES: usize : 4;
+    SCRIPT_ERROR_COLOR: u32 : 16737872;
+
+    GameHost :: class {
+        implements:
+            lantern:::engine:::Game;
+    public:
+        session~ ScriptSession*!? = null;
+        state~ EngineState*!;
+        source~ ScriptSource*!;
+        scriptError~ string!? = null;
+        scriptErrorCount~ u32 = 0;
+        lastFrameReport~ RenderReport = RenderReport { };
+        frames~ u64 = 0;
+        maxFrames~ u64? = null;
+        capturePath~ string!? = null;
+        quit~ bool = false;
+        mouseCaptured~ bool = false;
+        pixelsPerPoint~ f32 = 1.0f;
+
+        GameHost~: (engineState: EngineState*!, scriptSource: ScriptSource*!) {
+            state = engineState!;
+            source = scriptSource!;
+            StartSession();
+        }
+
+        !GameHost~: () {
+            delete session;
+            delete state;
+            delete source;
+            delete scriptError;
+            delete capturePath;
+        }
+
+        StatePointer~: () -> raw EngineState~* {
+            unsafe {
+                pointer: raw EngineState~* = state;
+                return pointer;
+            }
+        }
+
+        IsRunningScript :: () -> bool {
+            return session != null;
+        }
+
+        ScriptErrorCount :: () -> u32 {
+            return scriptErrorCount;
+        }
+
+        ReportError~: (message: string) -> void {
+            scriptErrorCount += 1;
+            if current := scriptError {
+                if current == message {
+                    return;
+                }
+            }
+            lantern:::core:::LogError("script", message);
+            delete scriptError;
+            scriptError = `${message}`;
+        }
+
+        Call~: (hook: GameHook, arguments: Array<f32>) -> void {
+            guard running ~= session return;
+            failure: string!? = running->Call(hook, arguments);
+            if text := failure {
+                ReportError(text);
+            }
+            delete failure;
+        }
+
+        StartSession~: () -> void {
+            state->ResetForNewSession();
+            engine: raw EngineState~* = StatePointer();
+            loaded := ScriptSession:::Load(source->scriptsDirectory, source->entryFile, source->applicationClass, engine);
+            when loaded! {
+                Result:::Ok(started) -> {
+                    message: string! = `game: ${started->EntryPath()}`;
+                    lantern:::core:::LogInfo("script", message);
+                    delete message;
+                    delete session;
+                    session = started!;
+                    delete scriptError;
+                    scriptError = null;
+                    noArguments: Array<f32>! = [];
+                    Call(GameHook:::OnStart, noArguments);
+                    delete noArguments;
+                },
+                Result:::Err(error) -> {
+                    message~ string! = OwnedText("the game failed to load (F5 retries):");
+                    message += "\n";
+                    message += error;
+                    ReportError(message);
+                    delete message;
+                    delete error;
+                }
+            }
+        }
+
+        Shutdown~: () -> void {
+            noArguments: Array<f32>! = [];
+            Call(GameHook:::OnExit, noArguments);
+            delete noArguments;
+            delete session;
+            session = null;
+            state->ResetForNewSession();
+        }
+
+        Reload~: () -> void {
+            lantern:::core:::LogInfo("script", "reloading the game's scripts");
+            Shutdown();
+            StartSession();
+        }
+
+        UpdateEngineDebugValues~: (frame: lantern:::engine:::FrameContext) -> void {
+            scriptMilliseconds~ f64 = 0.0f;
+            sourceText~ string! = "";
+            if running ~= session {
+                scriptMilliseconds = running->TakeScriptSeconds() * 1000.0f;
+                sourceText += running->EntryPath();
+            } else {
+                sourceText += "(not loaded)";
+            }
+            driverName: string! = OwnedText(state->renderer->DriverName());
+            defer delete driverName;
+            errorText~ string!? = null;
+            if error := scriptError {
+                errorText = `${error}`;
+            }
+            defer delete errorText;
+            values: lantern:::core:::DebugValues~* = state->debugValues;
+            framesPerSecond: string! = lantern:::core:::FixedDecimals(frame.stats.FramesPerSecond(), 0, 0);
+            values->SetText("Frame/FPS", framesPerSecond);
+            delete framesPerSecond;
+            values->SetNumber("Frame/Average ms", frame.stats.AverageFrameMilliseconds());
+            values->SetNumber("Frame/Worst ms", frame.stats.WorstFrameMilliseconds());
+            values->SetInteger("Frame/Fixed steps", i64(frame.plan.stepCount));
+            values->SetNumber("Frame/Dropped s", frame.stats.droppedSecondsTotal);
+            values->SetText("Script/Source", sourceText);
+            delete sourceText;
+            values->SetNumber("Script/ms this frame", scriptMilliseconds);
+            values->SetInteger("Script/Errors", i64(scriptErrorCount));
+            values->SetText("Renderer/Driver", driverName);
+            values->SetInteger("Renderer/Draws", i64(lastFrameReport.drawsSubmitted));
+            values->SetInteger("Renderer/Culled", i64(lastFrameReport.drawsCulled));
+            values->SetInteger("Renderer/Triangles", BitsToScript(lastFrameReport.triangles));
+            values->SetInteger("World/Entities", i64(state->world->Length()));
+            audio: lantern:::engine:::AudioStats = state->audio->Stats();
+            values->SetFlag("Audio/Device", audio.hasDevice);
+            values->SetInteger("Audio/Voices", i64(audio.activeVoices));
+            values->SetNumber("Audio/Queued ms", f64(audio.queuedMilliseconds));
+            values->SetInteger("Audio/Underruns", i64(audio.underrunCount));
+            if error := errorText {
+                values->SetText("Errors/Script", error);
+            } else {
+                values->RemovePrefix("Errors/");
+            }
+        }
+
+        DrawScriptError~: (error: string) -> void {
+            screen: Vec2 = state->screenSize;
+            scale: f32 = state->uiScale;
+            glyph: f32 = f32(lantern:::renderer:::GLYPH_SIZE) * scale;
+            columns: usize = usize(Math:::max((screen.x - 16.0f * scale) / glyph, 8.0f));
+            lines~ Array<string!>! = [];
+            lines.push(OwnedText(SCRIPT_ERROR_HEADING));
+            errorLines: Array<string>! = error.split("\n");
+            for index~ usize = 0; index < errorLines.length() && index < SCRIPT_ERROR_LINES; index++ {
+                line: string = errorLines[index].trimEnd();
+                if line.length() > columns {
+                    lines.push(`${line.substring(0, columns)}`);
+                } else {
+                    lines.push(`${line}`);
+                }
+            }
+            delete errorLines;
+            lineHeight: f32 = glyph * 1.3f;
+            top: f32 = screen.y - lineHeight * f32(lines.length()) - 6.0f * scale;
+            overlay: lantern:::renderer:::Overlay~* = state->renderWorld->overlay;
+            overlay->Rect(Vec2 { x: 0.0f, y: top - 4.0f * scale }, screen, lantern:::core:::Color:::Rgba(0.0f, 0.0f, 0.0f, 0.7f));
+            for index~ usize = 0; index < lines.length(); index++ {
+                position := Vec2 { x: 8.0f * scale, y: top + lineHeight * f32(index) };
+                overlay->Text(lines[index], position, scale, lantern:::core:::Color:::FromHex(SCRIPT_ERROR_COLOR));
+            }
+            lines.freeAll();
+        }
+
+        SaveCapture~: (path: string, frame: lantern:::engine:::FrameContext) -> void {
+            engine: raw EngineState~* = StatePointer();
+            unsafe {
+                captured := engine->renderer->Capture(engine->renderWorld, frame.window.pixelWidth, frame.window.pixelHeight);
+                when captured! {
+                    Result:::Ok(image) -> {
+                        bytes: Array<u8>! = image->ToPngBytes();
+                        if lantern:::core:::WriteBytes(path, bytes) {
+                            message: string! = `saved capture to ${path}`;
+                            lantern:::core:::LogInfo("renderer", message);
+                            delete message;
+                        } else {
+                            message: string! = `saving capture to ${path} failed`;
+                            lantern:::core:::LogError("renderer", message);
+                            delete message;
+                        }
+                        delete bytes;
+                        delete image;
+                    },
+                    Result:::Err(message) -> {
+                        failure: string! = `capture failed: ${message}`;
+                        lantern:::core:::LogError("renderer", failure);
+                        delete failure;
+                        delete message;
+                    }
+                }
+            }
+        }
+
+        HandleEvent~: (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void { }
+
+        FixedUpdate~: (step: lantern:::engine:::FixedStepContext) -> void {
+            if session == null {
+                return;
+            }
+            state->world->StorePreviousTransforms();
+            state->collision->BeginStep();
+            state->input->SetSnapshot(step.input->Copy());
+            stepArguments: Array<f32>! = [step.stepSeconds];
+            Call(GameHook:::OnFixedUpdate, stepArguments);
+            delete stepArguments;
+            state->world->UpdateWorldTransforms();
+        }
+
+        FrameUpdate~: (frame: lantern:::engine:::FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void {
+            frames += 1;
+            state->screenSize = Vec2 { x: f32(frame.window.pixelWidth), y: f32(frame.window.pixelHeight) };
+            state->uiScale = lantern:::renderer:::ScaleForDensity(2, frame.window.pixelDensity);
+            if frame.window.logicalWidth > 0 && frame.window.pixelWidth > 0 {
+                pixelsPerPoint = f32(frame.window.pixelWidth) / f32(frame.window.logicalWidth);
+            }
+            state->input->SetSnapshot(frame.input->Copy());
+            reload: bool = frame.input->Pressed(EngineReloadAction());
+            toggleHud: bool = frame.input->Pressed(EngineToggleHudAction());
+            if toggleHud {
+                state->debugHud->Toggle();
+            }
+            if reload {
+                Reload();
+            }
+            frameArguments: Array<f32>! = [frame.frameSeconds];
+            Call(GameHook:::OnUpdate, frameArguments);
+            delete frameArguments;
+            if captured := state->requests.mouseCaptured {
+                platform->SetMouseCaptured(captured);
+                mouseCaptured = captured;
+                state->requests.mouseCaptured = null;
+            }
+            if state->requests.quit {
+                state->requests.quit = false;
+                quit = true;
+            }
+            if maximum := maxFrames {
+                if frames >= maximum {
+                    quit = true;
+                }
+            }
+            UpdateEngineDebugValues(frame);
+            state->audio->Update();
+        }
+
+        Render~: (frame: lantern:::engine:::FrameContext) -> void {
+            state->renderWorld->Clear();
+            renderArguments: Array<f32>! = [frame.alpha, frame.frameSeconds];
+            Call(GameHook:::OnRender, renderArguments);
+            delete renderArguments;
+            engine: raw EngineState~* = StatePointer();
+            unsafe {
+                lantern:::engine:::ExtractDraws(engine->world, frame.alpha, engine->renderWorld);
+            }
+            if error := scriptError {
+                if !state->debugHud->visible {
+                    shown: string! = `${error}`;
+                    DrawScriptError(shown);
+                    delete shown;
+                }
+            }
+            scale: f32 = state->uiScale;
+            reportFromRender~ RenderReport? = null;
+            unsafe {
+                engine->debugHud->Draw(engine->debugValues, engine->renderWorld->overlay, Vec2 { x: 8.0f * scale, y: 8.0f * scale }, scale);
+                rendered := engine->renderer->Render(engine->renderWorld);
+                when rendered! {
+                    Result:::Ok(report) -> {
+                        reportFromRender = report;
+                    },
+                    Result:::Err(message) -> {
+                        lantern:::core:::LogError("renderer", message);
+                        delete message;
+                    }
+                }
+            }
+            if report := reportFromRender {
+                lastFrameReport = report;
+            }
+            if quit {
+                if path := capturePath {
+                    target: string! = `${path}`;
+                    SaveCapture(target, frame);
+                    delete target;
+                }
+            }
+        }
+
+        WantsToQuit :: () -> bool {
+            return quit;
+        }
+
+        UpdateInputConfiguration~: (input: lantern:::engine:::InputRouter~*) -> void {
+            if !state->input->configurationChanged {
+                return;
+            }
+            state->input->configurationChanged = false;
+            input->Reconfigure(state->input->actions->Copy(), state->input->bindings->Copy());
+        }
+    }
+}

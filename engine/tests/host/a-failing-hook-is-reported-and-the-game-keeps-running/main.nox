@@ -1,0 +1,125 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+lantern:::testoutput :: foreign "c" {
+    open :: (path: string, flags: i32) -> i32;
+    dup :: (fileDescriptor: i32) -> i32;
+    dup2 :: (fromDescriptor: i32, toDescriptor: i32) -> i32;
+    close :: (fileDescriptor: i32) -> i32;
+    fflush :: (stream: raw u8~*) -> i32;
+}
+
+STANDARD_OUTPUT: i32 : 1;
+WRITE_ONLY: i32 : 1;
+
+SilenceStandardOutput :: () -> i32 {
+    unsafe {
+        saved: i32 = lantern:::testoutput:::dup(STANDARD_OUTPUT);
+        discard: i32 = lantern:::testoutput:::open("/dev/null", WRITE_ONLY);
+        lantern:::testoutput:::dup2(discard, STANDARD_OUTPUT);
+        lantern:::testoutput:::close(discard);
+        return saved;
+    }
+}
+
+RestoreStandardOutput :: (saved: i32) -> void {
+    unsafe {
+        lantern:::testoutput:::fflush(null);
+        lantern:::testoutput:::dup2(saved, STANDARD_OUTPUT);
+        lantern:::testoutput:::close(saved);
+    }
+}
+
+GAME_DIRECTORY: string : "tests/support/games/drop";
+
+LoadManifest :: () -> lantern:::host:::GameManifest*! {
+    when lantern:::host:::GameManifest:::Load(GAME_DIRECTORY) {
+        Result:::Ok(manifest) -> {
+            return manifest!;
+        },
+        Result:::Err(message) -> {
+            print(`the manifest failed to load: ${message}`);
+            delete message;
+            assert(false, "the test game's manifest loads");
+            return new lantern:::host:::GameManifest("", "", "", "");
+        }
+    }
+}
+
+StateWithAssets :: (manifest: lantern:::host:::GameManifest*) -> lantern:::host:::EngineState*! {
+    assets: string!? = manifest->AssetsDirectory(GAME_DIRECTORY);
+    defer delete assets;
+    assetsView~ string? = null;
+    if path := assets {
+        assetsView = path;
+    }
+    when lantern:::host:::EngineState:::Create(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), assetsView) {
+        Result:::Ok(state) -> {
+            return state!;
+        },
+        Result:::Err(message) -> {
+            print(`the engine state failed: ${message}`);
+            delete message;
+            assert(false, "the headless engine state starts");
+            return new lantern:::host:::EngineState(new lantern:::host:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), null);
+        }
+    }
+}
+
+DebugText :: (host: lantern:::host:::GameHost*, path: string) -> string {
+    if index := host->state->debugValues->IndexOf(path) {
+        return host->state->debugValues->TextAt(index);
+    }
+    return "";
+}
+
+RunFrames :: (frameLoop: lantern:::engine:::FrameLoop~*, platform: lantern:::testing:::ScriptedPlatform~*, host: lantern:::host:::GameHost~*) -> void {
+    while platform->HasFrames() {
+        frameLoop->RunFrame(platform, host);
+    }
+}
+
+AddFrames :: (platform: lantern:::testing:::ScriptedPlatform~*, count: usize) -> void {
+    for index~ usize = 0; index < count; index++ {
+        platform->AddFrame(f64(platform->frames.length()) / 60.0f);
+    }
+}
+
+LiveMeshes :: (host: lantern:::host:::GameHost~*) -> usize {
+    guard headless ~= host->state->renderer as lantern:::host:::HeadlessRenderer~* return 0;
+    headless->UpdateLiveCounts();
+    return headless->Stats().liveMeshes;
+}
+
+main :: () -> i32 {
+    manifest := LoadManifest();
+    host := new lantern:::host:::GameHost(StateWithAssets(manifest), manifest->ScriptSourceFor(GAME_DIRECTORY));
+    host->state->SetFlag("DROP_FAIL", true);
+    platform := new lantern:::testing:::ScriptedPlatform();
+    frameLoop := new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
+    AddFrames(platform, 10);
+    saved: i32 = SilenceStandardOutput();
+    RunFrames(frameLoop, platform, host);
+    RestoreStandardOutput(saved);
+    assert(host->IsRunningScript(), "the game keeps running");
+    assert(host->ScriptErrorCount() == 10, "every failed OnUpdate counts");
+    if error := host->scriptError {
+        if !error.startsWith("OnUpdate: NYX_ERROR_FAILURE: Error::NotFound: no entity with id -1") {
+            print(`the error was '${error}'`);
+        }
+        assert(error.startsWith("OnUpdate: NYX_ERROR_FAILURE: Error::NotFound: no entity with id -1"), "the error names the hook and the failure");
+        assert(error.contains("main.nyx"), "and where it happened");
+    } else {
+        assert(false, "the host keeps the error");
+    }
+    assert(DebugText(host, "Errors/Script").startsWith("OnUpdate: "), "the HUD lists the error");
+    assert(host->state->renderWorld->overlay->vertices.length() > 0, "the error is drawn while the HUD is hidden");
+    assert(DebugText(host, "Drop/Steps") != "", "the rest of OnUpdate doesn't run, but OnFixedUpdate does");
+    delete frameLoop;
+    delete platform;
+    host->Shutdown();
+    delete host;
+    delete manifest;
+    print("a failing hook is reported and the game keeps running");
+    return 0;
+}

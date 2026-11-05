@@ -1,0 +1,297 @@
+lantern:::host :: namespace {
+    GAME_HOOK_COUNT: usize : 5;
+
+    GameHook :: enum {
+        OnStart,
+        OnFixedUpdate,
+        OnUpdate,
+        OnRender,
+        OnExit
+    }
+
+    GameHookAt :: (index: usize) -> GameHook {
+        return when index {
+            0 -> GameHook:::OnStart,
+            1 -> GameHook:::OnFixedUpdate,
+            2 -> GameHook:::OnUpdate,
+            3 -> GameHook:::OnRender,
+            override -> GameHook:::OnExit,
+        };
+    }
+
+    GameHookIndex :: (hook: GameHook) -> usize {
+        return when hook {
+            GameHook:::OnStart -> 0,
+            GameHook:::OnFixedUpdate -> 1,
+            GameHook:::OnUpdate -> 2,
+            GameHook:::OnRender -> 3,
+            GameHook:::OnExit -> 4,
+        };
+    }
+
+    GameHookName :: (hook: GameHook) -> string {
+        return when hook {
+            GameHook:::OnStart -> "OnStart",
+            GameHook:::OnFixedUpdate -> "OnFixedUpdate",
+            GameHook:::OnUpdate -> "OnUpdate",
+            GameHook:::OnRender -> "OnRender",
+            GameHook:::OnExit -> "OnExit",
+        };
+    }
+
+    HookTotal :: struct {
+        seconds~ f64 = 0.0f;
+        calls~ u64 = 0;
+    }
+
+    SecondsSince :: (startNanoseconds: u64) -> f64 {
+        return f64(monotonicNanoseconds() - startNanoseconds) / 1000000000.0f;
+    }
+
+    NyxFailure :: (error: lantern:::nyx:::NyxError*!) -> string! {
+        failure: string! = NyxFailureText(error);
+        delete error;
+        return failure!;
+    }
+
+    NyxFailureText :: (error: lantern:::nyx:::NyxError*) -> string! {
+        text: string! = error->Text();
+        defer delete text;
+        return `nyx: ${text}`;
+    }
+
+    DescribeHookError :: (hook: GameHook, error: lantern:::nyx:::NyxError*) -> string! {
+        errorText: string! = error->Text();
+        description~ string! = `${GameHookName(hook)}: ${errorText}`;
+        delete errorText;
+        for index~ usize = 1; index < error->stack.length(); index++ {
+            frameText: string! = error->stack[index]->Text();
+            description += "\n";
+            description += `    called from ${frameText}`;
+            delete frameText;
+        }
+        return description!;
+    }
+
+    ScriptSession :: class {
+    public:
+        program~ lantern:::nyx:::Program*!? = null;
+        runtime~ lantern:::nyx:::Runtime*!;
+        math~ MathTypes = MathTypes { };
+        definedHooks~ Array<bool>! = [];
+        entryPath~ string!;
+        scriptSeconds~ f64 = 0.0f;
+        hookTotals~ Array<HookTotal>! = [];
+
+        ScriptSession~: (sessionRuntime: lantern:::nyx:::Runtime*!, sessionProgram: lantern:::nyx:::Program*!, sessionMath: MathTypes, path: string!) {
+            runtime = sessionRuntime!;
+            program = sessionProgram!;
+            math = sessionMath;
+            entryPath = path!;
+            for index~ usize = 0; index < GAME_HOOK_COUNT; index++ {
+                definedHooks.push(false);
+                hookTotals.push(HookTotal { });
+            }
+        }
+
+        !ScriptSession~: () {
+            delete program;
+            delete runtime;
+            delete definedHooks;
+            delete entryPath;
+            delete hookTotals;
+        }
+
+        static Load :: (scriptsDirectory: string, entryFile: string, applicationClass: string, state: raw EngineState~*) -> Result<ScriptSession*!, string!> {
+            entryPath: string! = `${scriptsDirectory}/${entryFile}`;
+            runtime := new lantern:::nyx:::Runtime();
+            if !runtime->IsUsable() {
+                delete runtime;
+                delete entryPath;
+                return Result<ScriptSession*!, string!>:::Err(OwnedText("nyx: the runtime could not be created"));
+            }
+            math~ MathTypes = MathTypes { };
+            registered: lantern:::nyx:::NyxError*!? = RegisterEngineApis(runtime, state, math);
+            if error := registered {
+                failure: string! = NyxFailureText(error);
+                delete registered;
+                delete runtime;
+                delete entryPath;
+                return Result<ScriptSession*!, string!>:::Err(failure!);
+            }
+            delete registered;
+            searchFailed: lantern:::nyx:::NyxError*!? = runtime->AddImportSearchPath(scriptsDirectory);
+            if error := searchFailed {
+                failure: string! = NyxFailureText(error);
+                delete searchFailed;
+                delete runtime;
+                delete entryPath;
+                return Result<ScriptSession*!, string!>:::Err(failure!);
+            }
+            delete searchFailed;
+            mounted := runtime->MountFile(entryPath, applicationClass);
+            when mounted! {
+                Result:::Ok(program) -> {
+                    session := new ScriptSession(runtime!, program!, math, entryPath!);
+                    hooksFailure: string!? = session->FindHooks();
+                    if text := hooksFailure {
+                        failure: string! = `${text}`;
+                        delete hooksFailure;
+                        delete session;
+                        return Result<ScriptSession*!, string!>:::Err(failure!);
+                    }
+                    delete hooksFailure;
+                    return Result<ScriptSession*!, string!>:::Ok(session!);
+                },
+                Result:::Err(error) -> {
+                    failure: string! = MountFailure(runtime, entryPath, error!);
+                    delete runtime;
+                    delete entryPath;
+                    return Result<ScriptSession*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        static MountFailure :: (runtime: lantern:::nyx:::Runtime*, entryPath: string, error: lantern:::nyx:::NyxError*!) -> string! {
+            errorText: string! = error->Text();
+            delete error;
+            defer delete errorText;
+            rendered := runtime->RenderDiagnostics();
+            when rendered! {
+                Result:::Ok(diagnostics) -> {
+                    trimmed: string = diagnostics.trimEnd();
+                    if trimmed.trim().length() > 0 {
+                        failure: string! = `${trimmed}`;
+                        delete diagnostics;
+                        return failure!;
+                    }
+                    delete diagnostics;
+                },
+                Result:::Err(renderError) -> {
+                    delete renderError;
+                }
+            }
+            return `${entryPath}: ${errorText}`;
+        }
+
+        FindHooks~: () -> string!? {
+            guard mountedProgram ~= program return OwnedText("nyx: the program isn't mounted");
+            application := mountedProgram->Application();
+            when application! {
+                Result:::Ok(instance) -> {
+                    delete instance;
+                },
+                Result:::Err(error) -> {
+                    return NyxFailure(error!);
+                }
+            }
+            for index~ usize = 0; index < GAME_HOOK_COUNT; index++ {
+                defines := mountedProgram->DefinesMethod(GameHookName(GameHookAt(index)));
+                when defines! {
+                    Result:::Ok(defined) -> {
+                        definedHooks[index] = defined;
+                    },
+                    Result:::Err(error) -> {
+                        return NyxFailure(error!);
+                    }
+                }
+            }
+            return null;
+        }
+
+        EntryPath :: () -> string {
+            return entryPath;
+        }
+
+        Defines :: (hook: GameHook) -> bool {
+            return definedHooks[GameHookIndex(hook)];
+        }
+
+        Call~: (hook: GameHook, arguments: Array<f32>) -> string!? {
+            if !Defines(hook) {
+                return null;
+            }
+            guard mountedProgram ~= program return null;
+            values~ Array<lantern:::nyx:::Value*!>! = [];
+            for argument in arguments {
+                values.push(runtime->MakeF32(argument));
+            }
+            borrowed~ Array<lantern:::nyx:::Value*>! = [];
+            for value in values {
+                borrowed.push(value);
+            }
+            started: u64 = monotonicNanoseconds();
+            result := mountedProgram->CallApplicationMethod(GameHookName(hook), borrowed);
+            elapsed: f64 = SecondsSince(started);
+            scriptSeconds += elapsed;
+            index: usize = GameHookIndex(hook);
+            total~ HookTotal = hookTotals[index];
+            total.seconds += elapsed;
+            total.calls += 1;
+            hookTotals[index] = total;
+            defer delete borrowed;
+            defer values.freeAll();
+            when result! {
+                Result:::Ok(returned) -> {
+                    delete returned;
+                    return null;
+                },
+                Result:::Err(error) -> {
+                    description: string! = DescribeHookError(hook, error);
+                    delete error;
+                    return description!;
+                }
+            }
+        }
+
+        HookTotalOf :: (hook: GameHook) -> HookTotal {
+            return hookTotals[GameHookIndex(hook)];
+        }
+
+        TakeScriptSeconds~: () -> f64 {
+            taken: f64 = scriptSeconds;
+            scriptSeconds = 0.0f;
+            return taken;
+        }
+    }
+
+    EngineHostSurface :: () -> Result<string!, string!> {
+        created := EngineState:::Create(new HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), null);
+        when created! {
+            Result:::Ok(state) -> {
+                runtime := new lantern:::nyx:::Runtime();
+                math~ MathTypes = MathTypes { };
+                registered~ lantern:::nyx:::NyxError*!? = null;
+                unsafe {
+                    statePointer: raw EngineState~* = state;
+                    registered = RegisterEngineApis(runtime, statePointer, math);
+                }
+                if error := registered {
+                    failure: string! = NyxFailureText(error);
+                    delete registered;
+                    delete runtime;
+                    delete state;
+                    return Result<string!, string!>:::Err(failure!);
+                }
+                delete registered;
+                written := runtime->WriteHostSurface();
+                when written! {
+                    Result:::Ok(manifest) -> {
+                        delete runtime;
+                        delete state;
+                        return Result<string!, string!>:::Ok(manifest!);
+                    },
+                    Result:::Err(error) -> {
+                        failure: string! = NyxFailure(error!);
+                        delete runtime;
+                        delete state;
+                        return Result<string!, string!>:::Err(failure!);
+                    }
+                }
+            },
+            Result:::Err(message) -> {
+                return Result<string!, string!>:::Err(message!);
+            }
+        }
+    }
+}
