@@ -162,6 +162,7 @@ In the viewport:
 | Input | Action |
 |---|---|
 | Left click | Select (Shift adds or removes) |
+| Left click on a face of the view cube (top-right corner) | Snap to that face's camera preset |
 | Left drag on empty space | Box select |
 | Left drag on a gizmo handle | Move, rotate or scale along that axis or plane |
 | Left drag on a selected object | Move it across the surface under the cursor |

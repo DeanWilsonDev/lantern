@@ -72,6 +72,8 @@ lantern:::editorbackend :: namespace {
         markers~ Array<CachedMarkerMesh>! = [];
         materials~ Array<CachedMaterial*!>! = [];
         frame~ u64 = 0;
+        fontAtlas~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
+        fontAtlasFailed~ bool = false;
 
         GpuViewportResources~: (gpuRenderer: lantern:::gpu:::GpuRenderer*!, assets: string) {
             renderer = gpuRenderer!;
@@ -113,6 +115,25 @@ lantern:::editorbackend :: namespace {
             guard mesh := uploaded return null;
             shapes.push(CachedShapeMesh { shape: shape, mesh: mesh, lastUsedFrame: frame });
             return mesh;
+        }
+
+        FontTexture~: () -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
+            if fontAtlas != null || fontAtlasFailed {
+                return fontAtlas;
+            }
+            atlas := lantern:::renderer:::FontAtlas();
+            defer delete atlas;
+            when renderer->CreateTexture(atlas) {
+                Result:::Ok(texture) -> {
+                    fontAtlas = texture;
+                },
+                Result:::Err(message) -> {
+                    fontAtlasFailed = true;
+                    lantern:::core:::LogWarn("editor", message);
+                    delete message;
+                }
+            }
+            return fontAtlas;
         }
 
         MaterialTexture~: (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {

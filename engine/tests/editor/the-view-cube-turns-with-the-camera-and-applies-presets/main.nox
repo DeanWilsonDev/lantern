@@ -1,0 +1,120 @@
+lantern :: import lantern;
+
+ViewportSize :: () -> Vec2 {
+    return Vec2 { x: 1280.0f, y: 720.0f };
+}
+
+CourseSession :: () -> lantern:::editor:::EditorSession*!? {
+    when lantern:::editor:::Palette:::Load("../assets/editor/palette.json") {
+        Result:::Ok(palette) -> {
+            when lantern:::editor:::EditorSession:::Open("../assets/worlds/course.world.json", palette!) {
+                Result:::Ok(session) -> {
+                    session->SetViewportSize(ViewportSize());
+                    return session!;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return null;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return null;
+        }
+    }
+}
+
+VisibleFaceCount :: (camera: lantern:::editor:::OrbitCamera) -> usize {
+    count~ usize = 0;
+    for face~ usize = 0; face < lantern:::editor:::VIEW_CUBE_FACE_COUNT; face += 1 {
+        if lantern:::editor:::ViewCubeFaceVisible(camera, face) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+FaceCenterPixel :: (camera: lantern:::editor:::OrbitCamera, face: usize) -> Vec2 {
+    return lantern:::editor:::ViewCubeProject(camera, ViewportSize(), lantern:::editor:::ViewCubeFaceNormal(face));
+}
+
+SameFace :: (found: usize?, expected: usize) -> bool {
+    guard face := found return false;
+    return face == expected;
+}
+
+TheFrontPresetShowsOnlyTheFrontFace :: () -> void {
+    camera~ lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    applied: bool = camera.ApplyPreset("front");
+    assert(applied, "front is a preset");
+    assert(VisibleFaceCount(camera) == 1, "looking straight at a face shows only that face");
+    center: Vec2 = lantern:::editor:::ViewCubeCenter(ViewportSize());
+    assert(SameFace(lantern:::editor:::ViewCubeHit(camera, ViewportSize(), center), 0), "the middle of the cube is the front face");
+    assert(lantern:::editor:::ViewCubeHit(camera, ViewportSize(), center + Vec2 { x: 40.0f, y: 0.0f }) == null, "beside the face, inside the corner square, is a miss");
+    assert(lantern:::editor:::ViewCubeHit(camera, ViewportSize(), Vec2 { x: 10.0f, y: 10.0f }) == null, "the other corner of the viewport is a miss");
+}
+
+TheDefaultCameraShowsThreeFaces :: () -> void {
+    camera: lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    assert(VisibleFaceCount(camera) == 3, "a camera above and to the side shows three faces");
+    assert(lantern:::editor:::ViewCubeFaceVisible(camera, 0), "the front face is visible");
+    assert(lantern:::editor:::ViewCubeFaceVisible(camera, 2), "the +x face is visible");
+    assert(lantern:::editor:::ViewCubeFaceVisible(camera, 4), "the top face is visible");
+    for face~ usize = 0; face < lantern:::editor:::VIEW_CUBE_FACE_COUNT; face += 1 {
+        if lantern:::editor:::ViewCubeFaceVisible(camera, face) {
+            assert(SameFace(lantern:::editor:::ViewCubeHit(camera, ViewportSize(), FaceCenterPixel(camera, face)), face), "a visible face's middle hits that face");
+        }
+    }
+}
+
+EveryFacePutsTheCameraOnItsSide :: () -> void {
+    for face~ usize = 0; face < lantern:::editor:::VIEW_CUBE_FACE_COUNT; face += 1 {
+        camera~ lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+        applied: bool = camera.ApplyPreset(lantern:::editor:::ViewCubeFacePreset(face));
+        assert(applied, "each face names a preset");
+        side: f32 = (camera.Position() - camera.target).dot(lantern:::editor:::ViewCubeFaceNormal(face));
+        assert(side > camera.distance * 0.99f, "the face's preset puts the camera on that face's side");
+        assert(lantern:::editor:::ViewCubeFacing(camera, face) > 0.99f, "and the face then looks straight at the camera");
+    }
+}
+
+HoveringTheCubeHoversNothingBehindIt :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pixel: Vec2 = FaceCenterPixel(session->camera, 0);
+    session->PointerMoved(pixel);
+    assert(SameFace(session->hoveredViewCubeFace, 0), "the front face is hovered");
+    assert(session->hoveredEntity == null && session->hoveredHandle == null, "nothing behind the cube is hovered");
+    session->PointerMoved(Vec2 { x: 640.0f, y: 360.0f });
+    assert(session->hoveredViewCubeFace == null, "moving away stops hovering the cube");
+}
+
+ClickingAFaceAppliesItsPreset :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    selectedBefore: usize = session->selection.length();
+    pixel: Vec2 = FaceCenterPixel(session->camera, 4);
+    session->PointerMoved(pixel);
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, true, lantern:::editor:::Modifiers { });
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, false, lantern:::editor:::Modifiers { });
+    assert(session->camera.Forward().y < -0.99f, "clicking the top face looks down");
+    assert(session->camera.orthographic, "the top view is orthographic");
+    assert(session->status == "Top view", "the status line names the view");
+    assert(session->selection.length() == selectedBefore, "the click selects nothing");
+    assert(!session->IsRubberBanding(), "the click starts no rubber band");
+}
+
+main :: () -> i32 {
+    TheFrontPresetShowsOnlyTheFrontFace();
+    TheDefaultCameraShowsThreeFaces();
+    EveryFacePutsTheCameraOnItsSide();
+    HoveringTheCubeHoversNothingBehindIt();
+    ClickingAFaceAppliesItsPreset();
+    print("the view cube turns with the camera and applies presets");
+    return 0;
+}

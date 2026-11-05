@@ -90,6 +90,13 @@ static void PanelsThroughTheCApi(void) {
     CHECK_TEXT(lantern_editor_tool(editor), "move");
     CHECK(lantern_editor_delete_selection(editor));
     CHECK(lantern_editor_outline_count(editor) == 29);
+
+    CHECK(!lantern_editor_is_orthographic(editor));
+    lantern_editor_pointer_move(editor, 1220.0f, 60.0f);
+    lantern_editor_pointer_button(editor, 0, true, 0);
+    lantern_editor_pointer_button(editor, 0, false, 0);
+    CHECK(lantern_editor_is_orthographic(editor));
+    CHECK(TextEndsWith(lantern_editor_status(editor), " view"));
     lantern_editor_destroy(editor);
 }
 
