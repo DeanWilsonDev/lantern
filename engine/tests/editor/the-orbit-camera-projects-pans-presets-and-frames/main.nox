@@ -1,0 +1,78 @@
+lantern :: import lantern;
+
+Near3 :: (left: Vec3, right: Vec3, tolerance: f32) -> bool {
+    return Math:::abs(left.x - right.x) <= tolerance && Math:::abs(left.y - right.y) <= tolerance && Math:::abs(left.z - right.z) <= tolerance;
+}
+
+Distance2 :: (left: Vec2, right: Vec2) -> f32 {
+    return lantern:::core:::Vec2Length(left - right);
+}
+
+TheTargetIsInTheMiddleOfTheView :: () -> void {
+    camera: lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    projection := lantern:::editor:::ViewportProjection:::Create(camera.RenderCamera(), Vec2 { x: 800.0f, y: 600.0f });
+    projected: Vec2? = projection.Project(camera.target);
+    assert(projected != null, "the target projects");
+    guard pixel := projected return;
+    assert(Distance2(pixel, Vec2 { x: 400.0f, y: 300.0f }) < 0.01f, "the target lands in the middle of the view");
+    ray: lantern:::editor:::Ray = projection.RayThrough(Vec2 { x: 400.0f, y: 300.0f });
+    assert(ray.direction.dot(camera.Forward()) > 0.9999f, "the middle ray looks along the camera");
+}
+
+RaysAndProjectionAgree :: () -> void {
+    camera: lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    projection := lantern:::editor:::ViewportProjection:::Create(camera.RenderCamera(), Vec2 { x: 1280.0f, y: 720.0f });
+    pixel := Vec2 { x: 200.0f, y: 500.0f };
+    point: Vec3 = projection.RayThrough(pixel).At(20.0f);
+    projected: Vec2? = projection.Project(point);
+    assert(projected != null, "a point on the ray projects");
+    guard back := projected return;
+    assert(Distance2(back, pixel) < 0.05f, "a point on a pixel's ray projects back onto the pixel");
+}
+
+PanningKeepsDistanceAndDollyIsClamped :: () -> void {
+    camera~ lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    before: Vec3 = camera.Position() - camera.target;
+    camera.Pan(Vec2 { x: 10.0f, y: -5.0f }, 600.0f);
+    assert(((camera.Position() - camera.target) - before).length() < 0.0001f, "panning moves the camera and target together");
+    camera.Dolly(1000.0f);
+    assert(camera.distance == lantern:::editor:::MIN_CAMERA_DISTANCE, "dollying stops at the closest distance");
+}
+
+PresetsLookAlongTheAxesAndLookFromRoundTrips :: () -> void {
+    camera~ lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    assert(camera.ApplyPreset("top"), "top is a preset");
+    assert(camera.orthographic, "top is orthographic");
+    assert(camera.Forward().y < -0.99f, "top looks down");
+    assert(camera.ApplyPreset("front"), "front is a preset");
+    assert(Near3(camera.Forward(), Vec3 { x: 0.0f, y: 0.0f, z: -1.0f }, 0.00001f), "front looks along -z");
+    assert(!camera.ApplyPreset("sideways"), "sideways isn't a preset");
+    assert(camera.ApplyPreset("perspective"), "perspective is a preset");
+    assert(!camera.orthographic, "perspective isn't orthographic");
+    forward: Vec3 = Vec3 { x: 0.3f, y: -0.4f, z: -0.8f }.normalized();
+    camera.LookFrom(Vec3 { x: 1.0f, y: 5.0f, z: 2.0f }, forward);
+    assert(Near3(camera.Forward(), forward, 0.0001f), "looking from a point keeps the direction");
+    assert(Near3(camera.Position(), Vec3 { x: 1.0f, y: 5.0f, z: 2.0f }, 0.001f), "looking from a point puts the camera there");
+    orthographic~ lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    orthographic.orthographic = true;
+    projection := lantern:::editor:::ViewportProjection:::Create(orthographic.RenderCamera(), Vec2 { x: 800.0f, y: 600.0f });
+    expected: f32 = 2.0f * orthographic.OrthographicHalfHeight() / 600.0f;
+    assert(Math:::abs(projection.WorldPerPixel(Vec3 { }) - expected) < 0.000001f, "an orthographic view has the same scale everywhere");
+}
+
+FramingCentresTheBounds :: () -> void {
+    camera~ lantern:::editor:::OrbitCamera = lantern:::editor:::OrbitCamera { };
+    camera.Frame(lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { x: 3.0f, y: 1.0f, z: -2.0f }, lantern:::core:::Splat3(1.0f)));
+    assert(Near3(camera.target, Vec3 { x: 3.0f, y: 1.0f, z: -2.0f }, 0.0f), "framing looks at the middle of the bounds");
+    assert(camera.distance > 1.7f && camera.distance < 10.0f, "framing comes close enough to fill the view");
+}
+
+main :: () -> i32 {
+    TheTargetIsInTheMiddleOfTheView();
+    RaysAndProjectionAgree();
+    PanningKeepsDistanceAndDollyIsClamped();
+    PresetsLookAlongTheAxesAndLookFromRoundTrips();
+    FramingCentresTheBounds();
+    print("the orbit camera projects, pans, presets and frames");
+    return 0;
+}

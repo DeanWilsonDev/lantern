@@ -156,6 +156,12 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
 - `src/world/` is the Rust `world-format` crate: `WorldFile.nox` (`WorldFile` and `WorldEntity`, loading, validation
   and atomic saving of `.world.json` files) and `WorldPieces.nox` (`BuildPieces`: each entity's world matrix, mesh and
   collision triangles).
+- `src/editor/` is the world editor's logic, the Rust `editor-core` crate, `lantern:::editor`: `Document.nox`
+  (`EditorDocument`: the open world, its undo and redo history of `Edit`s, coalesced typing, previews that commit as
+  one step, dirty tracking and saving), `Palette.nox` (`Palette`: the game's `assets/editor/palette.json`, its Add menu
+  `EntityTemplate`s, `MarkerStyle`s and materials, or `Palette:::Fallback`), `Preferences.nox` (`EditorPreferences`, a
+  sorted map of strings saved as JSON in the user's config directory), `Camera.nox` (`OrbitCamera`, `Ray` and
+  `ViewportProjection`) and `SceneGeometry.nox` (each entity's world-space triangles and bounds, picking and placement).
 - `src/stub/` is the stub game `main` runs when it's given no game directory: it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
@@ -168,9 +174,10 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `games/platformer` headless for the `tests/host` programs that play it, as the Rust `headless_game` tests did.
 - `tests/host/the-platformer-matches-the-rust-trace/` plays the platformer under the autopilot for 600 frames and
   walks it from the menu for 240 frames, and compares every frame's player, camera and game debug values and draw
-  count with `rust-autopilot.trace` and `rust-walking.trace`. They match exactly. The Rust test
-  `the_platformer_writes_its_traces` writes those files when `LANTERN_TRACE_DIRECTORY` is set, and the Nox test writes
-  `nox-*.trace` there too.
+  count with `rust-autopilot.trace` and `rust-walking.trace`. They match exactly at the precision the game prints
+  them (two decimals for positions and speed). The camera stays still in both runs, so its values only show it starts
+  the same. The Rust test `the_platformer_writes_its_traces` writes those files when `LANTERN_TRACE_DIRECTORY` is set,
+  and the Nox test writes `nox-*.trace` there too.
 - `benchmarks/headless-platformer/` times the same autopilot run against the Rust build; `benchmarks/results.md` records
   the numbers and how to run both.
 - `tests/world/the-course-matches-the-rust-trace-at-every-display-rate/` runs the jump course the way the Rust

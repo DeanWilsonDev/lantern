@@ -1,0 +1,433 @@
+lantern:::editor :: namespace {
+    DEFAULT_MARKER_COLOR: string : "#D0D0E0";
+
+    MarkerMesh :: enum {
+        Cube,
+        Sphere,
+        Gem,
+        Capsule,
+        Plane
+    }
+
+    MarkerMeshName :: (mesh: MarkerMesh) -> string {
+        return when mesh {
+            MarkerMesh:::Cube -> "cube",
+            MarkerMesh:::Sphere -> "sphere",
+            MarkerMesh:::Gem -> "gem",
+            MarkerMesh:::Capsule -> "capsule",
+            MarkerMesh:::Plane -> "plane"
+        };
+    }
+
+    MarkerMeshNamed :: (name: string) -> MarkerMesh? {
+        if name == "cube" {
+            return MarkerMesh:::Cube;
+        }
+        if name == "sphere" {
+            return MarkerMesh:::Sphere;
+        }
+        if name == "gem" {
+            return MarkerMesh:::Gem;
+        }
+        if name == "capsule" {
+            return MarkerMesh:::Capsule;
+        }
+        if name == "plane" {
+            return MarkerMesh:::Plane;
+        }
+        return null;
+    }
+
+    MarkerStyle :: class {
+    public:
+        mesh~ MarkerMesh = MarkerMesh:::Cube;
+        color~ string!;
+
+        MarkerStyle~: (styleMesh: MarkerMesh, styleColor: string) {
+            mesh = styleMesh;
+            color = `${styleColor}`;
+        }
+
+        !MarkerStyle~: () {
+            delete color;
+        }
+
+        Copy :: () -> MarkerStyle*! {
+            return new MarkerStyle(mesh, color);
+        }
+    }
+
+    EntityTemplate :: class {
+    public:
+        id~ string!;
+        label~ string!;
+        lift~ f32 = 0.0f;
+        prototype~ lantern:::world:::WorldEntity*!;
+
+        EntityTemplate~: (templateId: string, templateLabel: string, templateKind: string) {
+            id = `${templateId}`;
+            label = `${templateLabel}`;
+            prototype = new lantern:::world:::WorldEntity(0, templateLabel, templateKind);
+        }
+
+        !EntityTemplate~: () {
+            delete id;
+            delete label;
+            delete prototype;
+        }
+
+        Kind :: () -> string {
+            return prototype->kind;
+        }
+    }
+
+    Palette :: class {
+    public:
+        templates~ Array<EntityTemplate*!>! = [];
+        markerKinds~ Array<string!>! = [];
+        markerStyles~ Array<MarkerStyle*!>! = [];
+        materials~ Array<string!>! = [];
+
+        Palette~: () { }
+
+        !Palette~: () {
+            templates.freeAll();
+            markerKinds.freeAll();
+            markerStyles.freeAll();
+            materials.freeAll();
+        }
+
+        static Fallback :: () -> Palette*! {
+            palette := new Palette();
+            block := new EntityTemplate("block", "Block", "block");
+            block->prototype->shape = lantern:::world:::Shape:::Box(Vec3 { x: 1.0f, y: 0.5f, z: 1.0f });
+            block->prototype->collider = lantern:::world:::ColliderKind:::Static;
+            palette->templates.push(block!);
+            ramp := new EntityTemplate("ramp", "Ramp", "ramp");
+            ramp->prototype->shape = lantern:::world:::Shape:::Ramp(2.0f, 1.0f, 3.0f);
+            ramp->prototype->collider = lantern:::world:::ColliderKind:::Static;
+            palette->templates.push(ramp!);
+            marker := new EntityTemplate("marker", "Marker", "marker");
+            palette->templates.push(marker!);
+            return palette!;
+        }
+
+        static Load :: (path: string) -> Result<Palette*!, string!> {
+            when readTextFile(path) {
+                Result:::Ok(text) -> {
+                    when FromJson(text, path) {
+                        Result:::Ok(palette) -> {
+                            delete text;
+                            return Result<Palette*!, string!>:::Ok(palette!);
+                        },
+                        Result:::Err(message) -> {
+                            delete text;
+                            return Result<Palette*!, string!>:::Err(message!);
+                        }
+                    }
+                },
+                Result:::Err(error) -> {
+                    failure: string! = `${path}: ${error.message()}`;
+                    delete error;
+                    return Result<Palette*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        static FromJson :: (text: string, path: string) -> Result<Palette*!, string!> {
+            when lantern:::json:::Parse(text) {
+                Result:::Ok(document) -> {
+                    reader := new lantern:::world:::WorldReader();
+                    palette := new Palette();
+                    ReadPalette(reader, document, palette);
+                    delete document;
+                    if problem := reader->problem {
+                        failure: string! = `${path}: ${problem}`;
+                        delete reader;
+                        delete palette;
+                        return Result<Palette*!, string!>:::Err(failure!);
+                    }
+                    delete reader;
+                    return Result<Palette*!, string!>:::Ok(palette!);
+                },
+                Result:::Err(message) -> {
+                    failure: string! = `${path}: ${message}`;
+                    delete message;
+                    return Result<Palette*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        ToJson :: () -> string! {
+            document := new lantern:::json:::JsonDocument();
+            root: u32 = document->NewObject();
+            templateList: u32 = document->NewList();
+            for template in templates {
+                document->Append(templateList, TemplateNode(document, template));
+            }
+            document->Set(root, "templates", templateList);
+            markerObject: u32 = document->NewObject();
+            for index~ usize = 0; index < markerKinds.length(); index++ {
+                styleNode: u32 = document->NewObject();
+                document->Set(styleNode, "mesh", document->NewText(MarkerMeshName(markerStyles[index]->mesh)));
+                document->Set(styleNode, "color", document->NewText(markerStyles[index]->color));
+                document->Set(markerObject, markerKinds[index], styleNode);
+            }
+            document->Set(root, "markers", markerObject);
+            materialList: u32 = document->NewList();
+            for material in materials {
+                document->Append(materialList, document->NewText(material));
+            }
+            document->Set(root, "materials", materialList);
+            document->root = root;
+            text~ string! = document->Write(root);
+            text += "\n";
+            delete document;
+            return text!;
+        }
+
+        Save :: (path: string) -> string!? {
+            text: string! = ToJson();
+            failure~ string!? = null;
+            when writeTextFile(path, text) {
+                Result:::Ok(written) -> { },
+                Result:::Err(error) -> {
+                    failure = `${path}: ${error.message()}`;
+                    delete error;
+                }
+            }
+            delete text;
+            return failure!;
+        }
+
+        Template :: (templateId: string) -> EntityTemplate*? {
+            for template in templates {
+                if template->id == templateId {
+                    return template;
+                }
+            }
+            return null;
+        }
+
+        MarkerStyleFor :: (kind: string) -> MarkerStyle*! {
+            for index~ usize = 0; index < markerKinds.length(); index++ {
+                if markerKinds[index] == kind {
+                    return markerStyles[index]->Copy();
+                }
+            }
+            return new MarkerStyle(MarkerMesh:::Cube, DEFAULT_MARKER_COLOR);
+        }
+
+        SetMarker~: (kind: string, style: MarkerStyle*!) -> void {
+            position~ usize = 0;
+            while position < markerKinds.length() && lantern:::world:::TextBefore(markerKinds[position], kind) {
+                position += 1;
+            }
+            if position < markerKinds.length() && markerKinds[position] == kind {
+                previous := markerStyles.remove(position);
+                delete previous;
+                markerStyles.insert(position, style!);
+                return;
+            }
+            markerKinds.insert(position, `${kind}`);
+            markerStyles.insert(position, style!);
+        }
+
+        Kinds :: () -> Array<string!>! {
+            candidates~ Array<string>! = [];
+            for template in templates {
+                candidates.push(template->Kind());
+            }
+            for kind in markerKinds {
+                candidates.push(kind);
+            }
+            kinds~ Array<string!>! = [];
+            for candidate in candidates {
+                position~ usize = 0;
+                while position < kinds.length() && lantern:::world:::TextBefore(kinds[position], candidate) {
+                    position += 1;
+                }
+                if position == kinds.length() || kinds[position] != candidate {
+                    kinds.insert(position, `${candidate}`);
+                }
+            }
+            delete candidates;
+            return kinds!;
+        }
+    }
+
+    TemplateNode :: (document: lantern:::json:::JsonDocument~*, template: EntityTemplate*) -> u32 {
+        node: u32 = document->NewObject();
+        entity: lantern:::world:::WorldEntity* = template->prototype;
+        document->Set(node, "id", document->NewText(template->id));
+        document->Set(node, "label", document->NewText(template->label));
+        document->Set(node, "kind", document->NewText(entity->kind));
+        if shape := entity->shape {
+            document->Set(node, "shape", lantern:::world:::ShapeNode(document, shape));
+        } else {
+            document->Set(node, "shape", document->NewNull());
+        }
+        if material := entity->material {
+            document->Set(node, "material", document->NewText(material));
+        } else {
+            document->Set(node, "material", document->NewNull());
+        }
+        if tint := entity->tint {
+            document->Set(node, "tint", document->NewText(tint));
+        } else {
+            document->Set(node, "tint", document->NewNull());
+        }
+        if collider := entity->collider {
+            document->Set(node, "collider", document->NewText(lantern:::world:::ColliderText(collider)));
+        } else {
+            document->Set(node, "collider", document->NewNull());
+        }
+        document->Set(node, "properties", lantern:::world:::PropertiesNode(document, entity));
+        document->Set(node, "lift", document->NewNumber(f64(template->lift)));
+        return node;
+    }
+
+    ReadPalette :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, palette: Palette~*) -> void {
+        root: u32 = document->root;
+        if document->Kind(root) != lantern:::json:::JsonKind:::Object {
+            reader->Fail("invalid type, expected struct Palette");
+            return;
+        }
+        templatesNode: u32? = reader->Required(document, root, "templates");
+        guard templatesAt := templatesNode return;
+        if document->Kind(templatesAt) != lantern:::json:::JsonKind:::List {
+            reader->Fail("invalid type for templates, expected a sequence");
+            return;
+        }
+        child~ u32 = document->FirstChild(templatesAt);
+        while child != lantern:::json:::NO_NODE {
+            parsed: EntityTemplate*!? = ReadTemplate(reader, document, child);
+            guard parsed return;
+            palette->templates.push(parsed!);
+            child = document->NextSibling(child);
+        }
+        if markersAt := reader->Present(document, root, "markers") {
+            if document->Kind(markersAt) != lantern:::json:::JsonKind:::Object {
+                reader->Fail("invalid type for markers, expected a map");
+                return;
+            }
+            marker~ u32 = document->FirstChild(markersAt);
+            while marker != lantern:::json:::NO_NODE {
+                parsedStyle: MarkerStyle*!? = ReadMarkerStyle(reader, document, marker);
+                guard parsedStyle return;
+                palette->SetMarker(document->Key(marker), parsedStyle!);
+                marker = document->NextSibling(marker);
+            }
+        }
+        if materialsAt := reader->Present(document, root, "materials") {
+            if document->Kind(materialsAt) != lantern:::json:::JsonKind:::List {
+                reader->Fail("invalid type for materials, expected a sequence");
+                return;
+            }
+            material~ u32 = document->FirstChild(materialsAt);
+            while material != lantern:::json:::NO_NODE {
+                if !reader->Text(document, material, "materials") {
+                    return;
+                }
+                palette->materials.push(`${document->Text(material)}`);
+                material = document->NextSibling(material);
+            }
+        }
+    }
+
+    RequiredText :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, object: u32, key: string) -> u32? {
+        found: u32? = reader->Required(document, object, key);
+        guard at := found return null;
+        if !reader->Text(document, at, key) {
+            return null;
+        }
+        return at;
+    }
+
+    ReadTemplate :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, node: u32) -> EntityTemplate*!? {
+        if document->Kind(node) != lantern:::json:::JsonKind:::Object {
+            reader->Fail("invalid type, expected struct EntityTemplate");
+            return null;
+        }
+        idNode: u32? = RequiredText(reader, document, node, "id");
+        guard idAt := idNode return null;
+        labelNode: u32? = RequiredText(reader, document, node, "label");
+        guard labelAt := labelNode return null;
+        kindNode: u32? = RequiredText(reader, document, node, "kind");
+        guard kindAt := kindNode return null;
+        template := new EntityTemplate(document->Text(idAt), document->Text(labelAt), document->Text(kindAt));
+        entity: lantern:::world:::WorldEntity~* = template->prototype;
+        if shapeAt := reader->Present(document, node, "shape") {
+            if shape := reader->ReadShape(document, shapeAt) {
+                entity->shape = shape;
+            }
+        }
+        if materialAt := reader->Present(document, node, "material") {
+            if reader->Text(document, materialAt, "material") {
+                entity->SetMaterial(document->Text(materialAt));
+            }
+        }
+        if tintAt := reader->Present(document, node, "tint") {
+            if reader->Text(document, tintAt, "tint") {
+                entity->SetTint(document->Text(tintAt));
+            }
+        }
+        if colliderAt := reader->Present(document, node, "collider") {
+            if reader->Text(document, colliderAt, "collider") {
+                colliderText: string = document->Text(colliderAt);
+                if colliderText == "static" {
+                    entity->collider = lantern:::world:::ColliderKind:::Static;
+                } else if colliderText == "kinematic" {
+                    entity->collider = lantern:::world:::ColliderKind:::Kinematic;
+                } else {
+                    message: string! = `unknown variant '${colliderText}', expected 'static' or 'kinematic'`;
+                    reader->Fail(message);
+                    delete message;
+                }
+            }
+        }
+        if propertiesAt := reader->Present(document, node, "properties") {
+            reader->ReadProperties(document, propertiesAt, entity);
+        }
+        if liftAt := reader->Present(document, node, "lift") {
+            if lift := reader->Number(document, liftAt, "lift") {
+                template->lift = lift;
+            }
+        }
+        if reader->problem != null {
+            delete template;
+            return null;
+        }
+        return template!;
+    }
+
+    ReadMarkerStyle :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, node: u32) -> MarkerStyle*!? {
+        if document->Kind(node) != lantern:::json:::JsonKind:::Object {
+            reader->Fail("invalid type, expected struct MarkerStyle");
+            return null;
+        }
+        mesh~ MarkerMesh = MarkerMesh:::Cube;
+        if meshAt := reader->Present(document, node, "mesh") {
+            if !reader->Text(document, meshAt, "mesh") {
+                return null;
+            }
+            meshName: string = document->Text(meshAt);
+            named: MarkerMesh? = MarkerMeshNamed(meshName);
+            if found := named {
+                mesh = found;
+            } else {
+                message: string! = `unknown variant '${meshName}', expected one of 'cube', 'sphere', 'gem', 'capsule', 'plane'`;
+                reader->Fail(message);
+                delete message;
+                return null;
+            }
+        }
+        if colorAt := reader->Present(document, node, "color") {
+            if !reader->Text(document, colorAt, "color") {
+                return null;
+            }
+            return new MarkerStyle(mesh, document->Text(colorAt));
+        }
+        return new MarkerStyle(mesh, DEFAULT_MARKER_COLOR);
+    }
+}

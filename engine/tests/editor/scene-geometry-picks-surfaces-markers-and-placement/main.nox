@@ -1,0 +1,59 @@
+lantern :: import lantern;
+
+WorldWithBoxAndMarker :: () -> lantern:::world:::WorldFile*! {
+    world := new lantern:::world:::WorldFile("test");
+    floor := new lantern:::world:::WorldEntity(1, "floor", "block");
+    floor->transform.position = Vec3 { x: 0.0f, y: -0.5f, z: 0.0f };
+    floor->shape = lantern:::world:::Shape:::Box(Vec3 { x: 5.0f, y: 0.5f, z: 5.0f });
+    world->Add(floor!);
+    gem := new lantern:::world:::WorldEntity(2, "gem", "gem");
+    gem->transform.position = Vec3 { x: 2.0f, y: 0.3f, z: 0.0f };
+    world->Add(gem!);
+    return world!;
+}
+
+Down :: (x: f32) -> lantern:::editor:::Ray {
+    return lantern:::editor:::Ray { origin: Vec3 { x: x, y: 10.0f, z: 0.0f }, direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f } };
+}
+
+PicksTheNearestSurfaceAndMarkers :: (scene: lantern:::editor:::SceneGeometry*) -> void {
+    floorHit: lantern:::editor:::PickHit? = scene->Pick(Down(-1.0f));
+    assert(floorHit != null, "a ray down onto the floor hits it");
+    guard hit := floorHit return;
+    assert(hit.key == 1, "the floor is picked");
+    assert(Math:::abs(hit.point.y) < 0.0001f, "the floor is hit on its top");
+    markerHit: lantern:::editor:::PickHit? = scene->Pick(Down(2.0f));
+    assert(markerHit != null, "a ray down onto the gem hits it");
+    guard gemHit := markerHit return;
+    assert(gemHit.key == 2, "the gem sitting above the floor is picked over it");
+    assert(scene->Pick(Down(20.0f)) == null, "a ray past the floor hits nothing");
+}
+
+PlacementFallsBackToTheGroundPlane :: (scene: lantern:::editor:::SceneGeometry*) -> void {
+    ray := lantern:::editor:::Ray { origin: Vec3 { x: 30.0f, y: 10.0f, z: 0.0f }, direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f } };
+    placed: Vec3? = scene->PlacementPoint(ray);
+    assert(placed != null, "placement finds the ground plane");
+    guard point := placed return;
+    assert(point.x == 30.0f && point.y == 0.0f && point.z == 0.0f, "placement off the floor lands on the ground plane");
+}
+
+SlabAndSphereTests :: () -> void {
+    ray := lantern:::editor:::Ray { origin: Vec3 { x: 0.0f, y: 0.0f, z: 5.0f }, direction: Vec3 { x: 0.0f, y: 0.0f, z: -1.0f } };
+    boxDistance: f32? = lantern:::editor:::RayAabb(ray, lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { }, lantern:::core:::Splat3(1.0f)));
+    assert((boxDistance ?? 0.0f) == 4.0f && boxDistance != null, "the ray meets the box's near face");
+    sphereDistance: f32? = lantern:::editor:::RaySphere(ray, Vec3 { }, 1.0f);
+    assert((sphereDistance ?? 0.0f) == 4.0f && sphereDistance != null, "the ray meets the sphere's near side");
+    assert(lantern:::editor:::RaySphere(ray, Vec3 { x: 3.0f, y: 0.0f, z: 0.0f }, 1.0f) == null, "the ray misses a sphere off to the side");
+}
+
+main :: () -> i32 {
+    world := WorldWithBoxAndMarker();
+    scene := lantern:::editor:::SceneGeometry:::Build(world, 1);
+    PicksTheNearestSurfaceAndMarkers(scene);
+    PlacementFallsBackToTheGroundPlane(scene);
+    SlabAndSphereTests();
+    delete scene;
+    delete world;
+    print("scene geometry picks surfaces, markers and placement");
+    return 0;
+}

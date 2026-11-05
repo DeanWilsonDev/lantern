@@ -1,0 +1,209 @@
+lantern:::editor :: namespace {
+    MARKER_PICK_RADIUS: f32 : 0.45f;
+    MAX_PICK_DISTANCE: f32 : 2000.0f;
+
+    EntityGeometry :: class {
+    public:
+        key~ u64 = 0;
+        worldMatrix~ Mat4 = Mat4 { };
+        triangles~ Array<lantern:::physics:::Triangle>! = [];
+        bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb { };
+        shape~ lantern:::world:::Shape? = null;
+
+        EntityGeometry~: () { }
+
+        !EntityGeometry~: () {
+            delete triangles;
+        }
+
+        Origin :: () -> Vec3 {
+            return worldMatrix.transformPoint(Vec3 { });
+        }
+
+        IsMarker :: () -> bool {
+            return shape == null;
+        }
+    }
+
+    PickHit :: struct {
+        key~ u64 = 0;
+        distance~ f32 = 0.0f;
+        point~ Vec3 = Vec3 { };
+    }
+
+    SceneGeometry :: class {
+    public:
+        entities~ Array<EntityGeometry*!>! = [];
+        revision~ u64 = 0;
+
+        SceneGeometry~: () { }
+
+        !SceneGeometry~: () {
+            entities.freeAll();
+        }
+
+        static Build :: (world: lantern:::world:::WorldFile*, documentRevision: u64) -> SceneGeometry*! {
+            scene := new SceneGeometry();
+            scene->revision = documentRevision;
+            pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(world);
+            for piece in pieces {
+                geometry := new EntityGeometry();
+                geometry->key = piece->key;
+                geometry->worldMatrix = piece->worldMatrix;
+                delete geometry->triangles;
+                geometry->triangles = piece->WorldTriangles();
+                origin: Vec3 = piece->worldMatrix.transformPoint(Vec3 { });
+                if geometry->triangles.length() == 0 {
+                    geometry->bounds = lantern:::core:::Aabb:::FromCenterHalfExtents(origin, lantern:::core:::Splat3(MARKER_PICK_RADIUS));
+                } else {
+                    bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
+                    for triangle in geometry->triangles {
+                        bounds = bounds.GrownTo(triangle.a).GrownTo(triangle.b).GrownTo(triangle.c);
+                    }
+                    geometry->bounds = bounds;
+                }
+                geometry->shape = world->entities[piece->entityIndex]->shape;
+                scene->entities.push(geometry!);
+            }
+            pieces.freeAll();
+            return scene!;
+        }
+
+        Find :: (key: u64) -> EntityGeometry*? {
+            for entity in entities {
+                if entity->key == key {
+                    return entity;
+                }
+            }
+            return null;
+        }
+
+        BoundsOf :: (keys: Array<u64>) -> lantern:::core:::Aabb {
+            bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
+            for key in keys {
+                for entity in entities {
+                    if entity->key == key {
+                        bounds = bounds.Union(entity->bounds);
+                    }
+                }
+            }
+            return bounds;
+        }
+
+        LevelBounds :: () -> lantern:::core:::Aabb {
+            bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
+            for entity in entities {
+                bounds = bounds.Union(entity->bounds);
+            }
+            return bounds;
+        }
+
+        Pick :: (ray: Ray) -> PickHit? {
+            nothingExcluded~ Array<u64>! = [];
+            hit: PickHit? = PickExcluding(ray, nothingExcluded);
+            delete nothingExcluded;
+            return hit;
+        }
+
+        PickExcluding :: (ray: Ray, excluded: Array<u64>) -> PickHit? {
+            end: Vec3 = ray.At(MAX_PICK_DISTANCE);
+            best~ PickHit? = null;
+            for entity in entities {
+                if ContainsKey(excluded, entity->key) {
+                    continue;
+                }
+                if entity->IsMarker() {
+                    if sphereDistance := RaySphere(ray, entity->Origin(), MARKER_PICK_RADIUS) {
+                        best = Closer(best, ray, entity->key, ray.At(Math:::max(sphereDistance - 0.25f, 0.0f)));
+                    }
+                    continue;
+                }
+                if RayAabb(ray, entity->bounds) == null {
+                    continue;
+                }
+                for triangle in entity->triangles {
+                    if point := lantern:::physics:::SegmentTriangleIntersection(ray.origin, end, triangle) {
+                        best = Closer(best, ray, entity->key, point);
+                    }
+                }
+            }
+            return best;
+        }
+
+        PlacementPoint :: (ray: Ray) -> Vec3? {
+            end: Vec3 = ray.At(MAX_PICK_DISTANCE);
+            nearest~ Vec3? = null;
+            nearestDistanceSquared~ f32 = 0.0f;
+            for entity in entities {
+                for triangle in entity->triangles {
+                    if point := lantern:::physics:::SegmentTriangleIntersection(ray.origin, end, triangle) {
+                        distanceSquared: f32 = lantern:::core:::LengthSquared3(point - ray.origin);
+                        if nearest == null || distanceSquared < nearestDistanceSquared {
+                            nearest = point;
+                            nearestDistanceSquared = distanceSquared;
+                        }
+                    }
+                }
+            }
+            if surface := nearest {
+                return surface;
+            }
+            return ray.IntersectPlane(Vec3 { }, lantern:::core:::WorldUp());
+        }
+    }
+
+    ContainsKey :: (keys: Array<u64>, key: u64) -> bool {
+        for candidate in keys {
+            if candidate == key {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    Closer :: (best: PickHit?, ray: Ray, key: u64, point: Vec3) -> PickHit? {
+        distance: f32 = (point - ray.origin).dot(ray.direction);
+        if distance < 0.0f {
+            return best;
+        }
+        if current := best {
+            if distance >= current.distance {
+                return best;
+            }
+        }
+        return PickHit { key: key, distance: distance, point: point };
+    }
+
+    RaySphere :: (ray: Ray, center: Vec3, radius: f32) -> f32? {
+        toCenter: Vec3 = center - ray.origin;
+        along: f32 = toCenter.dot(ray.direction);
+        squaredMiss: f32 = toCenter.dot(toCenter) - along * along;
+        squaredRadius: f32 = radius * radius;
+        if squaredMiss > squaredRadius {
+            return null;
+        }
+        halfChord: f32 = Math:::sqrt(squaredRadius - squaredMiss);
+        near: f32 = along - halfChord;
+        far: f32 = along + halfChord;
+        if far < 0.0f {
+            return null;
+        }
+        return Math:::max(near, 0.0f);
+    }
+
+    RayAabb :: (ray: Ray, bounds: lantern:::core:::Aabb) -> f32? {
+        toMinimum: Vec3 = bounds.min - ray.origin;
+        toMaximum: Vec3 = bounds.max - ray.origin;
+        first := Vec3 { x: toMinimum.x / ray.direction.x, y: toMinimum.y / ray.direction.y, z: toMinimum.z / ray.direction.z };
+        second := Vec3 { x: toMaximum.x / ray.direction.x, y: toMaximum.y / ray.direction.y, z: toMaximum.z / ray.direction.z };
+        nearCorner: Vec3 = lantern:::core:::ComponentMin3(first, second);
+        farCorner: Vec3 = lantern:::core:::ComponentMax3(first, second);
+        near: f32 = Math:::max(Math:::max(nearCorner.x, nearCorner.y), nearCorner.z);
+        far: f32 = Math:::min(Math:::min(farCorner.x, farCorner.y), farCorner.z);
+        clampedNear: f32 = Math:::max(near, 0.0f);
+        if far >= clampedNear {
+            return clampedNear;
+        }
+        return null;
+    }
+}

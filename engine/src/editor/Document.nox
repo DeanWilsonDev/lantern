@@ -1,0 +1,469 @@
+lantern:::editor :: namespace {
+    EditKind :: enum {
+        Replace,
+        Insert,
+        Remove
+    }
+
+    Edit :: class {
+    public:
+        kind~ EditKind = EditKind:::Remove;
+        index~ usize = 0;
+        key~ u64 = 0;
+        entity~ lantern:::world:::WorldEntity*!? = null;
+
+        Edit~: (editKind: EditKind, editIndex: usize, editKey: u64, editEntity: lantern:::world:::WorldEntity*!?) {
+            kind = editKind;
+            index = editIndex;
+            key = editKey;
+            entity = editEntity!;
+        }
+
+        !Edit~: () {
+            delete entity;
+        }
+
+        static Replace :: (replacement: lantern:::world:::WorldEntity*!) -> Edit*! {
+            entityKey: u64 = replacement->id;
+            return new Edit(EditKind:::Replace, 0, entityKey, replacement!);
+        }
+
+        static Insert :: (position: usize, inserted: lantern:::world:::WorldEntity*!) -> Edit*! {
+            entityKey: u64 = inserted->id;
+            return new Edit(EditKind:::Insert, position, entityKey, inserted!);
+        }
+
+        static Remove :: (removedKey: u64) -> Edit*! {
+            return new Edit(EditKind:::Remove, 0, removedKey, null);
+        }
+
+        Copy :: () -> Edit*! {
+            copiedEntity~ lantern:::world:::WorldEntity*!? = null;
+            if held := entity {
+                copiedEntity = held->Copy();
+            }
+            return new Edit(kind, index, key, copiedEntity!);
+        }
+    }
+
+    ApplyEdit :: (edit: Edit~*, world: lantern:::world:::WorldFile~*) -> Result<Edit*!, string!> {
+        when edit->kind {
+            EditKind:::Replace -> {
+                guard position := world->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
+                guard replacement ~= edit->entity return Result<Edit*!, string!>:::Err(OwnedEditorText("a replace edit has no entity"));
+                previous := world->entities.remove(position);
+                world->entities.insert(position, replacement->Copy());
+                return Result<Edit*!, string!>:::Ok(Edit:::Replace(previous!));
+            },
+            EditKind:::Insert -> {
+                if world->IndexOf(edit->key) != null {
+                    return Result<Edit*!, string!>:::Err(`entity ${edit->key} already exists`);
+                }
+                guard inserted ~= edit->entity return Result<Edit*!, string!>:::Err(OwnedEditorText("an insert edit has no entity"));
+                world->entities.insert(ClampIndex(edit->index, world->entities.length()), inserted->Copy());
+                return Result<Edit*!, string!>:::Ok(Edit:::Remove(edit->key));
+            },
+            EditKind:::Remove -> {
+                guard position := world->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
+                removed := world->entities.remove(position);
+                return Result<Edit*!, string!>:::Ok(Edit:::Insert(position, removed!));
+            },
+        }
+    }
+
+    ClampIndex :: (index: usize, limit: usize) -> usize {
+        if index > limit {
+            return limit;
+        }
+        return index;
+    }
+
+    OwnedEditorText :: (text: string) -> string! {
+        return `${text}`;
+    }
+
+    HistoryEntry :: class {
+    public:
+        label~ string!;
+        undo~ Array<Edit*!>! = [];
+        redo~ Array<Edit*!>! = [];
+        coalesceEntity~ u64? = null;
+        coalesceField~ string!? = null;
+        stateId~ u64 = 0;
+
+        HistoryEntry~: (entryLabel: string, entryStateId: u64) {
+            label = `${entryLabel}`;
+            stateId = entryStateId;
+        }
+
+        !HistoryEntry~: () {
+            delete label;
+            delete coalesceField;
+            undo.freeAll();
+            redo.freeAll();
+        }
+
+        CoalescesWith :: (entity: u64?, field: string?) -> bool {
+            guard mineEntity := coalesceEntity return false;
+            guard mineField := coalesceField return false;
+            guard theirEntity := entity return false;
+            guard theirField := field return false;
+            return mineEntity == theirEntity && mineField == theirField;
+        }
+    }
+
+    CopyEdits :: (edits: Array<Edit*!>) -> Array<Edit*!>! {
+        copies~ Array<Edit*!>! = [];
+        for edit in edits {
+            copied~ Edit*! = edit->Copy();
+            copies.push(copied!);
+        }
+        return copies!;
+    }
+
+    ApplyAll :: (world: lantern:::world:::WorldFile~*, edits: Array<Edit*!>!) -> Result<Array<Edit*!>!, string!> {
+        inverses~ Array<Edit*!>! = [];
+        pending~ Array<Edit*!>! = edits!;
+        defer pending.freeAll();
+        for index~ usize = 0; index < pending.length(); index++ {
+            applied := ApplyEdit(pending[index], world);
+            when applied! {
+                Result:::Ok(inverse) -> {
+                    inverses.push(inverse!);
+                },
+                Result:::Err(message) -> {
+                    RollBack(world, inverses!);
+                    return Result<Array<Edit*!>!, string!>:::Err(message!);
+                }
+            }
+        }
+        reversed~ Array<Edit*!>! = [];
+        while inverses.length() > 0 {
+            last := inverses.remove(inverses.length() - 1);
+            reversed.push(last!);
+        }
+        inverses.freeAll();
+        return Result<Array<Edit*!>!, string!>:::Ok(reversed!);
+    }
+
+    RollBack :: (world: lantern:::world:::WorldFile~*, inverses: Array<Edit*!>!) -> void {
+        remaining~ Array<Edit*!>! = inverses!;
+        while remaining.length() > 0 {
+            last := remaining.remove(remaining.length() - 1);
+            undone := ApplyEdit(last, world);
+            when undone! {
+                Result:::Ok(edit) -> {
+                    delete edit;
+                },
+                Result:::Err(message) -> {
+                    delete message;
+                }
+            }
+            delete last;
+        }
+        remaining.freeAll();
+    }
+
+    EditorDocument :: class {
+    public:
+        world~ lantern:::world:::WorldFile*!;
+        path~ string!? = null;
+        undoStack~ Array<HistoryEntry*!>! = [];
+        redoStack~ Array<HistoryEntry*!>! = [];
+        nextStateId~ u64 = 1;
+        savedStateId~ u64 = 0;
+        topOpenForCoalescing~ bool = false;
+        previewOriginals~ Array<lantern:::world:::WorldEntity*!>! = [];
+        revision~ u64 = 1;
+
+        EditorDocument~: (documentWorld: lantern:::world:::WorldFile*!, documentPath: string!?) {
+            world = documentWorld!;
+            path = documentPath!;
+        }
+
+        !EditorDocument~: () {
+            delete world;
+            delete path;
+            undoStack.freeAll();
+            redoStack.freeAll();
+            previewOriginals.freeAll();
+        }
+
+        static Open :: (filePath: string) -> Result<EditorDocument*!, string!> {
+            loaded := lantern:::world:::Load(filePath);
+            when loaded! {
+                Result:::Ok(opened) -> {
+                    return Result<EditorDocument*!, string!>:::Ok(new EditorDocument(opened!, `${filePath}`));
+                },
+                Result:::Err(message) -> {
+                    return Result<EditorDocument*!, string!>:::Err(message!);
+                }
+            }
+        }
+
+        Revision :: () -> u64 {
+            return revision;
+        }
+
+        CurrentStateId :: () -> u64 {
+            if undoStack.length() == 0 {
+                return 0;
+            }
+            return undoStack[undoStack.length() - 1]->stateId;
+        }
+
+        IsDirty :: () -> bool {
+            return CurrentStateId() != savedStateId || previewOriginals.length() > 0;
+        }
+
+        Save~: (target: string?) -> Result<string!, string!> {
+            CommitPreview("Edit");
+            chosen~ string!? = null;
+            if given := target {
+                chosen = `${given}`;
+            } else if own := path {
+                chosen = `${own}`;
+            }
+            guard chosenPath := chosen return Result<string!, string!>:::Err(OwnedEditorText("the world has no file yet"));
+            failure: string!? = world->Save(chosenPath);
+            if message := failure {
+                reason: string! = `${message}`;
+                delete failure;
+                delete chosen;
+                return Result<string!, string!>:::Err(reason!);
+            }
+            delete failure;
+            delete path;
+            path = `${chosenPath}`;
+            savedStateId = CurrentStateId();
+            topOpenForCoalescing = false;
+            revision += 1;
+            savedPath: string! = `${chosenPath}`;
+            delete chosen;
+            return Result<string!, string!>:::Ok(savedPath!);
+        }
+
+        Execute~: (label: string, edits: Array<Edit*!>!) -> string!? {
+            return ExecuteCoalescing(label, edits!, null, null);
+        }
+
+        ExecuteCoalescing~: (label: string, edits: Array<Edit*!>!, coalesceEntity: u64?, coalesceField: string?) -> string!? {
+            CommitPreview("Edit");
+            if edits.length() == 0 {
+                empty~ Array<Edit*!>! = edits!;
+                empty.freeAll();
+                return null;
+            }
+            redo~ Array<Edit*!>! = CopyEdits(edits);
+            applied := ApplyAll(world, edits!);
+            when applied! {
+                Result:::Ok(undo~ Array<Edit*!>!) -> {
+                    revision += 1;
+                    redoStack.freeAll();
+                    redoStack = [];
+                    merge~ bool = false;
+                    if topOpenForCoalescing && undoStack.length() > 0 {
+                        merge = undoStack[undoStack.length() - 1]->CoalescesWith(coalesceEntity, coalesceField);
+                    }
+                    if merge {
+                        top~ HistoryEntry~* = undoStack[undoStack.length() - 1];
+                        top->redo.freeAll();
+                        top->redo = redo!;
+                        top->stateId = nextStateId;
+                        undo.freeAll();
+                    } else {
+                        entry := new HistoryEntry(label, nextStateId);
+                        entry->undo.freeAll();
+                        entry->undo = undo!;
+                        entry->redo.freeAll();
+                        entry->redo = redo!;
+                        entry->coalesceEntity = coalesceEntity;
+                        if field := coalesceField {
+                            entry->coalesceField = `${field}`;
+                        }
+                        undoStack.push(entry!);
+                    }
+                    nextStateId += 1;
+                    topOpenForCoalescing = coalesceEntity != null && coalesceField != null;
+                    return null;
+                },
+                Result:::Err(message) -> {
+                    redo.freeAll();
+                    return message!;
+                }
+            }
+        }
+
+        SealHistory~: () -> void {
+            topOpenForCoalescing = false;
+        }
+
+        CanUndo :: () -> bool {
+            return undoStack.length() > 0 || previewOriginals.length() > 0;
+        }
+
+        CanRedo :: () -> bool {
+            return redoStack.length() > 0;
+        }
+
+        UndoLabel :: () -> string? {
+            if undoStack.length() == 0 {
+                return null;
+            }
+            return undoStack[undoStack.length() - 1]->label;
+        }
+
+        RedoLabel :: () -> string? {
+            if redoStack.length() == 0 {
+                return null;
+            }
+            return redoStack[redoStack.length() - 1]->label;
+        }
+
+        HistoryLabels :: () -> Array<string!>! {
+            labels~ Array<string!>! = [];
+            for entry in undoStack {
+                labels.push(`${entry->label}`);
+            }
+            index~ usize = redoStack.length();
+            while index > 0 {
+                index -= 1;
+                labels.push(`${redoStack[index]->label}`);
+            }
+            return labels!;
+        }
+
+        HistoryPosition :: () -> usize {
+            return undoStack.length();
+        }
+
+        JumpHistory~: (position: usize) -> bool {
+            moved~ bool = false;
+            while HistoryPosition() > position && Undo() {
+                moved = true;
+            }
+            while HistoryPosition() < position && Redo() {
+                moved = true;
+            }
+            return moved;
+        }
+
+        Undo~: () -> bool {
+            if previewOriginals.length() > 0 {
+                CancelPreview();
+                return true;
+            }
+            if undoStack.length() == 0 {
+                return false;
+            }
+            entry := undoStack.remove(undoStack.length() - 1);
+            ReportHistoryFailure("undo", entry->label, ApplyAll(world, CopyEdits(entry->undo)));
+            redoStack.push(entry!);
+            topOpenForCoalescing = false;
+            revision += 1;
+            return true;
+        }
+
+        Redo~: () -> bool {
+            CommitPreview("Edit");
+            if redoStack.length() == 0 {
+                return false;
+            }
+            entry := redoStack.remove(redoStack.length() - 1);
+            ReportHistoryFailure("redo", entry->label, ApplyAll(world, CopyEdits(entry->redo)));
+            undoStack.push(entry!);
+            topOpenForCoalescing = false;
+            revision += 1;
+            return true;
+        }
+
+        OriginalIndex :: (key: u64) -> usize? {
+            for index~ usize = 0; index < previewOriginals.length(); index++ {
+                if previewOriginals[index]->id == key {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        PreviewReplace~: (entity: lantern:::world:::WorldEntity*!) -> void {
+            positionFound: usize? = world->IndexOf(entity->id);
+            position~ usize = 0;
+            if found := positionFound {
+                position = found;
+            } else {
+                delete entity;
+                return;
+            }
+            if OriginalIndex(entity->id) == null {
+                original~ lantern:::world:::WorldEntity*! = world->entities[position]->Copy();
+                previewOriginals.push(original!);
+            }
+            previous := world->entities.remove(position);
+            delete previous;
+            world->entities.insert(position, entity!);
+            revision += 1;
+        }
+
+        IsPreviewing :: () -> bool {
+            return previewOriginals.length() > 0;
+        }
+
+        CommitPreview~: (label: string) -> void {
+            if previewOriginals.length() == 0 {
+                return;
+            }
+            entry := new HistoryEntry(label, nextStateId);
+            for current in world->entities {
+                guard originalIndex := OriginalIndex(current->id) continue;
+                original~ lantern:::world:::WorldEntity~* = previewOriginals[originalIndex];
+                if !original->SameAs(current) {
+                    undoEdit~ Edit*! = Edit:::Replace(original->Copy());
+                    entry->undo.push(undoEdit!);
+                    redoEdit~ Edit*! = Edit:::Replace(current->Copy());
+                    entry->redo.push(redoEdit!);
+                }
+            }
+            previewOriginals.freeAll();
+            previewOriginals = [];
+            if entry->undo.length() == 0 {
+                delete entry;
+                return;
+            }
+            redoStack.freeAll();
+            redoStack = [];
+            undoStack.push(entry!);
+            nextStateId += 1;
+            topOpenForCoalescing = false;
+            revision += 1;
+        }
+
+        CancelPreview~: () -> void {
+            while previewOriginals.length() > 0 {
+                original := previewOriginals.remove(previewOriginals.length() - 1);
+                if position := world->IndexOf(original->id) {
+                    previous := world->entities.remove(position);
+                    delete previous;
+                    world->entities.insert(position, original!);
+                } else {
+                    delete original;
+                }
+            }
+            revision += 1;
+        }
+    }
+
+    ReportHistoryFailure :: (action: string, label: string, applied: Result<Array<Edit*!>!, string!>) -> void {
+        when applied! {
+            Result:::Ok(inverses~ Array<Edit*!>!) -> {
+                inverses.freeAll();
+            },
+            Result:::Err(message) -> {
+                logged: string! = `${action} of '${label}' failed: ${message}`;
+                lantern:::core:::LogError("editor", logged);
+                delete logged;
+                delete message;
+            }
+        }
+    }
+}

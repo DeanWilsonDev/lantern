@@ -640,3 +640,21 @@ pointer captured when they're registered, the way the other APIs reach `EngineSt
   frames (move, press, release) where Rust queued the press and release together.
 
 Story: `engine-on-nox/l7-game-ui/wire-the-game-ui-into-the-game-host`.
+
+## D-048 The Nox editor model keeps the Rust shapes, with sorted arrays for maps
+
+`engine/src/editor/` ports `editor-core`'s document, palette, preferences, camera and scene geometry
+one type for one type. Where the Rust leans on something Nox doesn't have, it does this instead:
+
+- **Maps.** The palette's markers and the preferences are `BTreeMap`s in Rust. In Nox they're two
+  arrays kept sorted by key, so they save in the same order.
+- **Templates.** An `EntityTemplate` holds its partial entity as a `WorldEntity` with id 0 (its
+  `prototype`), so a new entity starts as a copy of it. Reading one reuses the world file's
+  `WorldReader`, and writing one reuses the world file's shape and property writers.
+- **Equality.** `WorldEntity` gets `Copy` and `SameAs` in place of Rust's derived `Clone` and
+  `PartialEq`, which a preview commit uses to leave out entities that didn't change.
+- **Tests.** The camera, scene geometry and preferences tests are the Rust ones. `document.rs` and
+  `palette.rs` had none, so `the-document-undoes-redoes-coalesces-and-previews` and
+  `the-palette-loads-saves-and-falls-back` are new.
+
+Story: `engine-on-nox/l8-editor/port-editor-core-s-model-document-palette-preferences-camera-and-scene-geometry`.
