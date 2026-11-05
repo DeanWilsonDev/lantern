@@ -22,6 +22,8 @@ lantern:::editor :: namespace {
         hoveredHandle~ Handle? = null;
         hoveredEntity~ u64? = null;
         hoveredViewCubeFace~ usize? = null;
+        clickCycle~ Array<u64>! = [];
+        clickCyclePixel~ Vec2? = null;
         leftDown~ bool = false;
         middleDown~ bool = false;
         rightDown~ bool = false;
@@ -56,6 +58,7 @@ lantern:::editor :: namespace {
             delete bookmarkSet;
             delete bookmarkCameras;
             delete keysHeld;
+            delete clickCycle;
             delete status;
             log.freeAll();
             recentFiles.freeAll();
@@ -1509,9 +1512,19 @@ lantern:::editor :: namespace {
         }
 
         Pick~: (ray: Ray) -> u64? {
+            nothingSkipped~ Array<u64>! = [];
+            found: u64? = PickSkipping(ray, nothingSkipped);
+            delete nothingSkipped;
+            return found;
+        }
+
+        PickSkipping~: (ray: Ray, skipped: Array<u64>) -> u64? {
             RefreshGeometry();
             excluded~ Array<u64>! = CopyKeys(hidden);
             for key in locked {
+                excluded.push(key);
+            }
+            for key in skipped {
                 excluded.push(key);
             }
             if !view.showMarkers {
@@ -1617,12 +1630,16 @@ lantern:::editor :: namespace {
                 if kind == DragKind:::Pending {
                     if key := activeFound->hit {
                         if activeFound->additive {
+                            ResetClickCycle();
                             ToggleSelected(key);
                         } else {
-                            SelectOnly(key);
+                            SelectByClick(activeFound->press, key);
                         }
-                    } else if !activeFound->additive {
-                        ClearSelection();
+                    } else {
+                        ResetClickCycle();
+                        if !activeFound->additive {
+                            ClearSelection();
+                        }
                     }
                 } else if kind == DragKind:::Gizmo || kind == DragKind:::Body {
                     verb~ string = "Move";
@@ -1644,12 +1661,73 @@ lantern:::editor :: namespace {
             } else if kind != DragKind:::Orbit && kind != DragKind:::Pan {
                 keep = true;
             }
+            if kind != DragKind:::Pending && kind != DragKind:::Orbit && kind != DragKind:::Pan {
+                ResetClickCycle();
+            }
             if keep {
                 drag = activeFound!;
             } else {
                 delete activeFound;
             }
             UpdateHover();
+        }
+
+        ResetClickCycle~: () -> void {
+            delete clickCycle;
+            clickCycle = [];
+            clickCyclePixel = null;
+        }
+
+        ContinuesClickCycle :: (press: Vec2) -> bool {
+            guard previous := clickCyclePixel return false;
+            moved: Vec2 = press - previous;
+            if Math:::sqrt(Dot2(moved, moved)) > CLICK_SLOP_PIXELS {
+                return false;
+            }
+            if clickCycle.length() == 0 || selection.length() != 1 {
+                return false;
+            }
+            return selection[0] == clickCycle[clickCycle.length() - 1];
+        }
+
+        CountUnderCursor~: (ray: Ray) -> usize {
+            counted~ Array<u64>! = [];
+            while counted.length() < MAX_CLICK_CYCLE_LENGTH {
+                next: u64? = PickSkipping(ray, counted);
+                guard key := next break;
+                counted.push(key);
+            }
+            count: usize = counted.length();
+            delete counted;
+            return count;
+        }
+
+        SelectByClick~: (press: Vec2, frontKey: u64) -> void {
+            ray: Ray = Projection().RayThrough(press);
+            chosen~ u64 = frontKey;
+            if ContinuesClickCycle(press) {
+                visited~ Array<u64>! = CopyKeys(clickCycle);
+                next: u64? = PickSkipping(ray, visited);
+                delete visited;
+                if nextKey := next {
+                    chosen = nextKey;
+                } else {
+                    delete clickCycle;
+                    clickCycle = [];
+                }
+            } else {
+                delete clickCycle;
+                clickCycle = [];
+                clickCyclePixel = press;
+            }
+            clickCycle.push(chosen);
+            SelectOnly(chosen);
+            stackCount: usize = CountUnderCursor(ray);
+            if stackCount > 1 {
+                if position := document->world->IndexOf(chosen) {
+                    SetStatus(`Selected ${document->world->entities[position]->name} (${clickCycle.length()} of ${stackCount} under the cursor)`);
+                }
+            }
         }
 
         FinishRubberBand~: (press: Vec2, additive: bool) -> void {

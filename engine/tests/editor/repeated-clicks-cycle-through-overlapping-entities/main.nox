@@ -1,0 +1,140 @@
+lantern :: import lantern;
+
+CourseSession :: () -> lantern:::editor:::EditorSession*!? {
+    when lantern:::editor:::Palette:::Load("../assets/editor/palette.json") {
+        Result:::Ok(palette) -> {
+            when lantern:::editor:::EditorSession:::Open("../assets/worlds/course.world.json", palette!) {
+                Result:::Ok(session) -> {
+                    session->SetViewportSize(Vec2 { x: 1280.0f, y: 720.0f });
+                    return session!;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return null;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return null;
+        }
+    }
+}
+
+NoModifiers :: () -> lantern:::editor:::Modifiers {
+    return lantern:::editor:::Modifiers { };
+}
+
+Command :: () -> lantern:::editor:::Modifiers {
+    return lantern:::editor:::Modifiers:::FromBits(lantern:::editor:::MODIFIER_COMMAND);
+}
+
+KeyNamed :: (session: lantern:::editor:::EditorSession*, name: string) -> u64 {
+    for entity in session->World()->entities {
+        if entity->name == name {
+            return entity->id;
+        }
+    }
+    assert(false, "the course has the named entity");
+    return 0;
+}
+
+EntityOf :: (session: lantern:::editor:::EditorSession*, key: u64) -> lantern:::world:::WorldEntity*? {
+    guard index := session->World()->IndexOf(key) return null;
+    return session->World()->entities[index];
+}
+
+PositionOf :: (session: lantern:::editor:::EditorSession*, key: u64) -> Vec3 {
+    guard entity := EntityOf(session, key) return Vec3 { };
+    return entity->transform.position;
+}
+
+PixelOf :: (session: lantern:::editor:::EditorSession*, point: Vec3) -> Vec2 {
+    return session->Projection().Project(point) ?? Vec2 { };
+}
+
+Click :: (session: lantern:::editor:::EditorSession~*, pixel: Vec2, modifiers: lantern:::editor:::Modifiers) -> void {
+    session->PointerMoved(pixel);
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, true, modifiers);
+    session->SetPointerButton(lantern:::editor:::PointerButton:::Left, false, modifiers);
+}
+
+Shift :: () -> lantern:::editor:::Modifiers {
+    return lantern:::editor:::Modifiers:::FromBits(lantern:::editor:::MODIFIER_SHIFT);
+}
+
+OnlySelectedKey :: (session: lantern:::editor:::EditorSession*) -> u64 {
+    if session->selection.length() != 1 {
+        return 0;
+    }
+    return session->selection[0];
+}
+
+TopDownOverCeiling :: (session: lantern:::editor:::EditorSession~*) -> Vec2 {
+    applied: bool = session->CameraPreset("top");
+    assert(applied, "top is a preset");
+    session->camera.target = PositionOf(session, KeyNamed(session, "low_ceiling"));
+    session->camera.distance = 20.0f;
+    return PixelOf(session, session->camera.target) + Vec2 { x: -35.0f, y: -35.0f };
+}
+
+RepeatedClicksStepBackAndWrap :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pixel: Vec2 = TopDownOverCeiling(session);
+    ceiling: u64 = KeyNamed(session, "low_ceiling");
+    Click(session, pixel, NoModifiers());
+    assert(OnlySelectedKey(session) == ceiling, "the first click selects the front entity, the ceiling");
+    session->PointerMoved(pixel);
+    assert(session->hoveredHandle == null, "the click spot is clear of the selection's gizmo, which a press there would grab");
+    stackCount: usize = session->CountUnderCursor(session->Projection().RayThrough(pixel));
+    assert(stackCount >= 2, "something lies under the ceiling");
+    firstSuffix: string! = `(1 of ${stackCount} under the cursor)`;
+    assert(session->status.endsWith(firstSuffix), "the status line says where in the stack the click is");
+    delete firstSuffix;
+    seen~ Array<u64>! = [];
+    defer delete seen;
+    seen.push(ceiling);
+    for step~ usize = 1; step < stackCount; step += 1 {
+        Click(session, pixel + Vec2 { x: 1.0f, y: 0.0f }, NoModifiers());
+        key: u64 = OnlySelectedKey(session);
+        assert(key != 0 && !lantern:::editor:::ContainsKeyIn(seen, key), "each click selects one entity not reached yet");
+        seen.push(key);
+    }
+    lastSuffix: string! = `(${stackCount} of ${stackCount} under the cursor)`;
+    assert(session->status.endsWith(lastSuffix), "the last click reaches the back of the stack");
+    delete lastSuffix;
+    Click(session, pixel, NoModifiers());
+    assert(OnlySelectedKey(session) == ceiling, "after the back of the stack it wraps to the front");
+}
+
+ClickingElsewhereOrWithShiftStartsOver :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    pixel: Vec2 = TopDownOverCeiling(session);
+    ceiling: u64 = KeyNamed(session, "low_ceiling");
+    Click(session, pixel, NoModifiers());
+    Click(session, pixel, NoModifiers());
+    assert(OnlySelectedKey(session) != ceiling, "the second click went behind the ceiling");
+    Click(session, pixel + Vec2 { x: 40.0f, y: 0.0f }, NoModifiers());
+    Click(session, pixel, NoModifiers());
+    assert(OnlySelectedKey(session) == ceiling, "a click elsewhere starts the next click back at the front");
+    Click(session, pixel, NoModifiers());
+    behind: u64 = OnlySelectedKey(session);
+    Click(session, pixel, Shift());
+    Click(session, pixel, Shift());
+    assert(session->selection.length() == 1 && session->selection[0] == behind, "two Shift-clicks toggle the ceiling on and off");
+    Click(session, pixel, NoModifiers());
+    assert(OnlySelectedKey(session) == ceiling, "after a Shift-click a plain click starts at the front again");
+}
+
+main :: () -> i32 {
+    RepeatedClicksStepBackAndWrap();
+    ClickingElsewhereOrWithShiftStartsOver();
+    print("repeated clicks cycle through overlapping entities");
+    return 0;
+}

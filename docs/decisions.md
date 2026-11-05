@@ -784,3 +784,21 @@ Clicking a face applies the camera preset that puts the camera on that face's si
   the cube highlights the face and hovers nothing behind it.
 
 Card: `world-editor/follow-ups-after-the-first-full-pass/clickable-view-cube-in-the-viewport-corner`.
+
+## D-053 Clicking the same spot again selects the next entity behind
+
+A plain click selects the nearest entity under the cursor, as before. Clicking again within the
+click slop, while that click's entity is still the whole selection, selects the nearest entity
+under the cursor that this run of clicks hasn't reached yet. Past the back of the stack it wraps
+to the front.
+
+- **On release, not press.** The press still picks the front entity, so pressing and dragging
+  moves what's under the cursor, whatever an earlier click reached.
+- **What starts over:** a click elsewhere, a Shift- or Command-click, a click on empty space, a
+  drag, or a selection made any other way (the next click no longer finds its entity selected
+  alone). A press on the selection's gizmo is a gizmo drag, as before, and also starts over.
+- **Status line.** When more than one entity lies under the cursor, it names the selection and
+  its place in the stack: "Selected low_ceiling (1 of 2 under the cursor)". Hidden and locked
+  entities, and markers while they're hidden from view, are skipped as they are for a plain click.
+
+Card: `world-editor/follow-ups-after-the-first-full-pass/selection-cycling-through-overlapping-entities-on-repeated-clicks`.
