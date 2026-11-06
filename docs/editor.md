@@ -190,6 +190,9 @@ change the world.
 
 Play saves the level to `.editor-play.world.json` beside the game's worlds and runs the
 `lantern` runner on it with `LANTERN_LEVEL` set, so what plays is what you see, saved or not.
+`LANTERN_LEVEL` names the level inside the assets directory (`worlds/.editor-play.world.json`) and
+`LANTERN_ASSETS` names that directory, so the game finds the level whether the editor was given a
+relative or an absolute assets directory.
 Stop ends the game. The game's own window opens; the editor stays usable.
 
 ## C API rules
