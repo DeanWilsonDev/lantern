@@ -208,9 +208,9 @@ commit. Links live in `mist.local.json`, which isn't committed.
 mist run test
 ```
 
-runs `nox test` over every suite under `tests/`, and passes its arguments through (`--backend c`, for one). It needs a
+runs `tools/run-tests.sh`, which runs `nox test` over every suite under `tests/`, and passes its arguments through (`--backend c`, for one). It needs a
 `nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
-Run `mist install` first. Two of the `tests/gpu` programs render with a real GPU device
+Run `mist install` first. The script relies on the library paths `mist run` sets, so run it through `mist run test` rather than on its own. Two of the `tests/gpu` programs render with a real GPU device
 and skip (logging why) when there isn't one; set `LANTERN_REQUIRE_GPU=1` to make that a failure. On Linux with no
 display, the script uses SDL's offscreen video driver, which renders with a software Vulkan driver such as lavapipe
 (Ubuntu's `mesa-vulkan-drivers`).
