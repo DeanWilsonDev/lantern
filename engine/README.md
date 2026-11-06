@@ -18,36 +18,35 @@ game runs against, the whole engine API, the script session and the host that ru
   `cmake -B build -G Ninja && cmake --build build && cmake --install build --component nox --prefix ~/.local`.
 - `mist` on `PATH`, from [mist-package-manager](https://github.com/fearlessgamedev/mist-package-manager):
   `git submodule update --init --recursive && cmake -B build -G Ninja && cmake --build build && cmake --install build --component mist --prefix ~/.local`.
-- SDL3 3.2 or later.
-- A checkout of [nyx-scripting-language](https://github.com/fearlessgamedev/nyx-scripting-language) on `proto` beside
-  this repository (`../nyx-scripting-language`), or `NYX_SOURCE_DIR` naming one, for the Nyx binding.
+- CMake 3.30 or later, a C++26 compiler (GCC 14, Clang 19 or a recent AppleClang) and Ninja, which Mist uses to build
+  SDL3, SDL3_image, SDL3_ttf and lantern-native.
 - To change a shader: `glslangValidator` and `spirv-cross`.
 
 On macOS with Homebrew:
 
 ```sh
-brew install sdl3 glslang spirv-cross
+brew install cmake ninja glslang spirv-cross
 ```
 
 On Arch Linux:
 
 ```sh
-sudo pacman -S sdl3 glslang spirv-cross
+sudo pacman -S cmake ninja glslang spirv-cross
 ```
 
 ## Building
 
-From this directory:
+From the repository root:
 
 ```sh
-./tools/bind-sdl.sh
-./tools/bind-nyx.sh
-./tools/build-native.sh
-./tools/install-dependencies.sh
-LIBRARY_PATH=generated/mist:/opt/homebrew/lib nox run
+mist install
+mist run game
 ```
 
-On Arch, leave `/opt/homebrew/lib` out of `LIBRARY_PATH`. `nox run` builds `build/lantern` and runs it. It prints the
+`mist install` fetches and builds everything the root `mist.json` names: cgltf, stb_image, SDL3, SDL3_image and SDL3_ttf
+from Mist's index, penumbra-ui-engine and penumbra-bridge, and lantern-native (below). `mist run game` runs
+`nox run --release` in this directory, with Mist's library directories on the search paths. Arguments after the
+script's name go to the program: `mist run game ../games/platformer`. `nox run` builds `build/lantern` and runs it. It prints the
 SDL version, the size of `assets/textures/ground.png` and the number of meshes in `assets/models/gem.glb`, read through
 stb_image and cgltf, then opens a window and draws a lit scene through SDL GPU (a textured ground, the gem spinning, a
 cube with debug lines, and overlay text) from a stub game in the frame loop, until you press Escape or close the
@@ -64,24 +63,26 @@ Run it from this directory, since the asset paths are relative to it. The compil
 - `LANTERN_WINDOW_SCRIPT=1` resizes the window to 800x450 on frame 5, minimises it on frame 15, restores it on frame 30
   and asks to quit on frame 45.
 
-- `bind-sdl.sh` runs `nox bind-c` over SDL3's headers and writes `generated/sdl.nox`. It looks for `SDL3/SDL.h` under
-  `/opt/homebrew/include`, `/usr/local/include` and `/usr/include`; pass another include directory as its argument.
-- `bind-nyx.sh` does the same for Nyx's `include/nyx/nyx.h` and writes `generated/nyx.nox`, and for
-  `native/include/lantern_chaos_ui.h` and writes `generated/chaos-ui.nox`. Both link `liblantern-native`.
-- `build-native.sh` builds `native/`, the one library that holds Nyx's C API and the Chaos UI bridge
-  (`native/src/ChaosUiBridge.cpp`, which runs Chaos and Cosmos on the game's own Nyx runtime), into
-  `generated/native-build/` and links `liblantern-native` into `generated/nyx/`. They're one library so there's exactly one
-  copy of Nyx, and it exports only the `nyx_` and `lantern_chaos_ui_` functions. It needs nyx-scripting-language,
-  chaos-ui-framework and cosmos-styling-language checked out on `proto` beside this repository, with their submodules
-  (or `NYX_SOURCE_DIR`, `CHAOS_SOURCE_DIR` and `COSMOS_SOURCE_DIR`). A program that links it needs that directory in
-  `LIBRARY_PATH` to build. On Linux it also needs it in `LD_LIBRARY_PATH` to start, since Nox doesn't record a
-  run-time search path yet. On macOS the library's install name is its full path in `generated/native-build/`, so a
-  program finds it without `DYLD_LIBRARY_PATH`, which macOS drops for programs a shell script starts.
-- `install-dependencies.sh` runs `mist install`, which fetches cgltf and stb_image at the commits in `mist.lock` and
-  builds each into a static library with its Nox binding, then links those into `generated/mist/`. It's a stand-in
-  until `mist resolve` tells `nox build` where Mist's builds are.
+`native/` is lantern-native, the one library that holds Nyx's C API, the Chaos UI bridge
+(`native/src/ChaosUiBridge.cpp`, which runs Chaos and Cosmos on the game's own Nyx runtime) and penumbra-bridge's C API.
+They're one library so there's exactly one copy of Nyx, and it exports only the `nyx_`, `lantern_chaos_ui_` and
+penumbra-bridge functions. `native/mist.json` describes its build: Mist fetches nyx-scripting-language,
+chaos-ui-framework and cosmos-styling-language on `proto` (with their submodules) and penumbra-bridge on `main`, runs
+`native/CMakeLists.txt` over them, and writes the `NyxC` and `ChaosUiC` bindings with `nox bind-c`.
 
-Each binding records the host's struct layouts, so `generated/` is written on each machine and isn't committed.
+A `nox.json` names Mist's packages with `@` sources: `@sdl3`, `@lantern-native`, `@cgltf` and `@stb_image` are each
+package's bindings, and `nox` asks `mist resolve` where they and their libraries are. Each binding records the host's
+struct layouts, so the bindings are written on each machine, in Mist's cache.
+
+To work on Nyx, Chaos, Cosmos or penumbra-bridge beside Lantern, link your checkout and install again:
+
+```sh
+mist link nyx-scripting-language ../nyx-scripting-language
+mist install
+```
+
+Mist then builds lantern-native from that checkout, and `mist unlink nyx-scripting-language` goes back to the locked
+commit. Links live in `mist.local.json`, which isn't committed.
 
 ## Layout
 
@@ -103,7 +104,7 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
   `SoundBank`, sounds by name).
 - `src/debug/` is the Rust `debug` crate: `DebugDraw.nox` (capsules, spheres, triangle edges and arrows as debug lines)
   and `Hud.nox` (`DebugHud`, the grouped panel of `DebugValues`).
-- `src/nyx/` is the Rust `nyx` crate, `lantern:::nyx`, over `generated/nyx.nox`: `Runtime` (mounting, diagnostics, the
+- `src/nyx/` is the Rust `nyx` crate, `lantern:::nyx`, over lantern-native's `NyxC` binding: `Runtime` (mounting, diagnostics, the
   host surface, making values, registering host functions and types), `Program` (calling functions and methods,
   asking for hooks), `Value` (a retained `nyx_value`, read as `Result`s), `Errors.nox` (`NyxError` with its status,
   message, failure value and Nyx call stack; `Diagnostic`), `Host.nox` (`CallContext`, what a host callback reads its
@@ -203,15 +204,12 @@ Each binding records the host's struct layouts, so `generated/` is written on ea
 ## Testing
 
 ```sh
-./tools/run-tests.sh
+mist run test
 ```
 
 runs `nox test` over every suite under `tests/`, and passes its arguments through (`--backend c`, for one). It needs a
 `nox` that builds a test program from the `nox.json` beside it, which nox-systems-language's `proto` has from #4 on.
-It points `LIBRARY_PATH` at `generated/mist`, which the renderer and asset tests link cgltf and stb_image from, so
-run `./tools/install-dependencies.sh` first. It also puts `generated/nyx` on `LIBRARY_PATH`, `LD_LIBRARY_PATH` and
-`DYLD_LIBRARY_PATH` for the `tests/nyx`, `tests/host` and `tests/chaosui` programs, so run `./tools/bind-nyx.sh` and `./tools/build-native.sh` first. The `tests/sdl` and `tests/gpu` programs link SDL3 and read
-`generated/sdl.nox`, so run `./tools/bind-sdl.sh` first. Two of the `tests/gpu` programs render with a real GPU device
+Run `mist install` first. Two of the `tests/gpu` programs render with a real GPU device
 and skip (logging why) when there isn't one; set `LANTERN_REQUIRE_GPU=1` to make that a failure. On Linux with no
 display, the script uses SDL's offscreen video driver, which renders with a software Vulkan driver such as lavapipe
 (Ubuntu's `mesa-vulkan-drivers`).
@@ -228,7 +226,7 @@ needs for minimising), as in a cloud session; on a desktop it uses the display y
 
 `shaders/` holds the three shaders as GLSL 4.50: `lit` (lit, textured meshes), `lines` (debug lines) and `overlay`
 (the HUD and menus). They're the Rust engine's WGSL shaders (`../shaders/*.wgsl`) rewritten line for line.
-`tools/build-shaders.sh` compiles each stage to SPIR-V with `glslangValidator` and translates the SPIR-V to Metal
+`mist run build-shaders` (`tools/build-shaders.sh`) compiles each stage to SPIR-V with `glslangValidator` and translates the SPIR-V to Metal
 Shading Language with `spirv-cross`, into `shaders/compiled/`. The compiled files are committed, so building the
 engine needs neither tool; run the script again after changing a shader.
 

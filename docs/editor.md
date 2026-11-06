@@ -92,9 +92,9 @@ writes the names the editor's host registers (its `editor*` functions, `appInsta
 `src/ui/.nyx.json`. Commit it when it changes.
 
 CMake runs `nox build` over `engine/editor-backend` itself when a Nox source changes, so `nox` has
-to be on `PATH` and `engine/generated/` has to exist: run `engine/tools/bind-sdl.sh` and
-`engine/tools/install-dependencies.sh` first (`engine/README.md`). The backend finds its compiled
-shaders in `engine/shaders/compiled/` (run `engine/tools/build-shaders.sh`), or in
+to be on `PATH`, and so does `mist`: run `mist install` in the repository root first (`engine/README.md`), and CMake
+asks `mist resolve` where cgltf and stb_image are. The backend finds its compiled
+shaders in `engine/shaders/compiled/` (run `mist run build-shaders`), or in
 `LANTERN_SHADER_DIRECTORY`. With `-DLANTERN_EDITOR_BACKEND=rust`, CMake runs
 `cargo build -p lantern-editor-backend` instead; if SDL3 is somewhere pkg-config doesn't look, set
 `PKG_CONFIG_PATH` (for example `/usr/local/lib/pkgconfig`).
