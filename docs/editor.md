@@ -79,13 +79,27 @@ lantern, and build the host with `nox build`. The built editor opens
 `assets/worlds/course.world.json`, or the world given as its argument:
 
 ```sh
+cd apps/world-editor/nox
 LD_LIBRARY_PATH=../../../engine/generated/nyx ./build/lantern-world-editor path/to/other.world.json
 ```
 
-`./build/lantern-world-editor --host-surface ../src/ui/editor-host-surface.json` writes the names the
+From the same directory, `./build/lantern-world-editor --host-surface ../src/ui/editor-host-surface.json` writes the names the
 editor's host registers (its `editor*` functions, penumbra-bridge's `penumbra:::` functions,
 `appInstance`, `Application`'s members, `Component` and `@signal`) for `nyx check` and nyx-lsp,
 through `src/ui/.nyx.json`. Rewrite it and commit it after changing a host function.
+
+The backend is tested without the app. Its Nox parts are in the engine's test suite
+(`engine/tests/editor/` and `engine/tests/editorbackend/`, run by `engine/tools/run-tests.sh`),
+and `engine/editor-backend` builds on its own with a C test of the whole C API:
+
+```sh
+cmake -S engine/editor-backend -B engine/editor-backend/build -G Ninja
+cmake --build engine/editor-backend/build
+ctest --test-dir engine/editor-backend/build --output-on-failure   # needs a GPU or lavapipe for the render test
+```
+
+`LANTERN_REQUIRE_GPU=1` turns a skipped render into a failure, and `LANTERN_EDITOR_CAPTURE=out.ppm`
+saves the rendered viewport.
 
 ## The panels
 
