@@ -11,21 +11,23 @@ never links the game, and the game never links it. The two share only the world 
 ## Architecture
 
 ```text
-apps/world-editor (C++26, CMake)                      crates/ (Rust)
+apps/world-editor                                     engine/ (Nox)
 ┌──────────────────────────────────────────┐          ┌──────────────────────────────────┐
-│ src/ui/*.chaos *.cosmos *.nyx            │          │ lantern-editor-backend           │
+│ src/ui/*.chaos *.cosmos *.nyx            │          │ lantern:::editorbackend          │
 │   menus, toolbar, outliner, inspector,   │          │   EditorBackend                  │
-│   assets, console, history, settings,    │          │   ├── EditorSession ─────────────┼──► lantern-editor-core
-│   palette, dialogs, status bar           │          │   ├── GpuRenderer (off-screen) ──┼──► lantern-sdl-gpu
+│   assets, console, history, settings,    │          │   ├── EditorSession              │
+│   palette, dialogs, status bar           │          │   ├── off-screen GpuRenderer     │
 │   Editor services via @provide/@context  │          │   ├── preview, thumbnails, play  │
-│        │ calls editor*() host functions  │  C API   │   └── ffi.rs                     │
-│ src/EditorHost.cpp ──────────────────────┼─────────►│   include/lantern_editor.h       │
-│ src/native/EditorViewportRenderers.cpp ──┼─────────►│                                  │
-│   IViewportRenderer per view: level,     │          └──────────────────────────────────┘
-│   preview, thumbnail:<template>          │                       │
-│                                          │                       ▼
-│ Penumbra · Chaos · Cosmos · nyx-proto    │          lantern-world-format ◄── the game host
-└──────────────────────────────────────────┘          (WorldFile, build_pieces)   loads the same file
+│        │ calls editor*() host functions  │          │                                  │
+│ nox/src/EditorFunctions.nox ─────────────┼─────────►│ lantern:::editorapi              │
+│ nox/src/ViewportRenderers.nox ───────────┼─────────►│   (src/EditorApi.nox)            │
+│   a renderer per view: level, preview,   │          └──────────────────────────────────┘
+│   thumbnail:<template>                   │
+│ nox/src/main.nox: window, frame loop     │
+│                                          │
+│ Nox Penumbra · penumbra-bridge · Chaos · │
+│ Cosmos · nyx-proto (lantern-native)      │
+└──────────────────────────────────────────┘
 ```
 
 - **`lantern-world-format`** is the seam. It defines the JSON world file (`WorldFile`,
@@ -42,15 +44,15 @@ apps/world-editor (C++26, CMake)                      crates/ (Rust)
   the game for play-in-editor, and exposes everything through a C API
   (`engine/editor-backend/include/lantern_editor.h`). It is written in Nox
   (`engine/src/editorbackend/` and `engine/editor-backend/`, `docs/decisions.md` D-051) and built
-  as a static library linked against the system SDL3, the same SDL Penumbra uses. The Rust
-  backend (`crates/editor-backend`) implements the same header and is still there to compare
-  with: configure with `-DLANTERN_EDITOR_BACKEND=rust` to link it instead.
-- **`apps/world-editor`** is the front end, built the same way as Pharos. `main.cpp` opens the
-  backend, loads the UI through `ChaosApplicationHost`, registers the viewport renderers and
-  runs. `EditorHost.cpp` registers one Nyx host function per C API call (`editorRevision()`,
-  `editorSelect(id, additive)` and so on). The panels are Chaos components styled by Cosmos,
-  one component per file. `EditorApplication.nyx` only sets up the application. `App.chaos`
-  provides an `Editor` whose services hold the shared UI state as signals: `EditorDocument` polls
+  as a static library linked against the system SDL3. The editor's Nox host imports its
+  `lantern:::editorapi` namespace directly. The Rust backend (`crates/editor-backend`) implements
+  the same header and is still there to compare with: link a C program against either library.
+- **`apps/world-editor`** is the front end. `nox/` is its host, a Nox program on Nox Penumbra:
+  `main.nox` opens an SDL3 window, mounts the UI through penumbra-bridge's `BridgeHost`, registers
+  the viewport renderers and runs the frame loop, and `EditorFunctions.nox` registers one Nyx host
+  function per backend call (`editorRevision()`, `editorSelect(entity, additive)` and so on). The
+  panels in `src/ui` are Chaos components styled by Cosmos, one component per file.
+  `EditorApplication.nyx` only sets up the application. `App.chaos` provides an `Editor` whose services hold the shared UI state as signals: `EditorDocument` polls
   `editorRevision()` each frame and refreshes what it mirrors when the revision changes, and
   `EditorCommands`, `EditorOverlays`, `EditorKeyboard`, `EditorSelection` and `EditorLayout` do the
   rest. Components read it with `@context` and keep their own state (`docs/decisions.md` D-031 to D-040,
@@ -71,42 +73,20 @@ Without a palette the editor still works, with generic blocks, ramps and markers
 
 ## Build and run
 
-You need everything the game needs, plus the C++ UI stack:
-
-- GCC 14 or Clang 19, CMake 3.30 or later and Ninja.
-- SDL3, SDL3_ttf and SDL3_image installed where CMake and pkg-config find them. On Arch:
-  `pacman -S sdl3 sdl3_ttf sdl3_image`. On macOS: `brew install sdl3 sdl3_ttf sdl3_image`.
-- Network access on the first configure, when CMake fetches Penumbra, Chaos, Cosmos,
-  penumbra-ui-backend and Cimmerian (and Chaos fetches nyx-proto).
+`apps/world-editor/nox/README.md` has the commands, run from the lantern checkout's root. They
+prepare the engine (`engine/README.md`), link the Nox Penumbra and penumbra-bridge checkouts beside
+lantern, and build the host with `nox build`. The built editor opens
+`assets/worlds/course.world.json`, or the world given as its argument:
 
 ```sh
-cmake -S apps/world-editor -B apps/world-editor/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build apps/world-editor/build
-apps/world-editor/build/lantern-world-editor                      # opens assets/worlds/course.world.json
-apps/world-editor/build/lantern-world-editor path/to/other.world.json
+cd apps/world-editor/nox
+LD_LIBRARY_PATH=../../../engine/generated/nyx ./build/lantern-world-editor path/to/other.world.json
 ```
 
-Every build also runs `lantern-world-editor --host-surface src/ui/editor-host-surface.json`, which
-writes the names the editor's host registers (its `editor*` functions, `appInstance`, Penumbra's
-`Application` members, `Component` and `@signal`) for `nyx check` and nyx-lsp, through
-`src/ui/.nyx.json`. Commit it when it changes.
-
-CMake runs `nox build` over `engine/editor-backend` itself when a Nox source changes, so `nox` has
-to be on `PATH` and `engine/generated/` has to exist: run `engine/tools/bind-sdl.sh` and
-`engine/tools/install-dependencies.sh` first (`engine/README.md`). The backend finds its compiled
-shaders in `engine/shaders/compiled/` (run `engine/tools/build-shaders.sh`), or in
-`LANTERN_SHADER_DIRECTORY`. With `-DLANTERN_EDITOR_BACKEND=rust`, CMake runs
-`cargo build -p lantern-editor-backend` instead; if SDL3 is somewhere pkg-config doesn't look, set
-`PKG_CONFIG_PATH` (for example `/usr/local/lib/pkgconfig`).
-
-The stack is fetched from `proto` (Penumbra, Chaos, Cosmos) and `main` (penumbra-ui-backend,
-Cimmerian). To build against other branches or local checkouts:
-
-```sh
--DLANTERN_STACK_BRANCH=claude/my-branch          # every dependency from one branch
--DLANTERN_PENUMBRA_BRANCH=claude/my-branch       # one dependency
--DFETCHCONTENT_SOURCE_DIR_PENUMBRA=../penumbra   # a local checkout (CMake's own switch)
-```
+From the same directory, `./build/lantern-world-editor --host-surface ../src/ui/editor-host-surface.json` writes the names the
+editor's host registers (its `editor*` functions, penumbra-bridge's `penumbra:::` functions,
+`appInstance`, `Application`'s members, `Component` and `@signal`) for `nyx check` and nyx-lsp,
+through `src/ui/.nyx.json`. Rewrite it and commit it after changing a host function.
 
 The backend is tested without the app. Its Nox parts are in the engine's test suite
 (`engine/tests/editor/` and `engine/tests/editorbackend/`, run by `engine/tools/run-tests.sh`),

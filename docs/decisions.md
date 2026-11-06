@@ -862,3 +862,22 @@ gives it more than one responsibility.
   application holds the application. The C++ host and the C API the Nox editor uses both register them.
 
 Card: `world-editor/follow-ups-after-the-first-full-pass/components-own-their-state-not-editorapplication`.
+
+## D-056 The Nox host is the world editor's only host
+
+The C++ host (`apps/world-editor/src/main.cpp`, `EditorHost.cpp`, `src/native/` and the CMake project with its
+`LANTERN_EDITOR_BACKEND` option) is gone. Dean ran the Nox host on his Mac on 2026-11-05, and it does everything the
+C++ one did. The editor runs only from `apps/world-editor/nox`.
+
+- **What stays.** `src/ui` (the Chaos, Cosmos and Nyx UI) and `data/fonts` (Inter), which the Nox host loads.
+- **The host functions.** `nox/src/EditorFunctions.nox` was generated from `EditorHost.cpp`. It is now the source,
+  edited by hand, and its generator is gone.
+- **The host surface.** `src/ui/editor-host-surface.json` is written by `lantern-world-editor --host-surface` from
+  the Nox host, by hand after a host function changes, rather than after every CMake build. Its function rows now
+  name their parameters. It no longer lists C++ Penumbra's own types (`PenumbraWidget`, `WidgetRef`,
+  `PenumbraFontBackend`, `PenumbraLifecycleRegistry` and their methods), which nothing in `src/ui` uses.
+- **The C API.** `engine/editor-backend`'s `lantern_editor.h`, its C shim and C test stay. Nothing in the editor uses
+  them now, since the Nox host imports `lantern:::editorapi` directly, but they're how the Nox and Rust backends are
+  compared.
+
+Card: `world-editor-on-nox-penumbra/mac-run-and-retire-the-c-editor-host`.
