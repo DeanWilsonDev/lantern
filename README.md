@@ -107,8 +107,8 @@ and press F5 in the running game.
 through `games/platformer/.nyx.json`, which names `engine-host-surface.json`, a description of
 everything `crates/game-host` registers. After changing a registration, rewrite it with
 `LANTERN_UPDATE_HOST_SURFACE=1 cargo test -p lantern-game-host --test host_surface`; that test fails
-while it's out of date. The world editor's `src/ui/editor-host-surface.json` is rewritten by every
-editor build.
+while it's out of date. The world editor's `src/ui/editor-host-surface.json` is written by
+`lantern-world-editor --host-surface` (`apps/world-editor/nox/README.md`).
 
 The checks that must stay green:
 
@@ -121,15 +121,9 @@ cargo run -p asset-gen -- --check    # assets/ matches the generator
 
 ### World editor
 
-The editor (`apps/world-editor`) is a CMake project, because its UI runs on Penumbra, Chaos and
-Nyx. It needs GCC 14 or Clang 19, CMake 3.30, Ninja, and SDL3, SDL3_ttf and SDL3_image
-installed on the system. See `docs/editor.md`.
-
-```sh
-cmake -S apps/world-editor -B apps/world-editor/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build apps/world-editor/build
-apps/world-editor/build/lantern-world-editor
-```
+The editor is a Nox program, `apps/world-editor/nox`, on Nox Penumbra. Its UI is Chaos, Cosmos and
+Nyx in `apps/world-editor/src/ui`. `apps/world-editor/nox/README.md` has the commands that build and
+run it, and `docs/editor.md` describes it.
 
 ## Controls
 

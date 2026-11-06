@@ -51,8 +51,8 @@ crates/
                                      (include/lantern_editor.h), built as a static library (new)
 apps/
   lantern/                           the runner: `lantern [game-directory]` (composition root)
-  world-editor/                      the world editor: Penumbra shell (C++, CMake) with panels
-                                     in Nyx, Chaos and Cosmos; see docs/editor.md
+  world-editor/                      the world editor: a Nox host on Nox Penumbra (nox/) with
+                                     panels in Nyx, Chaos and Cosmos (src/ui); see docs/editor.md
 games/
   platformer/                        the demo game, all Nyx
     game.json                        title, entry file, Application class, assets directory
@@ -333,7 +333,7 @@ A Nyx feature the game needs and can't have yet is a card on the Nyx kanban's Ga
 The editor is a separate program that edits `assets/worlds/*.world.json`. It shares only
 `lantern-world-format` and the assets with the game. Its logic is `lantern-editor-core`, its
 viewport is drawn off-screen by `lantern-editor-backend`, and its panels are Nyx, Chaos and
-Cosmos on Penumbra (`apps/world-editor`). The game's content reaches it as data through
+Cosmos on Nox Penumbra (`apps/world-editor`). The game's content reaches it as data through
 `assets/editor/palette.json`. See `docs/editor.md` and D-018 to D-022.
 
 ## Rewrite-in-another-language checklist

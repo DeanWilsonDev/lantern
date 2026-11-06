@@ -176,7 +176,8 @@ commit. Links live in `mist.local.json`, which isn't committed.
   the game runner and running it as a child process). `editor-backend/` builds it into a static library behind
   `include/lantern_editor.h`: `src/EditorApi.nox` exports the C API as `lantern:::editorapi`, and
   `shim/lantern_editor.c` implements the header over those exports. Its `CMakeLists.txt` builds the library and a C
-  test of the API (`tests/lantern_editor_test.c`); `apps/world-editor` links it the same way.
+  test of the API (`tests/lantern_editor_test.c`). The world editor's Nox host (`apps/world-editor/nox`) imports
+  `lantern:::editorapi` directly rather than going through the header.
 - `src/stub/` is the stub game `main` runs when it's given no game directory: it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
