@@ -6,44 +6,28 @@ functions from `lantern:::editorbackend`, and draws into an SDL3 window.
 
 ## Building and running
 
-The steps below run from the lantern checkout's root, on a branch that has `apps/world-editor/nox`.
-penumbra-ui-engine (on `nox-proto`), penumbra-bridge (on `main`), nyx-scripting-language,
-chaos-ui-framework and cosmos-styling-language (on `proto`, with their submodules) are checked out
-beside lantern.
+From the lantern checkout's root:
 
 ```sh
-cd engine
-tools/bind-sdl.sh
-tools/bind-nyx.sh
-tools/install-dependencies.sh
-tools/build-shaders.sh
-tools/build-native.sh
-cd ../apps/world-editor/nox
-tools/setup.sh
-LIBRARY_PATH=../../../engine/generated/mist:../../../engine/generated/nyx nox build --release
-LD_LIBRARY_PATH=../../../engine/generated/nyx ./build/lantern-world-editor
+mist install
+mist run editor
 ```
 
-On macOS, add `/opt/homebrew/lib` to `LIBRARY_PATH` and run with `DYLD_LIBRARY_PATH` in place of
-`LD_LIBRARY_PATH`. The editor opens `assets/worlds/course.world.json` unless given another world.
+`mist install` fetches and builds what the root `mist.json` names (see `engine/README.md`), and `mist run editor` runs
+`nox run --release --project apps/world-editor/nox` with Mist's library directories on the search paths. Arguments after
+`editor` go to the editor. It opens `assets/worlds/course.world.json` unless given another world.
 
-- `engine/tools/*` prepare the engine as `engine/README.md` describes: SDL3 and Nyx bindings,
-  cgltf and stb_image, the compiled shaders, and lantern-native, which now carries
-  penumbra-bridge's C API beside Nyx's and the Chaos UI bridge.
-- `apps/world-editor/nox/tools/setup.sh` links `external/penumbra-nox` to the penumbra-ui-engine
-  checkout (`PENUMBRA_NOX_DIR`, default `../penumbra-ui-engine` beside lantern), copies
-  penumbra-bridge's Nox sources (`PENUMBRA_BRIDGE_SOURCE_DIR`) into `generated/penumbra-bridge` so
-  they call lantern-native, and writes `generated/HostPaths.nox` with the UI, font, assets and
-  shader directories.
+- `nox.json` takes Penumbra's Nox sources from `@penumbra-ui-engine` (on `nox-proto`) and penumbra-bridge's Nox side
+  from `@penumbra-bridge` (on `main`). `foreignLibraries` links lantern-native wherever penumbra-bridge's foreign blocks
+  name `penumbra-bridge-capi`, since lantern-native carries that API.
+- `src/HostPaths.nox` names the UI, font, assets and shader directories relative to the repository root, which is where
+  `mist run` starts the editor. To work on penumbra-ui-engine or penumbra-bridge beside lantern, `mist link` your
+  checkout, as `engine/README.md` describes.
 
-`./build/lantern-world-editor --host-surface OUTPUT` writes the host functions it registers as a
-nyx-proto host surface manifest instead of opening the window. `src/ui/.nyx.json` names the
-committed one, `../src/ui/editor-host-surface.json`, for `nyx check` and nyx-lsp. After adding or
-changing a host function, rewrite it and commit it:
-
-```sh
-LD_LIBRARY_PATH=../../../engine/generated/nyx ./build/lantern-world-editor --host-surface ../src/ui/editor-host-surface.json
-```
+`mist run editor --host-surface apps/world-editor/src/ui/editor-host-surface.json` writes the host
+functions it registers as a nyx-proto host surface manifest instead of opening the window.
+`src/ui/.nyx.json` names that committed file for `nyx check` and nyx-lsp, so rewrite it and commit it
+after adding or changing a host function.
 
 `LANTERN_MAX_FRAMES` stops the editor after that many frames.
 
@@ -54,6 +38,7 @@ reloads: the editor never asks for one, and the fonts take the window's DPI scal
 
 | File | What it does |
 | --- | --- |
+| `src/HostPaths.nox` | the UI, font, assets and shader directories, relative to the repository root |
 | `src/main.nox` | the window, fonts, backends and frame loop; the window requests (title, size, text input, file dialogs) the editor makes |
 | `src/EditorFunctions.nox` | every `editor*` host function, each calling `lantern:::editorbackend` |
 | `src/HostFunctions.nox` | helpers the editor functions share |

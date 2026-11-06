@@ -8,12 +8,30 @@ if(NOT TARGET SDL3::SDL3)
 endif()
 
 get_filename_component(LANTERN_ENGINE_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-set(LANTERN_GENERATED_DIRECTORY "${LANTERN_ENGINE_DIRECTORY}/generated")
-foreach(generated_file sdl.nox mist/libcgltf.a mist/libstb_image.a)
-    if(NOT EXISTS "${LANTERN_GENERATED_DIRECTORY}/${generated_file}")
-        message(FATAL_ERROR "engine/generated/${generated_file} is missing: run engine/tools/bind-sdl.sh and "
-                            "engine/tools/install-dependencies.sh first")
+get_filename_component(LANTERN_REPOSITORY_DIRECTORY "${LANTERN_ENGINE_DIRECTORY}/.." ABSOLUTE)
+find_program(MIST_EXECUTABLE mist REQUIRED)
+execute_process(
+    COMMAND "${MIST_EXECUTABLE}" resolve --json --manifest "${LANTERN_REPOSITORY_DIRECTORY}/mist.json"
+    OUTPUT_VARIABLE LANTERN_MIST_RESOLVE_JSON
+    RESULT_VARIABLE LANTERN_MIST_RESOLVE_RESULT)
+if(NOT LANTERN_MIST_RESOLVE_RESULT EQUAL 0)
+    message(FATAL_ERROR "mist resolve failed: run mist install in the repository root first")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${LANTERN_REPOSITORY_DIRECTORY}/mist.lock" "${LANTERN_REPOSITORY_DIRECTORY}/mist_packages/.mist-install.json")
+string(JSON LANTERN_MIST_PACKAGE_COUNT LENGTH "${LANTERN_MIST_RESOLVE_JSON}" packages)
+math(EXPR LANTERN_MIST_LAST_PACKAGE "${LANTERN_MIST_PACKAGE_COUNT} - 1")
+set(LANTERN_MIST_LIBRARIES "")
+foreach(package_index RANGE ${LANTERN_MIST_LAST_PACKAGE})
+    string(JSON package_name GET "${LANTERN_MIST_RESOLVE_JSON}" packages ${package_index} name)
+    if(NOT package_name STREQUAL "cgltf" AND NOT package_name STREQUAL "stb_image")
+        continue()
     endif()
+    string(JSON package_library_directory GET "${LANTERN_MIST_RESOLVE_JSON}" packages ${package_index} libraryDirectories 0)
+    string(JSON package_library_name GET "${LANTERN_MIST_RESOLVE_JSON}" packages ${package_index} libraries 0)
+    find_library(LANTERN_MIST_LIBRARY_${package_name} NAMES ${package_library_name}
+                 PATHS "${package_library_directory}" NO_DEFAULT_PATH NO_CACHE REQUIRED)
+    list(APPEND LANTERN_MIST_LIBRARIES "${LANTERN_MIST_LIBRARY_${package_name}}")
 endforeach()
 
 file(GLOB_RECURSE LANTERN_EDITOR_NOX_SOURCES CONFIGURE_DEPENDS
@@ -59,8 +77,7 @@ target_compile_definitions(lantern_editor_backend PRIVATE
     "LANTERN_EDITOR_SHADER_DIRECTORY=\"${LANTERN_ENGINE_DIRECTORY}/shaders/compiled/\"")
 target_link_libraries(lantern_editor_backend PUBLIC
     lantern_editor_nox_library
-    "${LANTERN_GENERATED_DIRECTORY}/mist/libcgltf.a"
-    "${LANTERN_GENERATED_DIRECTORY}/mist/libstb_image.a"
+    ${LANTERN_MIST_LIBRARIES}
     SDL3::SDL3)
 if(NOT WIN32)
     target_link_libraries(lantern_editor_backend PUBLIC m)

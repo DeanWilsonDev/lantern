@@ -73,24 +73,24 @@ Without a palette the editor still works, with generic blocks, ramps and markers
 
 ## Build and run
 
-`apps/world-editor/nox/README.md` has the commands, run from the lantern checkout's root. They
-prepare the engine (`engine/README.md`), link the Nox Penumbra and penumbra-bridge checkouts beside
-lantern, and build the host with `nox build`. The built editor opens
-`assets/worlds/course.world.json`, or the world given as its argument:
+From the lantern checkout's root, `mist install` fetches and builds everything the editor needs
+(`engine/README.md`), and `mist run editor` builds the Nox host and opens
+`assets/worlds/course.world.json`, or the world given after `editor`:
 
 ```sh
-cd apps/world-editor/nox
-LD_LIBRARY_PATH=../../../engine/generated/nyx ./build/lantern-world-editor path/to/other.world.json
+mist install
+mist run editor path/to/other.world.json
 ```
 
-From the same directory, `./build/lantern-world-editor --host-surface ../src/ui/editor-host-surface.json` writes the names the
+`mist run editor --host-surface apps/world-editor/src/ui/editor-host-surface.json` writes the names the
 editor's host registers (its `editor*` functions, penumbra-bridge's `penumbra:::` functions,
 `appInstance`, `Application`'s members, `Component` and `@signal`) for `nyx check` and nyx-lsp,
 through `src/ui/.nyx.json`. Rewrite it and commit it after changing a host function.
 
 The backend is tested without the app. Its Nox parts are in the engine's test suite
-(`engine/tests/editor/` and `engine/tests/editorbackend/`, run by `engine/tools/run-tests.sh`),
-and `engine/editor-backend` builds on its own with a C test of the whole C API:
+(`engine/tests/editor/` and `engine/tests/editorbackend/`, run by `mist run test`),
+and `engine/editor-backend` builds on its own with a C test of the whole C API. Its CMake asks
+`mist resolve` where cgltf and stb_image are, so run `mist install` first:
 
 ```sh
 cmake -S engine/editor-backend -B engine/editor-backend/build -G Ninja
