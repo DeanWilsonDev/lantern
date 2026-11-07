@@ -86,18 +86,26 @@ commit. Links live in `mist.local.json`, which isn't committed.
 
 ## Layout
 
+`../docs/engine-structure.md` explains how the folders are organised and why; `../docs/renderer.md` walks through the
+renderer one frame at a time, and `../docs/application-and-game-loop.md` the start-up, the game loop and shutdown.
+
+- `src/main.nox` is the entry point, and `src/application/` the composition root: `Application.nox` (`Application`:
+  SDL, the window and the platform; `CreateRenderer`, `OpenAudioOutput`, `Run` and `RunObserved`; shutdown in order),
+  `ApplicationConfig.nox` (the window and the environment variables) and `Programs.nox` (`RunGame`, a Nyx game, and
+  `RunStubGame`).
 - `src/core/` is the Rust `core` crate: `Conventions.nox` (axes, yaw, perspective, `MoveTowards`, `WrapAngle`, `Aabb`)
   over `VectorMath.nox`, `Handle.nox` (`Handle<T>` and `Pool<T>`), `Time.nox` (`FixedStepClock`, `FrameStats`),
   `Input.nox` (keys, buttons, actions, bindings, `InputSnapshot`, the radial dead zone), `Color.nox`, `Debug.nox`
   (`DebugValues`), `Logging.nox` (the stderr logger, filtered by `LANTERN_LOG`), `Text.nox` (padding and fixed
   decimals), `Json.nox` (`lantern:::json`: a JSON document, its parser and a writer that lays text out as serde_json
   does, until the Nox library has JSON), `Files.nox` and `LibM.nox` (the C functions they call).
-- `src/engine/` is the Rust `engine` crate: `InputRouter.nox` turns platform events into each frame's action snapshot
-  and latches presses and releases until a fixed step takes them, `FrameLoop.nox` runs events, the fixed steps, the
-  frame update and the render for a `Game`, pausing the simulation while the window is minimised, `World.nox` holds the
-  entities (`World`: names, scenes, `Transform`s, the parent and child hierarchy, interpolation between fixed steps and
-  `MeshRenderer`s; `ComponentStore<T>` for a game's own data; `ExtractDraws`, which turns visible mesh renderers into
-  draws), and `Audio.nox` is the `AudioSystem`, which plays named sounds and tops the device queue up to 60 ms each
+- `src/engine/` is the Rust `engine` crate, one folder per job: `input/InputRouter.nox` turns platform events into each
+  frame's action snapshot and latches presses and releases until a fixed step takes them; `loop/Game.nox` is the `Game`
+  interface and `loop/GameLoop.nox` the `GameLoop`, which runs events, the fixed steps, the frame update and the render
+  for a `Game`, pausing the simulation while the window is minimised; `entities/World.nox` holds the entities (`World`:
+  names, scenes, `Transform`s, the parent and child hierarchy, interpolation between fixed steps and `MeshRenderer`s;
+  `ComponentStore<T>` for a game's own data; `ExtractDraws`, which turns visible mesh renderers into draws); and
+  `audio/AudioSystem.nox` is the `AudioSystem`, which plays named sounds and tops the device queue up to 60 ms each
   frame.
 - `src/audio/` is the Rust `audio` crate: `Wav.nox` (`SoundData`, 16-bit PCM WAV decoding and encoding, linear
   resampling) and `Mixer.nox` (`Mixer`: effect voices, one looping music track, volumes and the soft clip;
@@ -119,8 +127,7 @@ commit. Links live in `mist.local.json`, which isn't committed.
   loop runs: hooks, F5 reload, F1 HUD, the script error overlay, the HUD's engine values, the capture on quit, and the game's UI: the mouse and
   `SetNavigation`'s actions before `OnUpdate`, Chaos's updates and messages, and drawing after `OnRender`),
   `EngineState.nox` (everything the engine owns while a game runs, the engine's own F5 and F1 actions, the tags world
-  files give entities, `ParseColor`), `RenderBackend.nox` (the `RenderBackend` interface and `HeadlessRenderer`, which
-  hands out handles and counts what's live so a game runs in a test without a GPU), `HostApi.nox` (`HostNamespace`,
+  files give entities, `ParseColor`), `HostApi.nox` (`HostNamespace`,
   which registers functions under a namespace path such as `lantern::input`, and the argument helpers: vectors cross
   as `lantern:::math:::Vec3` and `Vec2` value types, handles as `i64`, a failure is `Error:::NotFound` or
   `Error:::Unknown`) and one file per group of the engine API: `MathApi.nox`, `EngineApi.nox` (engine, audio,
@@ -128,14 +135,20 @@ commit. Links live in `mist.local.json`, which isn't committed.
   entities), `PhysicsApi.nox` (`RayHit`, `ControllerStep` and `CharacterController` as host object types),
   `AssetsApi.nox` (textures and meshes), `DebugApi.nox`, `GameUiApi.nox` (`lantern::ui`: `Mount`, `Unmount`
   and `SetNavigation` over the session's `GameUiState`, which holds its `ChaosUi` and the game's application value), and `EngineApis.nox`, which registers them all. `docs/game-api.md` lists every call.
-- `src/runner/GpuRenderBackend.nox` is the `RenderBackend` over `GpuRenderer`, kept out of `src/host` so the host's
-  tests build without the GPU code, and `RunGame.nox` loads a game's manifest, opens the window, renderer and audio and
-  runs its `GameHost` (`LANTERN_MAX_FRAMES`, `LANTERN_CAPTURE_PATH` and `LANTERN_DEBUG_HUD` as in the Rust runner).
-- `src/sdl/` is the Rust `sdl-facade` crate: `SdlContext` (initialises SDL and shuts it down when deleted),
-  `SdlWindow`, `SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
-  `SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `SdlAudioOutput` (an `AudioSink` on
-  the default playback device). Delete the platform and the audio output before the context.
-- `src/renderer/` is the Rust `renderer-3d` crate's backend-neutral data: `Camera`, `Mesh.nox` (`Vertex`, 48 bytes
+- `src/sdl-facade/` is everything that calls SDL, one folder per domain it serves (the Rust `sdl-facade` and `sdl-gpu`
+  crates). `core/SdlContext` (initialises SDL and shuts it down when deleted), `window/SdlWindow`,
+  `platform/SdlPlatform` (the `PlatformBackend`: events, the clock, one gamepad and relative mouse mode),
+  `platform/SdlEvents.nox` (SDL events to `PlatformEvent`s, by physical key position) and `audio/SdlAudioOutput` (an
+  `AudioSink` on the default playback device). Delete the platform and the audio output before the context.
+  `renderer/` is the SDL GPU backend, `lantern:::gpu`: `GpuRenderer` implements `lantern:::renderer:::RenderBackend`.
+  It owns the device, the swapchain, the three pipelines (`GpuPipelines.nox`, from the shaders `GpuShaders.nox`
+  loads) and every mesh and texture (`GpuResources.nox`), and draws a `RenderWorld` to the window (`Render`) or to
+  memory (`Capture`, `RenderOffscreen`): it culls draws against the camera's `Frustum`, sorts them (`GpuDrawList.nox`)
+  and draws the meshes, the lines and the overlay in one pass. `GpuDevice.nox` sets up the device and swapchain and
+  `GpuUniforms.nox` holds the shaders' uniform blocks.
+- `src/renderer/` is the Rust `renderer-3d` crate, the backend-neutral renderer: `RenderBackend.nox` (the
+  `RenderBackend` interface every renderer implements, and `RenderReport`), `HeadlessRenderer.nox` (a `RenderBackend`
+  that hands out handles and counts what's live, so a game runs in a test without a GPU), `Frustum.nox`, `Camera`, `Mesh.nox` (`Vertex`, 48 bytes
   as the lit shader reads it, and `MeshData`), `Primitives.nox` (cube, box, plane, ramp, capsule, sphere, gem),
   `RenderWorld.nox` (`DrawItem`, `DirectionalLight`, the debug lines and the 2D `Overlay`), `Texture.nox`
   (`TextureData`, solid and checker textures, sRGB encoding, PNG loading through stb_image and `ToPngBytes`, written by
@@ -147,10 +160,6 @@ commit. Links live in `mist.local.json`, which isn't committed.
   messages), `Node.nox` and `Style.nox` (the bridge's snapshot as `UiNode`s with their resolved Cosmos `Style`s),
   `Layout.nox` (stacks in rows and columns with padding, margins, gaps, alignment, flex-grow and positioned boxes) and
   `Draw.nox` (rounded and gradient boxes, borders, shadows and text into the overlay). Only one `ChaosUi` runs at a time.
-- `src/gpu/` is the Rust `sdl-gpu` crate: `GpuRenderer` owns the device, the swapchain, the three pipelines
-  (`GpuPipelines.nox`, from the shaders `GpuShaders.nox` loads) and every mesh and texture (`GpuResources.nox`), and
-  draws a `RenderWorld` to the window (`Render`) or to memory (`Capture`), culling draws against the camera's
-  `Frustum`.
 - `src/physics/` is the Rust `physics` crate: `Geometry.nox` (triangles and closest points between points, segments
   and triangles), `World.nox` (`CollisionWorld`: static triangles in a uniform grid, kinematic bodies, capsule casts,
   contacts and raycasts) and `Controller.nox` (`CharacterController`: walking, jumping with coyote time and a jump
@@ -178,7 +187,8 @@ commit. Links live in `mist.local.json`, which isn't committed.
   `shim/lantern_editor.c` implements the header over those exports. Its `CMakeLists.txt` builds the library and a C
   test of the API (`tests/lantern_editor_test.c`). The world editor's Nox host (`apps/world-editor/nox`) imports
   `lantern:::editorapi` directly rather than going through the header.
-- `src/stub/` is the stub game `main` runs when it's given no game directory: it quits on Escape, counts what the loop calls and
+- `src/stub/` is the stub game `main` runs when it's given no game directory (`AssetReport.nox` first prints what SDL,
+  stb_image and cgltf read): it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the
   `PlatformBackend` and `AudioSink` interfaces a backend implements.

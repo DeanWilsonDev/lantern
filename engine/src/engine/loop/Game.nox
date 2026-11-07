@@ -1,0 +1,40 @@
+// The Game interface: everything the game loop asks of whatever it runs.
+//
+// The loop owns time and the platform; a Game owns what happens in the world. Lantern has three: GameHost (a Nyx game,
+// host/GameHost.nox), StubGame (stub/StubGame.nox) and the tests' own scripted games. The loop calls the hooks in this
+// order every frame:
+//
+//   UpdateInputConfiguration    let the game change its key bindings before input is read
+//   HandleEvent (per event)     window, keyboard, mouse and gamepad events, as they arrive
+//   FixedUpdate (0..n times)    the simulation, in fixed steps of exactly 1/60 s
+//   FrameUpdate                 once per displayed frame: camera, UI, anything tied to real time
+//   Render                      describe the frame and hand it to the renderer
+//   WantsToQuit                 checked last
+lantern:::engine :: namespace {
+    // What one fixed step sees: the input as it stood for that step, the step's length and its number since start.
+    FixedStepContext :: struct {
+        input~ lantern:::core:::InputSnapshot*;
+        stepSeconds~ f32 = 0.0f;
+        stepIndex~ u64 = 0;
+    }
+
+    // What one displayed frame sees. `alpha` is how far real time has got between the last fixed step and the
+    // next one (0 to 1), so rendering can blend the previous and current simulation states for smooth motion.
+    FrameContext :: struct {
+        input~ lantern:::core:::InputSnapshot*;
+        frameSeconds~ f32 = 0.0f;
+        alpha~ f32 = 0.0f;
+        plan~ lantern:::core:::FixedStepPlan = lantern:::core:::FixedStepPlan { };
+        stats~ lantern:::core:::FrameStats = lantern:::core:::FrameStats { };
+        window~ lantern:::platform:::WindowMetrics = lantern:::platform:::WindowMetrics { };
+    }
+
+    Game :: interface {
+        HandleEvent~ (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
+        FixedUpdate~ (step: FixedStepContext) -> void : 0;
+        FrameUpdate~ (frame: FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
+        Render~ (frame: FrameContext) -> void : 0;
+        WantsToQuit : () -> bool : 0;
+        UpdateInputConfiguration~ (input: InputRouter~*) -> void : 0;
+    }
+}

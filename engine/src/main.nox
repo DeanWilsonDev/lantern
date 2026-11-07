@@ -1,130 +1,11 @@
-Sdl :: import Sdl;
-
-lantern:::scaffold :: namespace {
-    ReportSdlVersion :: () -> void {
-        version~ i32 = 0;
-        unsafe {
-            version = Sdl:::SDL_GetVersion();
-        }
-        major: i32 = version / 1000000;
-        minor: i32 = (version / 1000) % 1000;
-        micro: i32 = version % 1000;
-        print(`SDL ${major}.${minor}.${micro}`);
-    }
-
-    ReportImageSize :: (path: string) -> bool {
-        when lantern:::renderer:::TextureData:::LoadPng(path) {
-            Result:::Ok(texture) -> {
-                print(`stb_image: ${path} is ${texture->width}x${texture->height}`);
-                delete texture;
-                return true;
-            },
-            Result:::Err(message) -> {
-                print(`stb_image could not read ${message}`);
-                delete message;
-                return false;
-            }
-        }
-    }
-
-    ReportModelMeshes :: (path: string) -> bool {
-        when lantern:::renderer:::LoadGltfMesh(path) {
-            Result:::Ok(mesh) -> {
-                print(`cgltf: ${path} has ${mesh->TriangleCount()} triangles`);
-                delete mesh;
-                return true;
-            },
-            Result:::Err(message) -> {
-                print(`cgltf could not load ${message}`);
-                delete message;
-                return false;
-            }
-        }
-    }
-}
-
-lantern:::run :: namespace {
-    FrameLimit :: () -> u64 {
-        limitText: string!? = environmentVariable("LANTERN_MAX_FRAMES");
-        defer delete limitText;
-        if text := limitText {
-            if limit := lantern:::core:::ParseUnsigned(text) {
-                return limit;
-            }
-        }
-        return 0;
-    }
-
-    ScriptRequested :: () -> bool {
-        scriptText: string!? = environmentVariable("LANTERN_WINDOW_SCRIPT");
-        defer delete scriptText;
-        if text := scriptText {
-            return text == "1";
-        }
-        return false;
-    }
-
-    RunStubGame :: () -> i32 {
-        context := lantern:::sdl:::SdlContext:::Init();
-        guard context return 1;
-        defer delete context;
-        window := lantern:::sdl:::SdlWindow:::Create(context, lantern:::platform:::WindowConfig { });
-        guard window return 1;
-        return RunInWindow(window!);
-    }
-
-    RunInWindow :: (window: lantern:::sdl:::SdlWindow*!) -> i32 {
-        when lantern:::stub:::LitScene:::Create(window->Raw()) {
-            Result:::Ok(scene) -> {
-                return RunScene(window!, scene!);
-            },
-            Result:::Err(message) -> {
-                lantern:::core:::LogError("renderer", message);
-                delete message;
-                delete window;
-                return 1;
-            }
-        }
-    }
-
-    RunScene :: (window: lantern:::sdl:::SdlWindow*!, scene: lantern:::stub:::LitScene*!) -> i32 {
-        game := new lantern:::stub:::StubGame(FrameLimit(), scene!);
-        defer delete game;
-        platform := new lantern:::sdl:::SdlPlatform(window!);
-        defer delete platform;
-        frameLoop := new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
-        defer delete frameLoop;
-        script := lantern:::stub:::WindowScript { enabled: ScriptRequested() };
-        lantern:::core:::LogInfo("engine", "frame loop started");
-        frame~ u64 = 0;
-        while frameLoop->RunFrame(platform, game) == lantern:::engine:::LoopStatus:::Running {
-            frame += 1;
-            script.Step(frame, platform);
-        }
-        capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
-        defer delete capturePath;
-        if path := capturePath {
-            metrics: lantern:::platform:::WindowMetrics = platform->CurrentWindowMetrics();
-            if game->CaptureLastFrame(path, metrics.pixelWidth, metrics.pixelHeight) {
-                message: string! = `captured the last frame to ${path}`;
-                lantern:::core:::LogInfo("renderer", message);
-                delete message;
-            } else {
-                lantern:::core:::LogError("renderer", "could not capture the last frame");
-            }
-        }
-        summary := game->Summary();
-        lantern:::core:::LogInfo("engine", summary);
-        print(summary);
-        delete summary;
-        return 0;
-    }
-}
+// The entry point. `lantern <game-directory>` runs a Nyx game; `lantern` alone runs the stub game. Everything else
+// starts in application/: Application.nox for the engine's life cycle, Programs.nox for the two programs.
+lantern :: import lantern;
 
 main :: (arguments: Array<string>) -> i32 {
     lantern:::core:::InitLogging(lantern:::core:::LogLevelFilter:::Info);
     if arguments.length() > 1 {
-        return lantern:::runner:::RunGame(arguments[1]);
+        return lantern:::application:::RunGame(arguments[1]);
     }
     lantern:::scaffold:::ReportSdlVersion();
     imageRead: bool = lantern:::scaffold:::ReportImageSize("../assets/textures/ground.png");
@@ -132,5 +13,5 @@ main :: (arguments: Array<string>) -> i32 {
     if !imageRead || !modelRead {
         return 1;
     }
-    return lantern:::run:::RunStubGame();
+    return lantern:::application:::RunStubGame();
 }

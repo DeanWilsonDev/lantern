@@ -1,0 +1,131 @@
+// The two programs `lantern` can run, each built on Application the same way: create it, build a Game around the
+// renderer and audio it hands out, run the loop, then delete the game before the application.
+lantern:::application :: namespace {
+    // `lantern <game-directory>`: a Nyx game. Its game.json names the title, scripts and assets; the game host runs
+    // the scripts against the engine API.
+    RunGame :: (gameDirectory: string) -> i32 {
+        loaded := lantern:::host:::GameManifest:::Load(gameDirectory);
+        when loaded! {
+            Result:::Ok(manifest) -> {
+                status: i32 = RunManifest(gameDirectory, manifest);
+                delete manifest;
+                return status;
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("game", message);
+                delete message;
+                return 1;
+            }
+        }
+    }
+
+    RunManifest :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*) -> i32 {
+        application := Application:::Create(ApplicationConfig:::FromEnvironment(manifest->title));
+        guard application return 1;
+        status: i32 = RunGameHost(gameDirectory, manifest, application);
+        delete application;
+        return status;
+    }
+
+    RunGameHost :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*, application: Application~*) -> i32 {
+        when application->CreateRenderer() {
+            Result:::Ok(renderer) -> {
+                assets: string!? = manifest->AssetsDirectory(gameDirectory);
+                defer delete assets;
+                assetsView~ string? = null;
+                if path := assets {
+                    assetsView = path;
+                }
+                audio := new lantern:::engine:::AudioSystem(application->OpenAudioOutput());
+                started := lantern:::host:::EngineState:::Create(renderer!, audio!, assetsView);
+                when started! {
+                    Result:::Ok(state) -> {
+                        host := new lantern:::host:::GameHost(state!, manifest->ScriptSourceFor(gameDirectory));
+                        ConfigureHost(host, application->config);
+                        application->Run(host);
+                        host->Shutdown();
+                        delete host;
+                        return 0;
+                    },
+                    Result:::Err(message) -> {
+                        lantern:::core:::LogError("game", message);
+                        delete message;
+                        return 1;
+                    }
+                }
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("renderer", message);
+                delete message;
+                return 1;
+            }
+        }
+    }
+
+    ConfigureHost :: (host: lantern:::host:::GameHost~*, config: ApplicationConfig) -> void {
+        if config.frameLimit > 0 {
+            host->maxFrames = config.frameLimit;
+        }
+        delete host->capturePath;
+        host->capturePath = CapturePath();
+        host->state->debugHud->visible = config.showDebugHud;
+    }
+
+    // `lantern` with no arguments: the stub game, a lit scene with no scripts, for checking the window, the loop and
+    // the renderer on their own.
+    RunStubGame :: () -> i32 {
+        application := Application:::Create(ApplicationConfig:::FromEnvironment("Lantern"));
+        guard application return 1;
+        status: i32 = RunStubScene(application);
+        delete application;
+        return status;
+    }
+
+    RunStubScene :: (application: Application~*) -> i32 {
+        when application->CreateRenderer() {
+            Result:::Ok(renderer) -> {
+                when lantern:::stub:::LitScene:::Create(renderer!) {
+                    Result:::Ok(scene) -> {
+                        game := new lantern:::stub:::StubGame(application->config.frameLimit, scene!);
+                        script := new lantern:::stub:::WindowScript(application->config.windowScript);
+                        application->RunObserved(game, script);
+                        delete script;
+                        status: i32 = FinishStub(application, game);
+                        delete game;
+                        return status;
+                    },
+                    Result:::Err(message) -> {
+                        lantern:::core:::LogError("renderer", message);
+                        delete message;
+                        return 1;
+                    }
+                }
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("renderer", message);
+                delete message;
+                return 1;
+            }
+        }
+    }
+
+    FinishStub :: (application: Application*, game: lantern:::stub:::StubGame~*) -> i32 {
+        capturePath: string!? = CapturePath();
+        defer delete capturePath;
+        if path := capturePath {
+            metrics: lantern:::platform:::WindowMetrics = application->WindowMetrics();
+            if game->CaptureLastFrame(path, metrics.pixelWidth, metrics.pixelHeight) {
+                message: string! = `captured the last frame to ${path}`;
+                lantern:::core:::LogInfo("renderer", message);
+                delete message;
+            } else {
+                lantern:::core:::LogError("renderer", "could not capture the last frame");
+            }
+        }
+        summary := game->Summary();
+        lantern:::core:::LogInfo("engine", summary);
+        print(summary);
+        delete summary;
+        return 0;
+    }
+}

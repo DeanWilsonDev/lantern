@@ -1,92 +1,99 @@
-lantern:::runner :: namespace {
-    AUDIO_SAMPLE_RATE: u32 : 48000;
+// The application: the one place that creates the engine's platform objects, runs the game loop and tears them down.
+//
+// Its life has four stages:
+//
+//   1. Create        start SDL, open the window and wrap it in the platform backend
+//   2. Initialise    the caller asks for what its game needs: a renderer (CreateRenderer) and an audio output
+//                    (OpenAudioOutput), and builds its Game around them
+//   3. Run           a game loop runs the Game until it or the window asks to quit
+//   4. Shut down     the caller deletes its Game (and with it the renderer and audio output), then the application,
+//                    which deletes the platform and its window, and SDL last
+//
+// The order in stage 4 matters: GPU resources must go before the window they draw to, and everything SDL made must go
+// before SDL itself shuts down. Programs.nox holds the two programs built on this: a Nyx game and the stub game.
+lantern:::application :: namespace {
+    Application :: class {
+    public:
+        config~ ApplicationConfig = ApplicationConfig { };
+        sdl~ lantern:::sdl:::SdlContext*!;
+        platform~ lantern:::sdl:::SdlPlatform*!;
 
-    OpenAudioOutput :: (context: lantern:::sdl:::SdlContext~*) -> lantern:::platform:::AudioSink*!? {
-        output := lantern:::sdl:::SdlAudioOutput:::Open(context, AUDIO_SAMPLE_RATE);
-        if output == null {
-            lantern:::core:::LogWarn("audio", "no audio output; continuing without sound");
+        Application~: (applicationConfig: ApplicationConfig, context: lantern:::sdl:::SdlContext*!, window: lantern:::sdl:::SdlWindow*!) {
+            config = applicationConfig;
+            sdl = context!;
+            platform = new lantern:::sdl:::SdlPlatform(window!);
         }
-        return output!;
-    }
 
-    ConfigureHost :: (host: lantern:::host:::GameHost~*) -> void {
-        limit: u64 = lantern:::run:::FrameLimit();
-        if limit > 0 {
-            host->maxFrames = limit;
+        !Application~: () {
+            delete platform;
+            delete sdl;
         }
-        delete host->capturePath;
-        host->capturePath = environmentVariable("LANTERN_CAPTURE_PATH");
-        host->state->debugHud->visible = lantern:::host:::EnvironmentFlag("LANTERN_DEBUG_HUD");
-    }
 
-    RunHost :: (window: lantern:::sdl:::SdlWindow*!, host: lantern:::host:::GameHost*!) -> i32 {
-        platform := new lantern:::sdl:::SdlPlatform(window!);
-        frameLoop := new lantern:::engine:::FrameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
-        frameLoop->Run(platform, host);
-        host->Shutdown();
-        delete host;
-        delete frameLoop;
-        delete platform;
-        return 0;
-    }
+        // Stage 1. Null when SDL or the window can't start; the reason is already logged.
+        static Create :: (applicationConfig: ApplicationConfig) -> Application*!? {
+            context := lantern:::sdl:::SdlContext:::Init();
+            guard context return null;
+            window := lantern:::sdl:::SdlWindow:::Create(context, applicationConfig.window);
+            guard window return ShutDownSdl(context!);
+            application := new Application(applicationConfig, context!, window!);
+            return application!;
+        }
 
-    RunGame :: (gameDirectory: string) -> i32 {
-        loaded := lantern:::host:::GameManifest:::Load(gameDirectory);
-        when loaded! {
-            Result:::Ok(manifest) -> {
-                status: i32 = RunManifest(gameDirectory, manifest);
-                delete manifest;
-                return status;
-            },
-            Result:::Err(message) -> {
-                lantern:::core:::LogError("game", message);
-                delete message;
-                return 1;
+        static ShutDownSdl :: (context: lantern:::sdl:::SdlContext*!) -> Application*!? {
+            delete context;
+            return null;
+        }
+
+        Platform :: () -> lantern:::sdl:::SdlPlatform* {
+            return platform;
+        }
+
+        WindowMetrics :: () -> lantern:::platform:::WindowMetrics {
+            return platform->CurrentWindowMetrics();
+        }
+
+        // Stage 2: a renderer drawing to this application's window. The caller owns it and deletes it before the
+        // application.
+        CreateRenderer :: () -> Result<lantern:::gpu:::GpuRenderer*!, string!> {
+            return lantern:::gpu:::GpuRenderer:::Create(platform->Window()->Raw(), config.gpu);
+        }
+
+        // Stage 2: the default audio device, or null (logged) when there is none, in which case the game runs
+        // silently. The caller owns it and deletes it before the application.
+        OpenAudioOutput~: () -> lantern:::platform:::AudioSink*!? {
+            output := lantern:::sdl:::SdlAudioOutput:::Open(sdl, config.audioSampleRate);
+            if output == null {
+                lantern:::core:::LogWarn("audio", "no audio output; continuing without sound");
             }
+            return output!;
         }
-    }
 
-    RunManifest :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*) -> i32 {
-        context := lantern:::sdl:::SdlContext:::Init();
-        guard context return 1;
-        defer delete context;
-        window := lantern:::sdl:::SdlWindow:::Create(context, lantern:::platform:::WindowConfig { title: manifest->title });
-        guard window return 1;
-        return RunInWindow(gameDirectory, manifest, context, window!);
-    }
+        // Stage 3: frames until the game or the window asks to quit.
+        Run~: (game: lantern:::engine:::Game~*) -> void {
+            gameLoop := NewGameLoop();
+            gameLoop->Run(platform, game);
+            delete gameLoop;
+        }
 
-    RunInWindow :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*, sdl: lantern:::sdl:::SdlContext~*, window: lantern:::sdl:::SdlWindow*!) -> i32 {
-        created := lantern:::gpu:::GpuRenderer:::Create(window->Raw(), lantern:::gpu:::GpuOptions:::FromEnvironment());
-        when created! {
-            Result:::Ok(renderer) -> {
-                assets: string!? = manifest->AssetsDirectory(gameDirectory);
-                defer delete assets;
-                assetsView~ string? = null;
-                if path := assets {
-                    assetsView = path;
-                }
-                audio := new lantern:::engine:::AudioSystem(OpenAudioOutput(sdl));
-                started := lantern:::host:::EngineState:::Create(new GpuRenderBackend(renderer!), audio!, assetsView);
-                when started! {
-                    Result:::Ok(state) -> {
-                        host := new lantern:::host:::GameHost(state!, manifest->ScriptSourceFor(gameDirectory));
-                        ConfigureHost(host);
-                        return RunHost(window!, host!);
-                    },
-                    Result:::Err(message) -> {
-                        lantern:::core:::LogError("game", message);
-                        delete message;
-                        delete window;
-                        return 1;
-                    }
-                }
-            },
-            Result:::Err(message) -> {
-                lantern:::core:::LogError("renderer", message);
-                delete message;
-                delete window;
-                return 1;
+        // Stage 3 for a caller that does something between frames: the observer sees each frame after it ran.
+        RunObserved~: (game: lantern:::engine:::Game~*, observer: FrameObserver~*) -> void {
+            gameLoop := NewGameLoop();
+            lantern:::core:::LogInfo("engine", "frame loop started");
+            frame~ u64 = 0;
+            while gameLoop->RunFrame(platform, game) == lantern:::engine:::LoopStatus:::Running {
+                frame += 1;
+                observer->AfterFrame(frame, platform);
             }
+            delete gameLoop;
         }
+
+        static NewGameLoop :: () -> lantern:::engine:::GameLoop*! {
+            gameLoop := new lantern:::engine:::GameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
+            return gameLoop!;
+        }
+    }
+
+    FrameObserver :: interface {
+        AfterFrame~ (frameNumber: u64, platform: lantern:::sdl:::SdlPlatform*) -> void : 0;
     }
 }

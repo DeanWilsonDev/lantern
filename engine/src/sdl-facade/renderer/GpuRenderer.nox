@@ -1,3 +1,22 @@
+// GpuRenderer: the RenderBackend over SDL GPU. This is where a RenderWorld becomes GPU commands.
+//
+// What it owns, for its whole life:
+//   - the device (the connection to the graphics card) and, when drawing to a window, the window's swapchain;
+//   - three pipelines, one per kind of thing it draws: lit meshes, debug lines and the 2D overlay (GpuPipelines.nox);
+//   - every mesh and texture a game uploaded, in pools so they are named by generational handles (GpuResources.nox);
+//   - a 1x1 white texture, used wherever a draw has no texture, so every draw can sample one;
+//   - two growable vertex buffers for the per-frame lines and overlay, and the depth buffer.
+//
+// What one frame does (Render):
+//   1. Acquire a command buffer: a list of GPU work recorded on the CPU and submitted in one go.
+//   2. Copy this frame's line and overlay vertices into their GPU buffers (a copy pass).
+//   3. Acquire the swapchain image to draw into, and make sure the depth buffer is the same size.
+//   4. Record the frame (RecordFrame): cull and sort the meshes, then one render pass that draws the meshes, the
+//      lines over them and the overlay on top.
+//   5. Submit the command buffer. SDL presents the swapchain image when the GPU finishes.
+//
+// Capture and RenderOffscreen record the same frame into a texture of their own instead of the swapchain, then copy
+// its pixels back to the CPU.
 Sdl :: import Sdl;
 
 lantern:::copyreadback :: foreign "c" {
@@ -7,168 +26,11 @@ lantern:::copyreadback :: foreign "c" {
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
-    GpuOptions :: struct {
-        debug~ bool = false;
-        vsync~ bool = true;
-
-        static FromEnvironment :: () -> GpuOptions {
-            return GpuOptions { debug: EnvironmentFlag("LANTERN_GPU_DEBUG", false), vsync: EnvironmentFlag("LANTERN_VSYNC", true) };
-        }
-    }
-
-    EnvironmentFlag :: (name: string, fallback: bool) -> bool {
-        valueText: string!? = environmentVariable(name);
-        defer delete valueText;
-        if text := valueText {
-            if text == "0" || text == "false" {
-                return false;
-            }
-            if text == "1" || text == "true" {
-                return true;
-            }
-        }
-        return fallback;
-    }
-
-    FrameReport :: struct {
-        presented~ bool = false;
-        drawsSubmitted~ u32 = 0;
-        drawsCulled~ u32 = 0;
-        triangles~ u64 = 0;
-        lineCount~ u32 = 0;
-    }
-
-    VisibleDraw :: struct {
-        textureKey~ u32 = 0;
-        meshIndex~ u32 = 0;
-        drawIndex~ usize = 0;
-
-        ComesBefore :: (other: VisibleDraw) -> bool {
-            if textureKey != other.textureKey {
-                return textureKey < other.textureKey;
-            }
-            if meshIndex != other.meshIndex {
-                return meshIndex < other.meshIndex;
-            }
-            return drawIndex < other.drawIndex;
-        }
-    }
-
-    SortedVisibleDraws :: (draws: Array<VisibleDraw>) -> Array<VisibleDraw>! {
-        sorted~ Array<VisibleDraw>! = [];
-        for draw in draws {
-            sorted.push(draw);
-            position~ usize = sorted.length() - 1;
-            while position > 0 && draw.ComesBefore(sorted[position - 1]) {
-                sorted[position] = sorted[position - 1];
-                position -= 1;
-            }
-            sorted[position] = draw;
-        }
-        return sorted!;
-    }
-
-    MatrixAndVectorUniforms :: struct {
-        matrix~ f32[16] = filled<f32, 16>(0.0f);
-        vector~ f32[4] = filled<f32, 4>(0.0f);
-    }
-
-    LightUniforms :: struct {
-        directionToLight~ f32[4] = filled<f32, 4>(0.0f);
-        lightColor~ f32[4] = filled<f32, 4>(0.0f);
-        ambientColor~ f32[4] = filled<f32, 4>(0.0f);
-        fogColor~ f32[4] = filled<f32, 4>(0.0f);
-        fogAndOutput~ f32[4] = filled<f32, 4>(0.0f);
-        cameraPosition~ f32[4] = filled<f32, 4>(0.0f);
-    }
-
-    ObjectUniforms :: struct {
-        model~ f32[16] = filled<f32, 16>(0.0f);
-        normalMatrix~ f32[16] = filled<f32, 16>(0.0f);
-    }
-
-    VectorUniforms :: struct {
-        values~ f32[4] = filled<f32, 4>(0.0f);
-    }
-
-    NormalMatrix4 :: (transform: Mat4) -> f32[16] {
-        normal: lantern:::core:::NormalMatrix = lantern:::core:::NormalMatrix:::FromTransform(transform);
-        return [
-            normal.xAxis.x, normal.xAxis.y, normal.xAxis.z, 0.0f,
-            normal.yAxis.x, normal.yAxis.y, normal.yAxis.z, 0.0f,
-            normal.zAxis.x, normal.zAxis.y, normal.zAxis.z, 0.0f,
-            0.0f, 0.0f, 0.0f, 1.0f
-        ];
-    }
-
-    EncodeSrgbChannel :: (linear: f32) -> f32 {
-        clamped: f32 = Math:::clamp(linear, 0.0f, 1.0f);
-        if clamped <= 0.0031308f {
-            return clamped * 12.92f;
-        }
-        return 1.055f * Math:::pow(clamped, 1.0f / 2.4f) - 0.055f;
-    }
-
-    EncodeSrgb :: (color: lantern:::core:::Color) -> lantern:::core:::Color {
-        return lantern:::core:::Color:::Rgba(EncodeSrgbChannel(color.r), EncodeSrgbChannel(color.g), EncodeSrgbChannel(color.b), color.a);
-    }
-
-    IsBgra :: (format: Sdl:::SDL_GPUTextureFormat) -> bool {
-        return format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM || format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
-    }
-
-    ChooseDepthFormat :: (device: raw Sdl:::SDL_GPUDevice~*) -> Sdl:::SDL_GPUTextureFormat {
-        candidates: Sdl:::SDL_GPUTextureFormat[3] = [Sdl:::SDL_GPU_TEXTUREFORMAT_D32_FLOAT, Sdl:::SDL_GPU_TEXTUREFORMAT_D24_UNORM, Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM];
-        for format in candidates {
-            supported~ bool = false;
-            unsafe {
-                supported = Sdl:::SDL_GPUTextureSupportsFormat(device, format, Sdl:::SDL_GPU_TEXTURETYPE_2D, Sdl:::SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
-            }
-            if supported {
-                return format;
-            }
-        }
-        return Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM;
-    }
-
-    ConfigureSwapchain :: (device: raw Sdl:::SDL_GPUDevice~*, window: raw Sdl:::SDL_Window~*, vsync: bool) -> bool {
-        unsafe {
-            srgb: bool = Sdl:::SDL_WindowSupportsGPUSwapchainComposition(device, window, Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR);
-            composition~ Sdl:::SDL_GPUSwapchainComposition = Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
-            if srgb {
-                composition = Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
-            }
-            presentMode~ Sdl:::SDL_GPUPresentMode = Sdl:::SDL_GPU_PRESENTMODE_VSYNC;
-            if !vsync {
-                if Sdl:::SDL_WindowSupportsGPUPresentMode(device, window, Sdl:::SDL_GPU_PRESENTMODE_MAILBOX) {
-                    presentMode = Sdl:::SDL_GPU_PRESENTMODE_MAILBOX;
-                } else if Sdl:::SDL_WindowSupportsGPUPresentMode(device, window, Sdl:::SDL_GPU_PRESENTMODE_IMMEDIATE) {
-                    presentMode = Sdl:::SDL_GPU_PRESENTMODE_IMMEDIATE;
-                }
-            }
-            if !Sdl:::SDL_SetGPUSwapchainParameters(device, window, composition, presentMode) {
-                failure: string! = SdlFailure("SDL_SetGPUSwapchainParameters");
-                lantern:::core:::LogWarn("renderer", failure);
-                delete failure;
-                return true;
-            }
-            return !srgb;
-        }
-    }
-
-    PushVertexUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
-        unsafe {
-            Sdl:::SDL_PushGPUVertexUniformData(commandBuffer, slot, bytes, byteCount);
-        }
-    }
-
-    PushFragmentUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
-        unsafe {
-            Sdl:::SDL_PushGPUFragmentUniformData(commandBuffer, slot, bytes, byteCount);
-        }
-    }
+    NO_BINDING: u32 : 4294967295;
 
     GpuRenderer :: class {
+        implements:
+            lantern:::renderer:::RenderBackend;
     public:
         device~ raw Sdl:::SDL_GPUDevice~* = null;
         window~ raw Sdl:::SDL_Window~* = null;
@@ -210,6 +72,33 @@ lantern:::gpu :: namespace {
             delete driverName;
         }
 
+        // Opens the device. SDL picks a driver unless LANTERN_GPU_DRIVER names one ("vulkan", "metal"). The shaders
+        // ship as SPIR-V for Vulkan and MSL for Metal, so the device must accept one of those.
+        OpenDevice~: (options: GpuOptions) -> string!? {
+            debug = options.debug;
+            driverText: string!? = environmentVariable("LANTERN_GPU_DRIVER");
+            defer delete driverText;
+            requestedDriver~ string? = null;
+            if text := driverText {
+                if text.length() > 0 {
+                    requestedDriver = text;
+                }
+            }
+            formats: Sdl:::SDL_GPUShaderFormat = Sdl:::SDL_GPU_SHADERFORMAT_SPIRV | Sdl:::SDL_GPU_SHADERFORMAT_MSL;
+            unsafe {
+                device = Sdl:::SDL_CreateGPUDevice(formats, options.debug, requestedDriver);
+            }
+            if device == null {
+                return SdlFailure("SDL_CreateGPUDevice");
+            }
+            unsafe {
+                delete driverName;
+                driverName = copyCString(Sdl:::SDL_GetGPUDeviceDriver(device));
+            }
+            return null;
+        }
+
+        // A renderer without a window, drawing only into its own textures: the editor's viewport and tests use it.
         static CreateOffscreen :: (options: GpuOptions) -> Result<GpuRenderer*!, string!> {
             videoStarted~ bool = false;
             unsafe {
@@ -219,31 +108,16 @@ lantern:::gpu :: namespace {
                 return Result<GpuRenderer*!, string!>:::Err(SdlFailure("SDL_InitSubSystem(VIDEO)"));
             }
             renderer := new GpuRenderer();
-            renderer->debug = options.debug;
             renderer->ownsVideoSubsystem = true;
-            driverText: string!? = environmentVariable("LANTERN_GPU_DRIVER");
-            defer delete driverText;
-            driverName~ string? = null;
-            if text := driverText {
-                if text.length() > 0 {
-                    driverName = text;
-                }
-            }
-            formats: Sdl:::SDL_GPUShaderFormat = Sdl:::SDL_GPU_SHADERFORMAT_SPIRV | Sdl:::SDL_GPU_SHADERFORMAT_MSL;
-            unsafe {
-                renderer->device = Sdl:::SDL_CreateGPUDevice(formats, options.debug, driverName);
-            }
-            if renderer->device == null {
-                failure: string! = SdlFailure("SDL_CreateGPUDevice");
+            deviceProblem: string!? = renderer->OpenDevice(options);
+            if problem := deviceProblem {
+                failure: string! = `${problem}`;
+                delete deviceProblem;
                 delete renderer;
                 unsafe {
                     Sdl:::SDL_QuitSubSystem(Sdl:::SDL_INIT_VIDEO);
                 }
                 return Result<GpuRenderer*!, string!>:::Err(failure!);
-            }
-            unsafe {
-                delete renderer->driverName;
-                renderer->driverName = copyCString(Sdl:::SDL_GetGPUDeviceDriver(renderer->device));
             }
             shaderFormat: ShaderFormat = ChooseShaderFormat(renderer->device);
             srgbSupported~ bool = false;
@@ -260,30 +134,16 @@ lantern:::gpu :: namespace {
             return GpuRenderer:::Finish(renderer!, shaderFormat);
         }
 
+        // A renderer that draws to a window: claim the window's swapchain for the device, then pick formats.
         static Create :: (window: raw Sdl:::SDL_Window~*, options: GpuOptions) -> Result<GpuRenderer*!, string!> {
             renderer := new GpuRenderer();
-            renderer->debug = options.debug;
             renderer->window = window;
-            driverText: string!? = environmentVariable("LANTERN_GPU_DRIVER");
-            defer delete driverText;
-            driverName~ string? = null;
-            if text := driverText {
-                if text.length() > 0 {
-                    driverName = text;
-                }
-            }
-            formats: Sdl:::SDL_GPUShaderFormat = Sdl:::SDL_GPU_SHADERFORMAT_SPIRV | Sdl:::SDL_GPU_SHADERFORMAT_MSL;
-            unsafe {
-                renderer->device = Sdl:::SDL_CreateGPUDevice(formats, options.debug, driverName);
-            }
-            if renderer->device == null {
-                failure: string! = SdlFailure("SDL_CreateGPUDevice");
+            deviceProblem: string!? = renderer->OpenDevice(options);
+            if problem := deviceProblem {
+                failure: string! = `${problem}`;
+                delete deviceProblem;
                 delete renderer;
                 return Result<GpuRenderer*!, string!>:::Err(failure!);
-            }
-            unsafe {
-                delete renderer->driverName;
-                renderer->driverName = copyCString(Sdl:::SDL_GetGPUDeviceDriver(renderer->device));
             }
             shaderFormat: ShaderFormat = ChooseShaderFormat(renderer->device);
             claimed~ bool = false;
@@ -304,6 +164,8 @@ lantern:::gpu :: namespace {
             return GpuRenderer:::Finish(renderer!, shaderFormat);
         }
 
+        // The steps both kinds of renderer share once the device and colour format are known: build the three
+        // pipelines, the samplers and the white texture.
         static Finish :: (renderer: GpuRenderer*!, shaderFormat: ShaderFormat) -> Result<GpuRenderer*!, string!> {
             debugName~ string = "off";
             if renderer->debug {
@@ -461,6 +323,7 @@ lantern:::gpu :: namespace {
             }
         }
 
+        // A draw with no texture, or a released one, samples the 1x1 white texture, so the shader needs no branch.
         TextureOrWhite :: (handle: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?) -> GpuTexture {
             if wanted := handle {
                 if found := textures->Get(lantern:::core:::CastHandle<lantern:::renderer:::TextureTag, GpuTexture>(wanted)) {
@@ -470,13 +333,14 @@ lantern:::gpu :: namespace {
             return whiteTexture;
         }
 
-        Render~: (world: lantern:::renderer:::RenderWorld*) -> Result<FrameReport, string!> {
+        // One frame to the window. The numbered steps are in the comment at the top of this file.
+        Render~: (world: lantern:::renderer:::RenderWorld*) -> Result<lantern:::renderer:::RenderReport, string!> {
             commandBuffer~ raw Sdl:::SDL_GPUCommandBuffer~* = null;
             unsafe {
                 commandBuffer = Sdl:::SDL_AcquireGPUCommandBuffer(device);
             }
             if commandBuffer == null {
-                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_AcquireGPUCommandBuffer"));
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(SdlFailure("SDL_AcquireGPUCommandBuffer"));
             }
             uploadProblem: string!? = UploadDynamicGeometry(commandBuffer, world);
             if problem := uploadProblem {
@@ -485,7 +349,7 @@ lantern:::gpu :: namespace {
                 unsafe {
                     Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
                 }
-                return Result<FrameReport, string!>:::Err(text!);
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(text!);
             }
             swapchainTexture~ raw Sdl:::SDL_GPUTexture~* = null;
             width~ u32 = 0;
@@ -499,14 +363,14 @@ lantern:::gpu :: namespace {
                 unsafe {
                     Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
                 }
-                return Result<FrameReport, string!>:::Err(failure!);
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(failure!);
             }
-            report~ FrameReport = FrameReport { };
+            report~ lantern:::renderer:::RenderReport = lantern:::renderer:::RenderReport { };
             if swapchainTexture == null {
                 unsafe {
                     Sdl:::SDL_SubmitGPUCommandBuffer(commandBuffer);
                 }
-                return Result<FrameReport, string!>:::Ok(report);
+                return Result<lantern:::renderer:::RenderReport, string!>:::Ok(report);
             }
             depthProblem: string!? = EnsureDepthTarget(width, height);
             if problem := depthProblem {
@@ -515,7 +379,7 @@ lantern:::gpu :: namespace {
                 unsafe {
                     Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
                 }
-                return Result<FrameReport, string!>:::Err(text!);
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(text!);
             }
             report = RecordFrame(commandBuffer, swapchainTexture, depthTexture, width, height, world);
             submitted~ bool = false;
@@ -523,10 +387,10 @@ lantern:::gpu :: namespace {
                 submitted = Sdl:::SDL_SubmitGPUCommandBuffer(commandBuffer);
             }
             if !submitted {
-                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_SubmitGPUCommandBuffer"));
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(SdlFailure("SDL_SubmitGPUCommandBuffer"));
             }
             report.presented = true;
-            return Result<FrameReport, string!>:::Ok(report);
+            return Result<lantern:::renderer:::RenderReport, string!>:::Ok(report);
         }
 
         Capture~: (world: lantern:::renderer:::RenderWorld*, width: u32, height: u32) -> Result<lantern:::renderer:::TextureData*!, string!> {
@@ -639,14 +503,14 @@ lantern:::gpu :: namespace {
             return null;
         }
 
-        RenderOffscreen~: (world: lantern:::renderer:::RenderWorld*, requestedWidth: u32, requestedHeight: u32, pixels: Array<u8>!~*) -> Result<FrameReport, string!> {
+        RenderOffscreen~: (world: lantern:::renderer:::RenderWorld*, requestedWidth: u32, requestedHeight: u32, pixels: Array<u8>!~*) -> Result<lantern:::renderer:::RenderReport, string!> {
             width: u32 = when (requestedWidth == 0) { true -> 1, false -> requestedWidth };
             height: u32 = when (requestedHeight == 0) { true -> 1, false -> requestedHeight };
             targetProblem: string!? = EnsureOffscreenTarget(width, height);
             if problem := targetProblem {
                 text: string! = `${problem}`;
                 delete targetProblem;
-                return Result<FrameReport, string!>:::Err(text!);
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(text!);
             }
             byteCount: u32 = width * height * 4;
             commandBuffer~ raw Sdl:::SDL_GPUCommandBuffer~* = null;
@@ -654,7 +518,7 @@ lantern:::gpu :: namespace {
                 commandBuffer = Sdl:::SDL_AcquireGPUCommandBuffer(device);
             }
             if commandBuffer == null {
-                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_AcquireGPUCommandBuffer"));
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(SdlFailure("SDL_AcquireGPUCommandBuffer"));
             }
             uploadProblem: string!? = UploadDynamicGeometry(commandBuffer, world);
             if problem := uploadProblem {
@@ -663,9 +527,9 @@ lantern:::gpu :: namespace {
                 unsafe {
                     Sdl:::SDL_CancelGPUCommandBuffer(commandBuffer);
                 }
-                return Result<FrameReport, string!>:::Err(text!);
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(text!);
             }
-            report: FrameReport = RecordFrame(commandBuffer, offscreenColor, offscreenDepth, width, height, world);
+            report: lantern:::renderer:::RenderReport = RecordFrame(commandBuffer, offscreenColor, offscreenDepth, width, height, world);
             fence~ raw Sdl:::SDL_GPUFence~* = null;
             unsafe {
                 source := Sdl:::SDL_GPUTextureRegion { texture: offscreenColor, w: width, h: height, d: 1 };
@@ -676,7 +540,7 @@ lantern:::gpu :: namespace {
                 fence = Sdl:::SDL_SubmitGPUCommandBufferAndAcquireFence(commandBuffer);
             }
             if fence == null {
-                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_SubmitGPUCommandBufferAndAcquireFence"));
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(SdlFailure("SDL_SubmitGPUCommandBufferAndAcquireFence"));
             }
             while pixels->length() < usize(byteCount) {
                 pixels->push(0);
@@ -695,7 +559,7 @@ lantern:::gpu :: namespace {
                 }
             }
             if mapped == null {
-                return Result<FrameReport, string!>:::Err(SdlFailure("SDL_MapGPUTransferBuffer"));
+                return Result<lantern:::renderer:::RenderReport, string!>:::Err(SdlFailure("SDL_MapGPUTransferBuffer"));
             }
             if IsBgra(colorFormat) {
                 for pixelOffset~ usize = 0; pixelOffset < usize(byteCount); pixelOffset += 4 {
@@ -704,9 +568,9 @@ lantern:::gpu :: namespace {
                     pixels[pixelOffset + 2] = blue;
                 }
             }
-            presentedReport~ FrameReport = report;
+            presentedReport~ lantern:::renderer:::RenderReport = report;
             presentedReport.presented = true;
-            return Result<FrameReport, string!>:::Ok(presentedReport);
+            return Result<lantern:::renderer:::RenderReport, string!>:::Ok(presentedReport);
         }
 
         ReleaseCaptureTarget :: (color: raw Sdl:::SDL_GPUTexture~*, depth: raw Sdl:::SDL_GPUTexture~*, download: raw Sdl:::SDL_GPUTransferBuffer~*) -> void {
@@ -723,6 +587,8 @@ lantern:::gpu :: namespace {
             }
         }
 
+        // Lines and overlay vertices change every frame, so they are copied into GPU buffers each frame. A copy pass
+        // maps a staging buffer the CPU can write, then copies it into the vertex buffer the pipeline reads.
         UploadDynamicGeometry~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, world: lantern:::renderer:::RenderWorld*) -> string!? {
             lineByteCount: u32 = u32(world->lines.length()) * lantern:::renderer:::LINE_VERTEX_STRIDE;
             overlayByteCount: u32 = u32(world->overlay->vertices.length()) * lantern:::renderer:::OVERLAY_VERTEX_STRIDE;
@@ -762,6 +628,7 @@ lantern:::gpu :: namespace {
             return null;
         }
 
+        // The depth buffer must match the colour target's size, so it is recreated when the window resizes.
         EnsureDepthTarget~: (width: u32, height: u32) -> string!? {
             if depthTexture != null && depthWidth == width && depthHeight == height {
                 return null;
@@ -783,7 +650,9 @@ lantern:::gpu :: namespace {
             return null;
         }
 
-        CollectVisibleDraws :: (world: lantern:::renderer:::RenderWorld*, frustum: Frustum, report: FrameReport~*) -> Array<VisibleDraw>! {
+        // Culling: a draw whose mesh bounds, moved by its transform, lie wholly outside the camera's view volume
+        // can't put a pixel on screen, so it is dropped before any GPU work. The rest are sorted (GpuDrawList.nox).
+        CollectVisibleDraws :: (world: lantern:::renderer:::RenderWorld*, frustum: lantern:::renderer:::Frustum, report: lantern:::renderer:::RenderReport~*) -> Array<VisibleDraw>! {
             visible~ Array<VisibleDraw>! = [];
             for drawIndex~ usize = 0; drawIndex < world->draws.length(); drawIndex++ {
                 draw: lantern:::renderer:::DrawItem = world->draws[drawIndex];
@@ -792,7 +661,7 @@ lantern:::gpu :: namespace {
                         report->drawsCulled += 1;
                         continue;
                     }
-                    textureKey~ u32 = 4294967295;
+                    textureKey~ u32 = UNTEXTURED_KEY;
                     if texture := draw.texture {
                         textureKey = texture.Index();
                     }
@@ -808,8 +677,14 @@ lantern:::gpu :: namespace {
             return sorted!;
         }
 
-        RecordFrame~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, colorTexture: raw Sdl:::SDL_GPUTexture~*, depthTarget: raw Sdl:::SDL_GPUTexture~*, width: u32, height: u32, world: lantern:::renderer:::RenderWorld*) -> FrameReport {
-            report~ FrameReport = FrameReport { };
+        // Records one whole frame into `colorTexture`, which is the swapchain image or an off-screen texture.
+        //
+        // A render pass is a stretch of drawing into a fixed set of targets. Its "load op" says what the targets
+        // start as (CLEAR: the clear colour, and depth 1.0, the far plane) and its "store op" whether to keep them
+        // afterwards (the colour, yes; the depth, no one reads it again). Inside the one pass, three steps draw in
+        // order, each with its own pipeline: the lit meshes, the debug lines, then the 2D overlay on top.
+        RecordFrame~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, colorTexture: raw Sdl:::SDL_GPUTexture~*, depthTarget: raw Sdl:::SDL_GPUTexture~*, width: u32, height: u32, world: lantern:::renderer:::RenderWorld*) -> lantern:::renderer:::RenderReport {
+            report~ lantern:::renderer:::RenderReport = lantern:::renderer:::RenderReport { };
             clear~ lantern:::core:::Color = world->clearColor;
             encodeFlag~ f32 = 0.0f;
             if encodeSrgbInShader {
@@ -822,21 +697,9 @@ lantern:::gpu :: namespace {
             }
             aspect: f32 = f32(width) / f32(safeHeight);
             viewProjection: Mat4 = world->camera.ViewProjection(aspect);
-            cameraPosition: Vec3 = world->camera.position;
-            frustum: Frustum = Frustum:::FromViewProjection(viewProjection);
+            frustum: lantern:::renderer:::Frustum = lantern:::renderer:::Frustum:::FromViewProjection(viewProjection);
             visibleDraws: Array<VisibleDraw>! = CollectVisibleDraws(world, frustum, report);
             defer delete visibleDraws;
-
-            frameUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f] };
-            directionToLight: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - world->light.direction, lantern:::core:::WorldUp());
-            lightUniforms := LightUniforms {
-                directionToLight: [directionToLight.x, directionToLight.y, directionToLight.z, 0.0f],
-                lightColor: world->light.color.ToArray(),
-                ambientColor: world->light.ambient.ToArray(),
-                fogColor: world->clearColor.ToArray(),
-                fogAndOutput: [world->fogStart, world->fogEnd, 0.0f, encodeFlag],
-                cameraPosition: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f]
-            };
             unsafe {
                 colorTarget := Sdl:::SDL_GPUColorTargetInfo {
                     texture: colorTexture,
@@ -854,11 +717,34 @@ lantern:::gpu :: namespace {
                     cycle: true
                 };
                 pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, depthTargetInfo);
+                DrawMeshes(commandBuffer, pass, world, visibleDraws, viewProjection, encodeFlag, report);
+                DrawLines(commandBuffer, pass, world, viewProjection, encodeFlag, report);
+                DrawOverlay(commandBuffer, pass, world, width, height, encodeFlag);
+                Sdl:::SDL_EndGPURenderPass(pass);
+            }
+            return report;
+        }
+
+        // Step 1: the lit meshes. The per-frame uniforms (camera and light) are pushed once; then for each visible
+        // draw, rebind the mesh and texture only if they changed, push the per-draw uniforms and draw its indices.
+        DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, world: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
+            cameraPosition: Vec3 = world->camera.position;
+            frameUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f] };
+            directionToLight: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - world->light.direction, lantern:::core:::WorldUp());
+            lightUniforms := LightUniforms {
+                directionToLight: [directionToLight.x, directionToLight.y, directionToLight.z, 0.0f],
+                lightColor: world->light.color.ToArray(),
+                ambientColor: world->light.ambient.ToArray(),
+                fogColor: world->clearColor.ToArray(),
+                fogAndOutput: [world->fogStart, world->fogEnd, 0.0f, encodeFlag],
+                cameraPosition: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f]
+            };
+            unsafe {
                 Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lit);
                 PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(frameUniforms), 80);
                 PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 96);
-                boundMesh~ u32 = 4294967295;
-                boundTexture~ u32 = 4294967295;
+                boundMesh~ u32 = NO_BINDING;
+                boundTexture~ u32 = NO_BINDING;
                 textureBound~ bool = false;
                 for visible in visibleDraws {
                     draw: lantern:::renderer:::DrawItem = world->draws[visible.drawIndex];
@@ -882,35 +768,49 @@ lantern:::gpu :: namespace {
                         PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 128);
                         PushFragmentUniforms(commandBuffer, 1, reinterpret<u8>(colorUniforms), 16);
                         Sdl:::SDL_DrawGPUIndexedPrimitives(pass, mesh.indexCount, 1, 0, 0, 0);
-                        report.drawsSubmitted += 1;
-                        report.triangles += u64(mesh.indexCount / 3);
+                        report->drawsSubmitted += 1;
+                        report->triangles += u64(mesh.indexCount / 3);
                     }
                 }
-                lineVertexCount: u32 = u32(world->lines.length());
-                if lineVertexCount > 0 {
-                    Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lines);
-                    lineUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [0.0f, 0.0f, 0.0f, encodeFlag] };
-                    PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(lineUniforms), 80);
-                    lineBinding := Sdl:::SDL_GPUBufferBinding { buffer: lineBuffer.buffer, offset: 0 };
-                    Sdl:::SDL_BindGPUVertexBuffers(pass, 0, lineBinding, 1);
-                    Sdl:::SDL_DrawGPUPrimitives(pass, lineVertexCount, 1, 0, 0);
-                    report.lineCount = lineVertexCount / 2;
-                }
-                overlayVertexCount: u32 = u32(world->overlay->vertices.length());
-                if overlayVertexCount > 0 {
-                    atlas: GpuTexture = TextureOrWhite(world->overlayTexture);
-                    Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.overlay);
-                    screenUniforms := VectorUniforms { values: [f32(width), f32(height), 0.0f, encodeFlag] };
-                    PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(screenUniforms), 16);
-                    atlasBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: atlas.texture, sampler: atlas.sampler };
-                    Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, atlasBinding, 1);
-                    overlayBinding := Sdl:::SDL_GPUBufferBinding { buffer: overlayBuffer.buffer, offset: 0 };
-                    Sdl:::SDL_BindGPUVertexBuffers(pass, 0, overlayBinding, 1);
-                    Sdl:::SDL_DrawGPUPrimitives(pass, overlayVertexCount, 1, 0, 0);
-                }
-                Sdl:::SDL_EndGPURenderPass(pass);
             }
-            return report;
+        }
+
+        // Step 2: debug lines, two vertices each, already uploaded to lineBuffer. They test against the depth the
+        // meshes wrote, so walls hide them, but don't write depth themselves.
+        DrawLines~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, world: lantern:::renderer:::RenderWorld*, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
+            lineVertexCount: u32 = u32(world->lines.length());
+            if lineVertexCount == 0 {
+                return;
+            }
+            unsafe {
+                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lines);
+                lineUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [0.0f, 0.0f, 0.0f, encodeFlag] };
+                PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(lineUniforms), 80);
+                lineBinding := Sdl:::SDL_GPUBufferBinding { buffer: lineBuffer.buffer, offset: 0 };
+                Sdl:::SDL_BindGPUVertexBuffers(pass, 0, lineBinding, 1);
+                Sdl:::SDL_DrawGPUPrimitives(pass, lineVertexCount, 1, 0, 0);
+            }
+            report->lineCount = lineVertexCount / 2;
+        }
+
+        // Step 3: the 2D overlay (HUD, menus, text) in screen pixels, with no depth test so it lands on top of
+        // everything. Every quad samples the font atlas; solid quads use its white cell.
+        DrawOverlay~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, world: lantern:::renderer:::RenderWorld*, width: u32, height: u32, encodeFlag: f32) -> void {
+            overlayVertexCount: u32 = u32(world->overlay->vertices.length());
+            if overlayVertexCount == 0 {
+                return;
+            }
+            atlas: GpuTexture = TextureOrWhite(world->overlayTexture);
+            unsafe {
+                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.overlay);
+                screenUniforms := VectorUniforms { values: [f32(width), f32(height), 0.0f, encodeFlag] };
+                PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(screenUniforms), 16);
+                atlasBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: atlas.texture, sampler: atlas.sampler };
+                Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, atlasBinding, 1);
+                overlayBinding := Sdl:::SDL_GPUBufferBinding { buffer: overlayBuffer.buffer, offset: 0 };
+                Sdl:::SDL_BindGPUVertexBuffers(pass, 0, overlayBinding, 1);
+                Sdl:::SDL_DrawGPUPrimitives(pass, overlayVertexCount, 1, 0, 0);
+            }
         }
     }
 }

@@ -1,0 +1,88 @@
+// Choosing how the GPU device is set up: debug mode, vertical sync, the depth format and the swapchain.
+//
+// A GPU device is the connection to one graphics card through one driver (Vulkan, Metal or Direct3D 12; SDL GPU picks
+// whichever the platform has). The swapchain is the small ring of images the window shows: each frame the renderer
+// borrows one, draws into it and hands it back to be presented.
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    // LANTERN_GPU_DEBUG=1 turns on the driver's validation layer, which reports misuse of the API in the log.
+    // LANTERN_VSYNC=0 presents as fast as possible instead of waiting for the display's refresh.
+    GpuOptions :: struct {
+        debug~ bool = false;
+        vsync~ bool = true;
+
+        static FromEnvironment :: () -> GpuOptions {
+            return GpuOptions { debug: EnvironmentFlag("LANTERN_GPU_DEBUG", false), vsync: EnvironmentFlag("LANTERN_VSYNC", true) };
+        }
+    }
+
+    EnvironmentFlag :: (name: string, fallback: bool) -> bool {
+        valueText: string!? = environmentVariable(name);
+        defer delete valueText;
+        if text := valueText {
+            if text == "0" || text == "false" {
+                return false;
+            }
+            if text == "1" || text == "true" {
+                return true;
+            }
+        }
+        return fallback;
+    }
+
+    // Some drivers (Metal, most Vulkan drivers on Windows) give the window blue-green-red-alpha images rather than
+    // red-green-blue-alpha. Drawing doesn't care, but pixels read back to the CPU have to be swapped.
+    IsBgra :: (format: Sdl:::SDL_GPUTextureFormat) -> bool {
+        return format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM || format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
+    }
+
+    // The depth buffer stores each pixel's distance from the camera so nearer triangles hide farther ones. More bits
+    // means fewer artefacts where surfaces are close together, so take the most precise format the card supports.
+    ChooseDepthFormat :: (device: raw Sdl:::SDL_GPUDevice~*) -> Sdl:::SDL_GPUTextureFormat {
+        candidates: Sdl:::SDL_GPUTextureFormat[3] = [Sdl:::SDL_GPU_TEXTUREFORMAT_D32_FLOAT, Sdl:::SDL_GPU_TEXTUREFORMAT_D24_UNORM, Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM];
+        for format in candidates {
+            supported~ bool = false;
+            unsafe {
+                supported = Sdl:::SDL_GPUTextureSupportsFormat(device, format, Sdl:::SDL_GPU_TEXTURETYPE_2D, Sdl:::SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET);
+            }
+            if supported {
+                return format;
+            }
+        }
+        return Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM;
+    }
+
+    // The renderer works in linear colour, where light adds up correctly, but screens expect sRGB-encoded values.
+    // An "SDR_LINEAR" swapchain encodes to sRGB in hardware as pixels are written. Where the window can't have one,
+    // the shaders encode instead. Returns true when the shaders must encode.
+    //
+    // The present mode decides what happens when a frame is ready: VSYNC waits for the display's next refresh (no
+    // tearing, frame rate capped at the refresh rate); MAILBOX and IMMEDIATE don't wait.
+    ConfigureSwapchain :: (device: raw Sdl:::SDL_GPUDevice~*, window: raw Sdl:::SDL_Window~*, vsync: bool) -> bool {
+        unsafe {
+            srgb: bool = Sdl:::SDL_WindowSupportsGPUSwapchainComposition(device, window, Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR);
+            composition~ Sdl:::SDL_GPUSwapchainComposition = Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+            if srgb {
+                composition = Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+            }
+            presentMode~ Sdl:::SDL_GPUPresentMode = Sdl:::SDL_GPU_PRESENTMODE_VSYNC;
+            if !vsync {
+                if Sdl:::SDL_WindowSupportsGPUPresentMode(device, window, Sdl:::SDL_GPU_PRESENTMODE_MAILBOX) {
+                    presentMode = Sdl:::SDL_GPU_PRESENTMODE_MAILBOX;
+                } else if Sdl:::SDL_WindowSupportsGPUPresentMode(device, window, Sdl:::SDL_GPU_PRESENTMODE_IMMEDIATE) {
+                    presentMode = Sdl:::SDL_GPU_PRESENTMODE_IMMEDIATE;
+                }
+            }
+            if !Sdl:::SDL_SetGPUSwapchainParameters(device, window, composition, presentMode) {
+                failure: string! = SdlFailure("SDL_SetGPUSwapchainParameters");
+                lantern:::core:::LogWarn("renderer", failure);
+                delete failure;
+                return true;
+            }
+            return !srgb;
+        }
+    }
+}
