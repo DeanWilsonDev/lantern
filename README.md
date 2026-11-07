@@ -8,6 +8,9 @@ tutorial repository and a prototype for a later engine.
 - `docs/brief.md` — what the prototype is for and its milestones.
 - `docs/architecture.md` — the tour: crates, per-frame sequence, ownership and shutdown, the
   game seam, a rewrite checklist and the known omissions.
+- `docs/engine-structure.md` — how the Nox engine (`engine/src/`) is laid out, one folder per domain, and why.
+- `docs/renderer.md` — the renderer, one frame at a time from the game to the GPU, and where new features would go.
+- `docs/application-and-game-loop.md` — start-up, the fixed-step game loop and shutdown.
 - `docs/game-api.md` — every engine call a Nyx game can make, and the hooks the engine calls.
 - `docs/decisions.md` — every decision made along the way, with reasons (D-001 onwards).
 - `docs/editor.md` — the world editor: architecture, build steps and controls.

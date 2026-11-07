@@ -1,34 +1,27 @@
+// The game loop: a fixed simulation step with rendering decoupled from it.
+//
+// Simulating with the real frame time makes results depend on frame rate: a jump is a little higher at 144 fps than
+// at 30, and one slow frame can tunnel a body through a wall. So the simulation always advances in fixed steps of
+// 1/60 s, and each displayed frame runs as many steps as real time has covered:
+//
+//   accumulated time += time since the last frame        (FixedStepClock, core/Time.nox; capped, so a long stall
+//   while accumulated time >= one step:                   can't demand an ever-growing burst of steps)
+//       FixedUpdate(step); accumulated time -= one step
+//   alpha = accumulated time / one step                   (the fraction of a step left over, for interpolation)
+//   FrameUpdate; Render
+//
+// Input is read once per frame, but a key pressed and released between two steps still reaches the next step: the
+// InputRouter latches presses and releases until a fixed step takes them (engine/input/InputRouter.nox).
+//
+// While the window is minimised there is nothing to draw, so neither the simulation nor the renderer runs, and the
+// time spent minimised is not counted when the window comes back.
 lantern:::engine :: namespace {
-    FixedStepContext :: struct {
-        input~ lantern:::core:::InputSnapshot*;
-        stepSeconds~ f32 = 0.0f;
-        stepIndex~ u64 = 0;
-    }
-
-    FrameContext :: struct {
-        input~ lantern:::core:::InputSnapshot*;
-        frameSeconds~ f32 = 0.0f;
-        alpha~ f32 = 0.0f;
-        plan~ lantern:::core:::FixedStepPlan = lantern:::core:::FixedStepPlan { };
-        stats~ lantern:::core:::FrameStats = lantern:::core:::FrameStats { };
-        window~ lantern:::platform:::WindowMetrics = lantern:::platform:::WindowMetrics { };
-    }
-
-    Game :: interface {
-        HandleEvent~ (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
-        FixedUpdate~ (step: FixedStepContext) -> void : 0;
-        FrameUpdate~ (frame: FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
-        Render~ (frame: FrameContext) -> void : 0;
-        WantsToQuit : () -> bool : 0;
-        UpdateInputConfiguration~ (input: InputRouter~*) -> void : 0;
-    }
-
     LoopStatus :: enum {
         Running,
         Finished
     }
 
-    FrameLoop :: class {
+    GameLoop :: class {
     public:
         input~ InputRouter*!;
         clock~ lantern:::core:::FixedStepClock = lantern:::core:::FixedStepClock { };
@@ -37,11 +30,11 @@ lantern:::engine :: namespace {
         wasMinimized~ bool = false;
         quitRequested~ bool = false;
 
-        FrameLoop~: (router: InputRouter*!) {
+        GameLoop~: (router: InputRouter*!) {
             input = router!;
         }
 
-        !FrameLoop~: () {
+        !GameLoop~: () {
             delete input;
         }
 
@@ -49,6 +42,7 @@ lantern:::engine :: namespace {
             return stats;
         }
 
+        // Runs frames until the game or the platform asks to quit.
         Run~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> void {
             lantern:::core:::LogInfo("engine", "frame loop started");
             while RunFrame(platform, game) == LoopStatus:::Running { }
@@ -57,6 +51,7 @@ lantern:::engine :: namespace {
             delete finishedMessage;
         }
 
+        // One pass of the loop. Returns Finished once the platform or the game asks to quit.
         RunFrame~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> LoopStatus {
             game->UpdateInputConfiguration(input);
 

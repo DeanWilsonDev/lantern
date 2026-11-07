@@ -1,5 +1,9 @@
 # Lantern architecture
 
+This tour describes the Rust engine (`crates/`), which the Nox engine in `engine/` was ported from.
+For the Nox engine's layout, read `engine-structure.md`; for its renderer, `renderer.md`; for its start-up and game
+loop, `application-and-game-loop.md`.
+
 Lantern is a small, readable 3D engine prototype written to answer one question: *what must a
 small 3D platformer engine actually do each frame?* It splits the engine into domains (core,
 platform, facade, renderer, physics, debug, engine), each a crate, and uses concrete Rust types

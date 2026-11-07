@@ -1,0 +1,42 @@
+// The renderer's one seam between "what to draw" and "how a GPU draws it".
+//
+// Everything above this interface (the game host, the editor, the stub game) describes a frame as plain data in a
+// RenderWorld and hands it to a RenderBackend. Everything below it (sdl-facade/renderer/GpuRenderer.nox) turns that
+// data into GPU commands. Swapping graphics APIs means writing another RenderBackend; nothing above it changes.
+//
+// The interface is deliberately small. A backend owns two kinds of long-lived resource, meshes and textures, which
+// it uploads once and hands back as handles. Per-frame data (draw items, lines, overlay quads) travels in the
+// RenderWorld every frame and is never kept.
+lantern:::renderer :: namespace {
+    // What one call to Render did, for the debug HUD and for tests.
+    RenderReport :: struct {
+        // False when there was nothing to present to, such as a minimised window.
+        presented~ bool = false;
+        // Mesh draws recorded after culling.
+        drawsSubmitted~ u32 = 0;
+        // Mesh draws skipped because their bounds were outside the camera's frustum.
+        drawsCulled~ u32 = 0;
+        triangles~ u64 = 0;
+        lineCount~ u32 = 0;
+    }
+
+    RenderBackend :: interface {
+        // A name for logs and the HUD, such as "vulkan", "metal" or "headless".
+        DriverName : () -> string : 0;
+
+        // Uploads a mesh's vertices and indices and returns a handle that DrawItems refer to. The MeshData stays
+        // the caller's: the backend keeps its own copy on the GPU.
+        CreateMesh~ (mesh: MeshData*) -> Result<lantern:::core:::Handle<MeshTag>, string!> : 0;
+        // Frees a mesh. Its handle goes stale, so a DrawItem still holding it is skipped rather than crashing.
+        RemoveMesh~ (mesh: lantern:::core:::Handle<MeshTag>) -> void : 0;
+
+        CreateTexture~ (texture: TextureData*) -> Result<lantern:::core:::Handle<TextureTag>, string!> : 0;
+        RemoveTexture~ (texture: lantern:::core:::Handle<TextureTag>) -> void : 0;
+
+        // Draws one frame to the window: the lit meshes, then the debug lines, then the 2D overlay.
+        Render~ (world: RenderWorld*) -> Result<RenderReport, string!> : 0;
+
+        // Draws one frame into memory instead of the window and returns its pixels (screenshots, golden tests).
+        Capture~ (world: RenderWorld*, width: u32, height: u32) -> Result<TextureData*!, string!> : 0;
+    }
+}

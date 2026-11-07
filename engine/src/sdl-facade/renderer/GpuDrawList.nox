@@ -1,0 +1,39 @@
+// The order meshes are drawn in.
+//
+// Binding a texture or a mesh's buffers costs the driver work, so draws that share them should sit next to each
+// other. After culling, every visible draw gets a sort key (texture, then mesh, then its place in the RenderWorld)
+// and the renderer walks the sorted list, binding a texture or mesh only when it changes. The last key keeps the sort
+// stable, so two draws with the same texture and mesh stay in the order the game submitted them.
+lantern:::gpu :: namespace {
+    VisibleDraw :: struct {
+        textureKey~ u32 = 0;
+        meshIndex~ u32 = 0;
+        drawIndex~ usize = 0;
+
+        ComesBefore :: (other: VisibleDraw) -> bool {
+            if textureKey != other.textureKey {
+                return textureKey < other.textureKey;
+            }
+            if meshIndex != other.meshIndex {
+                return meshIndex < other.meshIndex;
+            }
+            return drawIndex < other.drawIndex;
+        }
+    }
+
+    UNTEXTURED_KEY: u32 : 4294967295;
+
+    SortedVisibleDraws :: (draws: Array<VisibleDraw>) -> Array<VisibleDraw>! {
+        sorted~ Array<VisibleDraw>! = [];
+        for draw in draws {
+            sorted.push(draw);
+            position~ usize = sorted.length() - 1;
+            while position > 0 && draw.ComesBefore(sorted[position - 1]) {
+                sorted[position] = sorted[position - 1];
+                position -= 1;
+            }
+            sorted[position] = draw;
+        }
+        return sorted!;
+    }
+}

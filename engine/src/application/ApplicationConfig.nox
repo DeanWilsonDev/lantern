@@ -1,0 +1,55 @@
+// Everything the application reads from outside before it starts, gathered in one place.
+//
+// The window comes from the game (its title) and the defaults in WindowConfig. The rest are environment variables,
+// listed in engine/README.md, so a test or a script can change how a run behaves without new command-line options.
+lantern:::application :: namespace {
+    AUDIO_SAMPLE_RATE: u32 : 48000;
+
+    ApplicationConfig :: struct {
+        window~ lantern:::platform:::WindowConfig = lantern:::platform:::WindowConfig { };
+        gpu~ lantern:::gpu:::GpuOptions = lantern:::gpu:::GpuOptions { };
+        audioSampleRate~ u32 = AUDIO_SAMPLE_RATE;
+        // LANTERN_MAX_FRAMES: stop after this many frames; 0 runs until quit.
+        frameLimit~ u64 = 0;
+        // LANTERN_DEBUG_HUD=1: start with the debug HUD showing.
+        showDebugHud~ bool = false;
+        // LANTERN_WINDOW_SCRIPT=1: the stub game resizes, minimises and restores its window (tools/check-window.sh).
+        windowScript~ bool = false;
+
+        static FromEnvironment :: (windowTitle: string) -> ApplicationConfig {
+            return ApplicationConfig {
+                window: lantern:::platform:::WindowConfig { title: windowTitle },
+                gpu: lantern:::gpu:::GpuOptions:::FromEnvironment(),
+                frameLimit: FrameLimit(),
+                showDebugHud: lantern:::host:::EnvironmentFlag("LANTERN_DEBUG_HUD"),
+                windowScript: WindowScriptRequested()
+            };
+        }
+    }
+
+    // LANTERN_CAPTURE_PATH: save the last frame as a PNG at this path when the run ends. A string the caller owns,
+    // so it's read where it's used rather than kept in the config.
+    CapturePath :: () -> string!? {
+        return environmentVariable("LANTERN_CAPTURE_PATH");
+    }
+
+    FrameLimit :: () -> u64 {
+        limitText: string!? = environmentVariable("LANTERN_MAX_FRAMES");
+        defer delete limitText;
+        if text := limitText {
+            if limit := lantern:::core:::ParseUnsigned(text) {
+                return limit;
+            }
+        }
+        return 0;
+    }
+
+    WindowScriptRequested :: () -> bool {
+        scriptText: string!? = environmentVariable("LANTERN_WINDOW_SCRIPT");
+        defer delete scriptText;
+        if text := scriptText {
+            return text == "1";
+        }
+        return false;
+    }
+}

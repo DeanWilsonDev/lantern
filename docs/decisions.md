@@ -881,3 +881,27 @@ C++ one did. The editor runs only from `apps/world-editor/nox`.
   compared.
 
 Card: `world-editor-on-nox-penumbra/mac-run-and-retire-the-c-editor-host`.
+
+## D-057 The engine is laid out one folder per domain, with SDL behind a facade folder
+
+Dean asked for the engine to be a clear reference for writing a renderer, with a clean application and game loop,
+laid out by domain. `engine/src/` now has a folder per domain (`core`, `platform`, `renderer`, `engine/loop`,
+`engine/input`, `engine/entities`, `engine/audio`, ...), everything that calls SDL in `sdl-facade/` split by the domain
+it serves, and one composition root in `application/`. `engine-structure.md` has the map; `renderer.md` and
+`application-and-game-loop.md` are walkthroughs. Behaviour didn't change: 189 of 189 tests pass and the game, the stub
+and the editor run as before.
+
+- **RenderBackend lives with the renderer.** It moved from `lantern:::host` to `lantern:::renderer`, with
+  `RenderReport`, `HeadlessRenderer` and `Frustum`. `GpuRenderer` implements it directly, so the `GpuRenderBackend`
+  adapter and the duplicate `FrameReport` are gone.
+- **GpuRenderer is split by job**: `GpuDevice.nox` (device and swapchain), `GpuUniforms.nox` (the uniform blocks),
+  `GpuDrawList.nox` (draw order), and the frame into `DrawMeshes`, `DrawLines` and `DrawOverlay`.
+- **One Application.** `Application` starts SDL, opens the window and the platform, hands out the renderer and the
+  audio output, runs a `GameLoop` (formerly `FrameLoop`) and shuts down in order. `runner/` and `main.nox`'s copy of
+  the same set-up are gone.
+- **The application sits above engine/**, because tests build `engine/` without a GPU, the host or SDL.
+- **No dependency-injection container**: the application passes each object on, as before. File names stay
+  PascalCase, and namespaces kept their names where only the folder moved.
+- **Tutorial comments** in the renderer, the application and the loop, as the game code has (D-042).
+
+Card: `engine-follow-ups/engine-structure-and-a-renderer-to-learn-from`.
