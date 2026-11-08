@@ -1,24 +1,51 @@
 lantern:::platform :: namespace {
+    /** How to open the window. */
     WindowConfig :: struct {
+        /** The title bar text; a game's comes from its game.json. */
         title~ string = "Lantern";
+        /** Width in points (not pixels): the OS scales it on high-density displays. */
         width~ u32 = 1280;
+        /** Height in points. */
         height~ u32 = 720;
+        /** Whether the user can resize the window. The renderer recreates its depth buffer when they do. */
         resizable~ bool = true;
+        /** Unused by the window itself; vertical sync is the GPU swapchain's setting (`GpuOptions.vsync`). */
         vsync~ bool = true;
     }
 
+    /**
+     * The window's size and state at one moment. Read each frame by the loop and passed to the game in
+     * `FrameContext.window`.
+     */
     WindowMetrics :: struct {
+        /** Width in points, the unit the OS and mouse coordinates use. */
         logicalWidth~ u32 = 0;
+        /** Height in points. */
         logicalHeight~ u32 = 0;
+        /** Width in pixels: the size of the swapchain image the renderer draws. */
         pixelWidth~ u32 = 0;
+        /** Height in pixels. */
         pixelHeight~ u32 = 0;
+        /**
+         * Pixels per point: 1 on a standard display, 2 on Retina. UI scales by it so it's the same physical size
+         * everywhere.
+         */
         pixelDensity~ f32 = 1.0f;
+        /** Whether the window is minimised; nothing is rendered or simulated while it is. */
         minimized~ bool = false;
 
+        /**
+         * True when there's nothing to render into: minimised, or zero pixels in either direction (some platforms
+         * report that mid-resize).
+         */
         IsDrawableEmpty :: () -> bool {
             return minimized || pixelWidth == 0 || pixelHeight == 0;
         }
 
+        /**
+         * Width over height in pixels, which the camera's projection needs so circles stay round; 1 for an empty
+         * window.
+         */
         AspectRatio :: () -> f32 {
             if pixelHeight == 0 {
                 return 1.0f;
@@ -26,6 +53,7 @@ lantern:::platform :: namespace {
             return f32(pixelWidth) / f32(pixelHeight);
         }
 
+        /** Field-by-field equality, to notice when the window changed. */
         operator == :: (other: WindowMetrics) -> bool {
             return logicalWidth == other.logicalWidth && logicalHeight == other.logicalHeight
                 && pixelWidth == other.pixelWidth && pixelHeight == other.pixelHeight
@@ -33,36 +61,78 @@ lantern:::platform :: namespace {
         }
     }
 
+    /**
+     * Everything the platform layer reports to the engine, independent of SDL. Pumped once per frame by
+     * `GameLoop.RunFrame`, in the order they happened.
+     */
     PlatformEvent :: enum {
+        /** The window was closed or the OS asked the app to quit. */
         QuitRequested,
+        /** The window's pixel size changed; read the new size from `CurrentWindowMetrics`. */
         WindowResized,
+        /** The window was minimised. */
         WindowMinimized,
+        /** The window came back from being minimised. */
         WindowRestored,
+        /** The window became the one receiving keyboard input. */
         FocusGained,
+        /**
+         * Another window took the keyboard. The input router releases every held key, since their key-up events will go
+         * elsewhere.
+         */
         FocusLost,
+        /** A key went down; `repeat` is true for the OS's auto-repeat while it's held. */
         KeyDown(key: lantern:::core:::KeyCode, repeat: bool),
+        /** A key was released. */
         KeyUp(key: lantern:::core:::KeyCode),
+        /**
+         * The mouse moved: by `deltaX`/`deltaY` points since the last event (what mouse look uses), to `x`/`y` in the
+         * window.
+         */
         MouseMoved(deltaX: f32, deltaY: f32, x: f32, y: f32),
+        /** A mouse button went down at `x`/`y` points in the window. */
         MouseButtonDown(button: lantern:::core:::MouseButton, x: f32, y: f32),
+        /** A mouse button was released. */
         MouseButtonUp(button: lantern:::core:::MouseButton, x: f32, y: f32),
+        /** The wheel scrolled; positive is away from the user. */
         MouseWheel(deltaY: f32),
+        /** A gamepad was connected and opened. */
         GamepadConnected,
+        /** The open gamepad was disconnected. */
         GamepadDisconnected,
+        /** A gamepad button went down. */
         GamepadButtonDown(button: lantern:::core:::GamepadButton),
+        /** A gamepad button was released. */
         GamepadButtonUp(button: lantern:::core:::GamepadButton),
+        /** A stick or trigger moved, from -1 to 1 (triggers 0 to 1), with up positive on the sticks. */
         GamepadAxisMoved(axis: lantern:::core:::GamepadAxis, value: f32)
     }
 
+    /**
+     * What the game loop needs from the operating system. `SdlPlatform` implements it; tests use scripted ones, so the
+     * loop can be tested without a window.
+     */
     PlatformBackend :: interface {
+        /** This frame's events, in order. The caller owns the array. */
         PumpEvents~ () -> Array<PlatformEvent>! : 0;
+        /**
+         * A monotonic clock in seconds, which the loop measures frame times with. Monotonic means it never jumps back,
+         * unlike wall-clock time.
+         */
         SecondsSinceStart : () -> f64 : 0;
+        /** The window's size and state now. */
         CurrentWindowMetrics : () -> WindowMetrics : 0;
+        /** Hides the cursor and reports raw mouse motion, for mouse look; or undoes it. */
         SetMouseCaptured~ (captured: bool) -> void : 0;
     }
 
+    /** Where mixed audio goes: a queue of interleaved stereo float samples played at `SampleRate`. */
     AudioSink :: interface {
+        /** Audio frames played per second. */
         SampleRate : () -> u32 : 0;
+        /** Audio frames queued but not yet played. */
         QueuedFrames : () -> usize : 0;
+        /** Queues interleaved stereo samples for playback. */
         PushFrames~ (interleavedStereo: Array<f32>) -> void : 0;
     }
 }

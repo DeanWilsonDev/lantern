@@ -24,6 +24,10 @@ lantern:::host :: namespace {
         leftHeld~ bool = false;
     }
 
+    /**
+     * The `Game` that runs a Nyx game: it forwards each of the loop's hooks to the game's script (`OnFixedUpdate`,
+     * `OnUpdate`, `OnRender`) and does the engine's own work around each call.
+     */
     GameHost :: class {
         implements:
             lantern:::engine:::Game;
@@ -284,6 +288,10 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * Tracks the mouse for the game's UI: its position and left-button presses and releases; losing focus lets the
+         * button go. Keys and gamepads reach the script through the input router's snapshots instead.
+         */
         HandleEvent~: (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void {
             when event <lantern:::platform:::PlatformEvent> {
                 MouseMoved(_, _, x, y) -> {
@@ -310,6 +318,11 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * One simulation step. Saves every entity's transform as its previous one (for interpolation), starts the
+         * collision step, hands the step's input to the script, runs its `OnFixedUpdate`, then recomputes world
+         * transforms from the entity hierarchy.
+         */
         FixedUpdate~: (step: lantern:::engine:::FixedStepContext) -> void {
             if session == null {
                 return;
@@ -323,6 +336,10 @@ lantern:::host :: namespace {
             state->world->UpdateWorldTransforms();
         }
 
+        /**
+         * Once per frame: updates the screen size and UI scale, handles the engine's own keys (reload, debug HUD), runs
+         * the UI and the script's `OnUpdate`, publishes debug values and tops up the audio queue.
+         */
         FrameUpdate~: (frame: lantern:::engine:::FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void {
             frames += 1;
             state->screenSize = Vec2 { x: f32(frame.window.pixelWidth), y: f32(frame.window.pixelHeight) };
@@ -361,6 +378,16 @@ lantern:::host :: namespace {
             state->audio->Update();
         }
 
+        /**
+         * Fills the `RenderWorld` for this frame and renders it, in this order:
+         *
+         * 1. Clear last frame's draws, lines and overlay.
+         * 2. The script's `OnRender` sets the camera, light and fog and may add its own draws, lines and text.
+         * 3. The game's UI is laid out and drawn into the overlay.
+         * 4. `ExtractDraws` adds a draw for every visible entity, interpolated by `frame.alpha`.
+         * 5. A script error, if any, and the debug HUD go on the overlay last, so they're on top.
+         * 6. `RenderBackend.Render`. On the last frame, the frame is also captured if a capture path was set.
+         */
         Render~: (frame: lantern:::engine:::FrameContext) -> void {
             state->renderWorld->Clear();
             renderArguments: Array<f32>! = [frame.alpha, frame.frameSeconds];
