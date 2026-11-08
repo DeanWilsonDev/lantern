@@ -53,6 +53,11 @@ Two ideas carry the whole design:
 | `sdl-facade/renderer/GpuDrawList.nox` | The order meshes are drawn in |
 | `engine/shaders/*.vert`, `*.frag` | The GLSL shaders; `engine/shaders/compiled/` holds them built for Vulkan and Metal |
 
+Every type, field and function in these files, the shaders, the game loop (`engine/loop/`), the application
+(`application/`) and the rest of `sdl-facade/` has a `/** */` doc comment saying what it does and why: the frame order,
+who owns what and when it is freed, and the GPU concept behind each call. The language server shows them on hover, in
+completion and in signature help. The shaders explain themselves with `//` comments.
+
 ## 1. Start-up: device, pipelines, default resources
 
 `GpuRenderer:::Create(window, options)` (`GpuRenderer.nox`) does the one-time work:
