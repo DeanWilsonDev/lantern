@@ -1,35 +1,56 @@
-// The application: the one place that creates the engine's platform objects, runs the game loop and tears them down.
-//
-// Its life has four stages:
-//
-//   1. Create        start SDL, open the window and wrap it in the platform backend
-//   2. Initialise    the caller asks for what its game needs: a renderer (CreateRenderer) and an audio output
-//                    (OpenAudioOutput), and builds its Game around them
-//   3. Run           a game loop runs the Game until it or the window asks to quit
-//   4. Shut down     the caller deletes its Game (and with it the renderer and audio output), then the application,
-//                    which deletes the platform and its window, and SDL last
-//
-// The order in stage 4 matters: GPU resources must go before the window they draw to, and everything SDL made must go
-// before SDL itself shuts down. Programs.nox holds the two programs built on this: a Nyx game and the stub game.
 lantern:::application :: namespace {
+    /**
+     * The composition root: the one object that creates the engine's platform objects, runs the game loop and tears
+     * them down in a safe order.
+     *
+     * Its life has four stages:
+     *
+     * 1. Create: start SDL, open the window and wrap it in the platform backend (`Create`).
+     * 2. Initialise: the caller asks for what its game needs, a renderer (`CreateRenderer`) and an audio output
+     *    (`OpenAudioOutput`), and builds its `Game` around them.
+     * 3. Run: a game loop runs the `Game` until it or the window asks to quit (`Run`, `RunObserved`).
+     * 4. Shut down: the caller deletes its `Game` (and with it the renderer and audio output), then the application,
+     *    which deletes the platform and its window, and SDL last.
+     *
+     * The order in stage 4 matters. GPU resources belong to a device that is bound to the window, so they must go
+     * before the window, and everything SDL made must go before `SDL_Quit`. Ownership encodes this: the application
+     * owns only SDL and the platform, and hands out the renderer for the caller to delete first.
+     */
     Application :: class {
     public:
+        /** The settings it was started with: the window, GPU options, audio rate and the environment switches. */
         config~ ApplicationConfig = ApplicationConfig { };
+        /** SDL itself. Owned, and deleted last, which calls `SDL_Quit`. */
         sdl~ lantern:::sdl:::SdlContext*!;
+        /**
+         * The window plus event pumping and the clock, behind the engine's `PlatformBackend` interface. Owned; deleted
+         * before SDL.
+         */
         platform~ lantern:::sdl:::SdlPlatform*!;
 
+        /**
+         * Takes ownership of an initialised SDL and an open window. Use `Create`, which builds both and handles
+         * failure.
+         */
         Application~: (applicationConfig: ApplicationConfig, context: lantern:::sdl:::SdlContext*!, window: lantern:::sdl:::SdlWindow*!) {
             config = applicationConfig;
             sdl = context!;
             platform = new lantern:::sdl:::SdlPlatform(window!);
         }
 
+        /**
+         * Deletes the platform (and with it the window), then shuts SDL down. The caller must have deleted the renderer
+         * and audio output already.
+         */
         !Application~: () {
             delete platform;
             delete sdl;
         }
 
-        // Stage 1. Null when SDL or the window can't start; the reason is already logged.
+        /**
+         * Stage 1: starts SDL and opens the window. Null when SDL or the window can't start; the reason is already
+         * logged, and anything started is shut down again.
+         */
         static Create :: (applicationConfig: ApplicationConfig) -> Application*!? {
             context := lantern:::sdl:::SdlContext:::Init();
             guard context return null;
@@ -39,27 +60,37 @@ lantern:::application :: namespace {
             return application!;
         }
 
+        /** Deletes SDL after the window failed to open, and gives `Create` its null to return. */
         static ShutDownSdl :: (context: lantern:::sdl:::SdlContext*!) -> Application*!? {
             delete context;
             return null;
         }
 
+        /**
+         * The platform backend, lent for the caller to pump events or read the clock. The application keeps ownership.
+         */
         Platform :: () -> lantern:::sdl:::SdlPlatform* {
             return platform;
         }
 
+        /** The window's current size in points and in pixels, pixel density and whether it is minimised. */
         WindowMetrics :: () -> lantern:::platform:::WindowMetrics {
             return platform->CurrentWindowMetrics();
         }
 
-        // Stage 2: a renderer drawing to this application's window. The caller owns it and deletes it before the
-        // application.
+        /**
+         * Stage 2: a GPU renderer that draws to this application's window. Opens the GPU device, claims the window's
+         * swapchain and builds the pipelines (see `GpuRenderer.Create`). The caller owns the renderer and must delete
+         * it before the application, because its swapchain belongs to the window. An error describes what failed.
+         */
         CreateRenderer :: () -> Result<lantern:::gpu:::GpuRenderer*!, string!> {
             return lantern:::gpu:::GpuRenderer:::Create(platform->Window()->Raw(), config.gpu);
         }
 
-        // Stage 2: the default audio device, or null (logged) when there is none, in which case the game runs
-        // silently. The caller owns it and deletes it before the application.
+        /**
+         * Stage 2: a stream to the default audio device, or null (logged) when there is none, in which case the game
+         * runs silently. The caller owns it and deletes it before the application.
+         */
         OpenAudioOutput~: () -> lantern:::platform:::AudioSink*!? {
             output := lantern:::sdl:::SdlAudioOutput:::Open(sdl, config.audioSampleRate);
             if output == null {
@@ -68,14 +99,17 @@ lantern:::application :: namespace {
             return output!;
         }
 
-        // Stage 3: frames until the game or the window asks to quit.
+        /** Stage 3: builds a game loop, runs frames until the game or the window asks to quit, and deletes the loop. */
         Run~: (game: lantern:::engine:::Game~*) -> void {
             gameLoop := NewGameLoop();
             gameLoop->Run(platform, game);
             delete gameLoop;
         }
 
-        // Stage 3 for a caller that does something between frames: the observer sees each frame after it ran.
+        /**
+         * Stage 3 for a caller that does something between frames: the observer sees each frame after it ran. The stub
+         * game uses it to resize and minimise its own window as a test.
+         */
         RunObserved~: (game: lantern:::engine:::Game~*, observer: FrameObserver~*) -> void {
             gameLoop := NewGameLoop();
             lantern:::core:::LogInfo("engine", "frame loop started");
@@ -87,13 +121,19 @@ lantern:::application :: namespace {
             delete gameLoop;
         }
 
+        /**
+         * A game loop with an empty action set and no bindings; the game fills them in through
+         * `UpdateInputConfiguration`.
+         */
         static NewGameLoop :: () -> lantern:::engine:::GameLoop*! {
             gameLoop := new lantern:::engine:::GameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
             return gameLoop!;
         }
     }
 
+    /** Something that runs after every frame of `Application.RunObserved`, outside the game. */
     FrameObserver :: interface {
+        /** Called after frame `frameNumber` (from 1) has finished rendering. */
         AfterFrame~ (frameNumber: u64, platform: lantern:::sdl:::SdlPlatform*) -> void : 0;
     }
 }

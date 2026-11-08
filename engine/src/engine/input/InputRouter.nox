@@ -119,14 +119,36 @@ lantern:::engine :: namespace {
         value~ Vec2 = Vec2 { };
     }
 
+    /**
+     * Turns raw device events into the action states the game reads ("Jump is pressed", "Move is (0.7, 0)").
+     *
+     * Events arrive once per frame, but the simulation may run zero, one or several fixed steps in that frame. The
+     * router keeps two views:
+     *
+     * - the frame snapshot, rebuilt by `EndFrameEvents` after the frame's events, which `FrameUpdate` reads;
+     * - latched presses and releases, which collect every edge since the last fixed step and are handed to the next
+     *   step by `TakeFixedStepSnapshot`, then cleared.
+     *
+     * So a key tapped during a frame that ran no fixed step still counts as pressed in the next step, and a press is
+     * never seen twice by two steps in the same frame.
+     */
     InputRouter :: class {
     public:
+        /** The game's named actions (Jump, Move, ...) and each one's kind: a button, a 1D axis or a 2D axis. */
         actions~ lantern:::core:::ActionSet*!;
+        /** Which keys, buttons and sticks drive each action. */
         bindings~ lantern:::core:::Bindings*!;
+        /**
+         * The raw state of every device: what is held, what was tapped this frame, stick positions and mouse motion.
+         */
         devices~ DeviceState*!;
+        /** Per action, whether it was held at the end of the previous frame, to detect press and release edges. */
         heldLastFrame~ Array<bool>! = [];
+        /** Per action, its state for the current frame. Owned by the router; `FrameSnapshot` lends it out. */
         frameSnapshot~ lantern:::core:::InputSnapshot*!;
+        /** Per action, whether it was pressed at any point since the last fixed step took a snapshot. */
         latchedPressed~ Array<bool>! = [];
+        /** Per action, whether it was released at any point since the last fixed step took a snapshot. */
         latchedReleased~ Array<bool>! = [];
 
         InputRouter~: (newActions: lantern:::core:::ActionSet*!, newBindings: lantern:::core:::Bindings*!) {
@@ -173,6 +195,10 @@ lantern:::engine :: namespace {
             }
         }
 
+        /**
+         * Updates the raw device state for one event. Losing focus or a gamepad releases everything, so no key stays
+         * stuck down.
+         */
         HandleEvent~: (event: lantern:::platform:::PlatformEvent) -> void {
             when event <lantern:::platform:::PlatformEvent> {
                 KeyDown(key, _) -> {
@@ -212,6 +238,11 @@ lantern:::engine :: namespace {
             }
         }
 
+        /**
+         * Called by the game loop after the frame's events: evaluates every action from its bindings, works out press
+         * and release edges against the previous frame, latches them for the fixed steps and clears per-frame device
+         * data.
+         */
         EndFrameEvents~: () -> void {
             for index~ usize = 0; index < actions->Length(); index++ {
                 action := lantern:::core:::ActionId { value: u16(index) };
@@ -234,10 +265,15 @@ lantern:::engine :: namespace {
             devices->ClearFrameData();
         }
 
+        /** This frame's action states, for `FrameUpdate`. Lent, not owned; valid until the next `EndFrameEvents`. */
         FrameSnapshot :: () -> lantern:::core:::InputSnapshot* {
             return frameSnapshot;
         }
 
+        /**
+         * A new snapshot for one fixed step, with the latched edges, which are then cleared so the next step in the
+         * same frame doesn't see them again. The caller owns and deletes it.
+         */
         TakeFixedStepSnapshot~: () -> lantern:::core:::InputSnapshot*! {
             snapshot := new lantern:::core:::InputSnapshot();
             for index~ usize = 0; index < frameSnapshot->states.length(); index++ {
