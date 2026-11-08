@@ -86,6 +86,11 @@ lantern:::core :: namespace {
         return Vec3 { x: b, y: sign + vector.y * vector.y * a, z: -vector.y };
     }
 
+    /**
+     * A right-handed view matrix for a camera at `eye` looking along `direction`. It builds the camera's own axes
+     * (side, up, and backwards, since the camera looks down its -Z), then inverts the camera's placement: the rotation
+     * part is the transpose of those axes and the translation is `-eye` expressed in them.
+     */
     LookToRightHanded :: (eye: Vec3, direction: Vec3, up: Vec3) -> Mat4 {
         forward := direction;
         side := Normalize3(forward.cross(up));
@@ -97,6 +102,10 @@ lantern:::core :: namespace {
             Vec4 { x: -eye.dot(side), y: -eye.dot(upward), z: eye.dot(forward), w: 1.0f });
     }
 
+    /**
+     * A right-handed orthographic projection mapping the box left..right, bottom..top to clip space, with depth 0 at
+     * `nearPlane` and 1 at `farPlane`. Sizes don't change with distance.
+     */
     OrthographicRightHanded :: (left: f32, right: f32, bottom: f32, top: f32, nearPlane: f32, farPlane: f32) -> Mat4 {
         reciprocalWidth: f32 = 1.0f / (right - left);
         reciprocalHeight: f32 = 1.0f / (top - bottom);
@@ -182,6 +191,7 @@ lantern:::core :: namespace {
         return MatrixFromRotationTranslation(rotation, Vec3 { });
     }
 
+    /** A point moved by a matrix, translation included. */
     TransformPoint3 :: (transform: Mat4, point: Vec3) -> Vec3 {
         e := transform.elements;
         return Vec3 {
@@ -195,10 +205,16 @@ lantern:::core :: namespace {
         return Vec3 { x: matrix.elements[column * 4], y: matrix.elements[column * 4 + 1], z: matrix.elements[column * 4 + 2] };
     }
 
+    /** The determinant of the matrix's 3x3 part: negative when the transform mirrors, which flips triangle winding. */
     Determinant3 :: (matrix: Mat4) -> f32 {
         return MatrixColumn3(matrix, 2).dot(MatrixColumn3(matrix, 0).cross(MatrixColumn3(matrix, 1)));
     }
 
+    /**
+     * The matrix that transforms normals: the inverse transpose of a transform's 3x3 part. Under non-uniform scale (a
+     * box stretched along X), transforming normals like positions would tilt them; this keeps them perpendicular to the
+     * surface. Built from the cross products of the columns divided by the determinant (the cofactor matrix).
+     */
     NormalMatrix :: struct {
         xAxis~ Vec3 = Vec3 { };
         yAxis~ Vec3 = Vec3 { };

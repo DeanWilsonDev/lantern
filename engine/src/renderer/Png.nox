@@ -1,6 +1,8 @@
 lantern:::renderer :: namespace {
+    /** The most bytes one uncompressed deflate block can hold. */
     PNG_STORED_BLOCK_LIMIT: usize : 65535;
 
+    /** The lookup table for PNG's CRC-32 checksum, which every chunk ends with. */
     Crc32Table :: () -> Array<u32>! {
         table~ Array<u32>! = [];
         for entry~ u32 = 0; entry < 256; entry += 1 {
@@ -17,6 +19,7 @@ lantern:::renderer :: namespace {
         return table!;
     }
 
+    /** The CRC-32 of a range of bytes. */
     Crc32 :: (table: Array<u32>, bytes: Array<u8>, start: usize, end: usize) -> u32 {
         crc~ u32 = 4294967295;
         for index~ usize = start; index < end; index += 1 {
@@ -25,6 +28,7 @@ lantern:::renderer :: namespace {
         return crc ^ 4294967295;
     }
 
+    /** The Adler-32 checksum zlib streams end with. */
     Adler32 :: (bytes: Array<u8>) -> u32 {
         low~ u32 = 1;
         high~ u32 = 0;
@@ -35,6 +39,7 @@ lantern:::renderer :: namespace {
         return (high << 16) | low;
     }
 
+    /** A growable byte buffer with the big-endian writes PNG needs. */
     ByteWriter :: class {
     public:
         bytes~ Array<u8>! = [];
@@ -83,6 +88,10 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /**
+     * Wraps bytes in a zlib stream of uncompressed (stored) deflate blocks. Valid PNG without a compressor: the files
+     * are larger, which doesn't matter for screenshots and test goldens.
+     */
     StoredZlibStream :: (uncompressed: Array<u8>) -> Array<u8>! {
         stream := new ByteWriter();
         defer delete stream;
@@ -115,6 +124,10 @@ lantern:::renderer :: namespace {
         return stream->TakeBytes();
     }
 
+    /**
+     * Encodes RGBA8 pixels as a PNG: signature, IHDR (size, 8-bit RGBA), one IDAT of unfiltered rows, IEND. Used to
+     * save captured frames.
+     */
     EncodePng :: (texture: TextureData*) -> Array<u8>! {
         crcTable: Array<u32>! = Crc32Table();
         defer delete crcTable;

@@ -1,23 +1,57 @@
 lantern:::renderer :: namespace {
+    /**
+     * Marks a `Handle` as naming a mesh, so a mesh handle can't be passed where a texture handle is wanted. Carries no
+     * data.
+     */
     MeshTag :: struct { }
 
+    /** Marks a `Handle` as naming a texture. */
     TextureTag :: struct { }
 
+    /** Bytes per `LineVertex`: 3 floats of position and 4 of colour. Must match the lines pipeline's vertex layout. */
     LINE_VERTEX_STRIDE: u32 : 28;
+    /**
+     * Bytes per `OverlayVertex`: 2 floats of position, 2 of uv, 4 of colour. Must match the overlay pipeline's vertex
+     * layout.
+     */
     OVERLAY_VERTEX_STRIDE: u32 : 32;
 
+    /**
+     * One mesh to draw this frame: which mesh, which texture, where, and tinted how. The GPU renderer turns each
+     * visible one into one draw call.
+     */
     DrawItem :: struct {
+        /** The mesh, as returned by `CreateMesh`. */
         mesh~ lantern:::core:::Handle<MeshTag> = lantern:::core:::Handle<MeshTag> { };
+        /** The texture, or null to draw untextured (the white texture, so only the vertex colour and tint show). */
         texture~ lantern:::core:::Handle<TextureTag>? = null;
+        /**
+         * The model matrix: places the mesh's local coordinates in the world (scale, then rotate, then translate). For
+         * entities, `ExtractDraws` has already interpolated it by the frame's `alpha`.
+         */
         transform~ Mat4 = Mat4 { };
+        /** A tint multiplied into the texture and vertex colour, in linear RGB. */
         color~ lantern:::core:::Color = lantern:::core:::Color { };
     }
 
+    /**
+     * A light infinitely far away, like the sun: every surface sees it from the same direction, so only its direction
+     * matters, not a position.
+     */
     DirectionalLight :: struct {
+        /** The direction the light travels (from the sun towards the ground), unit length. */
         direction~ Vec3 = Vec3 { };
+        /** The light's colour times its strength, in linear RGB. */
         color~ lantern:::core:::Color = lantern:::core:::Color { };
+        /**
+         * Light added to every surface regardless of facing, a cheap stand-in for light bounced off the sky and ground.
+         */
         ambient~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
 
+        /**
+         * A warm sun high overhead, slightly to the right of and behind the default camera, with a cool sky-blue
+         * ambient.
+         */
         static Default :: () -> DirectionalLight {
             return DirectionalLight {
                 direction: lantern:::core:::Normalize3(Vec3 { x: -0.4f, y: -1.0f, z: -0.3f }),
@@ -27,31 +61,47 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /** One end of a debug line, laid out exactly as the GPU reads it (28 bytes). */
     LineVertex :: struct {
+        /** World position. */
         position~ f32[3] = [0.0f, 0.0f, 0.0f];
+        /** Linear RGBA; alpha below 1 blends. */
         color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
     }
 
+    /** One corner of an overlay triangle, laid out exactly as the GPU reads it (32 bytes). */
     OverlayVertex :: struct {
+        /** Screen position in pixels, from the top-left corner. */
         position~ f32[2] = [0.0f, 0.0f];
+        /** Where in the overlay texture (the font atlas) to sample, from 0 to 1. */
         uv~ f32[2] = [0.0f, 0.0f];
+        /** Linear RGBA, multiplied by the sampled texel. */
         color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
 
+        /** A vertex from vectors and a colour. */
         static Create :: (position: Vec2, uv: Vec2, color: lantern:::core:::Color) -> OverlayVertex {
             return OverlayVertex { position: [position.x, position.y], uv: [uv.x, uv.y], color: color.ToArray() };
         }
     }
 
+    /**
+     * This frame's 2D overlay: HUD, menus and text, built from textured triangles in screen pixels and drawn on top of
+     * everything in one draw call.
+     */
     Overlay :: class {
     public:
+        /** Every overlay vertex this frame, three per triangle, in draw order: later triangles cover earlier ones. */
         vertices~ Array<OverlayVertex>! = [];
 
+        /** An empty overlay. */
         Overlay~: () { }
 
+        /** Frees the vertex list. */
         !Overlay~: () {
             delete vertices;
         }
 
+        /** An axis-aligned rectangle as two triangles, sampling the atlas between the two uv corners. */
         Quad~: (minimum: Vec2, maximum: Vec2, uvMinimum: Vec2, uvMaximum: Vec2, color: lantern:::core:::Color) -> void {
             topLeft: OverlayVertex = OverlayVertex:::Create(minimum, uvMinimum, color);
             topRight: OverlayVertex = OverlayVertex:::Create(Vec2 { x: maximum.x, y: minimum.y }, Vec2 { x: uvMaximum.x, y: uvMinimum.y }, color);
@@ -65,11 +115,13 @@ lantern:::renderer :: namespace {
             vertices.push(topRight);
         }
 
+        /** A solid rectangle: a quad whose uvs all point at the atlas's white texel, so it shows just `color`. */
         Rect~: (minimum: Vec2, maximum: Vec2, color: lantern:::core:::Color) -> void {
             white: Vec2 = WhiteTexelUv();
             Quad(minimum, maximum, white, white, color);
         }
 
+        /** A solid triangle with a colour per corner, blended across it by the GPU. */
         Triangle~: (first: Vec2, second: Vec2, third: Vec2, firstColor: lantern:::core:::Color, secondColor: lantern:::core:::Color, thirdColor: lantern:::core:::Color) -> void {
             white: Vec2 = WhiteTexelUv();
             vertices.push(OverlayVertex:::Create(first, white, firstColor));
@@ -77,54 +129,82 @@ lantern:::renderer :: namespace {
             vertices.push(OverlayVertex:::Create(third, white, thirdColor));
         }
 
+        /** A line of text in the built-in 8x8 font, `scale` pixels per font pixel; see `PushText`. */
         Text~: (text: string, topLeft: Vec2, scale: f32, color: lantern:::core:::Color) -> void {
             PushText(this, text, topLeft, scale, color);
         }
 
+        /** Empties the overlay for the next frame, keeping its memory. */
         Clear~: () -> void {
             vertices.clear();
         }
     }
 
+    /**
+     * One frame, described as plain data. The game fills it every frame and the renderer reads it; nothing in it is a
+     * GPU object, only handles, so the same frame can go to the GPU renderer, the headless renderer or a capture
+     * unchanged.
+     *
+     * Each frame: `Clear`, then the game sets the camera, light and fog and adds draws, lines and overlay, then
+     * `RenderBackend.Render`. The lists keep their memory between frames, so a steady scene allocates nothing.
+     */
     RenderWorld :: class {
     public:
+        /** Where the frame is seen from. */
         camera~ Camera = Camera { };
+        /** The one directional light, and the ambient light. */
         light~ DirectionalLight = DirectionalLight { };
+        /** The colour the frame starts as before anything is drawn (the sky), in linear RGB. Fog fades to it too. */
         clearColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.42f, g: 0.6f, b: 0.85f };
+        /** The distance from the camera where fog begins. */
         fogStart~ f32 = 60.0f;
+        /** The distance where fog is total. Keeping it inside the camera's far plane hides the far plane's cut. */
         fogEnd~ f32 = 160.0f;
+        /** The meshes to draw this frame. */
         draws~ Array<DrawItem>! = [];
+        /** Debug line vertices this frame, two per line. */
         lines~ Array<LineVertex>! = [];
+        /** The 2D overlay this frame. Owned. */
         overlay~ Overlay*!;
+        /** The texture overlay quads sample, the font atlas; null samples white. */
         overlayTexture~ lantern:::core:::Handle<TextureTag>? = null;
 
+        /** A world with the default camera and light and empty lists. */
         RenderWorld~: () {
             camera = Camera:::Default();
             light = DirectionalLight:::Default();
             overlay = new Overlay();
         }
 
+        /** Frees the lists and the overlay. */
         !RenderWorld~: () {
             delete draws;
             delete lines;
             delete overlay;
         }
 
+        /**
+         * Empties the draws, lines and overlay for a new frame. The camera, light, clear colour and fog stay as they
+         * were.
+         */
         Clear~: () -> void {
             draws.clear();
             lines.clear();
             overlay->Clear();
         }
 
+        /** Adds one mesh draw. */
         Draw~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color) -> void {
             draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color });
         }
 
+        /** Adds one debug line between two world points. */
         Line~: (start: Vec3, end: Vec3, color: lantern:::core:::Color) -> void {
             lines.push(LineVertex { position: [start.x, start.y, start.z], color: color.ToArray() });
             lines.push(LineVertex { position: [end.x, end.y, end.z], color: color.ToArray() });
         }
 
+        /** Outlines a box with its twelve edges. */
         AabbLines~: (bounds: lantern:::core:::Aabb, color: lantern:::core:::Color) -> void {
             edgeStarts: u32[12] = [0, 2, 4, 6, 0, 1, 4, 5, 0, 1, 2, 3];
             edgeEnds: u32[12] = [1, 3, 5, 7, 2, 3, 6, 7, 4, 5, 6, 7];
@@ -133,6 +213,7 @@ lantern:::renderer :: namespace {
             }
         }
 
+        /** Draws a circle around `center`, in the plane facing `normal`, as `segments` straight lines. */
         CircleLines~: (center: Vec3, normal: Vec3, radius: f32, segments: u32, color: lantern:::core:::Color) -> void {
             axis: Vec3 = lantern:::core:::NormalizeOr3(normal, lantern:::core:::WorldUp());
             tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(axis);
@@ -143,6 +224,9 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /**
+     * One of a box's eight corners, picked by the bits of `index`: bit 0 for max x, bit 1 for max y, bit 2 for max z.
+     */
     AabbCorner :: (bounds: lantern:::core:::Aabb, index: u32) -> Vec3 {
         corner~ Vec3 = bounds.min;
         if (index & 1) != 0 {
@@ -157,6 +241,7 @@ lantern:::renderer :: namespace {
         return corner;
     }
 
+    /** Point `index` of `segments` evenly spaced round a circle in the plane of `tangent` and `bitangent`. */
     CirclePoint :: (center: Vec3, tangent: Vec3, bitangent: Vec3, radius: f32, index: u32, segments: u32) -> Vec3 {
         angle: f32 = (2.0f * Math:::PI) * f32(index) / f32(segments);
         return center + (tangent * Math:::cos(angle) + bitangent * Math:::sin(angle)) * radius;

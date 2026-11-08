@@ -1,24 +1,41 @@
 lantern:::core :: namespace {
+    /**
+     * A generational handle: names a value in a `Pool<T>` by slot index plus the generation that slot had when the
+     * value was inserted.
+     *
+     * When a value is removed, its slot's generation goes up, so every handle to the old value stops matching even
+     * after the slot is reused for something new. A stale handle finds nothing, instead of silently finding the wrong
+     * mesh or reading freed GPU memory. This is how the renderer names meshes and textures to the game: small,
+     * copyable, and safe to keep after the resource is gone. `T` is only a tag that stops a mesh handle being used as a
+     * texture handle.
+     */
     Handle<T> :: struct {
+        /** The slot in the pool. */
         index~ u32 = 0;
+        /** The slot's generation when this handle was made. */
         generation~ u32 = 0;
 
+        /** The slot index. The GPU renderer sorts draws by it. */
         Index :: () -> u32 {
             return index;
         }
 
+        /** The generation. */
         Generation :: () -> u32 {
             return generation;
         }
 
+        /** Both halves packed into one u64 (generation high, index low), to pass a handle through Nyx as a number. */
         ToBits :: () -> u64 {
             return (u64(generation) << 32) | u64(index);
         }
 
+        /** Same slot and same generation. */
         operator == :: (other: Handle<T>) -> bool {
             return index == other.index && generation == other.generation;
         }
 
+        /** Orders by index, then generation, for sorting. */
         operator< :: (other: Handle<T>) -> bool {
             if index != other.index {
                 return index < other.index;
@@ -27,24 +44,40 @@ lantern:::core :: namespace {
         }
     }
 
+    /** The handle `ToBits` packed. */
     HandleFromBits<T> :: (bits: u64) -> Handle<T> {
         return Handle<T> { index: u32(bits & 4294967295), generation: u32(bits >> 32) };
     }
 
+    /**
+     * The same handle with a different tag. The renderer's pools hold `GpuMesh` values but hand out `MeshTag` handles,
+     * so the game never sees GPU types.
+     */
     CastHandle<T, U> :: (handle: Handle<T>) -> Handle<U> {
         return Handle<U> { index: handle.index, generation: handle.generation };
     }
 
+    /**
+     * A slot array with generations, which hands out `Handle<T>`s and reuses freed slots. Insert, look-up and remove
+     * are all constant time.
+     */
     Pool<T> :: class {
     public:
+        /** The values, by slot. A free slot keeps its last value until reused. */
         values~ Array<T>! = [];
+        /** Each slot's current generation. */
         generations~ Array<u32>! = [];
+        /** Whether each slot holds a live value. */
         occupied~ Array<bool>! = [];
+        /** Free slots, reused last-freed first. */
         freeIndices~ Array<u32>! = [];
+        /** How many slots are occupied. */
         liveCount~ usize = 0;
 
+        /** An empty pool. */
         Pool~: () { }
 
+        /** Frees the arrays. Values that need releasing (GPU buffers) must be drained and released first. */
         !Pool~: () {
             delete values;
             delete generations;
@@ -52,6 +85,7 @@ lantern:::core :: namespace {
             delete freeIndices;
         }
 
+        /** Stores a value in a free slot (or a new one) and returns its handle. */
         Insert~: (value: T) -> Handle<T> {
             liveCount += 1;
             if index := freeIndices.pop() {
@@ -68,15 +102,18 @@ lantern:::core :: namespace {
             return Handle<T> { index: index, generation: 0 };
         }
 
+        /** Whether the handle names a live value: slot in range, occupied, and the same generation. */
         Resolves :: (handle: Handle<T>) -> bool {
             slot: usize = usize(handle.index);
             return slot < values.length() && occupied[slot] && generations[slot] == handle.generation;
         }
 
+        /** The same as `Resolves`. */
         Contains :: (handle: Handle<T>) -> bool {
             return Resolves(handle);
         }
 
+        /** A copy of the value, or null for a stale handle. */
         Get :: (handle: Handle<T>) -> T? {
             if !Resolves(handle) {
                 return null;
@@ -84,6 +121,7 @@ lantern:::core :: namespace {
             return values[usize(handle.index)];
         }
 
+        /** The value in place, or null for a stale handle. */
         Borrow :: (handle: Handle<T>) -> T*? {
             if !Resolves(handle) {
                 return null;
@@ -91,6 +129,7 @@ lantern:::core :: namespace {
             return values[usize(handle.index)];
         }
 
+        /** The value in place for changing, or null for a stale handle. */
         BorrowMutable~: (handle: Handle<T>) -> T~*? {
             if !Resolves(handle) {
                 return null;
@@ -98,6 +137,10 @@ lantern:::core :: namespace {
             return values[usize(handle.index)];
         }
 
+        /**
+         * Takes the value out and bumps the slot's generation so every existing handle to it goes stale. Null if it was
+         * already gone.
+         */
         Remove~: (handle: Handle<T>) -> T? {
             if !Resolves(handle) {
                 return null;
@@ -111,14 +154,17 @@ lantern:::core :: namespace {
             return removed;
         }
 
+        /** Live values. */
         Length :: () -> usize {
             return liveCount;
         }
 
+        /** Whether there are no live values. */
         IsEmpty :: () -> bool {
             return liveCount == 0;
         }
 
+        /** A handle for every live value, in slot order. */
         LiveHandles :: () -> Array<Handle<T>>! {
             handles~ Array<Handle<T>>! = [];
             for slot~ usize = 0; slot < values.length(); slot++ {
@@ -129,6 +175,7 @@ lantern:::core :: namespace {
             return handles!;
         }
 
+        /** Removes every live value and returns them, for releasing at shutdown. */
         Drain~: () -> Array<T>! {
             drained~ Array<T>! = [];
             handles~ Array<Handle<T>>! = LiveHandles();

@@ -1,26 +1,39 @@
 lantern:::stbmemory :: foreign "stb_image" {
+    /** stb_image's decoder over bytes already in memory, declared to take a Nox byte array. */
     stbi_load_from_memory :: (buffer: Array<u8>, length: i32, width: raw i32~*, height: raw i32~*, channelsInFile: raw i32~*, desiredChannels: i32) -> raw u8~*;
 }
 
 lantern:::bytecopy :: foreign "c" {
+    /** C's `memcpy`, to copy decoded pixels into a Nox array. */
     memcpy :: (destination: Array<u8~>, source: raw u8*, byteCount: usize) -> raw u8~*;
 }
 
 lantern:::renderer :: namespace {
     StbImage :: import StbImage;
 
+    /** Ask stb_image for four channels whatever the file has, so every texture is RGBA8. */
     RGBA_CHANNELS: i32 : 4;
 
+    /** How a texture is sampled between texels. */
     TextureFilter :: enum {
+        /** Blend the nearest texels and mip levels: smooth, for surfaces. Gets a mipmap chain on upload. */
         Linear,
+        /** Take the single nearest texel: crisp, for pixel art and the font. */
         Nearest
     }
 
+    /** What sampling does outside 0..1. */
     TextureWrap :: enum {
+        /** Tile the texture, for ground and walls whose uvs run past 1. */
         Repeat,
+        /** Stretch the edge texels, for images that mustn't bleed from the opposite edge. */
         Clamp
     }
 
+    /**
+     * Encodes a linear 0..1 channel as an sRGB byte. Textures store sRGB bytes, like image files do, and the GPU
+     * decodes them back to linear when it samples.
+     */
     ToSrgbByte :: (linear: f32) -> u8 {
         clamped: f32 = Math:::clamp(linear, 0.0f, 1.0f);
         encoded~ f32 = clamped * 12.92f;
@@ -30,14 +43,24 @@ lantern:::renderer :: namespace {
         return u8(encoded * 255.0f + 0.5f);
     }
 
+    /**
+     * A texture in CPU memory: RGBA8 pixels in rows from the top, sRGB-encoded, plus how it should be sampled. Uploaded
+     * with `CreateTexture`.
+     */
     TextureData :: class {
     public:
+        /** Width in pixels. */
         width~ u32 = 0;
+        /** Height in pixels. */
         height~ u32 = 0;
+        /** Four bytes per pixel (red, green, blue, alpha), rows from the top, `width * height * 4` in all. */
         rgba8~ Array<u8>! = [];
+        /** Linear or nearest sampling. */
         filter~ TextureFilter = TextureFilter:::Linear;
+        /** Repeat or clamp outside 0..1. */
         wrap~ TextureWrap = TextureWrap:::Repeat;
 
+        /** An empty texture of this size and sampling; the caller fills `rgba8`. */
         TextureData~: (newWidth: u32, newHeight: u32, newFilter: TextureFilter, newWrap: TextureWrap) {
             width = newWidth;
             height = newHeight;
@@ -45,10 +68,12 @@ lantern:::renderer :: namespace {
             wrap = newWrap;
         }
 
+        /** Frees the pixels. */
         !TextureData~: () {
             delete rgba8;
         }
 
+        /** A 1x1 texture of one colour; the GPU renderer's white texture is one. */
         static Solid :: (color: lantern:::core:::Color) -> TextureData*! {
             texture := new TextureData(1, 1, TextureFilter:::Nearest, TextureWrap:::Repeat);
             texture->rgba8.push(ToSrgbByte(color.r));
@@ -58,6 +83,7 @@ lantern:::renderer :: namespace {
             return texture!;
         }
 
+        /** A square checkerboard, `cells` squares a side, for test scenes and missing textures. */
         static Checker :: (size: u32, cells: u32, first: lantern:::core:::Color, second: lantern:::core:::Color) -> TextureData*! {
             cellSize~ u32 = size / cells;
             if cellSize < 1 {
@@ -79,6 +105,7 @@ lantern:::renderer :: namespace {
             return texture!;
         }
 
+        /** Copies pixels stb_image decoded into a new texture and frees stb_image's buffer. */
         static FromStbPixels :: (pixels: raw u8~*, width: i32, height: i32) -> TextureData*! {
             texture := new TextureData(u32(width), u32(height), TextureFilter:::Linear, TextureWrap:::Repeat);
             byteCount: usize = usize(width) * usize(height) * 4;
@@ -92,6 +119,7 @@ lantern:::renderer :: namespace {
             return texture!;
         }
 
+        /** stb_image's reason for the last failure, prefixed with `context`. */
         static StbFailure :: (context: string) -> string! {
             reason~ string! = "unknown failure" + "";
             unsafe {
@@ -106,6 +134,7 @@ lantern:::renderer :: namespace {
             return message!;
         }
 
+        /** Decodes a PNG (or any format stb_image reads) from memory. */
         static FromPngBytes :: (bytes: Array<u8>) -> Result<TextureData*!, string!> {
             width~ i32 = 0;
             height~ i32 = 0;
@@ -120,6 +149,7 @@ lantern:::renderer :: namespace {
             return Result<TextureData*!, string!>:::Ok(TextureData:::FromStbPixels(pixels, width, height));
         }
 
+        /** Decodes a PNG (or any format stb_image reads) from a file. */
         static LoadPng :: (path: string) -> Result<TextureData*!, string!> {
             width~ i32 = 0;
             height~ i32 = 0;
@@ -134,10 +164,12 @@ lantern:::renderer :: namespace {
             return Result<TextureData*!, string!>:::Ok(TextureData:::FromStbPixels(pixels, width, height));
         }
 
+        /** Encodes the pixels as a PNG file's bytes; see `EncodePng`. */
         ToPngBytes :: () -> Array<u8>! {
             return EncodePng(this);
         }
 
+        /** The index in `rgba8` of pixel (x, y)'s red byte. */
         PixelOffset :: (x: u32, y: u32) -> usize {
             return usize((y * width + x) * 4);
         }

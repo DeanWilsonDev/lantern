@@ -1,8 +1,13 @@
 lantern:::renderer :: namespace {
+    /** Opaque white, the vertex colour of every built-in shape, so only the texture and tint show. */
     White4 :: () -> Vec4 {
         return Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f };
     }
 
+    /**
+     * Adds a flat rectangle centred on `center`, facing `normal`, spanned by `right` and `up`, as four vertices and two
+     * counter-clockwise triangles. `uvSize` sets how many times the texture repeats across it.
+     */
     PushQuad :: (mesh: MeshData~*, center: Vec3, normal: Vec3, right: Vec3, up: Vec3, halfSize: Vec2, uvSize: Vec2) -> void {
         base: u32 = u32(mesh->vertices.length());
         signsRight: f32[4] = [-1.0f, 1.0f, 1.0f, -1.0f];
@@ -22,14 +27,20 @@ lantern:::renderer :: namespace {
         mesh->indices.push(base + 3);
     }
 
+    /** The size of `vector` along an axis, ignoring the axis's sign. */
     Component :: (vector: Vec3, axis: Vec3) -> f32 {
         return vector.dot(lantern:::core:::Abs3(axis));
     }
 
+    /** Shorthand for a Vec3. */
     Axis3 :: (x: f32, y: f32, z: f32) -> Vec3 {
         return Vec3 { x: x, y: y, z: z };
     }
 
+    /**
+     * A box with these half-extents, centred on the origin: six faces with their own vertices so each face has a flat
+     * normal. With `worldUvs`, uvs run in world units so a texture keeps its scale on boxes of any size.
+     */
     BoxMesh :: (halfExtents: Vec3, worldUvs: bool) -> MeshData*! {
         mesh := new MeshData();
         normals: Vec3[6] = [Axis3(1.0f, 0.0f, 0.0f), Axis3(-1.0f, 0.0f, 0.0f), Axis3(0.0f, 1.0f, 0.0f), Axis3(0.0f, -1.0f, 0.0f), Axis3(0.0f, 0.0f, 1.0f), Axis3(0.0f, 0.0f, -1.0f)];
@@ -49,10 +60,12 @@ lantern:::renderer :: namespace {
         return mesh!;
     }
 
+    /** A cube `size` across with each face's texture fitted once. */
     Cube :: (size: f32) -> MeshData*! {
         return BoxMesh(lantern:::core:::Splat3(size * 0.5f), false);
     }
 
+    /** A flat ground plane on the XZ plane facing +Y, with uvs in world units. */
     Plane :: (width: f32, depth: f32) -> MeshData*! {
         mesh := new MeshData();
         halfSize := Vec2 { x: width * 0.5f, y: depth * 0.5f };
@@ -60,6 +73,9 @@ lantern:::renderer :: namespace {
         return mesh!;
     }
 
+    /**
+     * Adds a flat convex polygon as a triangle fan from its first corner, with one normal from its first three corners.
+     */
     PushFan :: (mesh: MeshData~*, corners: Array<Vec3>, uvs: Array<Vec2>) -> void {
         normal := lantern:::core:::Normalize3((corners[1] - corners[0]).cross(corners[2] - corners[0]));
         base: u32 = u32(mesh->vertices.length());
@@ -73,6 +89,7 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /** Adds a flat four-cornered polygon. */
     PushPolygon4 :: (mesh: MeshData~*, corners: Vec3[4], uvs: Vec2[4]) -> void {
         cornerList~ Array<Vec3>! = [];
         defer delete cornerList;
@@ -85,6 +102,7 @@ lantern:::renderer :: namespace {
         PushFan(mesh, cornerList, uvList);
     }
 
+    /** Adds a triangle. */
     PushPolygon3 :: (mesh: MeshData~*, corners: Vec3[3], uvs: Vec2[3]) -> void {
         cornerList~ Array<Vec3>! = [];
         defer delete cornerList;
@@ -97,6 +115,10 @@ lantern:::renderer :: namespace {
         PushFan(mesh, cornerList, uvList);
     }
 
+    /**
+     * A wedge rising from the front (+Z) edge to the back: slope, back, bottom and two triangular sides, uvs in world
+     * units.
+     */
     Ramp :: (width: f32, height: f32, length: f32) -> MeshData*! {
         w: f32 = width * 0.5f;
         l: f32 = length * 0.5f;
@@ -123,6 +145,12 @@ lantern:::renderer :: namespace {
         return mesh!;
     }
 
+    /**
+     * A capsule: two hemispheres joined by a cylinder of half-height `halfHeight`, the usual shape of a character's
+     * collider. Built as rings of latitude: `segments` around, `rings` from pole to pole (even, so the equator can be
+     * split for the cylinder). Each vertex's normal is its direction from the hemisphere's centre, which makes the
+     * shading smooth.
+     */
     Capsule :: (radius: f32, halfHeight: f32, segments: u32, rings: u32) -> MeshData*! {
         assert(segments >= 3 && rings >= 2 && rings % 2 == 0, "need at least 3 segments and an even ring count");
         polarAngles~ Array<f32>! = [];
@@ -164,6 +192,10 @@ lantern:::renderer :: namespace {
         return mesh!;
     }
 
+    /**
+     * Adds a triangle unless its corners are collinear (which happens at the poles), since a zero-area triangle has no
+     * normal and only costs time.
+     */
     PushTriangleUnlessDegenerate :: (mesh: MeshData~*, first: u32, second: u32, third: u32) -> void {
         a := mesh->vertices[usize(first)].Position();
         b := mesh->vertices[usize(second)].Position();
@@ -175,10 +207,12 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /** A sphere: a capsule with no cylinder. */
     Sphere :: (radius: f32, segments: u32, rings: u32) -> MeshData*! {
         return Capsule(radius, 0.0f, segments, rings);
     }
 
+    /** The collectible gem: an octahedron with flat faces, each with its own normal so the facets catch the light. */
     Gem :: (radius: f32, height: f32) -> MeshData*! {
         top := Vec3 { x: 0.0f, y: height * 0.5f, z: 0.0f };
         bottom := -top;
@@ -193,6 +227,7 @@ lantern:::renderer :: namespace {
         return mesh!;
     }
 
+    /** Adds one gem facet with its face normal. */
     PushGemTriangle :: (mesh: MeshData~*, first: Vec3, second: Vec3, third: Vec3) -> void {
         normal := lantern:::core:::Normalize3((second - first).cross(third - first));
         base: u32 = u32(mesh->vertices.length());

@@ -72,7 +72,9 @@ lantern:::engine :: namespace {
         lastChild~ lantern:::core:::Handle<EntityTag>? = null;
         previousSibling~ lantern:::core:::Handle<EntityTag>? = null;
         nextSibling~ lantern:::core:::Handle<EntityTag>? = null;
+        /** The entity's world transform after the latest fixed step. */
         world~ Mat4 = Mat4 { };
+        /** Its world transform after the step before, kept so rendering can interpolate between the two. */
         previousWorld~ Mat4 = Mat4 { };
 
         WorldMatrix :: () -> Mat4 {
@@ -83,6 +85,11 @@ lantern:::engine :: namespace {
             return lantern:::core:::MatrixColumn3(world, 3);
         }
 
+        /**
+         * The transform to draw the entity with: `alpha` of the way from the previous step's transform to the current
+         * one. Position and scale are lerped and rotation is slerped (decomposing the matrices first), since lerping a
+         * matrix's elements directly would shear and shrink a rotating object. Skipped when the entity hasn't moved.
+         */
         InterpolatedWorld :: (alpha: f32) -> Mat4 {
             if alpha >= 1.0f || previousWorld == world {
                 return world;
@@ -494,6 +501,10 @@ lantern:::engine :: namespace {
         }
     }
 
+    /**
+     * Adds a `DrawItem` to the render world for every entity with a visible mesh renderer, at its interpolated
+     * transform. Called once per frame from the game's `Render`, after the game's own draws.
+     */
     ExtractDraws :: (world: World*, alpha: f32, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
         ids: Array<lantern:::core:::Handle<EntityTag>>! = world->Ids();
         for id in ids {

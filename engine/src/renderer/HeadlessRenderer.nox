@@ -4,76 +4,104 @@
 // it would on a GPU, and it counts what is alive and what was drawn. Tests run whole games against it, and it is
 // the smallest example of what implementing RenderBackend takes.
 lantern:::renderer :: namespace {
+    /** What the headless pool stores per mesh: nothing, since there is no GPU copy. The handle is what matters. */
     MeshSlot :: struct { }
 
+    /** What the headless pool stores per texture: nothing. */
     TextureSlot :: struct { }
 
+    /** What the headless renderer counted, for tests to assert on. */
     HeadlessStats :: struct {
+        /** Meshes created and not yet removed. A test that ends with more than it started has a leak. */
         liveMeshes~ usize = 0;
+        /** Textures created and not yet removed. */
         liveTextures~ usize = 0;
+        /** Calls to `Render`. */
         framesRendered~ u64 = 0;
+        /** Draw items in the last frame, before any culling (the headless renderer doesn't cull). */
         lastDrawCount~ usize = 0;
     }
 
+    /**
+     * A `RenderBackend` with no GPU behind it.
+     *
+     * It hands out real handles from pools, so code that creates, draws and frees meshes and textures behaves exactly
+     * as it would on a GPU, and it counts what is alive and what was drawn. Tests run whole games against it, and it is
+     * the smallest example of what implementing `RenderBackend` takes.
+     */
     HeadlessRenderer :: class {
         implements:
             RenderBackend;
     public:
+        /** A pool of empty slots, so mesh handles are generational exactly as on the GPU. */
         meshes~ lantern:::core:::Pool<MeshSlot>*!;
+        /** A pool of empty slots for texture handles. */
         textures~ lantern:::core:::Pool<TextureSlot>*!;
+        /** What has been counted so far. */
         stats~ HeadlessStats = HeadlessStats { };
 
+        /** A headless renderer with empty pools. */
         HeadlessRenderer~: () {
             meshes = new lantern:::core:::Pool<MeshSlot>();
             textures = new lantern:::core:::Pool<TextureSlot>();
         }
 
+        /** Frees the pools. */
         !HeadlessRenderer~: () {
             delete meshes;
             delete textures;
         }
 
+        /** The counts so far. */
         Stats :: () -> HeadlessStats {
             return stats;
         }
 
+        /** Refreshes the live counts from the pools. */
         UpdateLiveCounts~: () -> void {
             stats.liveMeshes = meshes->Length();
             stats.liveTextures = textures->Length();
         }
 
+        /** Always `headless`. */
         DriverName :: () -> string {
             return "headless";
         }
 
+        /** Hands out a mesh handle without validating or uploading anything. */
         CreateMesh~: (mesh: MeshData*) -> Result<lantern:::core:::Handle<MeshTag>, string!> {
             slot: lantern:::core:::Handle<MeshSlot> = meshes->Insert(MeshSlot { });
             UpdateLiveCounts();
             return Result<lantern:::core:::Handle<MeshTag>, string!>:::Ok(lantern:::core:::CastHandle<MeshSlot, MeshTag>(slot));
         }
 
+        /** Frees the handle's slot. */
         RemoveMesh~: (mesh: lantern:::core:::Handle<MeshTag>) -> void {
             meshes->Remove(lantern:::core:::CastHandle<MeshTag, MeshSlot>(mesh));
             UpdateLiveCounts();
         }
 
+        /** Hands out a texture handle. */
         CreateTexture~: (texture: TextureData*) -> Result<lantern:::core:::Handle<TextureTag>, string!> {
             slot: lantern:::core:::Handle<TextureSlot> = textures->Insert(TextureSlot { });
             UpdateLiveCounts();
             return Result<lantern:::core:::Handle<TextureTag>, string!>:::Ok(lantern:::core:::CastHandle<TextureSlot, TextureTag>(slot));
         }
 
+        /** Frees the handle's slot. */
         RemoveTexture~: (texture: lantern:::core:::Handle<TextureTag>) -> void {
             textures->Remove(lantern:::core:::CastHandle<TextureTag, TextureSlot>(texture));
             UpdateLiveCounts();
         }
 
+        /** Counts the frame and its draws and reports everything as submitted. */
         Render~: (world: RenderWorld*) -> Result<RenderReport, string!> {
             stats.framesRendered += 1;
             stats.lastDrawCount = world->draws.length();
             return Result<RenderReport, string!>:::Ok(RenderReport { presented: true, drawsSubmitted: u32(world->draws.length()) });
         }
 
+        /** Always an error: there are no pixels without a GPU. */
         Capture~: (world: RenderWorld*, width: u32, height: u32) -> Result<TextureData*!, string!> {
             return Result<TextureData*!, string!>:::Err("the headless renderer cannot capture" + "");
         }

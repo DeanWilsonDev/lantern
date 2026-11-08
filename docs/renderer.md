@@ -53,12 +53,18 @@ Two ideas carry the whole design:
 | `sdl-facade/renderer/GpuDrawList.nox` | The order meshes are drawn in |
 | `engine/shaders/*.vert`, `*.frag` | The GLSL shaders; `engine/shaders/compiled/` holds them built for Vulkan and Metal |
 
+Every type, field and function in these files, the shaders, the game loop (`engine/loop/`), the application
+(`application/`) and the rest of `sdl-facade/` has a `/** */` doc comment saying what it does and why: the frame order,
+who owns what and when it is freed, and the GPU concept behind each call. The language server shows them on hover, in
+completion and in signature help. The shaders explain themselves with `//` comments.
+
 ## 1. Start-up: device, pipelines, default resources
 
 `GpuRenderer:::Create(window, options)` (`GpuRenderer.nox`) does the one-time work:
 
-1. **Open a device** (`OpenDevice`). SDL GPU chooses Vulkan, Metal or Direct3D 12 for the platform. The renderer asks
-   for a device that accepts SPIR-V or MSL shaders, since those are the two compiled forms it ships.
+1. **Open a device** (`OpenDevice`). The renderer asks for a device that accepts SPIR-V or MSL shaders, since those
+   are the two compiled forms it ships, so SDL GPU chooses Vulkan or Metal for the platform. Direct3D 12 would need
+   DXIL shaders as well.
 2. **Claim the window** for the device, which gives it a swapchain: the images the window shows.
 3. **Pick formats** (`GpuDevice.nox`). Colour comes from the swapchain. The swapchain is set to SDR_LINEAR where the
    window supports it, so the hardware converts linear colour to sRGB as pixels are written; otherwise the shaders

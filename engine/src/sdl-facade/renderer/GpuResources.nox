@@ -1,21 +1,29 @@
 Sdl :: import Sdl;
 
+/**
+ * C's `memcpy` for mesh vertices into a mapped transfer buffer. Nox declares one per element type so each array passes
+ * without a cast.
+ */
 lantern:::copyvertices :: foreign "c" {
     memcpy :: (destination: raw u8~*, source: Array<lantern:::renderer:::Vertex>, byteCount: usize) -> raw u8~*;
 }
 
+/** C's `memcpy` for mesh indices. */
 lantern:::copyindices :: foreign "c" {
     memcpy :: (destination: raw u8~*, source: Array<u32>, byteCount: usize) -> raw u8~*;
 }
 
+/** C's `memcpy` for this frame's line vertices. */
 lantern:::copylines :: foreign "c" {
     memcpy :: (destination: raw u8~*, source: Array<lantern:::renderer:::LineVertex>, byteCount: usize) -> raw u8~*;
 }
 
+/** C's `memcpy` for this frame's overlay vertices. */
 lantern:::copyoverlay :: foreign "c" {
     memcpy :: (destination: raw u8~*, source: Array<lantern:::renderer:::OverlayVertex>, byteCount: usize) -> raw u8~*;
 }
 
+/** C's `memcpy` for texture pixels. */
 lantern:::copytexels :: foreign "c" {
     memcpy :: (destination: raw u8~*, source: Array<u8>, byteCount: usize) -> raw u8~*;
 }
@@ -23,6 +31,7 @@ lantern:::copytexels :: foreign "c" {
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
+    /** SDL's last error, prefixed with what was being done. The caller owns the result. */
     SdlFailure :: (context: string) -> string! {
         detail~ string! = "" + "";
         unsafe {
@@ -34,12 +43,24 @@ lantern:::gpu :: namespace {
         return message!;
     }
 
+    /**
+     * A mesh living on the GPU: two buffers and what's needed to draw and cull it. The `MeshData` it came from can be
+     * freed; this is an independent copy.
+     */
     GpuMesh :: struct {
+        /**
+         * The vertices (`Vertex`, 48 bytes each) in GPU memory, read by the vertex shader through the pipeline's vertex
+         * layout.
+         */
         vertexBuffer~ raw Sdl:::SDL_GPUBuffer~* = null;
+        /** 32-bit indices into the vertex buffer, three per triangle, so shared corners are stored once. */
         indexBuffer~ raw Sdl:::SDL_GPUBuffer~* = null;
+        /** How many indices to draw: three times the triangle count. */
         indexCount~ u32 = 0;
+        /** The axis-aligned box around the vertices in the mesh's own space, for culling. */
         bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb { };
 
+        /** Releases both buffers. SDL frees them once any frame still using them is done. */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
             unsafe {
                 if vertexBuffer != null {
@@ -52,10 +73,20 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * A texture on the GPU and the sampler it is read with. The sampler is shared and owned by `Samplers`, so it is not
+     * released with the texture.
+     */
     GpuTexture :: struct {
+        /** The image, RGBA8 sRGB, with its mipmap chain if it has one. */
         texture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /**
+         * How the shader reads it: filtering between texels and mip levels, and what happens past the edges. Lent from
+         * `Samplers`.
+         */
         sampler~ raw Sdl:::SDL_GPUSampler~* = null;
 
+        /** Releases the texture (not the shared sampler). */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
             unsafe {
                 if texture != null {
@@ -65,6 +96,12 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * A sampler for one filter and wrap combination. Linear filtering blends neighbouring texels and mip levels
+     * (trilinear), with 4x anisotropic filtering so textures seen at a grazing angle, like the ground, stay sharp.
+     * Nearest picks one texel, for pixel art and the font. Repeat tiles the texture past 0..1; clamp stretches the edge
+     * texel.
+     */
     CreateSampler :: (device: raw Sdl:::SDL_GPUDevice~*, filter: lantern:::renderer:::TextureFilter, wrap: lantern:::renderer:::TextureWrap) -> raw Sdl:::SDL_GPUSampler~* {
         linear: bool = filter == lantern:::renderer:::TextureFilter:::Linear;
         sdlFilter~ Sdl:::SDL_GPUFilter = Sdl:::SDL_GPU_FILTER_NEAREST;
@@ -93,12 +130,20 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * The four samplers every texture shares. Samplers are immutable state objects, so a handful covers every texture.
+     */
     Samplers :: struct {
+        /** Smooth and tiling: ground and wall textures. */
         linearRepeat~ raw Sdl:::SDL_GPUSampler~* = null;
+        /** Smooth, edges clamped: images that shouldn't wrap. */
         linearClamp~ raw Sdl:::SDL_GPUSampler~* = null;
+        /** Blocky and tiling. */
         nearestRepeat~ raw Sdl:::SDL_GPUSampler~* = null;
+        /** Blocky, edges clamped: the font atlas and captured frames. */
         nearestClamp~ raw Sdl:::SDL_GPUSampler~* = null;
 
+        /** Creates all four, or null (releasing any made) if one fails. */
         static Create :: (device: raw Sdl:::SDL_GPUDevice~*) -> Samplers? {
             samplers := Samplers {
                 linearRepeat: CreateSampler(device, lantern:::renderer:::TextureFilter:::Linear, lantern:::renderer:::TextureWrap:::Repeat),
@@ -113,6 +158,7 @@ lantern:::gpu :: namespace {
             return samplers;
         }
 
+        /** The sampler matching a texture's filter and wrap settings. */
         ForTexture :: (texture: lantern:::renderer:::TextureData*) -> raw Sdl:::SDL_GPUSampler~* {
             if texture->filter == lantern:::renderer:::TextureFilter:::Linear {
                 if texture->wrap == lantern:::renderer:::TextureWrap:::Repeat {
@@ -126,6 +172,7 @@ lantern:::gpu :: namespace {
             return nearestClamp;
         }
 
+        /** Releases all four. */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
             unsafe {
                 if linearRepeat != null {
@@ -144,6 +191,10 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * A GPU buffer of `size` bytes for `usage` (vertex or index). Its contents start undefined; fill it through a
+     * transfer buffer and a copy pass.
+     */
     CreateBuffer :: (device: raw Sdl:::SDL_GPUDevice~*, usage: Sdl:::SDL_GPUBufferUsageFlags, size: u32) -> raw Sdl:::SDL_GPUBuffer~* {
         unsafe {
             info := Sdl:::SDL_GPUBufferCreateInfo { usage: usage, size: size };
@@ -151,6 +202,11 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * A transfer (staging) buffer: memory both the CPU and GPU can reach. GPU-only buffers and textures are fastest to
+     * draw from but the CPU can't write them directly, so data goes CPU -> transfer buffer (upload) -> GPU buffer, or
+     * back the other way (download) to read pixels.
+     */
     CreateTransferBuffer :: (device: raw Sdl:::SDL_GPUDevice~*, size: u32, upload: bool) -> raw Sdl:::SDL_GPUTransferBuffer~* {
         usage~ Sdl:::SDL_GPUTransferBufferUsage = Sdl:::SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
         if upload {
@@ -162,6 +218,10 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * A texture to render into: a colour target, or a depth target when `depth` is true. One mip level, no
+     * multisampling, at least 1x1.
+     */
     CreateRenderTexture :: (device: raw Sdl:::SDL_GPUDevice~*, format: Sdl:::SDL_GPUTextureFormat, width: u32, height: u32, depth: bool) -> raw Sdl:::SDL_GPUTexture~* {
         usage~ Sdl:::SDL_GPUTextureUsageFlags = Sdl:::SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
         if depth {
@@ -190,6 +250,10 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * Submits an upload's command buffer and releases its transfer buffer. Releasing straight after submitting is safe:
+     * SDL keeps it alive until the GPU has copied from it.
+     */
     SubmitUpload :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, device: raw Sdl:::SDL_GPUDevice~*, transfer: raw Sdl:::SDL_GPUTransferBuffer~*) -> bool {
         unsafe {
             submitted: bool = Sdl:::SDL_SubmitGPUCommandBuffer(commandBuffer);
@@ -198,6 +262,11 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * Creates a mesh's vertex and index buffers and fills them: map a transfer buffer, copy the data in, unmap, then a
+     * copy pass on a command buffer of its own copies it to the GPU buffers. The upload is submitted but not waited
+     * for; the GPU runs it before any later command buffer, so the mesh is ready by the next frame.
+     */
     UploadMesh :: (device: raw Sdl:::SDL_GPUDevice~*, mesh: lantern:::renderer:::MeshData*) -> Result<GpuMesh, string!> {
         vertexByteCount: u32 = u32(mesh->VertexByteLength());
         indexByteCount: u32 = u32(mesh->IndexByteLength());
@@ -275,6 +344,15 @@ lantern:::gpu :: namespace {
         return Result<GpuMesh, string!>:::Ok(gpuMesh);
     }
 
+    /**
+     * Creates an RGBA8 texture in sRGB format and uploads its pixels. The sRGB format makes the GPU decode texels to
+     * linear colour when sampled, so lighting maths stays linear.
+     *
+     * A linearly filtered texture also gets a mipmap chain: half-size, quarter-size and so on down to 1x1, which
+     * `SDL_GenerateMipmapsForGPUTexture` builds on the GPU by blitting each level from the one above (that's why it
+     * needs the COLOR_TARGET usage too). Far away, the sampler reads a small level, which averages many texels instead
+     * of picking a few, so distant textures don't shimmer.
+     */
     UploadTexture :: (device: raw Sdl:::SDL_GPUDevice~*, samplers: Samplers, texture: lantern:::renderer:::TextureData*) -> Result<GpuTexture, string!> {
         if texture->width == 0 || texture->height == 0 || texture->rgba8.length() != usize(texture->width * texture->height * 4) {
             message: string! = `texture data is ${texture->rgba8.length()} bytes for ${texture->width}x${texture->height}`;
@@ -345,12 +423,23 @@ lantern:::gpu :: namespace {
         return Result<GpuTexture, string!>:::Ok(result);
     }
 
+    /**
+     * A vertex buffer refilled every frame, with its own staging buffer. It only grows (doubling from 4 KiB), so a
+     * scene with steady line and text counts allocates nothing after the first few frames.
+     */
     DynamicBuffer :: struct {
+        /** What the GPU buffer is for: always vertex data here. */
         usage~ Sdl:::SDL_GPUBufferUsageFlags = 0;
+        /** The GPU buffer the pipeline reads. */
         buffer~ raw Sdl:::SDL_GPUBuffer~* = null;
+        /** The staging buffer the CPU writes each frame. */
         transfer~ raw Sdl:::SDL_GPUTransferBuffer~* = null;
+        /** Size of both buffers in bytes. */
         capacity~ u32 = 0;
 
+        /**
+         * Makes sure both buffers hold at least `size` bytes, replacing them with larger ones if not. Null on success.
+         */
         Reserve~: (device: raw Sdl:::SDL_GPUDevice~*, size: u32) -> string!? {
             if size <= capacity {
                 return null;
@@ -372,12 +461,21 @@ lantern:::gpu :: namespace {
             return null;
         }
 
+        /**
+         * Maps the staging buffer for the CPU to write. `cycle` is true: if the GPU is still reading last frame's copy,
+         * SDL hands out a fresh piece of memory instead of making the CPU wait, which is what lets the CPU record frame
+         * N+1 while the GPU draws frame N.
+         */
         Map :: (device: raw Sdl:::SDL_GPUDevice~*) -> raw u8~* {
             unsafe {
                 return Sdl:::SDL_MapGPUTransferBuffer(device, transfer, true);
             }
         }
 
+        /**
+         * Unmaps the staging buffer and records a copy of its first `byteCount` bytes into the GPU buffer, again with
+         * `cycle` so the copy never overwrites data a frame in flight is drawing.
+         */
         FinishUpload :: (device: raw Sdl:::SDL_GPUDevice~*, copyPass: raw Sdl:::SDL_GPUCopyPass~*, byteCount: u32) -> void {
             unsafe {
                 Sdl:::SDL_UnmapGPUTransferBuffer(device, transfer);
@@ -387,6 +485,7 @@ lantern:::gpu :: namespace {
             }
         }
 
+        /** Releases both buffers and resets the capacity. */
         Release~: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
             unsafe {
                 if buffer != null {
@@ -402,6 +501,10 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * How many mip levels a full chain has: one more than how many times the larger side halves before reaching 1 (a
+     * 256x64 texture has 9).
+     */
     MipLevelCount :: (width: u32, height: u32) -> u32 {
         remaining~ u32 = width;
         if height > remaining {

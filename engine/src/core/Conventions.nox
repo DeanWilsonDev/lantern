@@ -1,28 +1,39 @@
 lantern:::core :: namespace {
+    /** +Y is up in Lantern's world. */
     WorldUp :: () -> Vec3 {
         return Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
     }
 
+    /** -Z is forward: a camera or character with no rotation looks down -Z (the right-handed convention). */
     WorldForward :: () -> Vec3 {
         return Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
     }
 
+    /** +X is right. */
     WorldRight :: () -> Vec3 {
         return Vec3 { x: 1.0f, y: 0.0f, z: 0.0f };
     }
 
+    /** A rotation about the up axis. */
     YawRotation :: (yawRadians: f32) -> Quaternion {
         return QuaternionFromRotationY(yawRadians);
     }
 
+    /** The forward direction after turning `yawRadians` about the up axis. */
     DirectionFromYaw :: (yawRadians: f32) -> Vec3 {
         return RotateVector(YawRotation(yawRadians), WorldForward());
     }
 
+    /** The yaw that faces `direction`, the inverse of `DirectionFromYaw`. */
     YawFromDirection :: (direction: Vec3) -> f32 {
         return Math:::atan2(-direction.x, -direction.z);
     }
 
+    /**
+     * A right-handed perspective projection with depth 0 at the near plane and 1 at the far plane, as Vulkan, Metal and
+     * Direct3D expect (OpenGL's -1..1 would need a different matrix). It puts -z (distance in front of the camera) into
+     * w, so the GPU's divide by w makes distant things smaller.
+     */
     Perspective :: (verticalFieldOfViewRadians: f32, aspectRatio: f32, nearPlane: f32, farPlane: f32) -> Mat4 {
         halfAngle: f32 = 0.5f * verticalFieldOfViewRadians;
         height: f32 = Math:::cos(halfAngle) / Math:::sin(halfAngle);
@@ -35,6 +46,7 @@ lantern:::core :: namespace {
             Vec4 { x: 0.0f, y: 0.0f, z: depthRange * nearPlane, w: 0.0f });
     }
 
+    /** Steps `current` towards `target` by at most `maxDelta`, without overshooting. */
     MoveTowards :: (current: f32, target: f32, maxDelta: f32) -> f32 {
         if Math:::abs(target - current) <= maxDelta {
             return target;
@@ -46,6 +58,7 @@ lantern:::core :: namespace {
         return current + direction * maxDelta;
     }
 
+    /** An angle wrapped into -pi..pi. */
     WrapAngle :: (angleRadians: f32) -> f32 {
         remainder~ f32 = 0.0f;
         unsafe {
@@ -61,22 +74,32 @@ lantern:::core :: namespace {
         return wrapped;
     }
 
+    /**
+     * An axis-aligned bounding box: the cheapest box around something, aligned with the world axes. Used for culling
+     * and broad collision tests.
+     */
     Aabb :: struct {
+        /** The corner with the smallest x, y and z. */
         min~ Vec3 = Vec3 { };
+        /** The corner with the largest x, y and z. */
         max~ Vec3 = Vec3 { };
 
+        /** An inside-out box (min infinite, max negative infinite) that the first `GrownTo` turns into a point. */
         static Empty :: () -> Aabb {
             return Aabb { min: Splat3(INFINITY), max: Splat3(-INFINITY) };
         }
 
+        /** The box with these two opposite corners, in either order. */
         static Create :: (first: Vec3, second: Vec3) -> Aabb {
             return Aabb { min: ComponentMin3(first, second), max: ComponentMax3(first, second) };
         }
 
+        /** The box around a centre, reaching `halfExtents` each way. */
         static FromCenterHalfExtents :: (center: Vec3, halfExtents: Vec3) -> Aabb {
             return Aabb { min: center - Abs3(halfExtents), max: center + Abs3(halfExtents) };
         }
 
+        /** The smallest box around the points. */
         static FromPoints :: (points: Array<Vec3>) -> Aabb {
             bounds~ Aabb = Aabb:::Empty();
             for point in points {
@@ -85,40 +108,53 @@ lantern:::core :: namespace {
             return bounds;
         }
 
+        /** Whether the box is inside out (contains nothing). */
         IsEmpty :: () -> bool {
             return min.x > max.x || min.y > max.y || min.z > max.z;
         }
 
+        /** The box grown to include a point. */
         GrownTo :: (point: Vec3) -> Aabb {
             return Aabb { min: ComponentMin3(min, point), max: ComponentMax3(max, point) };
         }
 
+        /** The smallest box around both. */
         Union :: (other: Aabb) -> Aabb {
             return Aabb { min: ComponentMin3(min, other.min), max: ComponentMax3(max, other.max) };
         }
 
+        /** The box grown by `amount` on every side. */
         Expanded :: (amount: f32) -> Aabb {
             return Aabb { min: min - Splat3(amount), max: max + Splat3(amount) };
         }
 
+        /** The box's centre. */
         Center :: () -> Vec3 {
             return (min + max) * 0.5f;
         }
 
+        /** Half the box's size on each axis. */
         HalfExtents :: () -> Vec3 {
             return (max - min) * 0.5f;
         }
 
+        /** Whether two boxes touch or overlap. */
         Overlaps :: (other: Aabb) -> bool {
             return min.x <= other.max.x && min.y <= other.max.y && min.z <= other.max.z
                 && max.x >= other.min.x && max.y >= other.min.y && max.z >= other.min.z;
         }
 
+        /** Whether a point is inside or on the box. */
         ContainsPoint :: (point: Vec3) -> bool {
             return min.x <= point.x && min.y <= point.y && min.z <= point.z
                 && max.x >= point.x && max.y >= point.y && max.z >= point.z;
         }
 
+        /**
+         * The world-space box around this box after a transform. A rotated box isn't axis-aligned any more, so this
+         * moves all eight corners and boxes them again: the result is a little larger than the object, which is fine
+         * for culling.
+         */
         Transformed :: (transform: Mat4) -> Aabb {
             if IsEmpty() {
                 return Aabb { min: min, max: max };

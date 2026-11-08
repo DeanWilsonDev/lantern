@@ -1,40 +1,107 @@
-// The Game interface: everything the game loop asks of whatever it runs.
-//
-// The loop owns time and the platform; a Game owns what happens in the world. Lantern has three: GameHost (a Nyx game,
-// host/GameHost.nox), StubGame (stub/StubGame.nox) and the tests' own scripted games. The loop calls the hooks in this
-// order every frame:
-//
-//   UpdateInputConfiguration    let the game change its key bindings before input is read
-//   HandleEvent (per event)     window, keyboard, mouse and gamepad events, as they arrive
-//   FixedUpdate (0..n times)    the simulation, in fixed steps of exactly 1/60 s
-//   FrameUpdate                 once per displayed frame: camera, UI, anything tied to real time
-//   Render                      describe the frame and hand it to the renderer
-//   WantsToQuit                 checked last
 lantern:::engine :: namespace {
-    // What one fixed step sees: the input as it stood for that step, the step's length and its number since start.
+    /**
+     * What one fixed simulation step sees: the input as it stood for that step, the step's length and its number since
+     * start.
+     *
+     * `GameLoop.RunFrame` builds a fresh one for every step it runs. It is only valid during that `FixedUpdate` call:
+     * the input snapshot is deleted straight afterwards, so a game must copy anything it wants to keep.
+     */
     FixedStepContext :: struct {
+        /**
+         * The input for this step: keys held, plus presses and releases latched since the previous step, so a tap
+         * shorter than a step still shows up exactly once.
+         */
         input~ lantern:::core:::InputSnapshot*;
+        /**
+         * The simulated time this step covers, always the fixed step (1/60 s). Multiply velocities by this, never by
+         * the frame time.
+         */
         stepSeconds~ f32 = 0.0f;
+        /**
+         * How many fixed steps ran before this one since the loop started. Deterministic, unlike wall-clock time, so
+         * good for seeding or timing gameplay.
+         */
         stepIndex~ u64 = 0;
     }
 
-    // What one displayed frame sees. `alpha` is how far real time has got between the last fixed step and the
-    // next one (0 to 1), so rendering can blend the previous and current simulation states for smooth motion.
+    /**
+     * What one displayed frame sees, passed to `FrameUpdate` and then `Render`.
+     *
+     * Fixed steps advance the simulation; a frame shows it. The two rates differ, so a frame usually falls part-way
+     * between two simulation steps. `alpha` says how far, and rendering blends each object's previous and current
+     * simulated state by it (interpolation), which keeps motion smooth at any display rate.
+     */
     FrameContext :: struct {
+        /**
+         * The input as of this frame, for things that react once per frame (camera look, menu navigation). Lent by the
+         * input router and overwritten next frame; copy anything you need to keep.
+         */
         input~ lantern:::core:::InputSnapshot*;
+        /**
+         * Real time since the previous frame, in seconds; zero on the first frame and the first frame after a restore.
+         * Use it for effects tied to wall-clock time, never for the simulation.
+         */
         frameSeconds~ f32 = 0.0f;
+        /**
+         * How far real time has got from the last fixed step towards the next one, from 0 to 1. Rendering draws each
+         * moving object at `previous + (current - previous) * alpha`.
+         */
         alpha~ f32 = 0.0f;
+        /**
+         * What the fixed-step clock decided this frame: how many steps ran, `alpha`, and any time dropped because the
+         * frame was too slow.
+         */
         plan~ lantern:::core:::FixedStepPlan = lantern:::core:::FixedStepPlan { };
+        /** Recent frame times and totals, for the debug HUD. */
         stats~ lantern:::core:::FrameStats = lantern:::core:::FrameStats { };
+        /** The window's size in points and pixels, its pixel density and whether it is minimised, as of this frame. */
         window~ lantern:::platform:::WindowMetrics = lantern:::platform:::WindowMetrics { };
     }
 
+    /**
+     * Everything the game loop asks of whatever it runs. The loop owns time and the platform; a `Game` owns what
+     * happens in the world.
+     *
+     * Lantern has three: `GameHost` (a Nyx game, host/GameHost.nox), `StubGame` (stub/StubGame.nox) and the tests' own
+     * scripted games. The loop calls the hooks in this order every frame:
+     *
+     *   UpdateInputConfiguration    let the game change its key bindings before input is read
+     *   HandleEvent (per event)     window, keyboard, mouse and gamepad events, as they arrive
+     *   FixedUpdate (0..n times)    the simulation, in fixed steps of exactly 1/60 s
+     *   FrameUpdate                 once per displayed frame: camera, UI, anything tied to real time
+     *   Render                      describe the frame and hand it to the renderer (skipped while minimised)
+     *   WantsToQuit                 checked last
+     */
     Game :: interface {
+        /**
+         * One platform event (window resized, key, mouse, gamepad, quit), after the input router has seen it. Called
+         * before any fixed step this frame, so a resize is known before rendering.
+         */
         HandleEvent~ (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
+        /**
+         * Advance the simulation by exactly one fixed step: physics, gameplay, anything that must behave the same at
+         * every frame rate. Called zero or more times per frame, each with its own input snapshot.
+         */
         FixedUpdate~ (step: FixedStepContext) -> void : 0;
+        /**
+         * Once per frame, after the fixed steps: work that follows real time rather than simulated time, such as the
+         * camera, UI animation and topping up the audio queue.
+         */
         FrameUpdate~ (frame: FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void : 0;
+        /**
+         * Describe this frame and hand it to the renderer. Called last, once the simulation is up to date, and only
+         * when the window has a drawable area. Nothing in the world should change here; `frame.alpha` is for
+         * interpolating what's drawn.
+         */
         Render~ (frame: FrameContext) -> void : 0;
+        /**
+         * Checked at the end of every frame; true stops the loop after this frame (a Quit menu item, a frame limit).
+         */
         WantsToQuit : () -> bool : 0;
+        /**
+         * Called first in every frame so the game can change its actions and bindings before this frame's events are
+         * read.
+         */
         UpdateInputConfiguration~ (input: InputRouter~*) -> void : 0;
     }
 }

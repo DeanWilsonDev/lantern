@@ -1,48 +1,98 @@
-// The game loop: a fixed simulation step with rendering decoupled from it.
-//
-// Simulating with the real frame time makes results depend on frame rate: a jump is a little higher at 144 fps than
-// at 30, and one slow frame can tunnel a body through a wall. So the simulation always advances in fixed steps of
-// 1/60 s, and each displayed frame runs as many steps as real time has covered:
-//
-//   accumulated time += time since the last frame        (FixedStepClock, core/Time.nox; capped, so a long stall
-//   while accumulated time >= one step:                   can't demand an ever-growing burst of steps)
-//       FixedUpdate(step); accumulated time -= one step
-//   alpha = accumulated time / one step                   (the fraction of a step left over, for interpolation)
-//   FrameUpdate; Render
-//
-// Input is read once per frame, but a key pressed and released between two steps still reaches the next step: the
-// InputRouter latches presses and releases until a fixed step takes them (engine/input/InputRouter.nox).
-//
-// While the window is minimised there is nothing to draw, so neither the simulation nor the renderer runs, and the
-// time spent minimised is not counted when the window comes back.
 lantern:::engine :: namespace {
+    /**
+     * What `GameLoop.RunFrame` reports after each frame: keep going, or stop because the window or the game asked to
+     * quit. A caller that wants to do something between frames (`Application.RunObserved`, the tests) drives the loop
+     * one `RunFrame` at a time and checks this instead of calling `Run`.
+     */
     LoopStatus :: enum {
+        /** Nothing asked to quit; call `RunFrame` again. */
         Running,
+        /**
+         * The platform sent a quit event or `Game.WantsToQuit` returned true. The frame that saw it still ran fully.
+         */
         Finished
     }
 
+    /**
+     * The engine's heartbeat: owns time and input, and calls a `Game`'s hooks in a fixed order every frame.
+     *
+     * One frame, in order:
+     *
+     * 1. Let the game change its key bindings (`UpdateInputConfiguration`).
+     * 2. Pump the platform's events and hand each to the input router and the game.
+     * 3. Measure how much real time passed since the last frame and feed it to the fixed-step clock, which says how
+     *    many 1/60 s simulation steps are due and how far into the next step real time has got (`alpha`).
+     * 4. Run `FixedUpdate` once per due step (zero, one or several times), each with its own input snapshot.
+     * 5. Run `FrameUpdate` once, then `Render` once, unless the window has no drawable area.
+     * 6. Stop if anything asked to quit.
+     *
+     * Simulating with the real frame time would make results depend on frame rate: a jump a little higher at 144 fps
+     * than at 30, and one slow frame able to tunnel a body through a wall. So the simulation always advances in fixed
+     * 1/60 s steps, and each frame runs as many as real time has covered:
+     *
+     *   accumulated time += time since the last frame      (FixedStepClock; capped, so a long stall can't demand
+     *   while accumulated time >= one step:                 an ever-growing burst of steps)
+     *       FixedUpdate(step); accumulated time -= one step
+     *   alpha = accumulated time / one step                 (the fraction of a step left over, for interpolation)
+     *   FrameUpdate; Render
+     *
+     * The simulation rate and the display rate are independent: a 144 Hz display renders more often than it
+     * simulates, a slow machine simulates several steps per rendered frame. `Render` receives `alpha` so it can draw
+     * objects part-way between their last two simulated positions, which hides the mismatch.
+     *
+     * The loop doesn't sleep to cap the frame rate. With vsync on, the renderer's wait for the next swapchain image
+     * blocks until the display refreshes, and that is what paces a normal frame. The only sleep is the 16 ms nap while
+     * the window is minimised.
+     */
     GameLoop :: class {
     public:
+        /**
+         * Turns raw key, mouse and gamepad events into the per-step and per-frame snapshots the game reads. Owned by
+         * the loop and deleted with it.
+         */
         input~ InputRouter*!;
+        /** Converts measured frame time into a number of fixed simulation steps; see `FixedStepClock.Advance`. */
         clock~ lantern:::core:::FixedStepClock = lantern:::core:::FixedStepClock { };
+        /** A rolling record of recent frame times, for the debug HUD and the end-of-run summary. */
         stats~ lantern:::core:::FrameStats = lantern:::core:::FrameStats { };
+        /**
+         * When the previous frame's time was measured (after its events were pumped), in seconds since the platform
+         * started. Null before the first frame, so the first frame measures zero elapsed time instead of the whole
+         * start-up.
+         */
         previousTime~ f64? = null;
+        /**
+         * Whether the window was minimised during the previous frame. The first frame after a restore measures zero
+         * elapsed time, so the time spent minimised isn't simulated in a burst.
+         */
         wasMinimized~ bool = false;
+        /**
+         * Latched when the platform delivers a quit event (the window closed, or the OS asked the app to quit); checked
+         * at the end of the frame.
+         */
         quitRequested~ bool = false;
 
+        /** Takes ownership of the input router the loop feeds events into. */
         GameLoop~: (router: InputRouter*!) {
             input = router!;
         }
 
+        /** Deletes the input router the loop owns. */
         !GameLoop~: () {
             delete input;
         }
 
+        /** A copy of the frame statistics so far: frame times, frames run, steps in the last frame, time dropped. */
         Stats :: () -> lantern:::core:::FrameStats {
             return stats;
         }
 
-        // Runs frames until the game or the platform asks to quit.
+        /**
+         * Runs frames until the game or the platform asks to quit, then logs how many frames and fixed steps ran.
+         *
+         * Neither argument is owned: the application owns the platform, and the program that built the game owns the
+         * game. Both outlive the loop.
+         */
         Run~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> void {
             lantern:::core:::LogInfo("engine", "frame loop started");
             while RunFrame(platform, game) == LoopStatus:::Running { }
@@ -51,7 +101,21 @@ lantern:::engine :: namespace {
             delete finishedMessage;
         }
 
-        // One pass of the loop. Returns Finished once the platform or the game asks to quit.
+        /**
+         * One pass of the loop: events, fixed steps, frame update, render. Returns `Finished` once the platform or the
+         * game asks to quit.
+         *
+         * Input is read once per frame but reaches every fixed step: the router latches a key pressed and released
+         * between two steps, so a quick tap is never lost when a frame runs zero steps.
+         *
+         * Elapsed time is measured from the platform's clock after events are pumped. Steps only run for whole 1/60 s
+         * slices of it, so the simulation trails real time by the leftover part of a step; `alpha` is that leftover as
+         * a fraction of a step.
+         *
+         * While the window has no drawable area (minimised, or zero-sized during a resize) the game still gets
+         * `FrameUpdate` but not `Render`, since there is no swapchain image to draw into, and the loop naps for 16 ms
+         * instead of spinning.
+         */
         RunFrame~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> LoopStatus {
             game->UpdateInputConfiguration(input);
 
