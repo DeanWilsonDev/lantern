@@ -8,17 +8,28 @@ Sdl :: import Sdl;
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
-    // LANTERN_GPU_DEBUG=1 turns on the driver's validation layer, which reports misuse of the API in the log.
-    // LANTERN_VSYNC=0 presents as fast as possible instead of waiting for the display's refresh.
+    /** How to set up the GPU device, read from the environment. */
     GpuOptions :: struct {
+        /**
+         * LANTERN_GPU_DEBUG=1 turns on the driver's validation layer (Vulkan's validation layers, Metal's API
+         * validation), which reports misuse of the API in the log at some cost in speed.
+         */
         debug~ bool = false;
+        /**
+         * LANTERN_VSYNC=0 presents as fast as possible instead of waiting for the display's refresh. On by default: it
+         * caps the frame rate at the display's and stops tearing.
+         */
         vsync~ bool = true;
 
+        /** The options set by LANTERN_GPU_DEBUG and LANTERN_VSYNC. */
         static FromEnvironment :: () -> GpuOptions {
             return GpuOptions { debug: EnvironmentFlag("LANTERN_GPU_DEBUG", false), vsync: EnvironmentFlag("LANTERN_VSYNC", true) };
         }
     }
 
+    /**
+     * Reads a boolean environment variable (`1`/`true` or `0`/`false`), or `fallback` when it's unset or anything else.
+     */
     EnvironmentFlag :: (name: string, fallback: bool) -> bool {
         valueText: string!? = environmentVariable(name);
         defer delete valueText;
@@ -33,14 +44,19 @@ lantern:::gpu :: namespace {
         return fallback;
     }
 
-    // Some drivers (Metal, most Vulkan drivers on Windows) give the window blue-green-red-alpha images rather than
-    // red-green-blue-alpha. Drawing doesn't care, but pixels read back to the CPU have to be swapped.
+    /**
+     * Some drivers (Metal, most Vulkan drivers on Windows) give the window blue-green-red-alpha images rather than
+     * red-green-blue-alpha. Drawing doesn't care, but pixels read back to the CPU have to be swapped.
+     */
     IsBgra :: (format: Sdl:::SDL_GPUTextureFormat) -> bool {
         return format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM || format == Sdl:::SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB;
     }
 
-    // The depth buffer stores each pixel's distance from the camera so nearer triangles hide farther ones. More bits
-    // means fewer artefacts where surfaces are close together, so take the most precise format the card supports.
+    /**
+     * The depth buffer stores each pixel's distance from the camera so nearer triangles hide farther ones. More bits
+     * means fewer artefacts (z-fighting) where surfaces are close together, so take the most precise format the card
+     * supports: 32-bit float, then 24-bit, then 16-bit.
+     */
     ChooseDepthFormat :: (device: raw Sdl:::SDL_GPUDevice~*) -> Sdl:::SDL_GPUTextureFormat {
         candidates: Sdl:::SDL_GPUTextureFormat[3] = [Sdl:::SDL_GPU_TEXTUREFORMAT_D32_FLOAT, Sdl:::SDL_GPU_TEXTUREFORMAT_D24_UNORM, Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM];
         for format in candidates {
@@ -55,12 +71,19 @@ lantern:::gpu :: namespace {
         return Sdl:::SDL_GPU_TEXTUREFORMAT_D16_UNORM;
     }
 
-    // The renderer works in linear colour, where light adds up correctly, but screens expect sRGB-encoded values.
-    // An "SDR_LINEAR" swapchain encodes to sRGB in hardware as pixels are written. Where the window can't have one,
-    // the shaders encode instead. Returns true when the shaders must encode.
-    //
-    // The present mode decides what happens when a frame is ready: VSYNC waits for the display's next refresh (no
-    // tearing, frame rate capped at the refresh rate); MAILBOX and IMMEDIATE don't wait.
+    /**
+     * Sets the swapchain's colour encoding and present mode. Returns true when the shaders must sRGB-encode their own
+     * output.
+     *
+     * The renderer works in linear colour, where light adds up correctly, but screens expect sRGB-encoded values. An
+     * SDR_LINEAR swapchain has an sRGB format, so the hardware encodes as pixels are written. Where the window can't
+     * have one, the shaders encode instead.
+     *
+     * The present mode decides what happens when a frame is ready: VSYNC waits for the display's next refresh (no
+     * tearing, frame rate capped at the refresh rate, and acquiring the next image blocks, which is what paces the game
+     * loop); MAILBOX replaces a waiting frame with a newer one without tearing; IMMEDIATE shows it at once and may
+     * tear.
+     */
     ConfigureSwapchain :: (device: raw Sdl:::SDL_GPUDevice~*, window: raw Sdl:::SDL_Window~*, vsync: bool) -> bool {
         unsafe {
             srgb: bool = Sdl:::SDL_WindowSupportsGPUSwapchainComposition(device, window, Sdl:::SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR);

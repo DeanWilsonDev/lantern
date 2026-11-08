@@ -5,11 +5,16 @@
 // and the renderer walks the sorted list, binding a texture or mesh only when it changes. The last key keeps the sort
 // stable, so two draws with the same texture and mesh stay in the order the game submitted them.
 lantern:::gpu :: namespace {
+    /** One draw that survived culling, with the keys it is sorted by. */
     VisibleDraw :: struct {
+        /** The texture's pool index, or `UNTEXTURED_KEY` for a draw with no texture. */
         textureKey~ u32 = 0;
+        /** The mesh's pool index. */
         meshIndex~ u32 = 0;
+        /** Its position in the `RenderWorld`'s draw list, to find the `DrawItem` and keep the sort stable. */
         drawIndex~ usize = 0;
 
+        /** Orders by texture, then mesh, then submission order. */
         ComesBefore :: (other: VisibleDraw) -> bool {
             if textureKey != other.textureKey {
                 return textureKey < other.textureKey;
@@ -21,8 +26,13 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /** The texture key of a draw with no texture: the largest u32, so untextured draws sort after textured ones. */
     UNTEXTURED_KEY: u32 : 4294967295;
 
+    /**
+     * The draws in bind-friendly order. An insertion sort: simple, stable, and fast when draws arrive mostly sorted, as
+     * a game's usually do frame to frame.
+     */
     SortedVisibleDraws :: (draws: Array<VisibleDraw>) -> Array<VisibleDraw>! {
         sorted~ Array<VisibleDraw>! = [];
         for draw in draws {

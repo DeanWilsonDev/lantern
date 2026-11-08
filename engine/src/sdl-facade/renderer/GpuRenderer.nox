@@ -20,43 +20,118 @@
 Sdl :: import Sdl;
 
 lantern:::copyreadback :: foreign "c" {
+    /** C's `memcpy`, declared to copy pixels the GPU wrote into a mapped download buffer back into a Nox byte array. */
     memcpy :: (destination: Array<u8~>, source: raw u8*, byteCount: usize) -> raw u8~*;
 }
 
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
+    /** A mesh or texture index that matches nothing, so the first draw of a frame always binds. */
     NO_BINDING: u32 : 4294967295;
 
+    /**
+     * The `RenderBackend` over SDL GPU: where a `RenderWorld` becomes GPU commands.
+     *
+     * SDL GPU is a thin layer over Vulkan, Metal and Direct3D 12 with the same concepts they share: a device, command
+     * buffers, render and copy passes, pipelines, buffers, textures, samplers and a swapchain. A renderer written
+     * straight against Vulkan makes the same calls with more set-up around each.
+     *
+     * What it owns, for its whole life: the device and the window's swapchain, the three pipelines, every mesh and
+     * texture a game uploaded, the samplers, a 1x1 white texture, two growable vertex buffers for per-frame lines and
+     * overlay, and the depth buffer. `ReleaseDevice` frees them in reverse order once the GPU is idle.
+     *
+     * What one frame does (`Render`):
+     *
+     * 1. Acquire a command buffer: GPU work is recorded on the CPU and submitted in one go.
+     * 2. Copy this frame's line and overlay vertices into their GPU buffers (a copy pass).
+     * 3. Acquire the swapchain image to draw into, and make sure the depth buffer is the same size.
+     * 4. Record the frame (`RecordFrame`): cull and sort the meshes, then one render pass that draws the meshes, the
+     *    lines over them and the overlay on top.
+     * 5. Submit. SDL presents the swapchain image when the GPU finishes.
+     *
+     * The CPU doesn't wait for the GPU to finish a frame: it records the next while the GPU draws the last. SDL keeps a
+     * few frames in flight and defers freeing a resource until the GPU is done with it, which is why `RemoveMesh` can
+     * release a mesh straight away.
+     */
     GpuRenderer :: class {
         implements:
             lantern:::renderer:::RenderBackend;
     public:
+        /**
+         * The GPU device: the connection to one graphics card through one driver. Everything else here is created from
+         * it and must be released before it.
+         */
         device~ raw Sdl:::SDL_GPUDevice~* = null;
+        /** The window this renderer presents to, or null for an off-screen renderer. Lent; the platform owns it. */
         window~ raw Sdl:::SDL_Window~* = null;
+        /** Whether the window's swapchain was claimed for the device, so it is released again on shutdown. */
         windowClaimed~ bool = false;
+        /** The three pipelines: lit meshes, debug lines and the 2D overlay. */
         pipelines~ Pipelines = Pipelines { };
+        /** The four samplers (linear or nearest, repeat or clamp); every texture uses the one matching its settings. */
         samplers~ Samplers = Samplers { };
+        /**
+         * Every uploaded mesh, in a pool so the game names them by generational handle. A stale handle finds nothing
+         * instead of a freed buffer.
+         */
         meshes~ lantern:::core:::Pool<GpuMesh>*!;
+        /** Every uploaded texture, in a pool like the meshes. */
         textures~ lantern:::core:::Pool<GpuTexture>*!;
+        /**
+         * A 1x1 white texture bound wherever a draw has no texture, so the shader always samples and multiplies and
+         * never branches.
+         */
         whiteTexture~ GpuTexture = GpuTexture { };
+        /** The GPU vertex buffer this frame's debug lines are copied into. It only grows. */
         lineBuffer~ DynamicBuffer = DynamicBuffer { };
+        /** The GPU vertex buffer this frame's overlay quads are copied into. It only grows. */
         overlayBuffer~ DynamicBuffer = DynamicBuffer { };
+        /**
+         * The depth buffer for window frames: one depth value per pixel, so nearer triangles hide farther ones.
+         * Recreated when the window's pixel size changes.
+         */
         depthTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** The depth buffer's width in pixels, to notice a resize. */
         depthWidth~ u32 = 0;
+        /** The depth buffer's height in pixels, to notice a resize. */
         depthHeight~ u32 = 0;
+        /**
+         * The pixel format of the colour target: the swapchain's, or RGBA8 (sRGB where supported) off-screen. Pipelines
+         * are built for exactly this format.
+         */
         colorFormat~ Sdl:::SDL_GPUTextureFormat = 0;
+        /** The depth buffer's format, the most precise the card supports; see `ChooseDepthFormat`. */
         depthFormat~ Sdl:::SDL_GPUTextureFormat = 0;
+        /**
+         * True when the colour target stores raw values, so the shaders must sRGB-encode their output themselves
+         * (passed to them as `encodeFlag`).
+         */
         encodeSrgbInShader~ bool = false;
+        /** Whether the driver's validation layer is on (LANTERN_GPU_DEBUG). */
         debug~ bool = false;
+        /** The driver SDL chose: `vulkan`, `metal` or `direct3d12`. */
         driverName~ string!;
+        /**
+         * True for an off-screen renderer, which started SDL's video subsystem itself and stops it again after
+         * destroying the device.
+         */
         ownsVideoSubsystem~ bool = false;
+        /**
+         * The colour texture `RenderOffscreen` draws into, kept between frames and recreated when the requested size
+         * changes.
+         */
         offscreenColor~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** The depth texture that goes with `offscreenColor`. */
         offscreenDepth~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** A transfer buffer the GPU copies `offscreenColor`'s pixels into so the CPU can read them. */
         offscreenDownload~ raw Sdl:::SDL_GPUTransferBuffer~* = null;
+        /** The off-screen target's width in pixels. */
         offscreenWidth~ u32 = 0;
+        /** The off-screen target's height in pixels. */
         offscreenHeight~ u32 = 0;
 
+        /** An empty renderer with no device yet. Use `Create` or `CreateOffscreen`. */
         GpuRenderer~: () {
             driverName = "" + "";
             meshes = new lantern:::core:::Pool<GpuMesh>();
@@ -65,6 +140,7 @@ lantern:::gpu :: namespace {
             overlayBuffer.usage = Sdl:::SDL_GPU_BUFFERUSAGE_VERTEX;
         }
 
+        /** Releases every GPU resource and the device (`ReleaseDevice`). */
         !GpuRenderer~: () {
             ReleaseDevice();
             delete meshes;
@@ -72,8 +148,11 @@ lantern:::gpu :: namespace {
             delete driverName;
         }
 
-        // Opens the device. SDL picks a driver unless LANTERN_GPU_DRIVER names one ("vulkan", "metal"). The shaders
-        // ship as SPIR-V for Vulkan and MSL for Metal, so the device must accept one of those.
+        /**
+         * Opens the device. SDL picks a driver unless LANTERN_GPU_DRIVER names one (`vulkan`, `metal`). The shaders
+         * ship as SPIR-V for Vulkan and MSL for Metal, so the device must accept one of those. Null on success, else
+         * the error.
+         */
         OpenDevice~: (options: GpuOptions) -> string!? {
             debug = options.debug;
             driverText: string!? = environmentVariable("LANTERN_GPU_DRIVER");
@@ -98,7 +177,11 @@ lantern:::gpu :: namespace {
             return null;
         }
 
-        // A renderer without a window, drawing only into its own textures: the editor's viewport and tests use it.
+        /**
+         * A renderer without a window, drawing only into its own textures: the editor's viewport and the GPU tests use
+         * it. With no swapchain to copy a format from, it renders into RGBA8 with hardware sRGB encoding where the card
+         * supports it.
+         */
         static CreateOffscreen :: (options: GpuOptions) -> Result<GpuRenderer*!, string!> {
             videoStarted~ bool = false;
             unsafe {
@@ -134,7 +217,10 @@ lantern:::gpu :: namespace {
             return GpuRenderer:::Finish(renderer!, shaderFormat);
         }
 
-        // A renderer that draws to a window: claim the window's swapchain for the device, then pick formats.
+        /**
+         * A renderer that draws to a window: open the device, claim the window's swapchain for it, configure sRGB
+         * output and vsync, then take the swapchain's colour format and pick a depth format.
+         */
         static Create :: (window: raw Sdl:::SDL_Window~*, options: GpuOptions) -> Result<GpuRenderer*!, string!> {
             renderer := new GpuRenderer();
             renderer->window = window;
@@ -164,8 +250,10 @@ lantern:::gpu :: namespace {
             return GpuRenderer:::Finish(renderer!, shaderFormat);
         }
 
-        // The steps both kinds of renderer share once the device and colour format are known: build the three
-        // pipelines, the samplers and the white texture.
+        /**
+         * The steps both kinds of renderer share once the device and formats are known: log the set-up, then build the
+         * three pipelines, the samplers and the white texture. Deletes the renderer and returns the error if any fails.
+         */
         static Finish :: (renderer: GpuRenderer*!, shaderFormat: ShaderFormat) -> Result<GpuRenderer*!, string!> {
             debugName~ string = "off";
             if renderer->debug {
@@ -212,6 +300,12 @@ lantern:::gpu :: namespace {
             return Result<GpuRenderer*!, string!>:::Ok(renderer!);
         }
 
+        /**
+         * Frees everything in reverse order of creation: wait until the GPU is idle (nothing may be released while a
+         * frame still uses it), then the meshes, textures, dynamic buffers, depth buffer, samplers, pipelines and
+         * off-screen target, then the window's swapchain, then the device. If SDL's video subsystem is already shut
+         * down, the device is gone with it, so nothing is released.
+         */
         ReleaseDevice~: () -> void {
             if device == null {
                 return;
@@ -265,22 +359,30 @@ lantern:::gpu :: namespace {
             }
         }
 
+        /** The driver SDL chose, for logs and the debug HUD. */
         DriverName :: () -> string {
             return driverName;
         }
 
+        /** Whether the validation layer is on. */
         DebugEnabled :: () -> bool {
             return debug;
         }
 
+        /** Live meshes, for the debug HUD and leak checks. */
         MeshCount :: () -> usize {
             return meshes->Length();
         }
 
+        /** Live textures, for the debug HUD and leak checks. */
         TextureCount :: () -> usize {
             return textures->Length();
         }
 
+        /**
+         * Validates and uploads a mesh to GPU vertex and index buffers (`UploadMesh`) and returns its handle. The
+         * caller keeps the `MeshData`; the GPU copy is independent of it.
+         */
         CreateMesh~: (mesh: lantern:::renderer:::MeshData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::MeshTag>, string!> {
             problem: string!? = mesh->Validate();
             if invalid := problem {
@@ -299,12 +401,17 @@ lantern:::gpu :: namespace {
             }
         }
 
+        /**
+         * Frees a mesh's GPU buffers. Its handle, and any copy of it, stops matching; draws that still use it are
+         * skipped with a warning.
+         */
         RemoveMesh~: (handle: lantern:::core:::Handle<lantern:::renderer:::MeshTag>) -> void {
             if removed := meshes->Remove(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(handle)) {
                 removed.Release(device);
             }
         }
 
+        /** Uploads a texture (`UploadTexture`), with mipmaps when it's linearly filtered, and returns its handle. */
         CreateTexture~: (texture: lantern:::renderer:::TextureData*) -> Result<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, string!> {
             when UploadTexture(device, samplers, texture) {
                 Result:::Ok(uploaded) -> {
@@ -317,13 +424,17 @@ lantern:::gpu :: namespace {
             }
         }
 
+        /** Frees a texture. Draws that still name it fall back to white. */
         RemoveTexture~: (handle: lantern:::core:::Handle<lantern:::renderer:::TextureTag>) -> void {
             if removed := textures->Remove(lantern:::core:::CastHandle<lantern:::renderer:::TextureTag, GpuTexture>(handle)) {
                 removed.Release(device);
             }
         }
 
-        // A draw with no texture, or a released one, samples the 1x1 white texture, so the shader needs no branch.
+        /**
+         * The GPU texture for a draw: its own, or the 1x1 white texture when it has none or it was removed, so the
+         * shader needs no branch.
+         */
         TextureOrWhite :: (handle: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?) -> GpuTexture {
             if wanted := handle {
                 if found := textures->Get(lantern:::core:::CastHandle<lantern:::renderer:::TextureTag, GpuTexture>(wanted)) {
@@ -333,7 +444,12 @@ lantern:::gpu :: namespace {
             return whiteTexture;
         }
 
-        // One frame to the window. The numbered steps are in the comment at the top of this file.
+        /**
+         * One frame to the window. Returns what was drawn, with `presented` false when there was no swapchain image
+         * (the window is minimised or hidden), or an error.
+         *
+         * Every failure path cancels the command buffer rather than submitting half a frame.
+         */
         Render~: (world: lantern:::renderer:::RenderWorld*) -> Result<lantern:::renderer:::RenderReport, string!> {
             commandBuffer~ raw Sdl:::SDL_GPUCommandBuffer~* = null;
             unsafe {
@@ -393,6 +509,11 @@ lantern:::gpu :: namespace {
             return Result<lantern:::renderer:::RenderReport, string!>:::Ok(report);
         }
 
+        /**
+         * Renders `world` once into a fresh texture of the given size and returns its pixels as RGBA8, for screenshots
+         * and tests. This is the slow, synchronous path: it waits on a fence for the GPU to finish before reading back,
+         * and creates and frees its targets every call.
+         */
         Capture~: (world: lantern:::renderer:::RenderWorld*, width: u32, height: u32) -> Result<lantern:::renderer:::TextureData*!, string!> {
             color: raw Sdl:::SDL_GPUTexture~* = CreateRenderTexture(device, colorFormat, width, height, false);
             depth: raw Sdl:::SDL_GPUTexture~* = CreateRenderTexture(device, depthFormat, width, height, true);
@@ -468,6 +589,7 @@ lantern:::gpu :: namespace {
             return Result<lantern:::renderer:::TextureData*!, string!>:::Ok(captured!);
         }
 
+        /** Frees `RenderOffscreen`'s kept textures and download buffer. */
         ReleaseOffscreenTarget~: () -> void {
             ReleaseCaptureTarget(offscreenColor, offscreenDepth, offscreenDownload);
             offscreenColor = null;
@@ -477,6 +599,10 @@ lantern:::gpu :: namespace {
             offscreenHeight = 0;
         }
 
+        /**
+         * Makes sure `RenderOffscreen`'s targets exist at this size, waiting for the GPU to go idle before replacing
+         * old ones still in use.
+         */
         EnsureOffscreenTarget~: (width: u32, height: u32) -> string!? {
             if offscreenColor != null && offscreenWidth == width && offscreenHeight == height {
                 return null;
@@ -503,6 +629,14 @@ lantern:::gpu :: namespace {
             return null;
         }
 
+        /**
+         * Renders `world` into the kept off-screen target and copies its pixels into `pixels` (RGBA8, resized to fit).
+         * The editor's viewport calls this every frame and shows the result as an image.
+         *
+         * The frame is drawn, then a copy pass downloads the colour texture into a transfer buffer, then the CPU waits
+         * on a fence (a signal the GPU raises when the command buffer finishes) before mapping and copying it. BGRA
+         * pixels are swapped to RGBA on the way.
+         */
         RenderOffscreen~: (world: lantern:::renderer:::RenderWorld*, requestedWidth: u32, requestedHeight: u32, pixels: Array<u8>!~*) -> Result<lantern:::renderer:::RenderReport, string!> {
             width: u32 = when (requestedWidth == 0) { true -> 1, false -> requestedWidth };
             height: u32 = when (requestedHeight == 0) { true -> 1, false -> requestedHeight };
@@ -573,6 +707,7 @@ lantern:::gpu :: namespace {
             return Result<lantern:::renderer:::RenderReport, string!>:::Ok(presentedReport);
         }
 
+        /** Releases a colour texture, depth texture and download buffer, skipping any that are null. */
         ReleaseCaptureTarget :: (color: raw Sdl:::SDL_GPUTexture~*, depth: raw Sdl:::SDL_GPUTexture~*, download: raw Sdl:::SDL_GPUTransferBuffer~*) -> void {
             unsafe {
                 if download != null {
@@ -587,8 +722,12 @@ lantern:::gpu :: namespace {
             }
         }
 
-        // Lines and overlay vertices change every frame, so they are copied into GPU buffers each frame. A copy pass
-        // maps a staging buffer the CPU can write, then copies it into the vertex buffer the pipeline reads.
+        /**
+         * Copies this frame's lines and overlay vertices to the GPU. They change every frame, so they can't be uploaded
+         * once like meshes. Each buffer grows if needed, then a copy pass writes the vertices into a staging (transfer)
+         * buffer the CPU can map and copies that into the vertex buffer the pipeline reads. Copy passes can't run
+         * inside a render pass, so this happens before the frame's render pass begins.
+         */
         UploadDynamicGeometry~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, world: lantern:::renderer:::RenderWorld*) -> string!? {
             lineByteCount: u32 = u32(world->lines.length()) * lantern:::renderer:::LINE_VERTEX_STRIDE;
             overlayByteCount: u32 = u32(world->overlay->vertices.length()) * lantern:::renderer:::OVERLAY_VERTEX_STRIDE;
@@ -628,7 +767,10 @@ lantern:::gpu :: namespace {
             return null;
         }
 
-        // The depth buffer must match the colour target's size, so it is recreated when the window resizes.
+        /**
+         * The depth buffer must be exactly the colour target's size, so it is recreated when the window's pixel size
+         * changes. Null on success.
+         */
         EnsureDepthTarget~: (width: u32, height: u32) -> string!? {
             if depthTexture != null && depthWidth == width && depthHeight == height {
                 return null;
@@ -650,8 +792,12 @@ lantern:::gpu :: namespace {
             return null;
         }
 
-        // Culling: a draw whose mesh bounds, moved by its transform, lie wholly outside the camera's view volume
-        // can't put a pixel on screen, so it is dropped before any GPU work. The rest are sorted (GpuDrawList.nox).
+        /**
+         * Frustum culling: a draw whose mesh bounds, moved by its transform, lie wholly outside the camera's view
+         * volume can't put a pixel on screen, so it is dropped before any GPU work and counted in `drawsCulled`. The
+         * rest are sorted by texture and mesh (GpuDrawList.nox). A draw naming a removed mesh is skipped with a
+         * warning.
+         */
         CollectVisibleDraws :: (world: lantern:::renderer:::RenderWorld*, frustum: lantern:::renderer:::Frustum, report: lantern:::renderer:::RenderReport~*) -> Array<VisibleDraw>! {
             visible~ Array<VisibleDraw>! = [];
             for drawIndex~ usize = 0; drawIndex < world->draws.length(); drawIndex++ {
@@ -677,12 +823,20 @@ lantern:::gpu :: namespace {
             return sorted!;
         }
 
-        // Records one whole frame into `colorTexture`, which is the swapchain image or an off-screen texture.
-        //
-        // A render pass is a stretch of drawing into a fixed set of targets. Its "load op" says what the targets
-        // start as (CLEAR: the clear colour, and depth 1.0, the far plane) and its "store op" whether to keep them
-        // afterwards (the colour, yes; the depth, no one reads it again). Inside the one pass, three steps draw in
-        // order, each with its own pipeline: the lit meshes, the debug lines, then the 2D overlay on top.
+        /**
+         * Records one whole frame into `colorTexture`, which is the swapchain image or an off-screen texture.
+         *
+         * It builds the view-projection matrix from the camera and the target's aspect ratio, culls and sorts the
+         * draws, then records one render pass. A render pass is a stretch of drawing into a fixed set of targets. Its
+         * load op says what the targets start as (CLEAR: the clear colour, and depth 1.0, the far plane) and its store
+         * op whether to keep them afterwards (the colour, yes; the depth, no one reads it again, so DONT_CARE lets
+         * tiled mobile and Apple GPUs skip writing it out). `cycle` on the depth target lets SDL hand over a fresh
+         * depth texture if the previous frame's is still in use, rather than stalling.
+         *
+         * Inside the one pass, three steps draw in order, each with its own pipeline: the lit meshes, the debug lines,
+         * then the 2D overlay on top. When the target can't sRGB-encode, the clear colour is encoded here on the CPU,
+         * since a clear doesn't run a shader.
+         */
         RecordFrame~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, colorTexture: raw Sdl:::SDL_GPUTexture~*, depthTarget: raw Sdl:::SDL_GPUTexture~*, width: u32, height: u32, world: lantern:::renderer:::RenderWorld*) -> lantern:::renderer:::RenderReport {
             report~ lantern:::renderer:::RenderReport = lantern:::renderer:::RenderReport { };
             clear~ lantern:::core:::Color = world->clearColor;
@@ -725,8 +879,12 @@ lantern:::gpu :: namespace {
             return report;
         }
 
-        // Step 1: the lit meshes. The per-frame uniforms (camera and light) are pushed once; then for each visible
-        // draw, rebind the mesh and texture only if they changed, push the per-draw uniforms and draw its indices.
+        /**
+         * Step 1: the lit meshes. The per-frame uniforms (view-projection, camera position, light and fog) are pushed
+         * once. Then for each visible draw, in sorted order: rebind the mesh's vertex and index buffers only if the
+         * mesh changed, rebind the texture only if it changed, push the per-draw uniforms (model matrix, normal matrix,
+         * tint) and issue one indexed draw. The byte counts pushed (80, 96, 128, 16) are the uniform structs' sizes.
+         */
         DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, world: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
             cameraPosition: Vec3 = world->camera.position;
             frameUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f] };
@@ -775,8 +933,10 @@ lantern:::gpu :: namespace {
             }
         }
 
-        // Step 2: debug lines, two vertices each, already uploaded to lineBuffer. They test against the depth the
-        // meshes wrote, so walls hide them, but don't write depth themselves.
+        /**
+         * Step 2: debug lines, two vertices each, already uploaded to `lineBuffer`. They test against the depth the
+         * meshes wrote, so walls hide them, but don't write depth themselves. One draw call for all of them.
+         */
         DrawLines~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, world: lantern:::renderer:::RenderWorld*, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
             lineVertexCount: u32 = u32(world->lines.length());
             if lineVertexCount == 0 {
@@ -793,8 +953,11 @@ lantern:::gpu :: namespace {
             report->lineCount = lineVertexCount / 2;
         }
 
-        // Step 3: the 2D overlay (HUD, menus, text) in screen pixels, with no depth test so it lands on top of
-        // everything. Every quad samples the font atlas; solid quads use its white cell.
+        /**
+         * Step 3: the 2D overlay (HUD, menus, text) in screen pixels, with no depth test so it lands on top of
+         * everything. The vertex shader turns pixels into clip space from the target size it is given. Every quad
+         * samples the font atlas; solid quads use its white cell. One draw call for all of it.
+         */
         DrawOverlay~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, world: lantern:::renderer:::RenderWorld*, width: u32, height: u32, encodeFlag: f32) -> void {
             overlayVertexCount: u32 = u32(world->overlay->vertices.length());
             if overlayVertexCount == 0 {

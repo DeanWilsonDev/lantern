@@ -15,34 +15,62 @@ Sdl :: import Sdl;
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
+    /**
+     * A matrix and a vector: 80 bytes. The lit vertex shader's per-frame block (view-projection matrix, camera
+     * position); the lines shader's block (view-projection matrix, with the sRGB flag in the vector's w).
+     */
     MatrixAndVectorUniforms :: struct {
+        /** A 4x4 matrix in column-major order, as GLSL's `mat4` expects. */
         matrix~ f32[16] = filled<f32, 16>(0.0f);
+        /** One vec4. */
         vector~ f32[4] = filled<f32, 4>(0.0f);
     }
 
+    /** The lit fragment shader's per-frame block: one directional light, ambient light and fog. 96 bytes. */
     LightUniforms :: struct {
-        // The light shines along `direction`; the shader wants the opposite, the direction towards the light.
+        /**
+         * The unit direction from a surface towards the light. `DirectionalLight` stores the direction light travels,
+         * so the renderer negates it.
+         */
         directionToLight~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sun's colour times its intensity, in linear RGB. */
         lightColor~ f32[4] = filled<f32, 4>(0.0f);
+        /**
+         * Light that reaches every surface regardless of facing, standing in for light bounced around the scene, so
+         * shadowed sides aren't black.
+         */
         ambientColor~ f32[4] = filled<f32, 4>(0.0f);
-        // Fog fades distant surfaces into the clear colour, so the far plane cutting the world off isn't visible.
+        /**
+         * The colour distant surfaces fade to: the clear colour, so the far plane cutting the world off isn't visible.
+         */
         fogColor~ f32[4] = filled<f32, 4>(0.0f);
-        // x: fog start distance, y: fog end distance, w: 1 when the shader must sRGB-encode its output.
+        /**
+         * x: the distance fog starts, y: the distance it is total, w: 1 when the shader must sRGB-encode its output.
+         */
         fogAndOutput~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's world position, to measure each fragment's distance for fog. */
         cameraPosition~ f32[4] = filled<f32, 4>(0.0f);
     }
 
+    /** The lit vertex shader's per-draw block: 128 bytes. */
     ObjectUniforms :: struct {
+        /** The draw's model (world) matrix: object space to world space. */
         model~ f32[16] = filled<f32, 16>(0.0f);
+        /** The matrix that moves the draw's normals to world space; see `NormalMatrix4`. */
         normalMatrix~ f32[16] = filled<f32, 16>(0.0f);
     }
 
+    /** A single vec4: the lit fragment shader's per-draw tint, or the overlay's target size. */
     VectorUniforms :: struct {
+        /** The four floats. */
         values~ f32[4] = filled<f32, 4>(0.0f);
     }
 
-    // Normals can't be moved by the model matrix itself: a non-uniform scale would tilt them off their surface. The
-    // inverse transpose of the model matrix's 3x3 part keeps them perpendicular. It's padded to a 4x4 for std140.
+    /**
+     * Normals can't be moved by the model matrix itself: a non-uniform scale would tilt them off their surface. The
+     * inverse transpose of the model matrix's 3x3 part keeps them perpendicular, and drops translation, which a
+     * direction must ignore. It's padded to a 4x4 for std140.
+     */
     NormalMatrix4 :: (transform: Mat4) -> f32[16] {
         normal: lantern:::core:::NormalMatrix = lantern:::core:::NormalMatrix:::FromTransform(transform);
         return [
@@ -53,7 +81,10 @@ lantern:::gpu :: namespace {
         ];
     }
 
-    // The standard sRGB transfer function, used for the clear colour when the swapchain can't encode in hardware.
+    /**
+     * The standard sRGB transfer function for one channel (linear to encoded), used for the clear colour when the
+     * swapchain can't encode in hardware.
+     */
     EncodeSrgbChannel :: (linear: f32) -> f32 {
         clamped: f32 = Math:::clamp(linear, 0.0f, 1.0f);
         if clamped <= 0.0031308f {
@@ -62,16 +93,23 @@ lantern:::gpu :: namespace {
         return 1.055f * Math:::pow(clamped, 1.0f / 2.4f) - 0.055f;
     }
 
+    /** A linear colour sRGB-encoded channel by channel; alpha is left linear, as sRGB defines. */
     EncodeSrgb :: (color: lantern:::core:::Color) -> lantern:::core:::Color {
         return lantern:::core:::Color:::Rgba(EncodeSrgbChannel(color.r), EncodeSrgbChannel(color.g), EncodeSrgbChannel(color.b), color.a);
     }
 
+    /**
+     * Copies a uniform block into the vertex shader's uniform slot `slot` for the draws that follow. SDL copies the
+     * bytes into a per-command-buffer ring at once, so the struct can be a local; the value stays bound until the next
+     * push to the same slot.
+     */
     PushVertexUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
         unsafe {
             Sdl:::SDL_PushGPUVertexUniformData(commandBuffer, slot, bytes, byteCount);
         }
     }
 
+    /** The same as `PushVertexUniforms` for the fragment shader's slots. */
     PushFragmentUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
         unsafe {
             Sdl:::SDL_PushGPUFragmentUniformData(commandBuffer, slot, bytes, byteCount);

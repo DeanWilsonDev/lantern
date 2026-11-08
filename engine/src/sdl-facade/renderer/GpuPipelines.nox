@@ -3,29 +3,52 @@ Sdl :: import Sdl;
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
+    /**
+     * One vertex attribute: its format (float2, float3, float4) and byte offset inside a vertex. Its index in the
+     * description is its shader `location`.
+     */
     VertexAttributeLayout :: struct {
         format~ Sdl:::SDL_GPUVertexElementFormat = 0;
         offset~ u32 = 0;
     }
 
+    /**
+     * Everything that fixes how one kind of geometry is drawn. A GPU pipeline bakes all of this in at creation, so the
+     * driver can compile it once; switching pipelines mid-frame is cheap, building one is not.
+     */
     PipelineDescription :: struct {
+        /** The vertex shader: runs once per vertex and places it in clip space. */
         vertex~ ShaderDescription = ShaderDescription { };
+        /** The fragment shader: runs once per covered pixel and gives its colour. */
         fragment~ ShaderDescription = ShaderDescription { };
+        /** Bytes from one vertex to the next in the vertex buffer. */
         stride~ u32 = 0;
+        /** Up to four attributes, matching the vertex shader's `layout(location = n) in` declarations. */
         attributes~ VertexAttributeLayout[4] = filled<VertexAttributeLayout, 4>(VertexAttributeLayout { });
+        /** How many of `attributes` are used. */
         attributeCount~ u32 = 0;
+        /** How vertices group: a triangle list (every three vertices a triangle) or a line list (every two a line). */
         primitive~ Sdl:::SDL_GPUPrimitiveType = 0;
+        /** Skip triangles facing away from the camera. Triangles wound counter-clockwise as seen are front-facing. */
         cullBackFaces~ bool = false;
+        /** Draw a fragment only if it's nearer than what the depth buffer holds. */
         depthTest~ bool = false;
+        /** Write the fragment's depth so later geometry is hidden behind it. */
         depthWrite~ bool = false;
+        /** Mix the fragment over what's there by its alpha, instead of replacing it. */
         alphaBlend~ bool = false;
     }
 
+    /** The three pipelines the renderer uses, created once at start-up. */
     Pipelines :: struct {
+        /** Lit, textured, opaque meshes: back faces culled, depth tested and written. */
         lit~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** Debug lines: depth tested but not written, alpha blended. */
         lines~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** The 2D overlay: no depth at all, alpha blended, drawn last. */
         overlay~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
 
+        /** Releases the pipelines that were created. */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
             unsafe {
                 if lit != null {
@@ -41,6 +64,10 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /**
+     * The mesh pipeline. Its vertex is `Vertex`: position (float3, offset 0), normal (float3, 12), uv (float2, 24),
+     * colour (float4, 32); 48 bytes.
+     */
     LitPipelineDescription :: () -> PipelineDescription {
         return PipelineDescription {
             vertex: ShaderDescription { name: "lit", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 2 },
@@ -61,6 +88,7 @@ lantern:::gpu :: namespace {
         };
     }
 
+    /** The line pipeline. Its vertex is `LineVertex`: position (float3, 0), colour (float4, 12); 28 bytes. */
     LinesPipelineDescription :: () -> PipelineDescription {
         return PipelineDescription {
             vertex: ShaderDescription { name: "lines", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 1 },
@@ -81,6 +109,10 @@ lantern:::gpu :: namespace {
         };
     }
 
+    /**
+     * The overlay pipeline. Its vertex is `OverlayVertex`: screen position in pixels (float2, 0), uv (float2, 8),
+     * colour (float4, 16); 32 bytes.
+     */
     OverlayPipelineDescription :: () -> PipelineDescription {
         return PipelineDescription {
             vertex: ShaderDescription { name: "overlay", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 1 },
@@ -101,6 +133,11 @@ lantern:::gpu :: namespace {
         };
     }
 
+    /**
+     * Standard alpha blending: `result = source * source.a + destination * (1 - source.a)`, with the alpha channel
+     * itself blended as `source.a + destination.a * (1 - source.a)`. With blending off, the fragment replaces the
+     * pixel.
+     */
     BlendState :: (alphaBlend: bool) -> Sdl:::SDL_GPUColorTargetBlendState {
         if !alphaBlend {
             return Sdl:::SDL_GPUColorTargetBlendState { };
@@ -116,6 +153,12 @@ lantern:::gpu :: namespace {
         };
     }
 
+    /**
+     * Builds one pipeline: loads its two shaders, describes the vertex buffer and attributes, the rasteriser (fill,
+     * cull, counter-clockwise front faces), the depth test (LESS: nearer wins) and the colour and depth formats it
+     * renders into. A pipeline only works with the formats it was built for. The shaders are released after: the
+     * pipeline keeps what it needs.
+     */
     CreatePipeline :: (device: raw Sdl:::SDL_GPUDevice~*, format: ShaderFormat, colorFormat: Sdl:::SDL_GPUTextureFormat, depthFormat: Sdl:::SDL_GPUTextureFormat, description: PipelineDescription) -> Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!> {
         vertexShader~ raw Sdl:::SDL_GPUShader~* = null;
         when CreateShader(device, description.vertex, format) {
@@ -195,6 +238,7 @@ lantern:::gpu :: namespace {
         return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Ok(pipeline);
     }
 
+    /** Builds all three pipelines, releasing any already built if one fails. */
     CreatePipelines :: (device: raw Sdl:::SDL_GPUDevice~*, format: ShaderFormat, colorFormat: Sdl:::SDL_GPUTextureFormat, depthFormat: Sdl:::SDL_GPUTextureFormat) -> Result<Pipelines, string!> {
         pipelines~ Pipelines = Pipelines { };
         when CreatePipeline(device, format, colorFormat, depthFormat, LitPipelineDescription()) {
