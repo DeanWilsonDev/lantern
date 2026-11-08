@@ -1,12 +1,30 @@
 lantern:::renderer :: namespace {
+    /**
+     * Bytes per `Vertex`: 3 + 3 + 2 + 4 floats. Must match the lit pipeline's vertex layout and `lit.vert`'s inputs.
+     */
     VERTEX_STRIDE: u32 : 48;
 
+    /**
+     * One mesh vertex, laid out exactly as the GPU reads it, so an array of them is copied to a vertex buffer byte for
+     * byte (48 bytes, no padding).
+     */
     Vertex :: struct {
+        /** Position in the mesh's own (object) space. Shader location 0. */
         position~ f32[3] = [0.0f, 0.0f, 0.0f];
+        /**
+         * The unit direction the surface faces here, for lighting. Shader location 1. A hard edge needs separate
+         * vertices per face, each with its face's normal.
+         */
         normal~ f32[3] = [0.0f, 0.0f, 0.0f];
+        /** Texture coordinates: where on the texture this vertex samples, (0, 0) at the top left. Shader location 2. */
         uv~ f32[2] = [0.0f, 0.0f];
+        /**
+         * Linear RGBA multiplied into the texture; white for most meshes, the material colour for glTF ones. Shader
+         * location 3.
+         */
         color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
 
+        /** A vertex from vectors. */
         static Create :: (position: Vec3, normal: Vec3, uv: Vec2, color: Vec4) -> Vertex {
             return Vertex {
                 position: [position.x, position.y, position.z],
@@ -16,33 +34,52 @@ lantern:::renderer :: namespace {
             };
         }
 
+        /** The position as a vector. */
         Position :: () -> Vec3 {
             return Vec3 { x: position[0], y: position[1], z: position[2] };
         }
 
+        /** The normal as a vector. */
         Normal :: () -> Vec3 {
             return Vec3 { x: normal[0], y: normal[1], z: normal[2] };
         }
     }
 
+    /** Three corner positions, for physics and picking, which need triangles rather than indexed vertices. */
     Triangle :: struct {
         first~ Vec3 = Vec3 { };
         second~ Vec3 = Vec3 { };
         third~ Vec3 = Vec3 { };
     }
 
+    /**
+     * A mesh in CPU memory: vertices and the indices that join them into triangles. The renderer copies it to the GPU
+     * in `CreateMesh`; afterwards the CPU copy can be kept (for collision) or deleted.
+     *
+     * Indices let triangles share vertices: a cube's 24 vertices (4 per face, since each face needs its own normal)
+     * make 12 triangles from 36 indices. Triangles are wound counter-clockwise seen from the front; the lit pipeline
+     * culls the other side.
+     */
     MeshData :: class {
     public:
+        /** The vertices. */
         vertices~ Array<Vertex>! = [];
+        /** Three indices into `vertices` per triangle. */
         indices~ Array<u32>! = [];
 
+        /** An empty mesh. */
         MeshData~: () { }
 
+        /** Frees the arrays. */
         !MeshData~: () {
             delete vertices;
             delete indices;
         }
 
+        /**
+         * The smallest axis-aligned box around every vertex, in object space. The GPU renderer keeps it per mesh for
+         * culling.
+         */
         Bounds :: () -> lantern:::core:::Aabb {
             bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
             for vertex in vertices {
@@ -51,10 +88,15 @@ lantern:::renderer :: namespace {
             return bounds;
         }
 
+        /** Triangles in the mesh. */
         TriangleCount :: () -> usize {
             return indices.length() / 3;
         }
 
+        /**
+         * Null when the mesh is drawable, else why not: indices not a multiple of three, an index past the vertices, or
+         * no vertices. An out-of-range index would read past the GPU buffer.
+         */
         Validate :: () -> string!? {
             if indices.length() % 3 != 0 {
                 problem: string! = `${indices.length()} indices is not a whole number of triangles`;
@@ -72,6 +114,7 @@ lantern:::renderer :: namespace {
             return null;
         }
 
+        /** Every triangle's corner positions, for building collision. The caller owns the array. */
         Triangles :: () -> Array<Triangle>! {
             triangles~ Array<Triangle>! = [];
             for start~ usize = 0; start + 2 < indices.length(); start += 3 {
@@ -84,6 +127,10 @@ lantern:::renderer :: namespace {
             return triangles!;
         }
 
+        /**
+         * Adds another mesh's vertices and triangles to this one, offsetting its indices past the existing vertices.
+         * Merging meshes that never move separately saves draw calls.
+         */
         Append~: (other: MeshData*) -> void {
             offset: u32 = u32(vertices.length());
             for vertex in other->vertices {
@@ -94,10 +141,12 @@ lantern:::renderer :: namespace {
             }
         }
 
+        /** Bytes the vertices take on the GPU. */
         VertexByteLength :: () -> usize {
             return vertices.length() * usize(VERTEX_STRIDE);
         }
 
+        /** Bytes the indices take on the GPU (4 per index). */
         IndexByteLength :: () -> usize {
             return indices.length() * 4;
         }
