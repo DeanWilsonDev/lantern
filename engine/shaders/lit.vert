@@ -7,7 +7,8 @@
 // triangle before the fragment shader reads it.
 //
 // SDL GPU fixes where resources live in SPIR-V: a vertex shader's uniform blocks are set 1, binding n for push slot
-// n. The Nox side (GpuUniforms.nox) pushes slot 0 once per frame and slot 1 once per draw.
+// n. GpuRenderer.DrawMeshes pushes slot 0 once per frame and slot 1 once per draw, using the structs in
+// GpuUniforms.nox.
 #version 450
 
 // Slot 0, pushed once per frame: MatrixAndVectorUniforms in GpuUniforms.nox (80 bytes).

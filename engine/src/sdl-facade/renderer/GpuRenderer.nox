@@ -27,7 +27,10 @@ lantern:::copyreadback :: foreign "c" {
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
-    /** A mesh or texture index that matches nothing, so the first draw of a frame always binds. */
+    /**
+     * A mesh index that matches no mesh, so the first draw of a frame always binds its mesh. Textures use
+     * `textureBound` instead, since `UNTEXTURED_KEY` has this same value.
+     */
     NO_BINDING: u32 : 4294967295;
 
     /**
@@ -110,7 +113,10 @@ lantern:::gpu :: namespace {
         encodeSrgbInShader~ bool = false;
         /** Whether the driver's validation layer is on (LANTERN_GPU_DEBUG). */
         debug~ bool = false;
-        /** The driver SDL chose: `vulkan`, `metal` or `direct3d12`. */
+        /**
+         * The driver SDL chose: `vulkan` or `metal`. Direct3D 12 needs DXIL shaders, which Lantern doesn't ship, so
+         * Windows uses Vulkan.
+         */
         driverName~ string!;
         /**
          * True for an off-screen renderer, which started SDL's video subsystem itself and stops it again after
@@ -304,7 +310,8 @@ lantern:::gpu :: namespace {
          * Frees everything in reverse order of creation: wait until the GPU is idle (nothing may be released while a
          * frame still uses it), then the meshes, textures, dynamic buffers, depth buffer, samplers, pipelines and
          * off-screen target, then the window's swapchain, then the device. If SDL's video subsystem is already shut
-         * down, the device is gone with it, so nothing is released.
+         * down, the window and its swapchain are gone, so the release is skipped and the device is left unreleased,
+         * with a warning.
          */
         ReleaseDevice~: () -> void {
             if device == null {

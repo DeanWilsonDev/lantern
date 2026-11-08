@@ -1,24 +1,7 @@
-// The game loop: a fixed simulation step with rendering decoupled from it.
-//
-// Simulating with the real frame time makes results depend on frame rate: a jump is a little higher at 144 fps than
-// at 30, and one slow frame can tunnel a body through a wall. So the simulation always advances in fixed steps of
-// 1/60 s, and each displayed frame runs as many steps as real time has covered:
-//
-//   accumulated time += time since the last frame        (FixedStepClock, core/Time.nox; capped, so a long stall
-//   while accumulated time >= one step:                   can't demand an ever-growing burst of steps)
-//       FixedUpdate(step); accumulated time -= one step
-//   alpha = accumulated time / one step                   (the fraction of a step left over, for interpolation)
-//   FrameUpdate; Render
-//
-// Input is read once per frame, but a key pressed and released between two steps still reaches the next step: the
-// InputRouter latches presses and releases until a fixed step takes them (engine/input/InputRouter.nox).
-//
-// While the window is minimised there is nothing to draw, so neither the simulation nor the renderer runs, and the
-// time spent minimised is not counted when the window comes back.
 lantern:::engine :: namespace {
     /**
      * What `GameLoop.RunFrame` reports after each frame: keep going, or stop because the window or the game asked to
-     * quit. A caller that wants to do something between frames (the editor, `Application.RunObserved`) drives the loop
+     * quit. A caller that wants to do something between frames (`Application.RunObserved`, the tests) drives the loop
      * one `RunFrame` at a time and checks this instead of calling `Run`.
      */
     LoopStatus :: enum {
@@ -43,9 +26,19 @@ lantern:::engine :: namespace {
      * 5. Run `FrameUpdate` once, then `Render` once, unless the window has no drawable area.
      * 6. Stop if anything asked to quit.
      *
-     * Rendering never waits for the simulation and the simulation never waits for rendering: a 144 Hz display renders
-     * more often than it simulates, a slow machine simulates several steps per rendered frame. `Render` receives
-     * `alpha` so it can draw objects part-way between their last two simulated positions, which hides the mismatch.
+     * Simulating with the real frame time would make results depend on frame rate: a jump a little higher at 144 fps
+     * than at 30, and one slow frame able to tunnel a body through a wall. So the simulation always advances in fixed
+     * 1/60 s steps, and each frame runs as many as real time has covered:
+     *
+     *   accumulated time += time since the last frame      (FixedStepClock; capped, so a long stall can't demand
+     *   while accumulated time >= one step:                 an ever-growing burst of steps)
+     *       FixedUpdate(step); accumulated time -= one step
+     *   alpha = accumulated time / one step                 (the fraction of a step left over, for interpolation)
+     *   FrameUpdate; Render
+     *
+     * The simulation rate and the display rate are independent: a 144 Hz display renders more often than it
+     * simulates, a slow machine simulates several steps per rendered frame. `Render` receives `alpha` so it can draw
+     * objects part-way between their last two simulated positions, which hides the mismatch.
      *
      * The loop doesn't sleep to cap the frame rate. With vsync on, the renderer's wait for the next swapchain image
      * blocks until the display refreshes, and that is what paces a normal frame. The only sleep is the 16 ms nap while
@@ -63,8 +56,9 @@ lantern:::engine :: namespace {
         /** A rolling record of recent frame times, for the debug HUD and the end-of-run summary. */
         stats~ lantern:::core:::FrameStats = lantern:::core:::FrameStats { };
         /**
-         * When the previous frame started, in seconds since the platform started. Null before the first frame, so the
-         * first frame measures zero elapsed time instead of the whole start-up.
+         * When the previous frame's time was measured (after its events were pumped), in seconds since the platform
+         * started. Null before the first frame, so the first frame measures zero elapsed time instead of the whole
+         * start-up.
          */
         previousTime~ f64? = null;
         /**

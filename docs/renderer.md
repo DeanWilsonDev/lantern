@@ -62,8 +62,9 @@ completion and in signature help. The shaders explain themselves with `//` comme
 
 `GpuRenderer:::Create(window, options)` (`GpuRenderer.nox`) does the one-time work:
 
-1. **Open a device** (`OpenDevice`). SDL GPU chooses Vulkan, Metal or Direct3D 12 for the platform. The renderer asks
-   for a device that accepts SPIR-V or MSL shaders, since those are the two compiled forms it ships.
+1. **Open a device** (`OpenDevice`). The renderer asks for a device that accepts SPIR-V or MSL shaders, since those
+   are the two compiled forms it ships, so SDL GPU chooses Vulkan or Metal for the platform. Direct3D 12 would need
+   DXIL shaders as well.
 2. **Claim the window** for the device, which gives it a swapchain: the images the window shows.
 3. **Pick formats** (`GpuDevice.nox`). Colour comes from the swapchain. The swapchain is set to SDR_LINEAR where the
    window supports it, so the hardware converts linear colour to sRGB as pixels are written; otherwise the shaders
