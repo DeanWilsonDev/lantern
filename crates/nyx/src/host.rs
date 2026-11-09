@@ -148,20 +148,104 @@ unsafe extern "C" fn function_trampoline(
     run_callback(&slot.runtime, call, args, count, out_result, |context, arguments| (slot.function)(context, arguments))
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Documentation {
+    pub summary: String,
+    pub parameters: Vec<(String, String)>,
+    pub returns: String,
+    pub failures: Vec<(String, String)>,
+    pub example: String,
+}
+
+impl Documentation {
+    pub fn new(summary: &str) -> Self {
+        Documentation { summary: summary.to_owned(), ..Documentation::default() }
+    }
+
+    pub fn parameter(mut self, name: &str, description: &str) -> Self {
+        self.parameters.push((name.to_owned(), description.to_owned()));
+        self
+    }
+
+    pub fn returns(mut self, description: &str) -> Self {
+        self.returns = description.to_owned();
+        self
+    }
+
+    pub fn failure(mut self, variant: &str, condition: &str) -> Self {
+        self.failures.push((variant.to_owned(), condition.to_owned()));
+        self
+    }
+
+    pub fn example(mut self, example: &str) -> Self {
+        self.example = example.to_owned();
+        self
+    }
+}
+
 pub(crate) fn register_function<F>(runtime: &Runtime, name: &str, signature: &str, function: F) -> Result<()>
 where
     F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
 {
+    register_documented_function(runtime, name, signature, None, function)
+}
+
+pub(crate) fn register_documented_function<F>(
+    runtime: &Runtime,
+    name: &str,
+    signature: &str,
+    documentation: Option<&Documentation>,
+    function: F,
+) -> Result<()>
+where
+    F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
+{
+    let parameters: Vec<sys::nyx_documented_parameter> = documentation
+        .map(|record| {
+            record
+                .parameters
+                .iter()
+                .map(|(parameter_name, description)| sys::nyx_documented_parameter {
+                    name: nyx_str(parameter_name),
+                    description: nyx_str(description),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let failures: Vec<sys::nyx_documented_failure> = documentation
+        .map(|record| {
+            record
+                .failures
+                .iter()
+                .map(|(variant, condition)| sys::nyx_documented_failure {
+                    variant: nyx_str(variant),
+                    condition: nyx_str(condition),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let raw_documentation = documentation.map(|record| sys::nyx_documentation {
+        summary: nyx_str(&record.summary),
+        parameters: parameters.as_ptr(),
+        parameter_count: parameters.len(),
+        returns: nyx_str(&record.returns),
+        failures: failures.as_ptr(),
+        failure_count: failures.len(),
+        example: nyx_str(&record.example),
+    });
+    let documentation_pointer =
+        raw_documentation.as_ref().map_or(std::ptr::null(), |record| record as *const sys::nyx_documentation);
     let slot =
         Box::into_raw(Box::new(FunctionSlot { runtime: Rc::downgrade(&runtime.inner), function: Box::new(function) }));
     let status = unsafe {
-        sys::nyx_runtime_register_function(
+        sys::nyx_runtime_register_function_documented(
             runtime.raw(),
             nyx_str(name),
             nyx_str(signature),
             Some(function_trampoline),
             slot.cast(),
             Some(free_boxed::<FunctionSlot>),
+            documentation_pointer,
         )
     };
     if status != sys::NYX_OK {

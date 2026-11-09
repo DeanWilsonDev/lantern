@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use nyx::{CallbackError, Kind, Receiver, Runtime, Severity, Status, Value, PANIC_VARIANT};
+use nyx::{CallbackError, Documentation, Kind, Receiver, Runtime, Severity, Status, Value, PANIC_VARIANT};
 
 const EMPTY_APPLICATION: &str = r#"
 Game :: class : Application {
@@ -92,6 +92,34 @@ fn a_refused_script_reports_its_diagnostics() {
     assert_eq!(first.path, "broken.nyx");
     assert_eq!(first.start_line, 1);
     assert!(runtime.render_diagnostics().unwrap().contains(&first.code));
+}
+
+#[test]
+fn documented_host_function_reaches_the_host_surface_and_still_runs() {
+    let runtime = Runtime::new().unwrap();
+    let documentation = Documentation::new("Deals damage to the target.")
+        .parameter("amount", "the damage to deal")
+        .returns("the damage that landed")
+        .failure("Unknown", "the target despawned")
+        .example("Damage(3);");
+    runtime
+        .register_documented_function("Damage", "(amount: i32) -> i32", &documentation, |context, arguments| {
+            Ok(Some(context.make_i32(arguments[0].as_i32()? + 1)?))
+        })
+        .unwrap();
+    runtime.register_function("Plain", "() -> void", |_context, _arguments| Ok(None)).unwrap();
+    let manifest = runtime.write_host_surface().unwrap();
+    for expected in [
+        "Deals damage to the target.",
+        "the damage to deal",
+        "the damage that landed",
+        "the target despawned",
+        "Damage(3);",
+    ] {
+        assert!(manifest.contains(expected), "the manifest should hold {expected:?}: {manifest}");
+    }
+    let program = mount(&runtime, "Run :: () -> i32 { return Damage(4); }");
+    assert_eq!(call_i32(&program, "Run", &[]).unwrap(), 5);
 }
 
 #[test]
