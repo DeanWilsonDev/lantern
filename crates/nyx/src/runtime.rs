@@ -6,7 +6,7 @@ use nyx_sys as sys;
 
 use crate::diagnostic::Diagnostic;
 use crate::error::{Error, Result, StackFrame, Status};
-use crate::host::{self, CallContext, HostTypeBuilder};
+use crate::host::{self, CallContext, Documentation, HostTypeBuilder};
 use crate::program::Program;
 use crate::raw::{nyx_str, owned_string, path_text};
 use crate::value::Value;
@@ -231,6 +231,19 @@ impl Runtime {
         F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
     {
         host::register_function(self, name, signature, function)
+    }
+
+    pub fn register_documented_function<F>(
+        &self,
+        name: &str,
+        signature: &str,
+        documentation: &Documentation,
+        function: F,
+    ) -> Result<()>
+    where
+        F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
+    {
+        host::register_documented_function(self, name, signature, Some(documentation), function)
     }
 
     pub fn register_type<T: 'static>(&self, name: &str) -> HostTypeBuilder<T> {
