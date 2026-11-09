@@ -142,10 +142,7 @@ fn a_removed_standard_namespace_refuses_its_import() {
         .expect("the import is refused");
     assert_eq!(error.status, Status::Refused);
     assert_eq!(runtime.diagnostics()[0].code, "NYX0493");
-    assert_eq!(
-        runtime.remove_standard_namespace("Teleport").unwrap_err().status,
-        Status::InvalidArgument
-    );
+    assert_eq!(runtime.remove_standard_namespace("Teleport").unwrap_err().status, Status::InvalidArgument);
 }
 
 #[test]
@@ -540,4 +537,93 @@ fn a_value_type_declares_operators() {
         .err()
         .unwrap();
     assert_eq!(refused.message, "'Vec4' can't declare the operator '%': a host type declares '+', '-', '*' or '/'");
+}
+
+#[test]
+fn a_callback_held_by_the_host_is_called_later() {
+    let runtime = Runtime::new().unwrap();
+    let remembered: Rc<RefCell<Option<Value>>> = Rc::new(RefCell::new(None));
+    let sink = remembered.clone();
+    runtime
+        .register_function("Remember", "(callback: (value: i32) -> i32) -> void", move |_context, arguments| {
+            *sink.borrow_mut() = Some(arguments[0].clone());
+            Ok(None)
+        })
+        .unwrap();
+    let source = "Game :: class : Application {\npublic:\n    Run :: () -> void { }\n    Start :: () -> void {\n        offset := 3;\n        Remember((value: i32) -> i32 { return value * 10 + offset; });\n    }\n}\n";
+    let program = runtime.mount_source(source, "callbacks.nyx", "Game").unwrap();
+    program.call_application_method("Start", &[]).unwrap();
+    let callback = remembered.borrow_mut().take().expect("the game handed over its callback");
+    assert_eq!(callback.kind(), Kind::Callable);
+    let argument = runtime.make_i32(7).unwrap();
+    assert_eq!(callback.call(std::slice::from_ref(&argument)).unwrap().unwrap().as_i32().unwrap(), 73);
+    assert_eq!(callback.call(&[]).unwrap_err().status, Status::Arguments);
+}
+
+#[test]
+fn dictionaries_built_in_rust_are_read_by_nyx_and_back() {
+    let runtime = Runtime::new().unwrap();
+    let program = mount(
+        &runtime,
+        "Total :: (scores: Dictionary<string, i32>) -> i32 {\n    total~ i32 = 0;\n    for key in scores.keys() { total += scores[key]; }\n    return total;\n}\n\
+         Scores :: () -> Dictionary<string, i32> {\n    scores~ Dictionary<string, i32> = {};\n    scores[\"beta\"] = 2;\n    scores[\"alpha\"] = 1;\n    return scores;\n}",
+    );
+    let entries: Vec<(Value, Value)> = [("one", 10), ("two", 20)]
+        .iter()
+        .map(|(name, number)| (runtime.make_string(name).unwrap(), runtime.make_i32(*number).unwrap()))
+        .collect();
+    let dictionary = runtime.make_dictionary(&entries).unwrap();
+    assert_eq!(dictionary.kind(), Kind::Dictionary);
+    assert_eq!(call_i32(&program, "Total", &[dictionary]).unwrap(), 30);
+
+    let scores = program.call_function("Scores", &[]).unwrap().unwrap();
+    assert_eq!(scores.dictionary_length().unwrap(), 2);
+    assert_eq!(scores.dictionary_get("beta").unwrap().as_i32().unwrap(), 2);
+    assert_eq!(scores.dictionary_get("gamma").unwrap_err().status, Status::NotFound);
+    let names: Vec<String> =
+        scores.dictionary_entries().unwrap().iter().map(|(key, _)| key.as_str().unwrap().to_string()).collect();
+    assert_eq!(names, ["alpha", "beta"]);
+    let bad_key = runtime.make_f32(1.5).unwrap();
+    let element = runtime.make_i32(1).unwrap();
+    assert_eq!(runtime.make_dictionary(&[(bad_key, element)]).unwrap_err().status, Status::TypeMismatch);
+}
+
+#[test]
+fn an_objects_fields_and_a_failure_s_suppressed_failures_are_read() {
+    let runtime = Runtime::new().unwrap();
+    let source = "LevelError :: enum : Error<i32> {\n    NotFound(path: string) { logged := 1; },\n    Locked(path: string) { logged := 2; }\n}\n\
+        Game :: class : Application {\npublic:\n    label: string = \"hero\";\n    Run :: () -> void { }\n    Self :: () -> :Game { return this; }\n    Broken :: () -> i32 {\n        defer { throw LevelError:::Locked(\"save\"); }\n        throw LevelError:::NotFound(\"x.lvl\");\n    }\n}\n";
+    let program = runtime.mount_source(source, "objects.nyx", "Game").unwrap();
+    let game = program.call_application_method("Self", &[]).unwrap().unwrap();
+    assert_eq!(game.kind(), Kind::Object);
+    assert_eq!(game.object_type_name().unwrap(), "Game");
+    assert_eq!(game.object_field("label").unwrap().as_str().unwrap(), "hero");
+    assert_eq!(game.object_field("missing").unwrap_err().status, Status::NotFound);
+
+    let error = program.call_application_method("Broken", &[]).unwrap_err();
+    let failure = error.failure.expect("the failure's error value");
+    let suppressed = failure.error_suppressed().unwrap();
+    assert_eq!(suppressed.len(), 1);
+    assert_eq!(suppressed[0].error_variant().unwrap(), "LevelError::Locked");
+}
+
+#[test]
+fn a_patch_changes_the_next_call_and_a_bad_one_changes_nothing() {
+    let runtime = Runtime::new().unwrap();
+    let program = mount(&runtime, "Scale :: (value: i32) -> i32 { return value * 2; }");
+    let four = runtime.make_i32(4).unwrap();
+    assert_eq!(call_i32(&program, "Scale", std::slice::from_ref(&four)).unwrap(), 8);
+    program.patch_function("Scale :: (value: i32) -> i32 { return value * 10; }", "Scale", "patch.nyx").unwrap();
+    assert_eq!(call_i32(&program, "Scale", std::slice::from_ref(&four)).unwrap(), 40);
+
+    let restart = program
+        .patch_function("Scale :: (value: i32, extra: i32) -> i32 { return value * extra; }", "Scale", "patch.nyx")
+        .unwrap_err();
+    assert_eq!(restart.status, Status::RestartRequired);
+    let refused = program
+        .patch_function("Scale :: (value: i32) -> i32 { return value * missing; }", "Scale", "patch.nyx")
+        .unwrap_err();
+    assert_eq!(refused.status, Status::Refused);
+    assert!(!runtime.diagnostics().is_empty());
+    assert_eq!(call_i32(&program, "Scale", std::slice::from_ref(&four)).unwrap(), 40);
 }
