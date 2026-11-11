@@ -569,7 +569,7 @@ lantern_chaos_ui_status lantern_chaos_ui_create(nyx_runtime* runtime, const char
     if (Runtime == nullptr || project_root == nullptr || ui_directory == nullptr) return LANTERN_CHAOS_UI_ERROR;
     try {
         Chaos::ChaosConfig Config;
-        Config.Target = Chaos::ChaosBuildTarget::UmbraEngine;
+        Config.Target = Chaos::ChaosBuildTarget::GameEngine;
         // Component imports (`MainMenu :: import MainMenu;`) are looked up under the search
         // paths, relative to the project root: the whole game directory, as for Nyx imports.
         Config.SearchPaths = {"."};
