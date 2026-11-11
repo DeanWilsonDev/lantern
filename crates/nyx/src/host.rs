@@ -574,6 +574,7 @@ impl<T: 'static> HostTypeBuilder<T> {
         self
     }
 
+    /// A read-only field scripts can read as `instance.name`. `type_name` is Nyx type text, such as `i32`.
     pub fn property<G>(mut self, name: &str, type_name: &str, getter: G) -> Self
     where
         G: Fn(&CallContext, &T) -> std::result::Result<Value, CallbackError> + 'static,
@@ -588,6 +589,8 @@ impl<T: 'static> HostTypeBuilder<T> {
         self
     }
 
+    /// A field scripts can read and assign. The setter gets `&T`, like a method, so a type that changes
+    /// through a property needs interior mutability such as `Cell` or `RefCell`.
     pub fn writable_property<G, S>(mut self, name: &str, type_name: &str, getter: G, setter: S) -> Self
     where
         G: Fn(&CallContext, &T) -> std::result::Result<Value, CallbackError> + 'static,
