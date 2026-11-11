@@ -655,3 +655,72 @@ fn a_patch_changes_the_next_call_and_a_bad_one_changes_nothing() {
     assert!(!runtime.diagnostics().is_empty());
     assert_eq!(call_i32(&program, "Scale", std::slice::from_ref(&four)).unwrap(), 40);
 }
+
+struct Unit {
+    identifier: i32,
+    health: Cell<i32>,
+    hidden: Cell<bool>,
+}
+
+fn register_unit(runtime: &Runtime) -> nyx::HostType<Unit> {
+    runtime
+        .register_type::<Unit>("Unit")
+        .property("id", "i32", |context, unit| Ok(context.make_i32(unit.identifier)?))
+        .writable_property(
+            "health",
+            "i32",
+            |context, unit| {
+                if unit.hidden.get() {
+                    return Err(context.refusal("the unit is out of sight"));
+                }
+                Ok(context.make_i32(unit.health.get())?)
+            },
+            |_context, unit, value| {
+                unit.health.set(value.as_i32()?);
+                Ok(())
+            },
+        )
+        .register()
+        .unwrap()
+}
+
+const UNIT_SCRIPT: &str = "Heal :: (target~ Unit, amount: i32) -> i32 {\n\
+    target.health = target.health + amount;\n\
+    target.health += 1;\n\
+    return target.health;\n\
+}\n\
+Identify :: (target: Unit) -> i32 { return target.id; }";
+
+#[test]
+fn a_rust_type_declares_properties_a_script_reads_and_assigns() {
+    let runtime = Runtime::new().unwrap();
+    let unit_type = register_unit(&runtime);
+    let program = mount(&runtime, UNIT_SCRIPT);
+    let unit = unit_type.wrap(Unit { identifier: 7, health: Cell::new(20), hidden: Cell::new(false) }).unwrap();
+    let amount = runtime.make_i32(4).unwrap();
+    assert_eq!(call_i32(&program, "Heal", &[unit.clone(), amount]).unwrap(), 25);
+    assert_eq!(unit_type.get(&unit).unwrap().health.get(), 25);
+    assert_eq!(call_i32(&program, "Identify", &[unit]).unwrap(), 7);
+}
+
+#[test]
+fn a_property_without_a_setter_is_read_only_at_analysis() {
+    let runtime = Runtime::new().unwrap();
+    let _unit_type = register_unit(&runtime);
+    let source = format!("Rename :: (target~ Unit) -> void {{ target.id = 3; }}\n{EMPTY_APPLICATION}");
+    assert!(runtime.mount_source(&source, "rename.nyx", "Game").is_err());
+    let diagnostics = runtime.diagnostics();
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic.code == "NYX0496"), "{diagnostics:?}");
+}
+
+#[test]
+fn a_failing_getter_reaches_the_script_as_a_runtime_error() {
+    let runtime = Runtime::new().unwrap();
+    let unit_type = register_unit(&runtime);
+    let program = mount(&runtime, UNIT_SCRIPT);
+    let unit = unit_type.wrap(Unit { identifier: 1, health: Cell::new(10), hidden: Cell::new(true) }).unwrap();
+    let amount = runtime.make_i32(1).unwrap();
+    let error = call_i32(&program, "Heal", &[unit, amount]).unwrap_err();
+    assert_eq!(error.status, Status::Runtime);
+    assert!(error.message.contains("the unit is out of sight"), "message was {}", error.message);
+}

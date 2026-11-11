@@ -619,9 +619,8 @@ copy of Nyx with the C API the engine calls.
   commits and its own copy of the bridge.
 - **One call added.** `lantern_chaos_ui_snapshot_node` copies one node of the last snapshot, since
   Nox can't index a C array through a raw pointer.
-- **Chaos's target.** The bridge still sets `ChaosBuildTarget::UmbraEngine`, the only Umbra name
-  in `engine/` (the Rust crates keep theirs until they're retired), until Chaos has a target named for game engines (Nyx board,
-  `proto-a-chaos-build-target-for-game-engines-that-doesn-t-say-umbra`).
+- **Chaos's target.** The bridge sets `ChaosBuildTarget::GameEngine`, the name Chaos gives a game
+  engine's target. `UmbraEngine` stays in Chaos as an alias of it.
 
 Story: `engine-on-nox/l7-game-ui/port-chaos-ui-the-native-library-its-binding-nodes-styles-layout-and-drawing`.
 
