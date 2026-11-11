@@ -536,7 +536,7 @@ lantern_chaos_ui_status lantern_chaos_ui_create(nyx_runtime* runtime, const char
     if (Runtime == nullptr || project_root == nullptr || ui_directory == nullptr) return LANTERN_CHAOS_UI_ERROR;
     try {
         Chaos::ChaosConfig Config;
-        Config.Target = Chaos::ChaosBuildTarget::UmbraEngine;
+        Config.Target = Chaos::ChaosBuildTarget::GameEngine;
         Config.SearchPaths = {"."};
         auto Ui       = std::make_unique<lantern_chaos_ui>(*Runtime, project_root, std::move(Config));
         Ui->RuntimeHandle = runtime;
