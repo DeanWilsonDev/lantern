@@ -113,7 +113,7 @@ lantern:::host :: namespace {
         return steps!;
     }
 
-    DeclareCharacterControllerType :: (state: raw EngineState~*, math: MathTypes, physics: PhysicsTypes) -> lantern:::nyx:::HostType*! {
+    DeclareCharacterControllerType :: (state: raw EngineState~*, math: MathTypes, physicsTypes: PhysicsTypes) -> lantern:::nyx:::HostType*! {
         controllers := new lantern:::nyx:::HostType(CHARACTER_CONTROLLER_TYPE_NAME);
         controllers->Constructor("(radius: f32, height: f32, feet: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [math] {
             settings~ lantern:::physics:::ControllerSettings = lantern:::physics:::ControllerSettings { };
@@ -125,7 +125,7 @@ lantern:::host :: namespace {
             }
             context->ReturnOwnObject(new ScriptCharacterController(lantern:::physics:::CharacterController:::Create(settings, feet)));
         });
-        controllers->Method("Step", "(moveDirection: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> lantern:::physics:::ControllerStep", true, new (context: lantern:::nyx:::CallContext~*) -> void [state, math, physics] {
+        controllers->Method("Step", "(moveDirection: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> lantern:::physics:::ControllerStep", true, new (context: lantern:::nyx:::CallContext~*) -> void [state, math, physicsTypes] {
             input~ lantern:::physics:::ControllerInput = lantern:::physics:::ControllerInput { };
             input.moveDirection = Vec3Argument(context, 0, math);
             input.jumpPressed = context->Bool(1);
@@ -137,7 +137,7 @@ lantern:::host :: namespace {
             if character ~= CharacterControllerOf(context) {
                 unsafe {
                     events: lantern:::physics:::ControllerEvents = character->controller.Step(state->collision, input, deltaSeconds);
-                    context->ReturnObject(physics.controllerStep, new ScriptControllerStep(events));
+                    context->ReturnObject(physicsTypes.controllerStep, new ScriptControllerStep(events));
                 }
             }
         });
@@ -221,12 +221,12 @@ lantern:::host :: namespace {
     }
 
     RegisterPhysicsApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
-        physics~ PhysicsTypes = PhysicsTypes { };
+        physicsTypes~ PhysicsTypes = PhysicsTypes { };
         rayHits := DeclareRayHitType(math);
         steps := DeclareControllerStepType();
         unsafe {
-            physics.rayHit = rayHits;
-            physics.controllerStep = steps;
+            physicsTypes.rayHit = rayHits;
+            physicsTypes.controllerStep = steps;
         }
         failure~ lantern:::nyx:::NyxError*!? = runtime->RegisterType(rayHits!);
         failure = FirstFailure(failure!, runtime->RegisterType(steps!));
@@ -234,7 +234,7 @@ lantern:::host :: namespace {
             return failure!;
         }
         queries := new HostNamespace(runtime, "lantern::physics");
-        queries->Function("Raycast", "(origin: lantern:::math:::Vec3, direction: lantern:::math:::Vec3, maxDistance: f32) -> lantern:::physics:::RayHit?", new (context: lantern:::nyx:::CallContext~*) -> void [state, math, physics] {
+        queries->Function("Raycast", "(origin: lantern:::math:::Vec3, direction: lantern:::math:::Vec3, maxDistance: f32) -> lantern:::physics:::RayHit?", new (context: lantern:::nyx:::CallContext~*) -> void [state, math, physicsTypes] {
             origin: Vec3 = Vec3Argument(context, 0, math);
             direction: Vec3 = lantern:::physics:::NormalizeOrZero3(Vec3Argument(context, 1, math));
             maximumDistance: f32 = context->F32(2);
@@ -244,7 +244,7 @@ lantern:::host :: namespace {
             unsafe {
                 found: lantern:::physics:::RayHit? = state->collision->Raycast(origin, direction, maximumDistance);
                 if hit := found {
-                    context->ReturnObject(physics.rayHit, new ScriptRayHit(hit));
+                    context->ReturnObject(physicsTypes.rayHit, new ScriptRayHit(hit));
                 } else {
                     context->ReturnNull();
                 }
@@ -271,6 +271,6 @@ lantern:::host :: namespace {
         if failure != null {
             return failure!;
         }
-        return runtime->RegisterType(DeclareCharacterControllerType(state, math, physics));
+        return runtime->RegisterType(DeclareCharacterControllerType(state, math, physicsTypes));
     }
 }

@@ -129,17 +129,17 @@ lantern:::physics :: namespace {
             return normal.y >= settings.MinGroundNormalY();
         }
 
-        Step~: (world: CollisionWorld*, input: ControllerInput, deltaSeconds: f32) -> ControllerEvents {
+        Step~: (collisionWorld: CollisionWorld*, input: ControllerInput, deltaSeconds: f32) -> ControllerEvents {
             events~ ControllerEvents = ControllerEvents { };
             wasGrounded: bool = grounded;
 
             if grounded {
                 if ground := groundCollider {
                     if !ground.isStatic {
-                        motion: Mat4 = world->BodyStepMotion(ground.body);
+                        motion: Mat4 = collisionWorld->BodyStepMotion(ground.body);
                         carried: Vec3 = lantern:::core:::TransformPoint3(motion, feetPosition) - feetPosition;
                         if lantern:::core:::LengthSquared3(carried) > 0.0f {
-                            MoveWithoutSliding(world, carried, ground);
+                            MoveWithoutSliding(collisionWorld, carried, ground);
                         }
                     }
                 }
@@ -193,7 +193,7 @@ lantern:::physics :: namespace {
                 displacement.y = -(normal.x * displacement.x + normal.z * displacement.z) / Math:::max(normal.y, 0.001f);
             }
             fallingSpeed: f32 = -velocity.y;
-            events = MoveAndSlide(world, displacement, events);
+            events = MoveAndSlide(collisionWorld, displacement, events);
 
             if velocity.y <= 0.0f {
                 risingFromJump = false;
@@ -201,7 +201,7 @@ lantern:::physics :: namespace {
                 if wasGrounded {
                     reach = settings.groundSnapDistance;
                 }
-                ProbeGround(world, reach);
+                ProbeGround(collisionWorld, reach);
             } else {
                 grounded = false;
                 groundCollider = null;
@@ -213,21 +213,21 @@ lantern:::physics :: namespace {
                 }
             }
 
-            Depenetrate(world);
+            Depenetrate(collisionWorld);
             return events;
         }
 
-        MoveWithoutSliding~: (world: CollisionWorld*, displacement: Vec3, ignore: ColliderId?) -> void {
+        MoveWithoutSliding~: (collisionWorld: CollisionWorld*, displacement: Vec3, ignore: ColliderId?) -> void {
             capsule: Capsule = settings.CapsuleShape();
             center: Vec3 = CapsuleCenter();
-            if hit := world->CapsuleCast(capsule, center, displacement, ignore) {
+            if hit := collisionWorld->CapsuleCast(capsule, center, displacement, ignore) {
                 SetCapsuleCenter(center + displacement * hit.fraction + hit.normal * settings.skinWidth);
             } else {
                 SetCapsuleCenter(center + displacement);
             }
         }
 
-        MoveAndSlide~: (world: CollisionWorld*, displacement: Vec3, incomingEvents: ControllerEvents) -> ControllerEvents {
+        MoveAndSlide~: (collisionWorld: CollisionWorld*, displacement: Vec3, incomingEvents: ControllerEvents) -> ControllerEvents {
             events~ ControllerEvents = incomingEvents;
             capsule: Capsule = settings.MovementCapsule();
             center~ Vec3 = CapsuleCenter();
@@ -238,7 +238,7 @@ lantern:::physics :: namespace {
                 if lantern:::core:::LengthSquared3(remaining) < 0.000000000001f {
                     break;
                 }
-                found: ShapeHit? = world->CapsuleCast(capsule, center, remaining, null);
+                found: ShapeHit? = collisionWorld->CapsuleCast(capsule, center, remaining, null);
                 if found == null {
                     center = center + remaining;
                     break;
@@ -250,7 +250,7 @@ lantern:::physics :: namespace {
 
                 if grounded && !walkable {
                     SetCapsuleCenter(center);
-                    if steppedCenter := TryStepUp(world, Horizontal(remaining)) {
+                    if steppedCenter := TryStepUp(collisionWorld, Horizontal(remaining)) {
                         center = steppedCenter;
                         remaining.x = 0.0f;
                         remaining.z = 0.0f;
@@ -290,14 +290,14 @@ lantern:::physics :: namespace {
             return events;
         }
 
-        CastFractionOr :: (world: CollisionWorld*, capsule: Capsule, center: Vec3, displacement: Vec3) -> f32 {
-            if hit := world->CapsuleCast(capsule, center, displacement, null) {
+        CastFractionOr :: (collisionWorld: CollisionWorld*, capsule: Capsule, center: Vec3, displacement: Vec3) -> f32 {
+            if hit := collisionWorld->CapsuleCast(capsule, center, displacement, null) {
                 return hit.fraction;
             }
             return 1.0f;
         }
 
-        TryStepUp :: (world: CollisionWorld*, forwardMotion: Vec3) -> Vec3? {
+        TryStepUp :: (collisionWorld: CollisionWorld*, forwardMotion: Vec3) -> Vec3? {
             capsule: Capsule = settings.MovementCapsule();
             forwardLength: f32 = forwardMotion.length();
             if forwardLength < 0.00001f {
@@ -308,18 +308,18 @@ lantern:::physics :: namespace {
             start: Vec3 = CapsuleCenter();
 
             up: Vec3 = lantern:::core:::WorldUp() * settings.stepHeight;
-            raised: Vec3 = start + up * CastFractionOr(world, capsule, start, up);
-            advanced: Vec3 = raised + forward * CastFractionOr(world, capsule, raised, forward);
+            raised: Vec3 = start + up * CastFractionOr(collisionWorld, capsule, start, up);
+            advanced: Vec3 = raised + forward * CastFractionOr(collisionWorld, capsule, raised, forward);
             if Horizontal(advanced - start).length() < settings.skinWidth {
                 return null;
             }
             down: Vec3 = lantern:::core:::WorldUp() * -(raised.y - start.y + settings.skinWidth);
-            found: ShapeHit? = world->CapsuleCast(capsule, advanced, down, null);
+            found: ShapeHit? = collisionWorld->CapsuleCast(capsule, advanced, down, null);
             guard found return null;
             hit: ShapeHit = found!;
             landsOnWalkable~ bool = IsWalkable(hit.normal);
             if !landsOnWalkable {
-                landsOnWalkable = WalkableFaceNear(world, hit.point, forwardDirection) != null;
+                landsOnWalkable = WalkableFaceNear(collisionWorld, hit.point, forwardDirection) != null;
             }
             if !landsOnWalkable {
                 return null;
@@ -331,9 +331,9 @@ lantern:::physics :: namespace {
             return null;
         }
 
-        WalkableFaceNear :: (world: CollisionWorld*, contact: Vec3, direction: Vec3) -> Vec3? {
+        WalkableFaceNear :: (collisionWorld: CollisionWorld*, contact: Vec3, direction: Vec3) -> Vec3? {
             origin: Vec3 = contact + NormalizeOrZero3(Horizontal(direction)) * WALKABLE_FACE_SIDE_OFFSET + lantern:::core:::WorldUp() * WALKABLE_FACE_START_ABOVE;
-            found: RayHit? = world->Raycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, WALKABLE_FACE_START_ABOVE + settings.stepHeight);
+            found: RayHit? = collisionWorld->Raycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, WALKABLE_FACE_START_ABOVE + settings.stepHeight);
             guard found return null;
             hit: RayHit = found!;
             if IsWalkable(hit.normal) {
@@ -342,8 +342,8 @@ lantern:::physics :: namespace {
             return null;
         }
 
-        FindGround :: (world: CollisionWorld*, center: Vec3, down: Vec3) -> GroundProbe? {
-            found: ShapeHit? = world->CapsuleCast(settings.MovementCapsule(), center, down, null);
+        FindGround :: (collisionWorld: CollisionWorld*, center: Vec3, down: Vec3) -> GroundProbe? {
+            found: ShapeHit? = collisionWorld->CapsuleCast(settings.MovementCapsule(), center, down, null);
             guard found return null;
             hit: ShapeHit = found!;
             if IsWalkable(hit.normal) {
@@ -351,23 +351,23 @@ lantern:::physics :: namespace {
             }
             alongVelocity: Vec3 = Horizontal(velocity);
             if lantern:::core:::LengthSquared3(alongVelocity) > 0.00000001f {
-                if faceNormal := WalkableFaceNear(world, hit.point, alongVelocity) {
+                if faceNormal := WalkableFaceNear(collisionWorld, hit.point, alongVelocity) {
                     return GroundProbe { hit: hit, normal: faceNormal };
                 }
             }
             towardAxis: Vec3 = Horizontal(center - hit.point);
             if lantern:::core:::LengthSquared3(towardAxis) > 0.00000001f {
-                if faceNormal := WalkableFaceNear(world, hit.point, towardAxis) {
+                if faceNormal := WalkableFaceNear(collisionWorld, hit.point, towardAxis) {
                     return GroundProbe { hit: hit, normal: faceNormal };
                 }
             }
             return null;
         }
 
-        ProbeGround~: (world: CollisionWorld*, reach: f32) -> void {
+        ProbeGround~: (collisionWorld: CollisionWorld*, reach: f32) -> void {
             center: Vec3 = CapsuleCenter();
             down: Vec3 = lantern:::core:::WorldUp() * -reach;
-            if ground := FindGround(world, center, down) {
+            if ground := FindGround(collisionWorld, center, down) {
                 SetCapsuleCenter(center + down * ground.hit.fraction);
                 grounded = true;
                 groundNormal = ground.normal;
@@ -379,10 +379,10 @@ lantern:::physics :: namespace {
             }
         }
 
-        Depenetrate~: (world: CollisionWorld*) -> void {
+        Depenetrate~: (collisionWorld: CollisionWorld*) -> void {
             capsule: Capsule = settings.CapsuleShape();
             for iteration~ usize = 0; iteration < MAX_DEPENETRATION_ITERATIONS; iteration++ {
-                contacts: Array<Contact>! = world->CapsuleContacts(capsule, CapsuleCenter(), null);
+                contacts: Array<Contact>! = collisionWorld->CapsuleContacts(capsule, CapsuleCenter(), null);
                 if contacts.length() == 0 {
                     delete contacts;
                     break;

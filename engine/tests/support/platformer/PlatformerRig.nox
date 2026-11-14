@@ -2,77 +2,77 @@ lantern:::testing :: namespace {
     PLATFORMER_DIRECTORY: string : "../games/platformer";
     PLATFORMER_FRAME_SECONDS: f64 : 0.016666666666666666f;
 
-    NextFrameTime :: (platform: ScriptedPlatform*) -> f64 {
-        return f64(platform->FrameCount()) * PLATFORMER_FRAME_SECONDS;
+    NextFrameTime :: (scriptedPlatform: ScriptedPlatform*) -> f64 {
+        return f64(scriptedPlatform->FrameCount()) * PLATFORMER_FRAME_SECONDS;
     }
 
-    QueueFrames :: (platform: ScriptedPlatform~*, count: usize) -> void {
+    QueueFrames :: (scriptedPlatform: ScriptedPlatform~*, count: usize) -> void {
         for index~ usize = 0; index < count; index++ {
-            platform->AddFrame(NextFrameTime(platform));
+            scriptedPlatform->AddFrame(NextFrameTime(scriptedPlatform));
         }
     }
 
-    QueueEvent :: (platform: ScriptedPlatform~*, event: lantern:::platform:::PlatformEvent) -> void {
-        platform->AddFrameWith(NextFrameTime(platform), event);
+    QueueEvent :: (scriptedPlatform: ScriptedPlatform~*, event: lantern:::platform:::PlatformEvent) -> void {
+        scriptedPlatform->AddFrameWith(NextFrameTime(scriptedPlatform), event);
     }
 
-    PressKey :: (platform: ScriptedPlatform~*, key: lantern:::core:::KeyCode) -> void {
-        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(key, false));
-        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(key));
+    PressKey :: (scriptedPlatform: ScriptedPlatform~*, key: lantern:::core:::KeyCode) -> void {
+        QueueEvent(scriptedPlatform, lantern:::platform:::PlatformEvent:::KeyDown(key, false));
+        QueueEvent(scriptedPlatform, lantern:::platform:::PlatformEvent:::KeyUp(key));
     }
 
-    HoldKey :: (platform: ScriptedPlatform~*, key: lantern:::core:::KeyCode, frames: usize) -> void {
-        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(key, false));
-        QueueFrames(platform, frames - 1);
-        QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(key));
+    HoldKey :: (scriptedPlatform: ScriptedPlatform~*, key: lantern:::core:::KeyCode, frames: usize) -> void {
+        QueueEvent(scriptedPlatform, lantern:::platform:::PlatformEvent:::KeyDown(key, false));
+        QueueFrames(scriptedPlatform, frames - 1);
+        QueueEvent(scriptedPlatform, lantern:::platform:::PlatformEvent:::KeyUp(key));
     }
 
-    Click :: (platform: ScriptedPlatform~*, point: Vec2) -> void {
-        QueueEvent(platform, lantern:::platform:::PlatformEvent:::MouseMoved(0.0f, 0.0f, point.x, point.y));
-        QueueEvent(platform, lantern:::platform:::PlatformEvent:::MouseButtonDown(lantern:::core:::MouseButton:::Left, point.x, point.y));
-        platform->AddEventToLastFrame(lantern:::platform:::PlatformEvent:::MouseButtonUp(lantern:::core:::MouseButton:::Left, point.x, point.y));
+    Click :: (scriptedPlatform: ScriptedPlatform~*, point: Vec2) -> void {
+        QueueEvent(scriptedPlatform, lantern:::platform:::PlatformEvent:::MouseMoved(0.0f, 0.0f, point.x, point.y));
+        QueueEvent(scriptedPlatform, lantern:::platform:::PlatformEvent:::MouseButtonDown(lantern:::core:::MouseButton:::Left, point.x, point.y));
+        scriptedPlatform->AddEventToLastFrame(lantern:::platform:::PlatformEvent:::MouseButtonUp(lantern:::core:::MouseButton:::Left, point.x, point.y));
     }
 
-    RunQueued :: (frameLoop: lantern:::engine:::GameLoop~*, platform: ScriptedPlatform~*, host: lantern:::host:::GameHost~*) -> void {
-        while platform->HasFrames() {
-            frameLoop->RunFrame(platform, host);
+    RunQueued :: (frameLoop: lantern:::engine:::GameLoop~*, scriptedPlatform: ScriptedPlatform~*, gameHost: lantern:::host:::GameHost~*) -> void {
+        while scriptedPlatform->HasFrames() {
+            frameLoop->RunFrame(scriptedPlatform, gameHost);
         }
     }
 
-    RunFrames :: (frameLoop: lantern:::engine:::GameLoop~*, platform: ScriptedPlatform~*, host: lantern:::host:::GameHost~*, count: usize) -> void {
-        QueueFrames(platform, count);
-        RunQueued(frameLoop, platform, host);
+    RunFrames :: (frameLoop: lantern:::engine:::GameLoop~*, scriptedPlatform: ScriptedPlatform~*, gameHost: lantern:::host:::GameHost~*, count: usize) -> void {
+        QueueFrames(scriptedPlatform, count);
+        RunQueued(frameLoop, scriptedPlatform, gameHost);
     }
 
     NewPlatformerPlatform :: () -> ScriptedPlatform*! {
-        platform := new ScriptedPlatform();
-        platform->width = 1280;
-        platform->height = 720;
-        return platform!;
+        scriptedPlatform := new ScriptedPlatform();
+        scriptedPlatform->width = 1280;
+        scriptedPlatform->height = 720;
+        return scriptedPlatform!;
     }
 
     NewFrameLoop :: () -> lantern:::engine:::GameLoop*! {
         return new lantern:::engine:::GameLoop(new lantern:::engine:::InputRouter(new lantern:::core:::ActionSet(), new lantern:::core:::Bindings()));
     }
 
-    DebugText :: (host: lantern:::host:::GameHost*, path: string) -> string {
-        if index := host->state->debugValues->IndexOf(path) {
-            return host->state->debugValues->TextAt(index);
+    DebugText :: (gameHost: lantern:::host:::GameHost*, path: string) -> string {
+        if index := gameHost->state->debugValues->IndexOf(path) {
+            return gameHost->state->debugValues->TextAt(index);
         }
         return "";
     }
 
-    StatsOf :: (host: lantern:::host:::GameHost~*) -> lantern:::renderer:::HeadlessStats {
-        guard headless ~= host->state->renderer as lantern:::renderer:::HeadlessRenderer~* return lantern:::renderer:::HeadlessStats { };
+    StatsOf :: (gameHost: lantern:::host:::GameHost~*) -> lantern:::renderer:::HeadlessStats {
+        guard headless ~= gameHost->state->renderBackend as lantern:::renderer:::HeadlessRenderer~* return lantern:::renderer:::HeadlessStats { };
         headless->UpdateLiveCounts();
         return headless->Stats();
     }
 
-    AssertNoScriptError :: (host: lantern:::host:::GameHost*, moment: string) -> void {
-        if error := host->scriptError {
+    AssertNoScriptError :: (gameHost: lantern:::host:::GameHost*, moment: string) -> void {
+        if error := gameHost->scriptError {
             print(`script error ${moment}: ${error}`);
         }
-        assert(host->ScriptErrorCount() == 0, "the game runs without a script error");
+        assert(gameHost->ScriptErrorCount() == 0, "the game runs without a script error");
     }
 
     LoadPlatformerManifest :: () -> lantern:::host:::GameManifest*! {

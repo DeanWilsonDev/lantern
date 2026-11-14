@@ -130,7 +130,7 @@ lantern:::editorbackend :: namespace {
     public:
         session~ lantern:::editor:::EditorSession*!;
         assetsDirectory~ string!;
-        gpu~ GpuViewportResources*!? = null;
+        gpuResources~ GpuViewportResources*!? = null;
         rendererError~ string!? = null;
         renderWorld~ lantern:::renderer:::RenderWorld*!;
         pixels~ Array<u8>! = [];
@@ -172,7 +172,7 @@ lantern:::editorbackend :: namespace {
         !EditorBackend~: () {
             StopPlay();
             delete session;
-            delete gpu;
+            delete gpuResources;
             delete renderWorld;
             delete previewWorld;
             delete pixels;
@@ -254,15 +254,15 @@ lantern:::editorbackend :: namespace {
         }
 
         EnsureGpu~: () -> string!? {
-            if gpu != null {
+            if gpuResources != null {
                 return null;
             }
             if failure := rendererError {
                 return `${failure}`;
             }
             when lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions:::FromEnvironment()) {
-                Result:::Ok(renderer) -> {
-                    gpu = new GpuViewportResources(renderer!, assetsDirectory);
+                Result:::Ok(gpuRenderer) -> {
+                    gpuResources = new GpuViewportResources(gpuRenderer!, assetsDirectory);
                     return null;
                 },
                 Result:::Err(failure) -> {
@@ -285,14 +285,14 @@ lantern:::editorbackend :: namespace {
                 return failure!;
             }
             delete failure;
-            active~ GpuViewportResources*!? = gpu!;
-            gpu = null;
+            active~ GpuViewportResources*!? = gpuResources!;
+            gpuResources = null;
             guard active return "viewport GPU unavailable".copy();
             active->Prepare();
-            world~ lantern:::renderer:::RenderWorld*! = renderWorld!;
-            lantern:::editor:::BuildViewport(session, active, world);
+            activeRenderWorld~ lantern:::renderer:::RenderWorld*! = renderWorld!;
+            lantern:::editor:::BuildViewport(session, active, activeRenderWorld);
             outcome~ string!? = null;
-            when active->renderer->RenderOffscreen(world, width, height, pixels) {
+            when active->viewportRenderer->RenderOffscreen(activeRenderWorld, width, height, pixels) {
                 Result:::Ok(report) -> {
                     pixelWidth = width;
                     pixelHeight = height;
@@ -302,8 +302,8 @@ lantern:::editorbackend :: namespace {
                     outcome = problem!;
                 }
             }
-            renderWorld = world!;
-            gpu = active!;
+            renderWorld = activeRenderWorld!;
+            gpuResources = active!;
             return outcome!;
         }
 
@@ -435,14 +435,14 @@ lantern:::editorbackend :: namespace {
                 return failure!;
             }
             delete failure;
-            active~ GpuViewportResources*!? = gpu!;
-            gpu = null;
+            active~ GpuViewportResources*!? = gpuResources!;
+            gpuResources = null;
             guard active return "viewport GPU unavailable".copy();
-            world~ lantern:::renderer:::RenderWorld*! = previewWorld!;
+            activeRenderWorld~ lantern:::renderer:::RenderWorld*! = previewWorld!;
             outcome~ string!? = null;
             if template := session->palette->Template(templateId) {
-                BuildTemplatePreview(template, session->palette, active, world, spin);
-                when active->renderer->RenderOffscreen(world, width, height, previewPixels) {
+                BuildTemplatePreview(template, session->palette, active, activeRenderWorld, spin);
+                when active->viewportRenderer->RenderOffscreen(activeRenderWorld, width, height, previewPixels) {
                     Result:::Ok(report) -> { },
                     Result:::Err(problem) -> {
                         outcome = problem!;
@@ -453,8 +453,8 @@ lantern:::editorbackend :: namespace {
             } else {
                 outcome = `no template '${templateId}'`;
             }
-            previewWorld = world!;
-            gpu = active!;
+            previewWorld = activeRenderWorld!;
+            gpuResources = active!;
             return outcome!;
         }
 

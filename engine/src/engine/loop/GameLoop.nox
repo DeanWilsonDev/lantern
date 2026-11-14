@@ -93,9 +93,9 @@ lantern:::engine :: namespace {
          * Neither argument is owned: the application owns the platform, and the program that built the game owns the
          * game. Both outlive the loop.
          */
-        Run~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> void {
+        Run~: (platformBackend: lantern:::platform:::PlatformBackend~*, game: Game~*) -> void {
             lantern:::core:::LogInfo("engine", "frame loop started");
-            while RunFrame(platform, game) == LoopStatus:::Running { }
+            while RunFrame(platformBackend, game) == LoopStatus:::Running { }
             finishedMessage: string! = `frame loop finished after ${stats.frames} frames, ${clock.TotalSteps()} fixed steps`;
             lantern:::core:::LogInfo("engine", finishedMessage);
             delete finishedMessage;
@@ -116,10 +116,10 @@ lantern:::engine :: namespace {
          * `FrameUpdate` but not `Render`, since there is no swapchain image to draw into, and the loop naps for 16 ms
          * instead of spinning.
          */
-        RunFrame~: (platform: lantern:::platform:::PlatformBackend~*, game: Game~*) -> LoopStatus {
+        RunFrame~: (platformBackend: lantern:::platform:::PlatformBackend~*, game: Game~*) -> LoopStatus {
             game->UpdateInputConfiguration(input);
 
-            events~ Array<lantern:::platform:::PlatformEvent>! = platform->PumpEvents();
+            events~ Array<lantern:::platform:::PlatformEvent>! = platformBackend->PumpEvents();
             for event in events {
                 when event <lantern:::platform:::PlatformEvent> {
                     QuitRequested -> {
@@ -128,13 +128,13 @@ lantern:::engine :: namespace {
                     default -> {},
                 }
                 input->HandleEvent(event);
-                game->HandleEvent(event, platform);
+                game->HandleEvent(event, platformBackend);
             }
             delete events;
             input->EndFrameEvents();
 
-            now: f64 = platform->SecondsSinceStart();
-            window := platform->CurrentWindowMetrics();
+            now: f64 = platformBackend->SecondsSinceStart();
+            window := platformBackend->CurrentWindowMetrics();
             frameSeconds~ f64 = 0.0f;
             if previous := previousTime {
                 if !wasMinimized {
@@ -165,7 +165,7 @@ lantern:::engine :: namespace {
                 stats: stats,
                 window: window
             };
-            game->FrameUpdate(frame, platform);
+            game->FrameUpdate(frame, platformBackend);
             if window.IsDrawableEmpty() {
                 unsafe {
                     lantern:::posix:::usleep(16000);

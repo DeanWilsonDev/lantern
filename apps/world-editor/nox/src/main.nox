@@ -64,15 +64,15 @@ lantern:::worldeditor :: namespace {
         preview~ PreviewRenderer*!;
         thumbnails~ Array<ThumbnailRenderer*!>! = [];
 
-        EditorRenderers~: (editor: raw Editor~*) {
-            this->level = new LevelRenderer(editor);
-            this->preview = new PreviewRenderer(editor);
+        EditorRenderers~: (editorInstance: raw Editor~*) {
+            this->level = new LevelRenderer(editorInstance);
+            this->preview = new PreviewRenderer(editorInstance);
             unsafe {
-                borrowed: Editor~* = editor;
+                borrowed: Editor~* = editorInstance;
                 templateCount: u32 = Api:::TemplateCount(borrowed);
                 for index~ u32 = 0; index < templateCount; index++ {
                     templateId: string! = Api:::Template(borrowed, index, Api:::TEMPLATE_ID);
-                    this->thumbnails.push(new ThumbnailRenderer(editor, templateId));
+                    this->thumbnails.push(new ThumbnailRenderer(editorInstance, templateId));
                     delete templateId;
                 }
             }
@@ -121,8 +121,8 @@ lantern:::worldeditor :: namespace {
         return failure!;
     }
 
-    RegisterHostFunctions :: (runtime: Runtime~*, editor: raw Editor~*, renderers: EditorRenderers~*) -> bool {
-        failure~ NyxError*!? = EditorFunctions:::RegisterEditorFunctions(runtime, editor);
+    RegisterHostFunctions :: (runtime: Runtime~*, editorInstance: raw Editor~*, renderers: EditorRenderers~*) -> bool {
+        failure~ NyxError*!? = EditorFunctions:::RegisterEditorFunctions(runtime, editorInstance);
         unsafe {
             previewPointer: raw PreviewRenderer~* = renderers->preview;
             failure = HostFunctions:::FirstFailure(failure!, RegisterPreviewFunctions(runtime, previewPointer));
@@ -145,13 +145,13 @@ lantern:::worldeditor :: namespace {
 
     WriteHostSurface :: (outputPath: string) -> i32 {
         UseBuiltShaderDirectory();
-        editor~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, "");
-        defer delete editor;
+        editorInstance~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, "");
+        defer delete editorInstance;
         runtime := new Runtime();
         defer delete runtime;
         editorPointer~ raw Editor~* = null;
         unsafe {
-            editorPointer = editor;
+            editorPointer = editorInstance;
         }
         renderers := new EditorRenderers(editorPointer);
         defer delete renderers;
@@ -222,13 +222,13 @@ lantern:::worldeditor :: namespace {
 
     RunEditor :: (worldPath: string) -> i32 {
         UseBuiltShaderDirectory();
-        editor~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, worldPath);
-        defer delete editor;
+        editorInstance~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, worldPath);
+        defer delete editorInstance;
         runtime := new Runtime();
         defer delete runtime;
         editorPointer~ raw Editor~* = null;
         unsafe {
-            editorPointer = editor;
+            editorPointer = editorInstance;
         }
         status~ i32 = 0;
         {
@@ -251,15 +251,15 @@ lantern:::worldeditor :: namespace {
         }
         fonts->dpiScaleFactor = window->DpiScaleFactor();
         guard fonts->IsReady() == true return 1;
-        renderer := new SdlRenderer(window->renderer, fonts->cache, window->DpiScaleFactor());
-        defer delete renderer;
+        sdlRenderer := new SdlRenderer(window->renderer, fonts->cache, window->DpiScaleFactor());
+        defer delete sdlRenderer;
         clipboard := new SdlClipboard();
         defer delete clipboard;
         icons := new StandardIconBackend(ICON_STROKE_LOGICAL, Color { red: 220, green: 220, blue: 228, alpha: 255 });
         defer delete icons;
         rendererPointer~ raw SdlRenderer~* = null;
         unsafe {
-            rendererPointer = renderer;
+            rendererPointer = sdlRenderer;
         }
         images := new SdlImages(rendererPointer);
         defer delete images;
@@ -312,7 +312,7 @@ lantern:::worldeditor :: namespace {
             fileDialog->FinishIfClosed(host);
             ApplyWindowRequests(window, host, fileDialog);
             input = window->FrameInput();
-            renderer->SetDpiScaleFactor(dpiScaleFactor);
+            sdlRenderer->SetDpiScaleFactor(dpiScaleFactor);
             fonts->dpiScaleFactor = dpiScaleFactor;
             host->SetWindowState(WindowState(viewport, dpiScaleFactor, input, rootConsumedInput));
             host->Update(input.deltaTimeSeconds);
@@ -334,14 +334,14 @@ lantern:::worldeditor :: namespace {
                     rootConsumedInput = root->UpdateInteractionState(input, stacking) || overlayConsumed;
                 }
             }
-            renderer->BeginFrame(clearColor);
+            sdlRenderer->BeginFrame(clearColor);
             unsafe {
                 if root != null {
-                    root->Draw(renderer, stacking);
-                    overlays->Draw(renderer, stacking);
+                    root->Draw(sdlRenderer, stacking);
+                    overlays->Draw(sdlRenderer, stacking);
                 }
             }
-            renderer->EndFrameAndPresent();
+            sdlRenderer->EndFrameAndPresent();
             frameCount = frameCount + 1;
             if frameLimit > 0 && frameCount >= frameLimit {
                 break;
