@@ -47,8 +47,8 @@ lantern:::editorbackend :: namespace {
         return SameFloatBits(left.width, right.width) && SameFloatBits(left.height, right.height) && SameFloatBits(left.length, right.length);
     }
 
-    UploadMesh :: (renderer: lantern:::gpu:::GpuRenderer~*, mesh: lantern:::renderer:::MeshData*, what: string) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
-        when renderer->CreateMesh(mesh) {
+    UploadMesh :: (gpuRenderer: lantern:::gpu:::GpuRenderer~*, mesh: lantern:::renderer:::MeshData*, what: string) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+        when gpuRenderer->CreateMesh(mesh) {
             Result:::Ok(handle) -> {
                 return handle;
             },
@@ -66,7 +66,7 @@ lantern:::editorbackend :: namespace {
         implements:
             lantern:::editor:::ViewportResources;
     public:
-        renderer~ lantern:::gpu:::GpuRenderer*!;
+        viewportRenderer~ lantern:::gpu:::GpuRenderer*!;
         assetsDirectory~ string!;
         shapes~ Array<CachedShapeMesh>! = [];
         markers~ Array<CachedMarkerMesh>! = [];
@@ -76,7 +76,7 @@ lantern:::editorbackend :: namespace {
         fontAtlasFailed~ bool = false;
 
         GpuViewportResources~: (gpuRenderer: lantern:::gpu:::GpuRenderer*!, assets: string) {
-            renderer = gpuRenderer!;
+            viewportRenderer = gpuRenderer!;
             assetsDirectory = `${assets}`;
         }
 
@@ -85,7 +85,7 @@ lantern:::editorbackend :: namespace {
             delete markers;
             materials.freeAll();
             delete assetsDirectory;
-            delete renderer;
+            delete viewportRenderer;
         }
 
         Prepare~: () -> void {
@@ -95,7 +95,7 @@ lantern:::editorbackend :: namespace {
                 if frame - cached.lastUsedFrame < UNUSED_FRAMES_BEFORE_RELEASE {
                     kept.push(cached);
                 } else {
-                    renderer->RemoveMesh(cached.mesh);
+                    viewportRenderer->RemoveMesh(cached.mesh);
                 }
             }
             delete shapes;
@@ -110,7 +110,7 @@ lantern:::editorbackend :: namespace {
                 }
             }
             data := lantern:::world:::ShapeMesh(shape);
-            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(renderer, data, "shape");
+            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(viewportRenderer, data, "shape");
             delete data;
             guard mesh := uploaded return null;
             shapes.push(CachedShapeMesh { shape: shape, mesh: mesh, lastUsedFrame: frame });
@@ -123,7 +123,7 @@ lantern:::editorbackend :: namespace {
             }
             atlas := lantern:::renderer:::FontAtlas();
             defer delete atlas;
-            when renderer->CreateTexture(atlas) {
+            when viewportRenderer->CreateTexture(atlas) {
                 Result:::Ok(texture) -> {
                     fontAtlas = texture;
                 },
@@ -160,7 +160,7 @@ lantern:::editorbackend :: namespace {
             delete path;
             texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
             if loadedData := data {
-                when renderer->CreateTexture(loadedData) {
+                when viewportRenderer->CreateTexture(loadedData) {
                     Result:::Ok(handle) -> {
                         texture = handle;
                     },
@@ -187,7 +187,7 @@ lantern:::editorbackend :: namespace {
                 }
             }
             data := MarkerMeshData(marker);
-            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(renderer, data, "marker");
+            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(viewportRenderer, data, "marker");
             delete data;
             guard mesh := uploaded return null;
             markers.push(CachedMarkerMesh { marker: marker, mesh: mesh });

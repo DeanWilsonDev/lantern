@@ -39,7 +39,7 @@ lantern:::editor :: namespace {
             document = sessionDocument!;
             palette = sessionPalette!;
             status = "".copy();
-            geometry = SceneGeometry:::Build(document->world, document->Revision());
+            geometry = SceneGeometry:::Build(document->documentWorldFile, document->Revision());
             for slot~ usize = 0; slot < BOOKMARK_COUNT; slot++ {
                 bookmarkSet.push(false);
                 bookmarkCameras.push(OrbitCamera { });
@@ -65,12 +65,12 @@ lantern:::editor :: namespace {
             recentFiles.freeAll();
         }
 
-        static Create :: (world: lantern:::world:::WorldFile*!, path: string?, sessionPalette: Palette*!) -> EditorSession*! {
+        static Create :: (worldFile: lantern:::world:::WorldFile*!, path: string?, sessionPalette: Palette*!) -> EditorSession*! {
             ownedPath~ string!? = null;
             if given := path {
                 ownedPath = `${given}`;
             }
-            return new EditorSession(new EditorDocument(world!, ownedPath!), sessionPalette!);
+            return new EditorSession(new EditorDocument(worldFile!, ownedPath!), sessionPalette!);
         }
 
         static Open :: (path: string, sessionPalette: Palette*!) -> Result<EditorSession*!, string!> {
@@ -99,7 +99,7 @@ lantern:::editor :: namespace {
         }
 
         World :: () -> lantern:::world:::WorldFile* {
-            return document->world;
+            return document->documentWorldFile;
         }
 
         UiRevision :: () -> u64 {
@@ -109,7 +109,7 @@ lantern:::editor :: namespace {
         RefreshGeometry~: () -> void {
             if geometry->revision != document->Revision() {
                 delete geometry;
-                geometry = SceneGeometry:::Build(document->world, document->Revision());
+                geometry = SceneGeometry:::Build(document->documentWorldFile, document->Revision());
             }
         }
 
@@ -194,33 +194,33 @@ lantern:::editor :: namespace {
 
         ShownParent :: (entity: lantern:::world:::WorldEntity*) -> u64? {
             guard parent := entity->parent return null;
-            if document->world->IndexOf(parent) == null {
+            if document->documentWorldFile->IndexOf(parent) == null {
                 return null;
             }
             return parent;
         }
 
         Outline :: () -> Array<OutlineRow*!>! {
-            world: lantern:::world:::WorldFile* = document->world;
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
             rows~ Array<OutlineRow*!>! = [];
             stackKeys~ Array<u64>! = [];
             stackDepths~ Array<u32>! = [];
-            index~ usize = world->entities.length();
+            index~ usize = worldFile->entities.length();
             while index > 0 {
                 index -= 1;
-                if ShownParent(world->entities[index]) == null {
-                    stackKeys.push(world->entities[index]->id);
+                if ShownParent(worldFile->entities[index]) == null {
+                    stackKeys.push(worldFile->entities[index]->id);
                     stackDepths.push(0);
                 }
             }
             while stackKeys.length() > 0 {
                 key: u64 = stackKeys.remove(stackKeys.length() - 1);
                 depth: u32 = stackDepths.remove(stackDepths.length() - 1);
-                found: usize? = world->IndexOf(key);
+                found: usize? = worldFile->IndexOf(key);
                 guard entityIndex := found continue;
-                entity: lantern:::world:::WorldEntity* = world->entities[entityIndex];
+                entity: lantern:::world:::WorldEntity* = worldFile->entities[entityIndex];
                 children~ Array<u64>! = [];
-                for child in world->entities {
+                for child in worldFile->entities {
                     if SameOptionalU64(ShownParent(child), key) {
                         children.push(child->id);
                     }
@@ -233,7 +233,7 @@ lantern:::editor :: namespace {
                 row->locked = IsLocked(key);
                 row->hasChildren = children.length() > 0;
                 rows.push(row!);
-                if rows.length() > world->entities.length() {
+                if rows.length() > worldFile->entities.length() {
                     delete children;
                     break;
                 }
@@ -253,18 +253,18 @@ lantern:::editor :: namespace {
         Inspector :: () -> Array<InspectorField*!>! {
             primaryFound: u64? = PrimarySelection();
             guard key := primaryFound return [];
-            world: lantern:::world:::WorldFile* = document->world;
-            found: usize? = world->IndexOf(key);
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
+            found: usize? = worldFile->IndexOf(key);
             guard primaryIndex := found return [];
             others~ Array<lantern:::world:::WorldEntity*>! = [];
             for other in selection {
                 if other != key {
-                    if otherIndex := world->IndexOf(other) {
-                        others.push(world->entities[otherIndex]);
+                    if otherIndex := worldFile->IndexOf(other) {
+                        others.push(worldFile->entities[otherIndex]);
                     }
                 }
             }
-            fields: Array<InspectorField*!>! = FieldsForSelection(world->entities[primaryIndex], others, world, palette);
+            fields: Array<InspectorField*!>! = FieldsForSelection(worldFile->entities[primaryIndex], others, worldFile, palette);
             delete others;
             return fields!;
         }
@@ -381,7 +381,7 @@ lantern:::editor :: namespace {
             delete drag;
             drag = null;
             delete geometry;
-            geometry = SceneGeometry:::Build(document->world, document->Revision());
+            geometry = SceneGeometry:::Build(document->documentWorldFile, document->Revision());
             FrameAll();
         }
 
@@ -425,7 +425,7 @@ lantern:::editor :: namespace {
         }
 
         SelectOnly~: (key: u64) -> void {
-            if document->world->IndexOf(key) != null {
+            if document->documentWorldFile->IndexOf(key) != null {
                 only~ Array<u64>! = [];
                 only.push(key);
                 SetSelection(only!);
@@ -435,7 +435,7 @@ lantern:::editor :: namespace {
         ToggleSelected~: (key: u64) -> void {
             if position := KeyPosition(selection, key) {
                 selection.remove(position);
-            } else if document->world->IndexOf(key) != null {
+            } else if document->documentWorldFile->IndexOf(key) != null {
                 selection.push(key);
             }
             SelectionChanged();
@@ -450,7 +450,7 @@ lantern:::editor :: namespace {
 
         SelectAll~: () -> void {
             keys~ Array<u64>! = [];
-            for entity in document->world->entities {
+            for entity in document->documentWorldFile->entities {
                 keys.push(entity->id);
             }
             SetSelection(keys!);
@@ -458,7 +458,7 @@ lantern:::editor :: namespace {
 
         InvertSelection~: () -> void {
             keys~ Array<u64>! = [];
-            for entity in document->world->entities {
+            for entity in document->documentWorldFile->entities {
                 if !IsSelected(entity->id) {
                     keys.push(entity->id);
                 }
@@ -468,7 +468,7 @@ lantern:::editor :: namespace {
 
         SelectKind~: (kind: string) -> void {
             keys~ Array<u64>! = [];
-            for entity in document->world->entities {
+            for entity in document->documentWorldFile->entities {
                 if entity->kind == kind {
                     keys.push(entity->id);
                 }
@@ -481,7 +481,7 @@ lantern:::editor :: namespace {
             index~ usize = 0;
             while index < keys.length() {
                 parent: u64 = keys[index];
-                for entity in document->world->entities {
+                for entity in document->documentWorldFile->entities {
                     if SameOptionalU64(entity->parent, parent) && !ContainsKeyIn(keys, entity->id) {
                         keys.push(entity->id);
                     }
@@ -496,7 +496,7 @@ lantern:::editor :: namespace {
         }
 
         Exists :: (key: u64) -> bool {
-            return document->world->IndexOf(key) != null;
+            return document->documentWorldFile->IndexOf(key) != null;
         }
 
         Pruned :: (keys: Array<u64>) -> Array<u64>! {
@@ -708,9 +708,9 @@ lantern:::editor :: namespace {
         }
 
         EntityCopy :: (key: u64) -> lantern:::world:::WorldEntity*!? {
-            found: usize? = document->world->IndexOf(key);
+            found: usize? = document->documentWorldFile->IndexOf(key);
             guard index := found return null;
-            return document->world->entities[index]->Copy();
+            return document->documentWorldFile->entities[index]->Copy();
         }
 
         ExecuteEdits~: (label: string, edits: Array<Edit*!>!) -> bool {
@@ -718,9 +718,9 @@ lantern:::editor :: namespace {
         }
 
         SetField~: (key: u64, field: string, text: string) -> bool {
-            found: usize? = document->world->IndexOf(key);
+            found: usize? = document->documentWorldFile->IndexOf(key);
             guard index := found return Refuse(`no entity ${key}`);
-            entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+            entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
             when ApplyField(entity, field, text) {
                 Result:::Ok(edited) -> {
                     if edited->SameAs(entity) {
@@ -750,9 +750,9 @@ lantern:::editor :: namespace {
             document->SealHistory();
             edits~ Array<Edit*!>! = [];
             for key in selection {
-                found: usize? = document->world->IndexOf(key);
+                found: usize? = document->documentWorldFile->IndexOf(key);
                 guard index := found continue;
-                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
                 when ApplyField(entity, field, text) {
                     Result:::Ok(edited) -> {
                         if edited->SameAs(entity) {
@@ -791,9 +791,9 @@ lantern:::editor :: namespace {
             }
             edits~ Array<Edit*!>! = [];
             for key in selection {
-                found: usize? = document->world->IndexOf(key);
+                found: usize? = document->documentWorldFile->IndexOf(key);
                 guard index := found continue;
-                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
                 propertyFound: usize? = entity->PropertyIndex(oldName);
                 guard propertyIndex := propertyFound continue;
                 value: lantern:::world:::PropertyValue = entity->propertyValues[propertyIndex];
@@ -834,17 +834,17 @@ lantern:::editor :: namespace {
                 }
             }
             position.y += template->lift;
-            key: u64 = document->world->NextEntityKey();
+            key: u64 = document->documentWorldFile->NextEntityKey();
             entity := template->prototype->Copy();
             entity->id = key;
-            name: string! = UniqueName(document->world, template->id);
+            name: string! = UniqueName(document->documentWorldFile, template->id);
             entity->SetName(name);
             delete name;
             entity->transform = lantern:::world:::TransformData:::FromPosition(position);
             label: string! = `Add ${template->label}`;
             lowered: string! = template->label.toLower();
             edits~ Array<Edit*!>! = [];
-            edits.push(Edit:::Insert(document->world->entities.length(), entity!));
+            edits.push(Edit:::Insert(document->documentWorldFile->entities.length(), entity!));
             added: bool = ExecuteEdits(label, edits!);
             if !added {
                 delete label;
@@ -865,7 +865,7 @@ lantern:::editor :: namespace {
             doomed: Array<u64>! = Descendants(selection);
             positions~ Array<usize>! = [];
             for key in doomed {
-                if index := document->world->IndexOf(key) {
+                if index := document->documentWorldFile->IndexOf(key) {
                     positions.push(index);
                 }
             }
@@ -879,7 +879,7 @@ lantern:::editor :: namespace {
                     }
                 }
                 position: usize = positions.remove(largestAt);
-                edits.push(Edit:::Remove(document->world->entities[position]->id));
+                edits.push(Edit:::Remove(document->documentWorldFile->entities[position]->id));
             }
             delete positions;
             count: usize = edits.length();
@@ -921,8 +921,8 @@ lantern:::editor :: namespace {
             keys: Array<u64>! = CopyKeys(selection);
             originals~ Array<DragOriginal*!>! = DragOriginalsFor(keys);
             delete keys;
-            nextKey~ u64 = document->world->NextEntityKey();
-            names~ Array<string!>! = EntityNames(document->world);
+            nextKey~ u64 = document->documentWorldFile->NextEntityKey();
+            names~ Array<string!>! = EntityNames(document->documentWorldFile);
             edits~ Array<Edit*!>! = [];
             copies~ Array<u64>! = [];
             for original in originals {
@@ -1056,20 +1056,20 @@ lantern:::editor :: namespace {
         }
 
         MoveBefore~: (child: u64, sibling: u64?) -> bool {
-            world: lantern:::world:::WorldFile* = document->world;
-            guard childIndex := world->IndexOf(child) return false;
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
+            guard childIndex := worldFile->IndexOf(child) return false;
             newParent~ u64? = null;
             targetIndex~ usize = LAST_INDEX;
             if siblingKey := sibling {
                 if siblingKey == child {
                     return true;
                 }
-                guard siblingIndex := world->IndexOf(siblingKey) return false;
-                newParent = world->entities[siblingIndex]->parent;
+                guard siblingIndex := worldFile->IndexOf(siblingKey) return false;
+                newParent = worldFile->entities[siblingIndex]->parent;
                 targetIndex = when (childIndex < siblingIndex) { true -> siblingIndex - 1, false -> siblingIndex };
             }
-            sameParent: bool = SameOptionalU64(world->entities[childIndex]->parent, newParent);
-            alreadyLast: bool = sibling == null && childIndex + 1 == world->entities.length();
+            sameParent: bool = SameOptionalU64(worldFile->entities[childIndex]->parent, newParent);
+            alreadyLast: bool = sibling == null && childIndex + 1 == worldFile->entities.length();
             if sameParent && (targetIndex == childIndex || alreadyLast) {
                 return true;
             }
@@ -1095,15 +1095,15 @@ lantern:::editor :: namespace {
         ParentChainContains~: (start: u64?, key: u64) -> bool {
             current~ u64? = start;
             steps~ usize = 0;
-            while current != null && steps <= document->world->entities.length() {
+            while current != null && steps <= document->documentWorldFile->entities.length() {
                 visited: u64 = current ?? 0;
                 if visited == key {
                     return true;
                 }
-                found: usize? = document->world->IndexOf(visited);
+                found: usize? = document->documentWorldFile->IndexOf(visited);
                 current = null;
                 if index := found {
-                    current = document->world->entities[index]->parent;
+                    current = document->documentWorldFile->entities[index]->parent;
                 }
                 steps += 1;
             }
@@ -1124,15 +1124,15 @@ lantern:::editor :: namespace {
             keys: Array<u64>! = CopyKeys(selection);
             centerFound: Vec3? = PivotPoint(PivotMode:::Center);
             center: Vec3 = centerFound ?? Vec3 { };
-            world: lantern:::world:::WorldFile* = document->world;
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
             firstParent~ u64? = null;
-            if firstIndex := world->IndexOf(keys[0]) {
-                firstParent = world->entities[firstIndex]->parent;
+            if firstIndex := worldFile->IndexOf(keys[0]) {
+                firstParent = worldFile->entities[firstIndex]->parent;
             }
             shared~ bool = true;
             for key in keys {
-                if index := world->IndexOf(key) {
-                    if !SameOptionalU64(world->entities[index]->parent, firstParent) {
+                if index := worldFile->IndexOf(key) {
+                    if !SameOptionalU64(worldFile->entities[index]->parent, firstParent) {
                         shared = false;
                     }
                 } else {
@@ -1140,9 +1140,9 @@ lantern:::editor :: namespace {
                 }
             }
             commonParent: u64? = when shared { true -> firstParent, false -> null };
-            groupKey: u64 = world->NextEntityKey();
+            groupKey: u64 = worldFile->NextEntityKey();
             parentWorld: Mat4 = WorldMatrixOf(commonParent);
-            name: string! = UniqueName(document->world, "group");
+            name: string! = UniqueName(document->documentWorldFile, "group");
             group := new lantern:::world:::WorldEntity(groupKey, name, "group");
             delete name;
             group->parent = commonParent;
@@ -1259,9 +1259,9 @@ lantern:::editor :: namespace {
         RevertSelectionToTemplate~: () -> bool {
             edits~ Array<Edit*!>! = [];
             for key in selection {
-                found: usize? = document->world->IndexOf(key);
+                found: usize? = document->documentWorldFile->IndexOf(key);
                 guard index := found continue;
-                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
                 templateFound: EntityTemplate*? = TemplateForKind(entity->kind);
                 guard template := templateFound continue;
                 edited := template->prototype->Copy();
@@ -1775,8 +1775,8 @@ lantern:::editor :: namespace {
             SelectOnly(chosen);
             stackCount: usize = CountUnderCursor(ray);
             if stackCount > 1 {
-                if position := document->world->IndexOf(chosen) {
-                    SetStatus(`Selected ${document->world->entities[position]->name} (${clickCycle.length()} of ${stackCount} under the cursor)`);
+                if position := document->documentWorldFile->IndexOf(chosen) {
+                    SetStatus(`Selected ${document->documentWorldFile->entities[position]->name} (${clickCycle.length()} of ${stackCount} under the cursor)`);
                 }
             }
         }

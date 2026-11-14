@@ -167,7 +167,7 @@ lantern:::renderer :: namespace {
      * Non-triangle primitives (lines, points) are skipped with a warning.
      */
     AppendGltfNode :: (node: raw Cgltf:::cgltf_node~*, parent: Mat4, mesh: MeshData~*) -> string!? {
-        world: Mat4 = parent * LocalNodeTransform(node);
+        worldTransform: Mat4 = parent * LocalNodeTransform(node);
         unsafe {
             nodeMesh: raw Cgltf:::cgltf_mesh~* = node->mesh;
             if nodeMesh != null && nodeMesh->primitives_count > 0 {
@@ -178,7 +178,7 @@ lantern:::renderer :: namespace {
                         lantern:::core:::Log(lantern:::core:::LogLevel:::Warn, "assets", "skipping a non-triangle primitive");
                         continue;
                     }
-                    problem: string!? = AppendGltfPrimitive(primitive, world, mesh);
+                    problem: string!? = AppendGltfPrimitive(primitive, worldTransform, mesh);
                     if problem != null {
                         return problem!;
                     }
@@ -188,7 +188,7 @@ lantern:::renderer :: namespace {
             if childCount > 0 {
                 children := lantern:::gltfnodes:::memmove(node->children, node->children, 0);
                 for childIndex~ usize = 0; childIndex < childCount; childIndex += 1 {
-                    problem: string!? = AppendGltfNode(children^*[childIndex].node, world, mesh);
+                    problem: string!? = AppendGltfNode(children^*[childIndex].node, worldTransform, mesh);
                     if problem != null {
                         return problem!;
                     }
@@ -279,7 +279,7 @@ lantern:::renderer :: namespace {
      * through the normal matrix. A primitive with no normals gets flat per-face normals, which means unsharing every
      * vertex.
      */
-    AppendGltfPrimitive :: (primitive: raw Cgltf:::cgltf_primitive*, world: Mat4, mesh: MeshData~*) -> string!? {
+    AppendGltfPrimitive :: (primitive: raw Cgltf:::cgltf_primitive*, worldTransform: Mat4, mesh: MeshData~*) -> string!? {
         positionAccessor~ raw Cgltf:::cgltf_accessor* = null;
         normalAccessor~ raw Cgltf:::cgltf_accessor* = null;
         uvAccessor~ raw Cgltf:::cgltf_accessor* = null;
@@ -320,7 +320,7 @@ lantern:::renderer :: namespace {
                 return "an index is out of range" + "";
             }
         }
-        if lantern:::core:::Determinant3(world) < 0.0f {
+        if lantern:::core:::Determinant3(worldTransform) < 0.0f {
             for start~ usize = 0; start + 2 < indices.length(); start += 3 {
                 second: u32 = indices[start + 1];
                 indices[start + 1] = indices[start + 2];
@@ -333,10 +333,10 @@ lantern:::renderer :: namespace {
             colors.push(Vec4 { x: color.x * baseColor.x, y: color.y * baseColor.y, z: color.z * baseColor.z, w: color.w * baseColor.w });
         }
         if normalAccessor != null {
-            normalMatrix: lantern:::core:::NormalMatrix = lantern:::core:::NormalMatrix:::FromTransform(world);
+            normalMatrix: lantern:::core:::NormalMatrix = lantern:::core:::NormalMatrix:::FromTransform(worldTransform);
             base: u32 = u32(mesh->vertices.length());
             for vertexIndex~ usize = 0; vertexIndex < vertexCount; vertexIndex += 1 {
-                position: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[vertexIndex]));
+                position: Vec3 = lantern:::core:::TransformPoint3(worldTransform, Vec3Of(positions[vertexIndex]));
                 normal: Vec3 = lantern:::core:::NormalizeOr3(normalMatrix.Apply(Vec3Of(normals[vertexIndex])), lantern:::core:::WorldUp());
                 uv: Vec2 = Vec2 { x: uvs[vertexIndex].x, y: uvs[vertexIndex].y };
                 mesh->vertices.push(Vertex:::Create(position, normal, uv, colors[vertexIndex]));
@@ -347,9 +347,9 @@ lantern:::renderer :: namespace {
             return null;
         }
         for start~ usize = 0; start + 2 < indices.length(); start += 3 {
-            first: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[usize(indices[start])]));
-            second: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[usize(indices[start + 1])]));
-            third: Vec3 = lantern:::core:::TransformPoint3(world, Vec3Of(positions[usize(indices[start + 2])]));
+            first: Vec3 = lantern:::core:::TransformPoint3(worldTransform, Vec3Of(positions[usize(indices[start])]));
+            second: Vec3 = lantern:::core:::TransformPoint3(worldTransform, Vec3Of(positions[usize(indices[start + 1])]));
+            third: Vec3 = lantern:::core:::TransformPoint3(worldTransform, Vec3Of(positions[usize(indices[start + 2])]));
             faceNormal: Vec3 = lantern:::core:::NormalizeOr3((second - first).cross(third - first), lantern:::core:::WorldUp());
             corners: Vec3[3] = [first, second, third];
             for corner~ usize = 0; corner < 3; corner += 1 {

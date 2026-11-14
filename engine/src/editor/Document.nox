@@ -46,26 +46,26 @@ lantern:::editor :: namespace {
         }
     }
 
-    ApplyEdit :: (edit: Edit~*, world: lantern:::world:::WorldFile~*) -> Result<Edit*!, string!> {
+    ApplyEdit :: (edit: Edit~*, worldFile: lantern:::world:::WorldFile~*) -> Result<Edit*!, string!> {
         when edit->kind {
             EditKind:::Replace -> {
-                guard position := world->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
+                guard position := worldFile->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
                 guard replacement ~= edit->entity return Result<Edit*!, string!>:::Err(OwnedEditorText("a replace edit has no entity"));
-                previous := world->entities.remove(position);
-                world->entities.insert(position, replacement->Copy());
+                previous := worldFile->entities.remove(position);
+                worldFile->entities.insert(position, replacement->Copy());
                 return Result<Edit*!, string!>:::Ok(Edit:::Replace(previous!));
             },
             EditKind:::Insert -> {
-                if world->IndexOf(edit->key) != null {
+                if worldFile->IndexOf(edit->key) != null {
                     return Result<Edit*!, string!>:::Err(`entity ${edit->key} already exists`);
                 }
                 guard inserted ~= edit->entity return Result<Edit*!, string!>:::Err(OwnedEditorText("an insert edit has no entity"));
-                world->entities.insert(ClampIndex(edit->index, world->entities.length()), inserted->Copy());
+                worldFile->entities.insert(ClampIndex(edit->index, worldFile->entities.length()), inserted->Copy());
                 return Result<Edit*!, string!>:::Ok(Edit:::Remove(edit->key));
             },
             EditKind:::Remove -> {
-                guard position := world->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
-                removed := world->entities.remove(position);
+                guard position := worldFile->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
+                removed := worldFile->entities.remove(position);
                 return Result<Edit*!, string!>:::Ok(Edit:::Insert(position, removed!));
             },
         }
@@ -121,18 +121,18 @@ lantern:::editor :: namespace {
         return copies!;
     }
 
-    ApplyAll :: (world: lantern:::world:::WorldFile~*, edits: Array<Edit*!>!) -> Result<Array<Edit*!>!, string!> {
+    ApplyAll :: (worldFile: lantern:::world:::WorldFile~*, edits: Array<Edit*!>!) -> Result<Array<Edit*!>!, string!> {
         inverses~ Array<Edit*!>! = [];
         pending~ Array<Edit*!>! = edits!;
         defer pending.freeAll();
         for index~ usize = 0; index < pending.length(); index++ {
-            applied := ApplyEdit(pending[index], world);
+            applied := ApplyEdit(pending[index], worldFile);
             when applied! {
                 Result:::Ok(inverse) -> {
                     inverses.push(inverse!);
                 },
                 Result:::Err(message) -> {
-                    RollBack(world, inverses!);
+                    RollBack(worldFile, inverses!);
                     return Result<Array<Edit*!>!, string!>:::Err(message!);
                 }
             }
@@ -146,11 +146,11 @@ lantern:::editor :: namespace {
         return Result<Array<Edit*!>!, string!>:::Ok(reversed!);
     }
 
-    RollBack :: (world: lantern:::world:::WorldFile~*, inverses: Array<Edit*!>!) -> void {
+    RollBack :: (worldFile: lantern:::world:::WorldFile~*, inverses: Array<Edit*!>!) -> void {
         remaining~ Array<Edit*!>! = inverses!;
         while remaining.length() > 0 {
             last := remaining.remove(remaining.length() - 1);
-            undone := ApplyEdit(last, world);
+            undone := ApplyEdit(last, worldFile);
             when undone! {
                 Result:::Ok(edit) -> {
                     delete edit;
@@ -166,7 +166,7 @@ lantern:::editor :: namespace {
 
     EditorDocument :: class {
     public:
-        world~ lantern:::world:::WorldFile*!;
+        documentWorldFile~ lantern:::world:::WorldFile*!;
         path~ string!? = null;
         undoStack~ Array<HistoryEntry*!>! = [];
         redoStack~ Array<HistoryEntry*!>! = [];
@@ -177,12 +177,12 @@ lantern:::editor :: namespace {
         revision~ u64 = 1;
 
         EditorDocument~: (documentWorld: lantern:::world:::WorldFile*!, documentPath: string!?) {
-            world = documentWorld!;
+            documentWorldFile = documentWorld!;
             path = documentPath!;
         }
 
         !EditorDocument~: () {
-            delete world;
+            delete documentWorldFile;
             delete path;
             undoStack.freeAll();
             redoStack.freeAll();
@@ -224,8 +224,8 @@ lantern:::editor :: namespace {
             } else if own := path {
                 chosen = `${own}`;
             }
-            guard chosenPath := chosen return Result<string!, string!>:::Err(OwnedEditorText("the world has no file yet"));
-            failure: string!? = world->Save(chosenPath);
+            guard chosenPath := chosen return Result<string!, string!>:::Err(OwnedEditorText("the documentWorldFile has no file yet"));
+            failure: string!? = documentWorldFile->Save(chosenPath);
             if message := failure {
                 reason: string! = `${message}`;
                 delete failure;
@@ -255,7 +255,7 @@ lantern:::editor :: namespace {
                 return null;
             }
             redo~ Array<Edit*!>! = CopyEdits(edits);
-            applied := ApplyAll(world, edits!);
+            applied := ApplyAll(documentWorldFile, edits!);
             when applied! {
                 Result:::Ok(undo~ Array<Edit*!>!) -> {
                     revision += 1;
@@ -357,7 +357,7 @@ lantern:::editor :: namespace {
                 return false;
             }
             entry := undoStack.remove(undoStack.length() - 1);
-            ReportHistoryFailure("undo", entry->label, ApplyAll(world, CopyEdits(entry->undo)));
+            ReportHistoryFailure("undo", entry->label, ApplyAll(documentWorldFile, CopyEdits(entry->undo)));
             redoStack.push(entry!);
             topOpenForCoalescing = false;
             revision += 1;
@@ -370,7 +370,7 @@ lantern:::editor :: namespace {
                 return false;
             }
             entry := redoStack.remove(redoStack.length() - 1);
-            ReportHistoryFailure("redo", entry->label, ApplyAll(world, CopyEdits(entry->redo)));
+            ReportHistoryFailure("redo", entry->label, ApplyAll(documentWorldFile, CopyEdits(entry->redo)));
             undoStack.push(entry!);
             topOpenForCoalescing = false;
             revision += 1;
@@ -387,7 +387,7 @@ lantern:::editor :: namespace {
         }
 
         PreviewReplace~: (entity: lantern:::world:::WorldEntity*!) -> void {
-            positionFound: usize? = world->IndexOf(entity->id);
+            positionFound: usize? = documentWorldFile->IndexOf(entity->id);
             position~ usize = 0;
             if found := positionFound {
                 position = found;
@@ -396,12 +396,12 @@ lantern:::editor :: namespace {
                 return;
             }
             if OriginalIndex(entity->id) == null {
-                original~ lantern:::world:::WorldEntity*! = world->entities[position]->Copy();
+                original~ lantern:::world:::WorldEntity*! = documentWorldFile->entities[position]->Copy();
                 previewOriginals.push(original!);
             }
-            previous := world->entities.remove(position);
+            previous := documentWorldFile->entities.remove(position);
             delete previous;
-            world->entities.insert(position, entity!);
+            documentWorldFile->entities.insert(position, entity!);
             revision += 1;
         }
 
@@ -414,7 +414,7 @@ lantern:::editor :: namespace {
                 return;
             }
             entry := new HistoryEntry(label, nextStateId);
-            for current in world->entities {
+            for current in documentWorldFile->entities {
                 guard originalIndex := OriginalIndex(current->id) continue;
                 original~ lantern:::world:::WorldEntity~* = previewOriginals[originalIndex];
                 if !original->SameAs(current) {
@@ -441,10 +441,10 @@ lantern:::editor :: namespace {
         CancelPreview~: () -> void {
             while previewOriginals.length() > 0 {
                 original := previewOriginals.remove(previewOriginals.length() - 1);
-                if position := world->IndexOf(original->id) {
-                    previous := world->entities.remove(position);
+                if position := documentWorldFile->IndexOf(original->id) {
+                    previous := documentWorldFile->entities.remove(position);
                     delete previous;
-                    world->entities.insert(position, original!);
+                    documentWorldFile->entities.insert(position, original!);
                 } else {
                     delete original;
                 }
