@@ -1,29 +1,29 @@
 lantern:::host :: namespace {
     RegisterEngineApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
-        engine := new HostNamespace(runtime, "lantern::engine");
-        engine->Function("Log", "(text: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
+        engineNamespace := new HostNamespace(runtime, "lantern::engine");
+        engineNamespace->Function("Log", "(text: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
             text: string! = context->Text(0);
             lantern:::core:::LogInfo("game", text);
             delete text;
         });
-        engine->Function("Warn", "(text: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
+        engineNamespace->Function("Warn", "(text: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void {
             text: string! = context->Text(0);
             lantern:::core:::LogWarn("game", text);
             delete text;
         });
-        engine->Function("Quit", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        engineNamespace->Function("Quit", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             unsafe {
                 state->requests.quit = true;
             }
         });
-        engine->Function("Flag", "(name: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        engineNamespace->Function("Flag", "(name: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             name: string! = context->Text(0);
             unsafe {
                 context->ReturnBool(state->Flag(name));
             }
             delete name;
         });
-        engine->Function("Setting", "(name: string) -> string", new (context: lantern:::nyx:::CallContext~*) -> void {
+        engineNamespace->Function("Setting", "(name: string) -> string", new (context: lantern:::nyx:::CallContext~*) -> void {
             name: string! = context->Text(0);
             value: string!? = environmentVariable(name);
             if text := value {
@@ -34,52 +34,52 @@ lantern:::host :: namespace {
             delete value;
             delete name;
         });
-        failure := engine->Finish();
-        delete engine;
+        failure := engineNamespace->Finish();
+        delete engineNamespace;
         return failure!;
     }
 
     RegisterAudioApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
-        audio := new HostNamespace(runtime, "lantern::audio");
-        audio->Function("Load", "(name: string, path: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        audioNamespace := new HostNamespace(runtime, "lantern::audio");
+        audioNamespace->Function("Load", "(name: string, path: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             name: string! = context->Text(0);
             relative: string! = context->Text(1);
             if !context->Refused() {
                 unsafe {
                     path: string! = state->AssetPath(relative);
-                    state->audio->LoadSound(name, path);
+                    state->audioSystemInstance->LoadSound(name, path);
                     delete path;
                 }
             }
             delete relative;
             delete name;
         });
-        audio->Function("Play", "(name: string, volume: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        audioNamespace->Function("Play", "(name: string, volume: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             name: string! = context->Text(0);
             volume: f32 = context->F32(1);
             if !context->Refused() {
                 unsafe {
-                    state->audio->Play(name, volume);
+                    state->audioSystemInstance->Play(name, volume);
                 }
             }
             delete name;
         });
-        audio->Function("PlayMusic", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        audioNamespace->Function("PlayMusic", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             name: string! = context->Text(0);
             if !context->Refused() {
                 unsafe {
-                    state->audio->PlayMusic(name);
+                    state->audioSystemInstance->PlayMusic(name);
                 }
             }
             delete name;
         });
-        audio->Function("StopMusic", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        audioNamespace->Function("StopMusic", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             unsafe {
-                state->audio->StopMusic();
+                state->audioSystemInstance->StopMusic();
             }
         });
-        failure := audio->Finish();
-        delete audio;
+        failure := audioNamespace->Finish();
+        delete audioNamespace;
         return failure!;
     }
 
@@ -142,8 +142,8 @@ lantern:::host :: namespace {
         });
         failure~ lantern:::nyx:::NyxError*!? = camera->Finish();
         delete camera;
-        renderer := new HostNamespace(runtime, "lantern::renderer");
-        renderer->Function("SetClearColor", "(color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        rendererNamespace := new HostNamespace(runtime, "lantern::renderer");
+        rendererNamespace->Function("SetClearColor", "(color: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             color: lantern:::core:::Color = ColorArgument(context, 0);
             if Stopped(context) {
                 return;
@@ -152,7 +152,7 @@ lantern:::host :: namespace {
                 state->renderWorld->clearColor = color;
             }
         });
-        renderer->Function("SetFog", "(start: f32, end: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        rendererNamespace->Function("SetFog", "(start: f32, end: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             start: f32 = context->F32(0);
             end: f32 = context->F32(1);
             if Stopped(context) {
@@ -163,8 +163,8 @@ lantern:::host :: namespace {
                 state->renderWorld->fogEnd = end;
             }
         });
-        failure = FirstFailure(failure!, renderer->Finish());
-        delete renderer;
+        failure = FirstFailure(failure!, rendererNamespace->Finish());
+        delete rendererNamespace;
         screen := new HostNamespace(runtime, "lantern::screen");
         screen->Function("Width", "() -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             unsafe {

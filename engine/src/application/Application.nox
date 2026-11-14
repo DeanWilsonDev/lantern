@@ -21,12 +21,12 @@ lantern:::application :: namespace {
         /** The settings it was started with: the window, GPU options, audio rate and the environment switches. */
         config~ ApplicationConfig = ApplicationConfig { };
         /** SDL itself. Owned, and deleted last, which calls `SDL_Quit`. */
-        sdl~ lantern:::sdl:::SdlContext*!;
+        sdlContext~ lantern:::sdl:::SdlContext*!;
         /**
          * The window plus event pumping and the clock, behind the engine's `PlatformBackend` interface. Owned; deleted
          * before SDL.
          */
-        platform~ lantern:::sdl:::SdlPlatform*!;
+        sdlPlatform~ lantern:::sdl:::SdlPlatform*!;
 
         /**
          * Takes ownership of an initialised SDL and an open window. Use `Create`, which builds both and handles
@@ -34,8 +34,8 @@ lantern:::application :: namespace {
          */
         Application~: (applicationConfig: ApplicationConfig, context: lantern:::sdl:::SdlContext*!, window: lantern:::sdl:::SdlWindow*!) {
             config = applicationConfig;
-            sdl = context!;
-            platform = new lantern:::sdl:::SdlPlatform(window!);
+            sdlContext = context!;
+            sdlPlatform = new lantern:::sdl:::SdlPlatform(window!);
         }
 
         /**
@@ -43,8 +43,8 @@ lantern:::application :: namespace {
          * and audio output already.
          */
         !Application~: () {
-            delete platform;
-            delete sdl;
+            delete sdlPlatform;
+            delete sdlContext;
         }
 
         /**
@@ -56,8 +56,8 @@ lantern:::application :: namespace {
             guard context return null;
             window := lantern:::sdl:::SdlWindow:::Create(context, applicationConfig.window);
             guard window return ShutDownSdl(context!);
-            application := new Application(applicationConfig, context!, window!);
-            return application!;
+            applicationInstance := new Application(applicationConfig, context!, window!);
+            return applicationInstance!;
         }
 
         /** Deletes SDL after the window failed to open, and gives `Create` its null to return. */
@@ -70,12 +70,12 @@ lantern:::application :: namespace {
          * The platform backend, lent for the caller to pump events or read the clock. The application keeps ownership.
          */
         Platform :: () -> lantern:::sdl:::SdlPlatform* {
-            return platform;
+            return sdlPlatform;
         }
 
         /** The window's current size in points and in pixels, pixel density and whether it is minimised. */
         WindowMetrics :: () -> lantern:::platform:::WindowMetrics {
-            return platform->CurrentWindowMetrics();
+            return sdlPlatform->CurrentWindowMetrics();
         }
 
         /**
@@ -84,7 +84,7 @@ lantern:::application :: namespace {
          * it before the application, because its swapchain belongs to the window. An error describes what failed.
          */
         CreateRenderer :: () -> Result<lantern:::gpu:::GpuRenderer*!, string!> {
-            return lantern:::gpu:::GpuRenderer:::Create(platform->Window()->Raw(), config.gpu);
+            return lantern:::gpu:::GpuRenderer:::Create(sdlPlatform->Window()->Raw(), config.gpuOptions);
         }
 
         /**
@@ -92,7 +92,7 @@ lantern:::application :: namespace {
          * runs silently. The caller owns it and deletes it before the application.
          */
         OpenAudioOutput~: () -> lantern:::platform:::AudioSink*!? {
-            output := lantern:::sdl:::SdlAudioOutput:::Open(sdl, config.audioSampleRate);
+            output := lantern:::sdl:::SdlAudioOutput:::Open(sdlContext, config.audioSampleRate);
             if output == null {
                 lantern:::core:::LogWarn("audio", "no audio output; continuing without sound");
             }
@@ -102,7 +102,7 @@ lantern:::application :: namespace {
         /** Stage 3: builds a game loop, runs frames until the game or the window asks to quit, and deletes the loop. */
         Run~: (game: lantern:::engine:::Game~*) -> void {
             gameLoop := NewGameLoop();
-            gameLoop->Run(platform, game);
+            gameLoop->Run(sdlPlatform, game);
             delete gameLoop;
         }
 
@@ -114,9 +114,9 @@ lantern:::application :: namespace {
             gameLoop := NewGameLoop();
             lantern:::core:::LogInfo("engine", "frame loop started");
             frame~ u64 = 0;
-            while gameLoop->RunFrame(platform, game) == lantern:::engine:::LoopStatus:::Running {
+            while gameLoop->RunFrame(sdlPlatform, game) == lantern:::engine:::LoopStatus:::Running {
                 frame += 1;
-                observer->AfterFrame(frame, platform);
+                observer->AfterFrame(frame, sdlPlatform);
             }
             delete gameLoop;
         }

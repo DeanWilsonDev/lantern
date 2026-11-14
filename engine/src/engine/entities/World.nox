@@ -73,16 +73,16 @@ lantern:::engine :: namespace {
         previousSibling~ lantern:::core:::Handle<EntityTag>? = null;
         nextSibling~ lantern:::core:::Handle<EntityTag>? = null;
         /** The entity's world transform after the latest fixed step. */
-        world~ Mat4 = Mat4 { };
+        worldTransform~ Mat4 = Mat4 { };
         /** Its world transform after the step before, kept so rendering can interpolate between the two. */
         previousWorld~ Mat4 = Mat4 { };
 
         WorldMatrix :: () -> Mat4 {
-            return world;
+            return worldTransform;
         }
 
         WorldPosition :: () -> Vec3 {
-            return lantern:::core:::MatrixColumn3(world, 3);
+            return lantern:::core:::MatrixColumn3(worldTransform, 3);
         }
 
         /**
@@ -91,10 +91,10 @@ lantern:::engine :: namespace {
          * matrix's elements directly would shear and shrink a rotating object. Skipped when the entity hasn't moved.
          */
         InterpolatedWorld :: (alpha: f32) -> Mat4 {
-            if alpha >= 1.0f || previousWorld == world {
-                return world;
+            if alpha >= 1.0f || previousWorld == worldTransform {
+                return worldTransform;
             }
-            return Transform:::FromMatrix(previousWorld).Lerp(Transform:::FromMatrix(world), alpha).Matrix();
+            return Transform:::FromMatrix(previousWorld).Lerp(Transform:::FromMatrix(worldTransform), alpha).Matrix();
         }
     }
 
@@ -123,7 +123,7 @@ lantern:::engine :: namespace {
 
         Spawn~: (name: string, scene: SceneId, local: Transform) -> lantern:::core:::Handle<EntityTag> {
             matrix: Mat4 = local.Matrix();
-            handle: lantern:::core:::Handle<EntityRecord> = records->Insert(EntityRecord { scene: scene, local: local, world: matrix, previousWorld: matrix });
+            handle: lantern:::core:::Handle<EntityRecord> = records->Insert(EntityRecord { scene: scene, local: local, worldTransform: matrix, previousWorld: matrix });
             slot: usize = usize(handle.index);
             owned: string! = `${name}`;
             if slot < names.length() {
@@ -137,10 +137,10 @@ lantern:::engine :: namespace {
             return EntityHandle(handle);
         }
 
-        SpawnMesh~: (name: string, scene: SceneId, local: Transform, renderer: MeshRenderer) -> lantern:::core:::Handle<EntityTag> {
+        SpawnMesh~: (name: string, scene: SceneId, local: Transform, meshRenderer: MeshRenderer) -> lantern:::core:::Handle<EntityTag> {
             id: lantern:::core:::Handle<EntityTag> = Spawn(name, scene, local);
             if record ~= records->BorrowMutable(RecordHandle(id)) {
-                record->meshRenderer = renderer;
+                record->meshRenderer = meshRenderer;
             }
             return id;
         }
@@ -227,7 +227,7 @@ lantern:::engine :: namespace {
             pending.push(id);
             while current := pending.pop() {
                 if record ~= BorrowMutable(current) {
-                    record->previousWorld = record->world;
+                    record->previousWorld = record->worldTransform;
                 }
                 children: Array<lantern:::core:::Handle<EntityTag>>! = Children(current);
                 for child in children {
@@ -309,7 +309,7 @@ lantern:::engine :: namespace {
             handles: Array<lantern:::core:::Handle<EntityRecord>>! = records->LiveHandles();
             for handle in handles {
                 if record ~= records->BorrowMutable(handle) {
-                    record->previousWorld = record->world;
+                    record->previousWorld = record->worldTransform;
                 }
             }
             delete handles;
@@ -324,11 +324,11 @@ lantern:::engine :: namespace {
                 parentWorld~ Mat4 = Mat4 { };
                 if parent := Parent(id) {
                     if parentRecord := Get(parent) {
-                        parentWorld = parentRecord.world;
+                        parentWorld = parentRecord.worldTransform;
                     }
                 }
                 if record ~= BorrowMutable(id) {
-                    record->world = parentWorld * record->local.Matrix();
+                    record->worldTransform = parentWorld * record->local.Matrix();
                 }
             }
         }
@@ -505,13 +505,13 @@ lantern:::engine :: namespace {
      * Adds a `DrawItem` to the render world for every entity with a visible mesh renderer, at its interpolated
      * transform. Called once per frame from the game's `Render`, after the game's own draws.
      */
-    ExtractDraws :: (world: World*, alpha: f32, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
-        ids: Array<lantern:::core:::Handle<EntityTag>>! = world->Ids();
+    ExtractDraws :: (entityWorld: World*, alpha: f32, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
+        ids: Array<lantern:::core:::Handle<EntityTag>>! = entityWorld->Ids();
         for id in ids {
-            if record := world->Get(id) {
-                if renderer := record.meshRenderer {
-                    if renderer.visible {
-                        renderWorld->Draw(renderer.mesh, renderer.texture, record.InterpolatedWorld(alpha), renderer.color);
+            if record := entityWorld->Get(id) {
+                if meshRenderer := record.meshRenderer {
+                    if meshRenderer.visible {
+                        renderWorld->Draw(meshRenderer.mesh, meshRenderer.texture, record.InterpolatedWorld(alpha), meshRenderer.color);
                     }
                 }
             }

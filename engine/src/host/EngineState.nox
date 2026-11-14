@@ -129,10 +129,10 @@ lantern:::host :: namespace {
     EngineState :: class {
     public:
         assetsDirectory~ string!? = null;
-        world~ lantern:::engine:::World*!;
+        entityWorld~ lantern:::engine:::World*!;
         collision~ lantern:::physics:::CollisionWorld*!;
-        renderer~ lantern:::renderer:::RenderBackend*!;
-        audio~ lantern:::engine:::AudioSystem*!;
+        renderBackend~ lantern:::renderer:::RenderBackend*!;
+        audioSystemInstance~ lantern:::engine:::AudioSystem*!;
         renderWorld~ lantern:::renderer:::RenderWorld*!;
         debugValues~ lantern:::core:::DebugValues*!;
         debugHud~ lantern:::debug:::DebugHud*!;
@@ -155,10 +155,10 @@ lantern:::host :: namespace {
             if directory := assets {
                 assetsDirectory = `${directory}`;
             }
-            world = new lantern:::engine:::World();
+            entityWorld = new lantern:::engine:::World();
             collision = new lantern:::physics:::CollisionWorld();
-            renderer = backend!;
-            audio = audioSystem!;
+            renderBackend = backend!;
+            audioSystemInstance = audioSystem!;
             renderWorld = new lantern:::renderer:::RenderWorld();
             debugValues = new lantern:::core:::DebugValues();
             debugHud = new lantern:::debug:::DebugHud();
@@ -168,11 +168,11 @@ lantern:::host :: namespace {
 
         !EngineState~: () {
             delete assetsDirectory;
-            delete world;
+            delete entityWorld;
             delete collision;
             delete renderWorld;
-            delete renderer;
-            delete audio;
+            delete renderBackend;
+            delete audioSystemInstance;
             delete debugValues;
             delete debugHud;
             delete input;
@@ -191,7 +191,7 @@ lantern:::host :: namespace {
             state := new EngineState(backend!, audioSystem!, assets);
             atlas := lantern:::renderer:::FontAtlas();
             defer delete atlas;
-            created := state->renderer->CreateTexture(atlas);
+            created := state->renderBackend->CreateTexture(atlas);
             when created! {
                 Result:::Ok(texture) -> {
                     state->fontAtlas = texture;
@@ -303,9 +303,9 @@ lantern:::host :: namespace {
         }
 
         ClearWorld~: () -> void {
-            world->DespawnScene(GameScene());
+            entityWorld->DespawnScene(GameScene());
             for mesh in worldMeshes {
-                renderer->RemoveMesh(mesh);
+                renderBackend->RemoveMesh(mesh);
             }
             worldMeshes.clear();
             delete collision;
@@ -318,17 +318,17 @@ lantern:::host :: namespace {
         ResetForNewSession~: () -> void {
             ClearWorld();
             for mesh in scriptMeshes {
-                renderer->RemoveMesh(mesh);
+                renderBackend->RemoveMesh(mesh);
             }
             scriptMeshes.clear();
             for texture in scriptTextures {
-                renderer->RemoveTexture(texture);
+                renderBackend->RemoveTexture(texture);
             }
             scriptTextures.clear();
             materialNames.freeAll();
             materialNames = [];
             materialTextures.clear();
-            audio->StopMusic();
+            audioSystemInstance->StopMusic();
             debugValues->Clear();
             input->Reset();
             requests.mouseCaptured = false;
