@@ -232,6 +232,8 @@ Each is one depth texture drawn in one render pass, with the viewport and scisso
 (`RecordShadowTile`), with the vertex shader `shadow.vert` placing each vertex and an empty `shadow.frag`: the depth
 the GPU computes while rasterising is the whole output.
 
+If the GPU refuses to create a shadow map, the frame is drawn without shadows and a warning is logged. The lit shader still needs something bound at each shadow slot, so `ShadowTargets` keeps a 1 by 1 fallback depth texture for that case.
+
 **Planning** (`renderer/ShadowPlan.nox`) is pure data and runs first, so a test can check it with no GPU.
 
 - **The sun's cascades.** A sun is infinitely far away, so its shadow map is orthographic. One map over the whole view
