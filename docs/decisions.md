@@ -1127,7 +1127,7 @@ Card: `renderer-visuals/ambient-occlusion`.
 
 Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
 
-## D-068: A spiral shadow filter and cascade blending, not contact-hardening shadows
+## D-069: A spiral shadow filter and cascade blending, not contact-hardening shadows
 
 - **The 3x3 filter becomes a spiral of 4, 12 or 20 lookups** over a disc of `softness` texels (default 2), turned by a
   different angle per pixel, so the edge is softer and the banding becomes fine noise. Quality sets the count.
