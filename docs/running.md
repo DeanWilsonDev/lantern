@@ -33,6 +33,8 @@ locked commit. Links live in `mist.local.json`, which isn't committed. `engine/R
 
 Make sure `~/.local/bin` is on your `PATH`.
 
+In a cloud session, `engine/tools/cloud-bootstrap.sh` does the install; see [Testing in a cloud session](cloud-testing.md).
+
 ## macOS
 
 ```sh
