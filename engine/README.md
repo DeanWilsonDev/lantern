@@ -48,7 +48,7 @@ mist run game
 `mist install` fetches and builds everything the root `mist.json` names: cgltf, stb_image, SDL3, SDL3_image and SDL3_ttf
 from Mist's index, penumbra-ui-engine and penumbra-bridge, and lantern-native (below). `mist run game` runs
 `nox run --release` in this directory, with Mist's library directories on the search paths. Arguments after the
-script's name go to the program: `mist run game ../games/platformer`. `nox run` builds `build/lantern` and runs it. It prints the
+script's name go to the program: `mist run game ../games/other`, or `mist run game --stub` for the stub scene. With none it plays the platformer. `nox run` builds `build/lantern` and runs it. The stub prints the
 SDL version, the size of `assets/textures/ground.png` and the number of meshes in `assets/models/gem.glb`, read through
 stb_image and cgltf, then opens a window and draws a lit scene through SDL GPU (a textured ground, the gem spinning, a
 cube with debug lines, and overlay text) from a stub game in the frame loop, until you press Escape or close the
@@ -189,7 +189,7 @@ renderer one frame at a time, and `../docs/application-and-game-loop.md` the sta
   `shim/lantern_editor.c` implements the header over those exports. Its `CMakeLists.txt` builds the library and a C
   test of the API (`tests/lantern_editor_test.c`). The world editor's Nox host (`apps/world-editor/nox`) imports
   `lantern:::editorapi` directly rather than going through the header.
-- `src/stub/` is the stub game `main` runs when it's given no game directory (`AssetReport.nox` first prints what SDL,
+- `src/stub/` is the stub game `main` runs for `--stub` (`AssetReport.nox` first prints what SDL,
   stb_image and cgltf read): it quits on Escape, counts what the loop calls and
   draws `LitScene`, and `WindowScript` drives the window for the check below.
 - `src/platform/Platform.nox` holds the platform vocabulary: `WindowConfig`, `WindowMetrics`, `PlatformEvent`, and the

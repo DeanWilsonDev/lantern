@@ -80,7 +80,7 @@ engine/src/
                                ParticlesApi, GameUiApi, DebugApi; `game-api.md` lists the calls)
   editor/                      the world editor's logic
   editorbackend/               the editor's off-screen viewport and session
-  stub/                        the stub game `lantern` runs with no game directory
+  stub/                        the stub game `lantern --stub` runs
 ```
 
 ## Who depends on whom
