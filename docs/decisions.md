@@ -904,3 +904,20 @@ and the editor run as before.
 - **Tutorial comments** in the renderer, the application and the loop, as the game code has (D-042).
 
 Card: `engine-follow-ups/engine-structure-and-a-renderer-to-learn-from`.
+
+## D-058 The platformer grows by slices of the Crimson and Thorn mechanics
+
+Dean (2026-11-16) wants the platformer to become a full 3D platformer, starting with mechanics from the Crimson and
+Thorn design documents. `crimson-and-thorn-slice.md` maps every mechanic to now, later or not for the demo.
+
+- **Design source only.** The demo takes mechanics and pacing, not story, art or audio, and Lantern's code and docs name
+  nothing but Lantern.
+- **Slice 1 is the streets**: checkpoints, a scripted companion, the Boost in its solo and cooperative forms, and one
+  short level that teaches them in that order. Slice 2 adds the Guide Light, chapter looks and thorns.
+- **Never punish.** The design's gentleness is a rule for the demo: no health and no lives. A fall returns the player to
+  the latest checkpoint with their gems.
+- **The Anchor waits.** Its 3D form is open in the design, so it is a question for Dean on its card, not a guess.
+- **The game stays on the seam.** New world kinds are labels the game gives meaning to. A missing engine call is a card
+  on `engine-follow-ups` before it is worked around.
+
+Cards: `platformer-game/crimson-and-thorn-slice`.

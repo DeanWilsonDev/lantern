@@ -12,6 +12,7 @@ tutorial repository and a prototype for a later engine.
 - `docs/renderer.md` — the renderer, one frame at a time from the game to the GPU, and where new features would go.
 - `docs/application-and-game-loop.md` — start-up, the fixed-step game loop and shutdown.
 - `docs/game-api.md` — every engine call a Nyx game can make, and the hooks the engine calls.
+- `docs/crimson-and-thorn-slice.md` — which design mechanics the platformer takes on, in what order, and what each one needs from the engine.
 - `docs/decisions.md` — every decision made along the way, with reasons (D-001 onwards).
 - `docs/editor.md` — the world editor: architecture, build steps and controls.
 - `docs/dependencies.md` — each third-party crate and why; `docs/future-work.md` — later ideas.
