@@ -3,6 +3,89 @@
 Dean handed over the decisions for the overnight build on 2026-10-26. Each entry says what was
 decided, why, and how to undo it. Newest entries go at the bottom.
 
+## Index
+
+Decisions are numbered in the order they were made, without gaps. A new decision takes the next number, and a pull
+request that adds one to a branch that has since gained another renumbers its own. This table lists D-001 to D-073; a
+later decision is in the log below and is added here when someone next tidies it. `grep '^## D-' docs/decisions.md` lists
+every entry.
+
+| Number | Decision |
+| --- | --- |
+| D-001 | Work on a branch based on `proto` |
+| D-002 | Nyx C ABI comes from the `nyx-capi` pull request branch |
+| D-003 | SDL3 through `sdl3-sys`, bundled by default |
+| D-004 | Shaders: WGSL compiled to SPIR-V and MSL by naga at build time |
+| D-005 | Text: embedded 8×8 bitmap font |
+| D-006 | Audio: WAV only, mixed on the main thread |
+| D-007 | Collision: our own kinematic collision, no physics crate |
+| D-008 | Assets are generated and committed |
+| D-009 | Windows renders through Vulkan |
+| D-010 | One rustfmt configuration for the whole workspace |
+| D-011 | The frame loop is a struct driven one frame at a time |
+| D-012 | Minimised windows pause the simulation |
+| D-013 | Rendering details chosen for M2 |
+| D-014 | Scene, assets and audio wiring (M3) |
+| D-015 | Collision and character controller (M4) |
+| D-016 | Platformer slice details (M5) |
+| D-017 | Nyx scripting layer (M6) |
+| D-018 | The world file is the seam between the game and the editor |
+| D-019 | The game describes itself to the editor with a palette |
+| D-020 | The editor's split: Rust logic and viewport, Nyx/Chaos/Cosmos panels |
+| D-021 | The viewport renders off-screen and is copied into a Penumbra texture |
+| D-022 | The editor links the system SDL3, and the C API's rules |
+| D-023 | All game code is Nyx; engine code is Rust (2026-10-27) |
+| D-024 | Direct calls replace the snapshot and command queue |
+| D-025 | One generic runner: `lantern` and `game.json` |
+| D-026 | The level is the editor's world file |
+| D-027 | The engine keeps F5 and F1 |
+| D-028 | Reload restarts the whole game |
+| D-029 | Vectors are host value types |
+| D-030 | Nyx gaps go on the Game Engine epic |
+| D-031 | The viewport is a Chaos primitive, not a native widget |
+| D-032 | Editor UI state lives in one Nyx `Application` |
+| D-033 | Menus, popups, tooltips and dialogs are portals built from frames |
+| D-034 | Shortcuts are split between Nyx and the viewport |
+| D-035 | Preferences are a flat JSON file |
+| D-036 | Play in editor runs the real game on a scratch level |
+| D-037 | The stack is pinned by branch, overridable per checkout |
+| D-038 | Editing operations are editor-core methods with one undo entry each |
+| D-039 | Thumbnails and previews are rendered by the backend |
+| D-040 | Penumbra's closed dropdown draws its label |
+| D-041 | The hosts describe their names to nyx-lsp |
+| D-042 | The game code reads as a tutorial |
+| D-043 | The game's UI is Chaos and Cosmos |
+| D-044 | Mouse in the in-game UI; Ui::: removed; elements are lantern:::ui:::Element |
+| D-045 | Every engine name is under lantern::: |
+| D-046 | The Nox engine links Nyx and the Chaos bridge as one library |
+| D-047 | The Nox game host keeps the game's UI in a GameUiState the session owns |
+| D-048 | The Nox editor model keeps the Rust shapes, with sorted arrays for maps |
+| D-049 | Nox gizmo handles are a struct, and the viewport build waits for the session |
+| D-050 | The Nox editor session takes its drag out of the session while it works on it |
+| D-051 | The Nox editor backend is a static library behind the same C header |
+| D-052 | The view cube is drawn by the Nox editor into the viewport's overlay |
+| D-053 | Clicking the same spot again selects the next entity behind |
+| D-054 | Outliner rows reorder by dropping on the line between them |
+| D-055 | EditorApplication only sets up the application; behaviour lives in services and components |
+| D-056 | The Nox host is the world editor's only host |
+| D-057 | The engine is laid out one folder per domain, with SDL behind a facade folder |
+| D-058 | Lights are plain data in RenderWorld: one sun, up to eight local lights, a PBR-lite material |
+| D-059 | Shadows come from depth maps in two atlases, filtered with PCF |
+| D-060 | The platformer grows by slices of the Crimson and Thorn mechanics |
+| D-061 | Slice 1 of the Crimson and Thorn mechanics: the streets |
+| D-062 | Lights in a world file are ordinary entities, found by kind |
+| D-063 | Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters |
+| D-064 | The scene is drawn in high dynamic range, then tone mapped, with bloom as an optional pass |
+| D-065 | A procedural sky that lights the scene |
+| D-066 | FXAA, not MSAA or TAA |
+| D-067 | Screen-space ambient occlusion over the depth buffer |
+| D-068 | Height fog and light shafts in the composite pass |
+| D-069 | A spiral shadow filter and cascade blending, not contact-hardening shadows |
+| D-070 | Blob shadows darken surfaces by distance to a point, in the composite pass |
+| D-071 | The colour grade is applied after tone mapping, in the composite pass |
+| D-072 | Particles are simulated in the engine and drawn as fading line streaks |
+| D-073 | Normal maps use a cotangent frame from screen-space derivatives |
+
 ## D-001 Work on a branch based on `proto`
 
 All work is on `claude/project-thread-mxbapl`, branched from `proto` and opened as a pull request
@@ -392,7 +475,7 @@ about 150 µs, `OnUpdate` 40 µs and `OnRender` 50 µs per call.
 
 The 3D view, the template thumbnails and the turntable preview are all `<viewport renderer="…">`
 elements in `.chaos` files. The primitive is new in Penumbra and penumbra-ui-backend; a renderer
-is anything that implements `Umbra::IViewportRenderer` (from the umbra-interfaces library): it fills an RGBA
+is anything that implements the interface library's `IViewportRenderer`: it fills an RGBA
 buffer each frame and gets pointer, wheel, key and hover events in its own coordinates. The
 editor registers three renderers by name (`level`, `preview`, `thumbnail:<template>`) from
 `EditorHost::RegisterViewportRenderers` before the UI runs, and the Chaos tree picks them by
@@ -518,8 +601,8 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
 (GAME-F04), Chaos and Cosmos boards (epic `lantern-in-game-ui-gaps`).
 
 - **Backend shape.** Chaos and Cosmos are C++, so a small C++ bridge (`crates/chaos-ui/native`)
-  is the Chaos backend: each element is a plain node implementing `Umbra::IWidget` (from the
-  umbra-interfaces library), the contract Chaos reconciles against, and `Cosmos::IStyleTarget`. The bridge
+  is the Chaos backend: each element is a plain node implementing the interface library's `IWidget`,
+  the contract Chaos reconciles against, and `Cosmos::IStyleTarget`. The bridge
   hands Rust a flat snapshot of nodes with resolved styles over a C API; layout, drawing and
   focus are Rust (`lantern-chaos-ui`). That keeps the engine's drawing in one language and the
   C++ surface small. Penumbra isn't used: it is a desktop widget toolkit with its own renderer.

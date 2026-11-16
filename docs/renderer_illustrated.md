@@ -24,6 +24,11 @@ p.cap { text-align:center; color:#a3a3a8; font-size:9.5pt; font-style:italic; ma
 
 # The renderer, one frame at a time
 
+> **An illustrated edition of the walkthrough as it stood before the post-processing effects.** The scene pass, culling,
+> sorting and the shaders still work as drawn here, but the frame now continues through shadow maps, a high dynamic range scene,
+> ambient occlusion, bloom, a composite pass and FXAA. `renderer.md` is the current text.
+
+
 This is a walkthrough of Lantern's renderer for someone who wants to build one like it. It follows a single frame
 from the game to the screen, names the file each step lives in, and ends with what this renderer leaves out and
 where each missing feature would go.
