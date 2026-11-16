@@ -1158,7 +1158,7 @@ Card: `renderer-visuals/softer-shadows-and-stable-cascades`.
 
 Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
 
-## D-070: The colour grade is applied after tone mapping, in the composite pass
+## D-071: The colour grade is applied after tone mapping, in the composite pass
 
 - **Four controls:** saturation, contrast, tint and vignette, in that order, on the 0 to 1 picture after tone mapping and
   before the sRGB encode, so each number does the same to what the viewer sees whatever the scene's brightness.
