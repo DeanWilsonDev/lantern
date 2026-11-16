@@ -938,9 +938,9 @@ Card: `lighting-and-shadows/light-model-and-materials`.
   code short and the resource count low.
 - **Sun: three cascades** fitted to slices of the camera's view, with texel snapping so edges don't shimmer.
 - **Local lights:** the shadowed spot lights use one tile each; a shadowed point light uses six (a cube laid out as
-  tiles, face picked by the larger axis of the light-to-pixel vector). A frame shadows at most `MAX_SHADOWED_LOCAL_LIGHTS`.
+  tiles, face picked by the larger axis of the light-to-pixel vector). The local atlas has 12 tiles (`MAX_LOCAL_SHADOW_TILES`), so a frame shadows at most twelve spot lights, or two point lights.
 - **Filtering and bias.** Hardware 2x2 comparison filtering plus a 3x3 PCF loop. Acne is handled by a rasteriser
-  slope bias in the shadow pass and a normal-offset in the shader, both in world units scaled by the texel size.
+  constant and slope bias in the shadow pipeline, plus a normal-offset push and a small fixed depth bias in the shader.
 - **Opt-out per draw.** `DrawItem.castsShadows` and `ShadowSettings` on the `RenderWorld` (map size, distance, on or off).
 - **Left out:** soft shadows from area lights (PCSS), shadow caching, translucent shadows and cascade blending.
 
