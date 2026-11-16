@@ -30,6 +30,7 @@ the camera and the level layout explain a puzzle without text.
 | Thorns from Chapter 3 | Slice 2 | Done: a hazard that moves the player back, never one that ends the run. |
 | Ability 3, the Anchor | Slice 3 | Done as a set swing arc between two posts (Dean's choice). The companion's form first, then the solo one. |
 | A goal, a win state and a chapter progression | Slice 4 | Done: a gold goal at the end of the streets ends the level and loads the next one. |
+| A second chapter-2 level of moving platforms | Slice 5 | Done: `the rooftops`, solo, between the streets and `streets-later`. |
 | Authored cameras: static shots, player-locked, player-controlled (Camera) | Later | The third-person camera is the only mode today. A shot system needs its own design. |
 | Chapters 1 to 5 as a whole, recurring and unique levels | Later | The slice builds one recurring level (the streets) in two chapter looks. More levels come after the mechanics feel right. |
 | Post-completion changes (the blue and red doors, stripped levels) | Later | Needs saving and a finished first playthrough. |
@@ -96,7 +97,7 @@ walks the whole way with the keyboard, and `thorns-nudge-the-player-back` walks 
 | `glow_platform` | none; a `block`-like piece with a `kinematic` collider | Hidden and not solid until a Guide Light reaches it, and for 4 s after the light leaves. |
 | `lantern` | none | A small box the player walks into. It disappears and the player carries a cooler, smaller Guide Light from then on. |
 | `thorns` | `half_extents` (vector), `min_chapter` (optional, 3) | A patch that appears from its chapter. Touching it sends the player back to the last place they stood on the ground away from thorns. Nothing is lost. |
-| `spawn` | `chapter` (optional, 0) | Which look the level wears (`settings/chapter-looks.nyx`). The course is chapter 0, the streets chapter 1, `streets-later` chapter 3. |
+| `spawn` | `chapter` (optional, 0) | Which look the level wears (`settings/chapter-looks.nyx`). The course is chapter 0, the streets chapter 1, the rooftops chapter 2, `streets-later` chapter 3. |
 
 How it plays, in order:
 
@@ -168,9 +169,9 @@ How it plays:
    overlapping a 1.3 m sphere above the plate reaches it (`GoalSystem.DetectReached`).
 2. `GameRules.Finish` marks the level complete once, tints the goal pale gold, plays the pickup sound and shows
    `Level complete! Gems N / M` for 6 s. Falling or restarting afterwards resets the goal (`Goal.Restore`).
-3. After 4 s the game loads `next_level` and keeps playing. `streets-later` is the same street with no `next_level`,
-   so finishing it returns to the main menu: the chapter progression has one link now and more can be chained by
-   editing the world files.
+3. After 4 s the game loads `next_level` and keeps playing. `streets-later` has no `next_level`, so finishing it
+   returns to the main menu. The chain is authored in the world files: the streets lead to the rooftops (slice 5) and
+   the rooftops to `streets-later`.
 4. A `swing_arc` whose `end` is missing or less than half a metre away along the ground is skipped with a log line
    naming the entity, instead of breaking the level (`Anchor.isValid`).
 
@@ -180,6 +181,25 @@ How it plays:
 | `game-systems/goal-system.nyx` | the overlap test that raises `GameEvent.GoalReached` |
 
 The debug overlay has `Game/Complete` and `Game/Level` for tests and tuning.
+
+## Slice 5: the rooftops
+
+A third level, `worlds/rooftops.world.json`, gives the first playthrough a chapter 2 between the streets (chapter 1) and
+`streets-later` (chapter 3). It is a short, bright, **solo** level with no companion: four rooftops over a void, joined
+by two moving platforms and one swing arc, six gems, three checkpoints and a goal. It uses only world kinds the game
+already had (`moving_platform`, `swing_arc`, `checkpoint`, `gem`, `goal`), so the slice is a world file, a menu button and
+a test. The main menu has a "The rooftops" button, and the streets' goal now leads here.
+
+| Gap | Crossed by |
+|---|---|
+| 14 m, first | A 3 m platform that eases 6 m along the street every 6 s. Step on as it arrives, ride, step off. |
+| 16 m, second | The same platform, longer: 12 m every 8 s. |
+| 12 m, third | The solo form of the Anchor: jump beside the post. |
+
+`engine/tests/host/the-rooftops-ride-the-platforms` plays the whole level from the menu with the keyboard: it waits for
+each platform by its position (the debug overlay's `Platform/N` values, the depth of each moving platform in the order
+the level lists them), rides it, swings and finishes. A platform's position is a function of the simulation clock, so
+the waits are the same every run.
 
 ## How it fits the engine
 

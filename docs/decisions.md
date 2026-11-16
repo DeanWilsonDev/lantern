@@ -1265,3 +1265,22 @@ The streets needed an end, and the game needed a loop (`crimson-and-thorn-slice.
 - **Slice 3's review nits.** The `SwingTo` comment sits above the right method, and the missing `end` is the guard above.
 
 Cards: `platformer-game/crimson-and-thorn-slice` (the goal and the swing arc diagnostics complete).
+
+## D-077: Slice 5 of the Crimson and Thorn mechanics: the rooftops, a solo level of moving platforms
+
+The chapter progression had one real level played twice. A second level makes it a progression
+(`crimson-and-thorn-slice.md`, slice 5).
+
+- **Solo, with no companion.** The level lists no companion stops, so no companion appears. The design teaches solo
+  first, and a level without her shows the other kinds working alone; the Anchor's solo arc is used for the same reason.
+- **Moving platforms, not a new kind.** The platforms are the engine's existing `moving_platform`, whose position is a
+  function of time. Timing a crossing needs no new input: the player waits for the platform, which the test does
+  from the debug overlay's `Platform/N` values.
+- **World files are the chain.** streets -> rooftops -> streets-later is two `next_level` properties, so the order is
+  edited in the world files and the menu buttons are shortcuts.
+- **No autopilot for it.** The scripted pilot plays only the streets; with `LANTERN_AUTOPLAY` the rooftops run the
+  course's pilot. The keyboard test is its check.
+- **Moving platform order is the level's.** `Platform/0` is the last platform listed in the world file, found by
+  `FindByKind`; the test relies on that order.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the rooftops complete).
