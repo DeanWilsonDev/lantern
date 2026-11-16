@@ -265,6 +265,47 @@ lantern:::renderer :: namespace {
     }
 
     /**
+     * The air between the camera and what it looks at: fog that is thicker low down than high up, and shafts of sunlight
+     * through it. The guide is `docs/fog-and-light-shafts.md`. The older `fogStart` and `fogEnd` on the world still fade
+     * distant things to the horizon colour; this adds to that.
+     */
+    AtmosphereSettings :: struct {
+        /** Fog that thins with height: ground mist in valleys, haze that clears above the rooftops. */
+        heightFogEnabled~ bool = true;
+        /** How thick the fog is at the base height: the fraction of light lost per metre travelled through it. 0.01 is a light haze. */
+        fogDensity~ f32 = 0.008f;
+        /** How fast the fog thins as you go up, per metre. 0.1 halves it about every 7 metres. */
+        fogHeightFalloff~ f32 = 0.1f;
+        /** The height in metres where the fog is at its full density. */
+        fogBaseHeight~ f32 = 0.0f;
+        /** The fog's colour, in linear RGB. */
+        fogColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.62f, g: 0.72f, b: 0.85f };
+        /** How much brighter the fog is when you look towards the sun. 0 for none. */
+        fogSunScattering~ f32 = 0.5f;
+        /** Shafts of sunlight: bright streaks away from the sun where objects block it. Costs 24 depth reads per pixel. */
+        lightShaftsEnabled~ bool = true;
+        /** How bright the shafts are. */
+        lightShaftStrength~ f32 = 0.35f;
+        /** How much of a shaft survives each step towards the sun, 0 to 1; closer to 1 gives longer shafts. */
+        lightShaftDecay~ f32 = 0.95f;
+
+        /** These settings with every quality-dependent effect set for `level`. Height fog is cheap and stays; shafts go at Low. */
+        WithQuality :: (level: QualityLevel) -> AtmosphereSettings {
+            return AtmosphereSettings {
+                heightFogEnabled: heightFogEnabled,
+                fogDensity: fogDensity,
+                fogHeightFalloff: fogHeightFalloff,
+                fogBaseHeight: fogBaseHeight,
+                fogColor: fogColor,
+                fogSunScattering: fogSunScattering,
+                lightShaftsEnabled: level != QualityLevel:::Low,
+                lightShaftStrength: lightShaftStrength,
+                lightShaftDecay: lightShaftDecay
+            };
+        }
+    }
+
+    /**
      * How much the renderer spends on looks. Each effect that costs frame time picks its setting from the level, so one
      * call turns a whole set of effects up or down. The game sets it with `lantern:::graphics:::SetQuality`.
      */
@@ -443,6 +484,8 @@ lantern:::renderer :: namespace {
         shadows~ ShadowSettings = ShadowSettings { };
         /** The sky and the light it gives; see `SkySettings`. */
         sky~ SkySettings = SkySettings { };
+        /** Height fog and light shafts; see `AtmosphereSettings`. */
+        atmosphere~ AtmosphereSettings = AtmosphereSettings { };
         /** How the frame is tone mapped and bloomed; see `PostSettings`. */
         post~ PostSettings = PostSettings { };
         /** The next id `AddLight` hands out. Starts at 1 so 0 can mean "no light". */

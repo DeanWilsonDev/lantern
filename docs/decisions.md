@@ -1087,3 +1087,19 @@ Card: `renderer-visuals/anti-aliasing`.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU. This is the most expensive effect so far.
 
 Card: `renderer-visuals/ambient-occlusion`.
+
+## D-067: Height fog and light shafts in the composite pass
+
+- **Both are done in `composite.frag`**, which already reads the scene, so it also reads the depth buffer. Each pixel's
+  distance comes from its stored depth and its ray from the camera basis, as the sky does it.
+- **Height fog is analytic.** Exponential density with height integrates in closed form along a ray, so there is no
+  marching. It adds to the old distance fog, which still hides the far plane; it doesn't replace it.
+- **Light shafts are a screen-space radial walk** towards the sun, counting steps that see the far plane. No shadow-map
+  marching: it needs only the depth buffer and no extra shadow work, but it can't shaft through geometry the depth buffer
+  doesn't contain (so the sun behind the camera, or off one side, gives none).
+- **Quality:** Low turns shafts off; height fog stays (it is arithmetic only). Orthographic cameras skip both.
+- **Defaults are on, and subtle** (density 0.008, shaft strength 0.35), so the platformer gains some haze without nyx edits.
+  A game can set them with `lantern::atmosphere`; the Crimson and Thorn chapter looks can set their own.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.

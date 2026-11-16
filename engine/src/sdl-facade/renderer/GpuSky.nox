@@ -95,4 +95,38 @@ lantern:::gpu :: namespace {
             sunColor: [sunColor.r * sunStrength, sunColor.g * sunStrength, sunColor.b * sunStrength, 1.0f]
         };
     }
+
+    /**
+     * The composite shader's block: the tone-mapping settings plus what height fog and light shafts need. They read the
+     * depth buffer, so they need the camera's basis to turn a pixel and a depth back into a ray, the same basis the sky
+     * uses. Both are skipped for an orthographic camera, where rays don't fan out from a point.
+     */
+    PackCompositeUniforms :: (renderWorld: lantern:::renderer:::RenderWorld*, aspectRatio: f32, toneSettings: f32[4], occlusionFlag: f32) -> CompositeUniforms {
+        camera: lantern:::renderer:::Camera = renderWorld->camera;
+        atmosphere: lantern:::renderer:::AtmosphereSettings = renderWorld->atmosphere;
+        perspective: bool = !camera.IsOrthographic();
+        fogFlag: f32 = perspective && atmosphere.heightFogEnabled && atmosphere.fogDensity > 0.0f ? 1.0f : 0.0f;
+        shaftFlag: f32 = perspective && atmosphere.lightShaftsEnabled && atmosphere.lightShaftStrength > 0.0f ? 1.0f : 0.0f;
+        sky: SkyUniforms = PackSkyUniforms(renderWorld, aspectRatio);
+        halfHeight: f32 = Math:::tan(camera.verticalFieldOfViewRadians * 0.5f);
+        halfWidth: f32 = halfHeight * Math:::max(aspectRatio, 0.001f);
+        depthRange: f32 = camera.farPlane / (camera.nearPlane - camera.farPlane);
+        toSun: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - renderWorld->light.direction, lantern:::core:::WorldUp());
+        sunColor: lantern:::core:::Color = renderWorld->light.color;
+        safeWidth: f32 = Math:::max(halfWidth, 0.0001f);
+        safeHeight: f32 = Math:::max(halfHeight, 0.0001f);
+        return CompositeUniforms {
+            exposureGlowToneMapEncode: toneSettings,
+            flags: [occlusionFlag, fogFlag, shaftFlag, 0.0f],
+            projectionTerms: [halfWidth, halfHeight, camera.nearPlane, depthRange],
+            cameraRight: [sky.rightScaled[0] / safeWidth, sky.rightScaled[1] / safeWidth, sky.rightScaled[2] / safeWidth, 0.0f],
+            cameraUp: [sky.upScaled[0] / safeHeight, sky.upScaled[1] / safeHeight, sky.upScaled[2] / safeHeight, 0.0f],
+            cameraForward: sky.forward,
+            cameraPositionAndFalloff: [camera.position.x, camera.position.y, camera.position.z, Math:::max(atmosphere.fogHeightFalloff, 0.0f)],
+            fogColorAndDensity: [atmosphere.fogColor.r, atmosphere.fogColor.g, atmosphere.fogColor.b, Math:::max(atmosphere.fogDensity, 0.0f)],
+            sunDirectionAndScattering: [toSun.x, toSun.y, toSun.z, Math:::max(atmosphere.fogSunScattering, 0.0f)],
+            sunColorAndShaftStrength: [sunColor.r, sunColor.g, sunColor.b, Math:::max(atmosphere.lightShaftStrength, 0.0f)],
+            fogBaseAndShaftDecay: [atmosphere.fogBaseHeight, Math:::clamp(atmosphere.lightShaftDecay, 0.0f, 0.999f), 0.0f, 0.0f]
+        };
+    }
 }
