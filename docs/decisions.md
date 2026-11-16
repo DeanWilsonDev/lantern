@@ -905,7 +905,7 @@ and the editor run as before.
 
 Card: `engine-follow-ups/engine-structure-and-a-renderer-to-learn-from`.
 
-## D-058 The platformer grows by slices of the Crimson and Thorn mechanics
+## D-060 The platformer grows by slices of the Crimson and Thorn mechanics
 
 Dean (2026-11-16) wants the platformer to become a full 3D platformer, starting with mechanics from the Crimson and
 Thorn design documents. `crimson-and-thorn-slice.md` maps every mechanic to now, later or not for the demo.
@@ -922,7 +922,7 @@ Thorn design documents. `crimson-and-thorn-slice.md` maps every mechanic to now,
 
 Cards: `platformer-game/crimson-and-thorn-slice`.
 
-## D-059 Slice 1 of the Crimson and Thorn mechanics: the streets
+## D-061 Slice 1 of the Crimson and Thorn mechanics: the streets
 
 The first slice (`crimson-and-thorn-slice.md`) is playable from the main menu's "The streets" button.
 

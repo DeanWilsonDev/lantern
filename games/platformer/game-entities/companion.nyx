@@ -60,14 +60,14 @@ public:
     }
 
     // One fixed step. `playerFeet` is where the player stands; she walks on when they are close.
-    Update~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+    Update~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, dt: f32) -> void {
         guard stops.length() > 0;
         if isWalking {
             Walk(dt);
             return;
         }
         if isBoostJumpInFlight {
-            JudgeBoostJump(playerFeet, dt);
+            JudgeBoostJump(playerFeet, isPlayerGrounded, dt);
         }
         waitedSeconds += dt;
         guard stopIndex + 1 < stops.length();
@@ -85,22 +85,26 @@ private:
     static BODY_LIFT :: 0.85f;           // half the body's 1.7 m height: the capsule is centred
     static CROUCH_SCALE :: 0.6f;         // how much shorter she is while crouched
     static FOLLOW_DISTANCE :: 4.0f;      // metres: how close the player must be for her to walk on
+    static LEDGE_MIN_HEIGHT :: 2.0f;     // metres above her that counts as having landed on the ledge: above an unboosted jump's 1.5 m
+    static MIN_JUMP_SECONDS :: 0.1f;     // the player is still on the ground for the step the jump starts in
     body~ i64 = 0;
     waitedSeconds~ f32 = 0.0f;
     isBoostJumpInFlight~ bool = false;
     secondsSinceBoostJump~ f32 = 0.0f;
 
-    // The boost worked when the player is a metre or more above her (they are on the ledge): she
-    // stands up and is free to follow. It failed when, after a moment in the air, they are back
-    // down at her height: she stays crouched and the offer stands. In between, keep waiting.
-    JudgeBoostJump~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+    // The jump is judged when the player lands, never on the way up: a boosted jump passes a
+    // metre above her within a few steps, so a height check in the air would call a jump the
+    // player cut short a success. While airborne, keep waiting. Once grounded again:
+    // - on a ledge at least LEDGE_MIN_HEIGHT above her (more than an unboosted jump reaches), the
+    //   boost worked: she stands up and is free to follow;
+    // - anywhere lower, it failed: she stays crouched and the offer stands for another try.
+    JudgeBoostJump~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, dt: f32) -> void {
         secondsSinceBoostJump += dt;
-        if playerFeet.y > position.y + 1.0f {
-            isBoostJumpInFlight = false;
+        guard isPlayerGrounded && secondsSinceBoostJump > MIN_JUMP_SECONDS;
+        isBoostJumpInFlight = false;
+        if playerFeet.y > position.y + LEDGE_MIN_HEIGHT {
             isHoldingForBoost = false;
             ShowCrouch();
-        } else if secondsSinceBoostJump > 0.3f && playerFeet.y < position.y + 0.1f {
-            isBoostJumpInFlight = false;
         }
     }
 
