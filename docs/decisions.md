@@ -1568,4 +1568,8 @@ this section has been compiled or run (the cloud has no `nox` or `mist`); all of
   of tension only.
 - **D-112: the climb and station have markers on their ground routes.** Her service stair route and the footbridge, as D-099
   promised.
+- **D-113: she pauses further back.** `PAUSE_DISTANCE` 24 m and `RESUME_DISTANCE` 18 m (were 16 and 11). A player holding a plate for her
+  stands up to 18 m from the far plate she has to reach, and at 16 m she stopped short and waited for them. Provisional: not reviewed by Dean.
+- **D-114: failing room tests print the debug values.** Six host tests use `ExpectWithState`, which prints every debug value before it asserts, so a
+  failure shows where she stood and what mode she was in. It prints only on failure.
 
