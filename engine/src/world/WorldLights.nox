@@ -1,0 +1,97 @@
+/**
+ * Lights placed in a world file. A light is an ordinary world entity whose kind says what it is, so the editor can
+ * place, move and rotate it like anything else and the file format needs nothing new. Its numbers are the entity's
+ * properties:
+ *
+ * | Kind | Properties (default) |
+ * | --- | --- |
+ * | `point_light` | `color` ("#FFFFFF"), `strength` (8), `range` (12), `casts_shadows` (false) |
+ * | `spot_light` | the point light's, plus `inner_degrees` (20) and `outer_degrees` (35) |
+ * | `sun` | `color` ("#FFF5E0"), `sky_ambient` ("#4D5C73"), `ground_ambient` ("#241F1A"), `casts_shadows` (true) |
+ *
+ * A point light shines from the entity's position. A spot light and the sun shine the way the entity points: with no
+ * rotation that is straight down, and rotating the entity turns the light. Scale does nothing to a light.
+ */
+lantern:::world :: namespace {
+    DEFAULT_LIGHT_STRENGTH: f32 : 8.0f;
+    DEFAULT_LIGHT_RANGE: f32 : 12.0f;
+    DEFAULT_SPOT_INNER_DEGREES: f32 : 20.0f;
+    DEFAULT_SPOT_OUTER_DEGREES: f32 : 35.0f;
+
+    PointLightKind :: () -> string {
+        return "point_light";
+    }
+
+    SpotLightKind :: () -> string {
+        return "spot_light";
+    }
+
+    SunKind :: () -> string {
+        return "sun";
+    }
+
+    /** Whether an entity of this kind is a point or spot light (the sun is separate: a world has one). */
+    IsLocalLightKind :: (kind: string) -> bool {
+        return kind == PointLightKind() || kind == SpotLightKind();
+    }
+
+    /** The colour in a text property such as "#FFB866", or `fallback` when the entity has none or it isn't a colour. */
+    LightColorProperty :: (entity: WorldEntity*, key: string, fallback: lantern:::core:::Color) -> lantern:::core:::Color {
+        text: string!? = entity->TextProperty(key);
+        defer delete text;
+        if present := text {
+            if parsed := ParseHexColor(present) {
+                return parsed;
+            }
+        }
+        return fallback;
+    }
+
+    /** The way an entity with this matrix points: straight down, turned by the matrix's rotation. */
+    LightDirection :: (worldMatrix: Mat4) -> Vec3 {
+        down: Vec3 = Vec3 { x: 0.0f, y: -1.0f, z: 0.0f };
+        return lantern:::core:::NormalizeOr3(worldMatrix.transformDirection(down), down);
+    }
+
+    /**
+     * The point or spot light an entity describes, placed by `worldMatrix`, or null when the entity is not a local
+     * light. The values are clamped as the engine clamps every light, so a bad number in a file can't break a frame.
+     */
+    LocalLightFromEntity :: (entity: WorldEntity*, worldMatrix: Mat4) -> lantern:::renderer:::Light? {
+        if !IsLocalLightKind(entity->kind) {
+            return null;
+        }
+        white: lantern:::core:::Color = lantern:::core:::Color:::White();
+        base: lantern:::core:::Color = LightColorProperty(entity, "color", white);
+        strength: f32 = entity->NumberProperty("strength") ?? DEFAULT_LIGHT_STRENGTH;
+        nonNegativeStrength: f32 = strength > 0.0f ? strength : 0.0f;
+        color: lantern:::core:::Color = lantern:::core:::Color:::Rgba(base.r * nonNegativeStrength, base.g * nonNegativeStrength, base.b * nonNegativeStrength, 1.0f);
+        range: f32 = entity->NumberProperty("range") ?? DEFAULT_LIGHT_RANGE;
+        position: Vec3 = worldMatrix.transformPoint(Vec3 { });
+        radiansPerDegree: f32 = Math:::PI / 180.0f;
+        light~ lantern:::renderer:::Light = lantern:::renderer:::Light:::Point(position, color, range);
+        if entity->kind == SpotLightKind() {
+            innerDegrees: f32 = entity->NumberProperty("inner_degrees") ?? DEFAULT_SPOT_INNER_DEGREES;
+            outerDegrees: f32 = entity->NumberProperty("outer_degrees") ?? DEFAULT_SPOT_OUTER_DEGREES;
+            target: Vec3 = position + LightDirection(worldMatrix);
+            light = lantern:::renderer:::Light:::Spot(position, target, color, range, innerDegrees * radiansPerDegree, outerDegrees * radiansPerDegree);
+        }
+        light.castsShadows = entity->BooleanProperty("casts_shadows") ?? false;
+        return light;
+    }
+
+    /** The sun an entity of kind `sun` describes, or null for any other kind. */
+    SunFromEntity :: (entity: WorldEntity*, worldMatrix: Mat4) -> lantern:::renderer:::DirectionalLight? {
+        if entity->kind != SunKind() {
+            return null;
+        }
+        defaults: lantern:::renderer:::DirectionalLight = lantern:::renderer:::DirectionalLight:::Default();
+        sun~ lantern:::renderer:::DirectionalLight = defaults;
+        sun.direction = LightDirection(worldMatrix);
+        sun.color = LightColorProperty(entity, "color", lantern:::core:::Color:::FromHex(16774624));
+        sun.ambient = LightColorProperty(entity, "sky_ambient", lantern:::core:::Color:::FromHex(5069939));
+        sun.groundAmbient = LightColorProperty(entity, "ground_ambient", lantern:::core:::Color:::FromHex(2367258));
+        sun.castsShadows = entity->BooleanProperty("casts_shadows") ?? true;
+        return sun;
+    }
+}

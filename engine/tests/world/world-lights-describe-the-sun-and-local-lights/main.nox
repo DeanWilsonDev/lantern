@@ -1,0 +1,74 @@
+lantern :: import lantern;
+
+Near :: (left: f32, right: f32) -> bool {
+    difference: f32 = left - right;
+    return difference < 0.001f && difference > -0.001f;
+}
+
+main :: () -> i32 {
+    here: Vec3 = { x: 2.0f, y: 3.0f, z: -4.0f };
+    placed: Mat4 = Mat4:::translation(here);
+
+    block := new lantern:::world:::WorldEntity(1, "block", "block");
+    defer delete block;
+    blockLight: lantern:::renderer:::Light? = lantern:::world:::LocalLightFromEntity(block, placed);
+    assert(blockLight == null, "a block is not a light");
+    blockSun: lantern:::renderer:::DirectionalLight? = lantern:::world:::SunFromEntity(block, placed);
+    assert(blockSun == null, "a block is not a sun");
+
+    lamp := new lantern:::world:::WorldEntity(2, "lamp", lantern:::world:::PointLightKind());
+    defer delete lamp;
+    plain := lantern:::world:::LocalLightFromEntity(lamp, placed);
+    guard plainLight := plain return 1;
+    assert(plainLight.kind == lantern:::renderer:::LightKind:::Point, "a point light entity makes a point light");
+    assert(Near(plainLight.position.x, 2.0f) && Near(plainLight.position.y, 3.0f) && Near(plainLight.position.z, -4.0f), "the light stands where the entity is");
+    assert(Near(plainLight.range, lantern:::world:::DEFAULT_LIGHT_RANGE), "no range property gives the default range");
+    assert(Near(plainLight.color.r, lantern:::world:::DEFAULT_LIGHT_STRENGTH), "white times the default strength");
+    assert(!plainLight.castsShadows, "lights cast no shadows unless asked");
+
+    lamp->SetTextProperty("color", "#FF0000");
+    lamp->SetNumberProperty("strength", 2.0f);
+    lamp->SetNumberProperty("range", 0.0f);
+    lamp->SetBooleanProperty("casts_shadows", true);
+    tuned := lantern:::world:::LocalLightFromEntity(lamp, placed);
+    guard tunedLight := tuned return 1;
+    assert(Near(tunedLight.color.r, 2.0f) && Near(tunedLight.color.g, 0.0f), "the colour times the strength");
+    assert(tunedLight.range > 0.0f, "range never reaches zero");
+    assert(tunedLight.castsShadows, "casts_shadows turns shadows on");
+
+    lamp->SetTextProperty("color", "teal");
+    fallback := lantern:::world:::LocalLightFromEntity(lamp, placed);
+    guard fallbackLight := fallback return 1;
+    assert(Near(fallbackLight.color.g, 2.0f), "a bad colour falls back to white");
+
+    torch := new lantern:::world:::WorldEntity(3, "torch", lantern:::world:::SpotLightKind());
+    defer delete torch;
+    torch->SetNumberProperty("inner_degrees", 50.0f);
+    torch->SetNumberProperty("outer_degrees", 30.0f);
+    spot := lantern:::world:::LocalLightFromEntity(torch, placed);
+    guard spotLight := spot return 1;
+    assert(spotLight.kind == lantern:::renderer:::LightKind:::Spot, "a spot light entity makes a spot light");
+    assert(Near(spotLight.direction.y, -1.0f), "with no rotation a spot light points straight down");
+    assert(spotLight.innerConeRadians <= spotLight.outerConeRadians, "the inner cone stays inside the outer one");
+
+    turn: Quaternion = lantern:::core:::QuaternionFromEulerYxz(0.0f, 0.0f, 1.5707964f);
+    sideways: Mat4 = lantern:::core:::MatrixFromRotationTranslation(turn, here);
+    turned := lantern:::world:::LocalLightFromEntity(torch, sideways);
+    guard turnedLight := turned return 1;
+    assert(Near(turnedLight.direction.y, 0.0f) && Near(turnedLight.direction.x * turnedLight.direction.x, 1.0f), "rotating the entity turns the light");
+
+    sun := new lantern:::world:::WorldEntity(4, "sun", lantern:::world:::SunKind());
+    defer delete sun;
+    sunLight := lantern:::world:::SunFromEntity(sun, placed);
+    guard sunValue := sunLight return 1;
+    assert(Near(sunValue.direction.y, -1.0f), "the sun points straight down by default");
+    assert(sunValue.castsShadows, "the sun casts shadows by default");
+    sun->SetBooleanProperty("casts_shadows", false);
+    quiet := lantern:::world:::SunFromEntity(sun, placed);
+    guard quietValue := quiet return 1;
+    assert(!quietValue.castsShadows, "casts_shadows turns the sun's shadows off");
+    sunAsLamp: lantern:::renderer:::Light? = lantern:::world:::LocalLightFromEntity(sun, placed);
+    assert(sunAsLamp == null, "the sun is not a local light");
+    print("world lights describe the sun and local lights");
+    return 0;
+}

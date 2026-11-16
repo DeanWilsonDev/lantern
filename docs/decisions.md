@@ -985,7 +985,33 @@ The first slice (`crimson-and-thorn-slice.md`) is playable from the main menu's 
 
 Cards: `platformer-game/crimson-and-thorn-slice` (checkpoints, companion and the Boost complete).
 
-## D-062 Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters
+## D-062 Lights in a world file are ordinary entities, found by kind
+
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+Dean asked for lights that can be placed in the world editor. A light is a world entity of kind `point_light`,
+`spot_light` or `sun`, and its colour, strength, range, cone and shadow switch are the entity's properties, so the
+file format, the editor's placement, move, rotate, hide and undo tools and its property inspector all work on lights
+unchanged.
+
+- **No new format.** The world file already carries a kind and typed properties per entity. A new top-level `lights`
+  list would have needed a format version, a second editing path and its own selection rules.
+- **Direction is rotation.** A spot light and the sun point straight down with no rotation, and rotating the entity
+  turns them, which the editor's rotate gizmo already does. Scale is ignored.
+- **One conversion, two users.** `lantern:::world:::LocalLightFromEntity` and `SunFromEntity` turn an entity into the
+  renderer's `Light` or `DirectionalLight`. The game's world load and the editor's viewport both call them, so the
+  editor shows what the game draws.
+- **Load adds, clear removes.** `lantern:::world:::Load` adds the file's lights to the render world and remembers
+  their ids, and `lantern:::world:::Clear` removes exactly those, so lights a game adds itself stay. A `sun` entity
+  replaces the sun and ambient light; the last one in the file wins. Clearing the world does not put the old sun back, so a game that loads more than one level sets its own sun before each load, as the platformer does.
+- **A parent's transform is not applied in the game.** The editor places a light through its parents, the game load
+  by the light's own transform. Keep lights unparented until the game load composes parents.
+- **Left out:** a light that follows another entity, lights switched on and off by game events from the file alone
+  (a script can `FindByKind` the entity and use the `lights` API), and a viewport toggle that turns the editor's
+  light preview off.
+
+Card: `lighting-and-shadows/lights-in-the-world-editor`.
+## D-063 Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters
 
 The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter looks and thorns to the streets.
 
