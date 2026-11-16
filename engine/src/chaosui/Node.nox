@@ -2,12 +2,21 @@ ChaosUiC :: import ChaosUiC;
 NyxC :: import NyxC;
 
 lantern:::chaosui :: namespace {
+    /**
+     * What an element of a Chaos UI is: a `frame` (a box that holds other elements), a `text`, or something this engine
+     * doesn't draw (Unsupported, which is skipped).
+     */
     NodeKind :: enum {
         Frame,
         Text,
         Unsupported
     }
 
+    /**
+     * One element of the UI as the game sees it, copied out of Chaos each frame: its id, its parent and children (as
+     * indexes into the same array), its kind and text, whether it can be clicked, and its Cosmos style plus the styles
+     * it takes while hovered or pressed. The array of nodes is the whole UI tree flattened, parents before children.
+     */
     UiNode :: struct {
         id~ u64 = 0;
         parent~ usize? = null;
@@ -20,6 +29,9 @@ lantern:::chaosui :: namespace {
         active~ Style? = null;
     }
 
+    /**
+     * Chaos's kind number as a NodeKind.
+     */
     NodeKindFromRaw :: (kind: i32) -> NodeKind {
         return when kind {
             0 -> NodeKind:::Frame,
@@ -28,10 +40,17 @@ lantern:::chaosui :: namespace {
         };
     }
 
+    /**
+     * Copies a node's text out of Chaos's memory into a Nox string.
+     */
     NodeTextFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_node) -> string! {
         return lantern:::nyx:::ReadText(NyxC:::nyx_str { data_: raw.text, length: raw.text_length });
     }
 
+    /**
+     * Builds a UiNode from Chaos's C record. A node counts as focusable (a button) when it handles press or release
+     * events.
+     */
     NodeFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_node) -> UiNode {
         node~ UiNode = UiNode { text: NodeTextFromRaw(raw) };
         node.id = raw.id;
@@ -50,6 +69,9 @@ lantern:::chaosui :: namespace {
         return node!;
     }
 
+    /**
+     * Fills in each node's `children` from the `parent` links, so layout can walk down as well as up.
+     */
     LinkChildren :: (nodes: Array<UiNode~>) -> void {
         for index~ usize = 0; index < nodes.length(); index++ {
             if parent := nodes[index].parent {

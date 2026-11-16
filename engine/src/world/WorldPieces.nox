@@ -1,4 +1,9 @@
 lantern:::world :: namespace {
+    /**
+     * One entity of a world file made ready to use: its matrices, a mesh built from its shape (if it has one), its tint and
+     * its collider kind. The level loader turns each piece into a renderable, a collider or both. The mesh is owned by
+     * the piece.
+     */
     WorldPiece :: class {
     public:
         entityIndex~ usize = 0;
@@ -16,18 +21,30 @@ lantern:::world :: namespace {
             delete mesh;
         }
 
+        /**
+         * True when the entity has a shape.
+         */
         HasMesh :: () -> bool {
             return mesh != null;
         }
 
+        /**
+         * The mesh's triangles moved to their place in the world, for building a static collider.
+         */
         WorldTriangles :: () -> Array<lantern:::physics:::Triangle>! {
             return TrianglesWith(worldMatrix);
         }
 
+        /**
+         * The mesh's triangles in the entity's own space, for a moving body (which is moved by a matrix later).
+         */
         LocalTriangles :: () -> Array<lantern:::physics:::Triangle>! {
             return TrianglesWith(Mat4 { });
         }
 
+        /**
+         * The mesh's triangles moved by a matrix. Empty when there is no mesh.
+         */
         TrianglesWith :: (matrix: Mat4) -> Array<lantern:::physics:::Triangle>! {
             triangles~ Array<lantern:::physics:::Triangle>! = [];
             if shapeMesh := mesh {
@@ -44,6 +61,9 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * The mesh for a shape: a box, or a ramp.
+     */
     ShapeMesh :: (shape: Shape) -> lantern:::renderer:::MeshData*! {
         if shape.kind == ShapeKind:::Box {
             return lantern:::renderer:::BoxMesh(shape.halfExtents, true);
@@ -51,6 +71,10 @@ lantern:::world :: namespace {
         return lantern:::renderer:::Ramp(shape.width, shape.height, shape.length);
     }
 
+    /**
+     * The entity's transform in the world: its own transform times its parent's, up the chain. A parent that can't be
+     * found ends the chain, and the length limit stops a loop of parents from spinning forever.
+     */
     WorldMatrix :: (worldFile: WorldFile*, entityIndex: usize) -> Mat4 {
         chain~ Array<usize>! = [];
         chain.push(entityIndex);
@@ -70,6 +94,9 @@ lantern:::world :: namespace {
         return matrix;
     }
 
+    /**
+     * The world matrix of every entity, in file order.
+     */
     WorldMatrices :: (worldFile: WorldFile*) -> Array<Mat4>! {
         matrices~ Array<Mat4>! = [];
         for index~ usize = 0; index < worldFile->entities.length(); index++ {
@@ -78,6 +105,9 @@ lantern:::world :: namespace {
         return matrices!;
     }
 
+    /**
+     * Builds a piece for every entity in the file, in file order.
+     */
     BuildPieces :: (worldFile: WorldFile*) -> Array<WorldPiece*!>! {
         pieces~ Array<WorldPiece*!>! = [];
         for index~ usize = 0; index < worldFile->entities.length(); index++ {

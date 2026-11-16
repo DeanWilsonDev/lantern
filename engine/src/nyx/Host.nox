@@ -1,17 +1,32 @@
 NyxC :: import NyxC;
 
+// C's `memcpy`, to copy the argument handles Nyx passes into the call context.
 lantern:::nyxarguments :: foreign "c" {
     memcpy :: (destination: Array<u64~>, source: raw NyxC:::nyx_value~**, byteCount: usize) -> raw u8~*;
 }
 
 lantern:::nyx :: namespace {
+    /**
+     * The error variant a host function reports when it panics.
+     */
     PANIC_VARIANT: string : "Error::Unknown";
+    /**
+     * The most arguments a host function may take (16). A call with more is refused.
+     */
     MAX_HOST_ARGUMENTS: usize : 16;
 
+    /**
+     * What a Nox object that scripts hold must implement: a name, for messages. Scripts never see the object itself,
+     * only a handle (see HostType).
+     */
     HostObject :: interface {
         HostTypeName : () -> string : 0;
     }
 
+    /**
+     * What a slot holds after its object was released, so a stale handle finds a harmless placeholder and not freed
+     * memory.
+     */
     ReleasedHostObject :: class {
         implements:
             HostObject;
@@ -23,6 +38,10 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * The five things a script can call on the host: a free function, a method, a static method, an operator, or a
+     * constructor.
+     */
     HostCallKind :: enum {
         Function,
         Method,
@@ -31,12 +50,22 @@ lantern:::nyx :: namespace {
         Constructor
     }
 
+    /**
+     * How a host call ended: it returned a value, it failed (a Nyx error the script can catch), or it was refused (a
+     * misuse by the caller, such as a missing argument).
+     */
     CallOutcome :: enum {
         Returned,
         Failed,
         Refused
     }
 
+    /**
+     * The view a host function gets of one call. It reads the arguments (`Bool`, `I32`, `Text` and the rest convert
+     * the Nyx value at an index and refuse the call if it is the wrong kind), and it sets the result (`Return...`),
+     * or fails (`Fail`) or refuses (`Refuse`). The arguments arrive as raw handles from Nyx and are only valid during
+     * the call; `Argument` makes a Value that outlives it.
+     */
     CallContext :: class {
     public:
         call~ raw NyxC:::nyx_call~* = null;
@@ -60,6 +89,9 @@ lantern:::nyx :: namespace {
             ReleaseResult();
         }
 
+        /**
+         * Releases the result handle if one is held and not yet handed back.
+         */
         ReleaseResult~: () -> void {
             if result != null {
                 unsafe {
@@ -69,6 +101,9 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * How many arguments the script passed, not counting a method's receiver.
+         */
         Count :: () -> usize {
             if argumentCount < firstArgument {
                 return 0;
@@ -76,6 +111,9 @@ lantern:::nyx :: namespace {
             return argumentCount - firstArgument;
         }
 
+        /**
+         * The raw handle of argument `index`, or null when there isn't one.
+         */
         Handle :: (index: usize) -> raw NyxC:::nyx_value~* {
             if firstArgument + index >= argumentCount {
                 return null;
@@ -87,6 +125,9 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * Argument `index` as a Value with its own reference, or a null value when it is missing.
+         */
         Argument :: (index: usize) -> Value*! {
             handle: raw NyxC:::nyx_value~* = Handle(index);
             unsafe {
@@ -99,6 +140,9 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * True (and refuses the call with "missing argument N") when argument `index` wasn't passed.
+         */
         Missing~: (index: usize) -> bool {
             if Handle(index) == null {
                 message: string! = `missing argument ${index + 1}`;
@@ -109,6 +153,9 @@ lantern:::nyx :: namespace {
             return false;
         }
 
+        /**
+         * Refuses the call with the C API's message when a conversion's status wasn't OK.
+         */
         ReadFailed~: (status: NyxC:::nyx_status) -> void {
             if status == NyxC:::NYX_OK {
                 return;
@@ -200,6 +247,9 @@ lantern:::nyx :: namespace {
             return ReadText(read);
         }
 
+        /**
+         * The instance of a host value type at an argument, after checking it is that type.
+         */
         HostBytes~: (index: usize, valueType: HostType*) -> raw u8~* {
             instance~ raw u8~* = null;
             if Missing(index) {
@@ -213,6 +263,9 @@ lantern:::nyx :: namespace {
             return instance;
         }
 
+        /**
+         * The Nox object behind a host-type argument, or null.
+         */
         HostObjectAt~: (index: usize, objectType: HostType~*) -> HostObject~*? {
             instance: raw u8~* = HostBytes(index, objectType);
             if instance == null {
@@ -221,6 +274,9 @@ lantern:::nyx :: namespace {
             return objectType->ObjectAt(instance);
         }
 
+        /**
+         * The Nox object a method was called on, or null.
+         */
         ReceiverObject :: () -> HostObject~*? {
             if hostType == null || receiver == null {
                 return null;
@@ -230,11 +286,17 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * Makes a new result handle the call's result, releasing any earlier one.
+         */
         Keep~: (made: raw NyxC:::nyx_value~*) -> void {
             ReleaseResult();
             result = made;
         }
 
+        /**
+         * Returns a Value to the script.
+         */
         Return~: (value: Value*!) -> void {
             unsafe {
                 Keep(NyxC:::nyx_value_retain(value->handle));
@@ -242,6 +304,9 @@ lantern:::nyx :: namespace {
             delete value;
         }
 
+        /**
+         * Returns Nyx `null`. The `ReturnBool`, `ReturnI32`, `ReturnText` and similar functions return the simple kinds.
+         */
         ReturnNull~: () -> void {
             made~ raw NyxC:::nyx_value~* = null;
             unsafe {
@@ -322,6 +387,9 @@ lantern:::nyx :: namespace {
             Keep(made);
         }
 
+        /**
+         * Returns a value of a host value type, copied from `bytes`.
+         */
         ReturnHostBytes~: (valueType: HostType*, bytes: raw u8~*) -> void {
             made~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -332,6 +400,10 @@ lantern:::nyx :: namespace {
             Keep(made);
         }
 
+        /**
+         * Wraps a Nox object as a script-visible handle of `objectType` and returns it. The runtime keeps the object alive
+         * until the script lets the handle go.
+         */
         ReturnObject~: (objectType: HostType~*, object: HostObject*!) -> void {
             made~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -342,6 +414,9 @@ lantern:::nyx :: namespace {
             Keep(made);
         }
 
+        /**
+         * ReturnObject for the type whose method is running.
+         */
         ReturnOwnObject~: (object: HostObject*!) -> void {
             if hostType == null {
                 delete object;
@@ -353,6 +428,9 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * ReturnHostBytes for the type whose method is running.
+         */
         ReturnOwnBytes~: (bytes: raw u8~*) -> void {
             if hostType == null {
                 Refuse("only a host type's own call can return its value");
@@ -363,10 +441,17 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * The raw bytes of a value type's receiver.
+         */
         ReceiverBytes :: () -> raw u8~* {
             return receiver;
         }
 
+        /**
+         * Ends the call with a Nyx error of this variant and message, which the script sees as a thrown error it can `when`
+         * over. Use it for failures a script can reasonably expect.
+         */
         Fail~: (variant: string, message: string) -> void {
             variantText := new CText(variant);
             messageText := new CText(message);
@@ -385,6 +470,10 @@ lantern:::nyx :: namespace {
             outcome = CallOutcome:::Failed;
         }
 
+        /**
+         * Ends the call as refused, with a message. It is for misuse (a wrong kind of argument), and the script gets an
+         * error naming the call.
+         */
         Refuse~: (message: string) -> void {
             if outcome == CallOutcome:::Refused {
                 return;
@@ -398,10 +487,16 @@ lantern:::nyx :: namespace {
             outcome = CallOutcome:::Refused;
         }
 
+        /**
+         * True when the call has been refused.
+         */
         Refused :: () -> bool {
             return outcome == CallOutcome:::Refused;
         }
 
+        /**
+         * Hands the result and the outcome back to the C API as a status.
+         */
         Finish~: (outResult: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status {
             if outcome == CallOutcome:::Refused {
                 return NyxC:::NYX_ERROR_REFUSED;
@@ -419,6 +514,10 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * A registered host function, method, operator or constructor: its name, Nyx signature and Nox body, kept alive for as
+     * long as Nyx may call it. Nyx calls it through HostCallTrampoline, with a pointer to this object (`userdata`).
+     */
     HostCall :: class {
     public:
         kind~ HostCallKind = HostCallKind:::Function;
@@ -455,11 +554,17 @@ lantern:::nyx :: namespace {
             delete body;
         }
 
+        /**
+         * The pointer Nyx stores and hands back on each call, which is this object.
+         */
         Userdata :: () -> raw u8~* {
             return userdata;
         }
     }
 
+    /**
+     * Recovers the HostCall from the `userdata` pointer.
+     */
     CallFromUserdata :: (userdata: raw u8~*) -> raw HostCall~* {
         unsafe {
             viewed := reinterpret<raw HostCall~*>(userdata);
@@ -467,6 +572,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * Recovers the HostType from the `userdata` pointer.
+     */
     TypeFromUserdata :: (userdata: raw u8~*) -> raw HostType~* {
         unsafe {
             viewed := reinterpret<raw HostType~*>(userdata);
@@ -474,6 +582,10 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * The C function Nyx calls for every host call. It finds the HostCall from `userdata`, builds a CallContext from the
+     * argument handles, finds the receiver for a method, runs the Nox body, and returns the status.
+     */
     HostCallTrampoline :: (call: raw NyxC:::nyx_call~*, args: raw NyxC:::nyx_value~**, count: usize, outResult: raw NyxC:::nyx_value~*~*, userdata: raw u8~*) -> NyxC:::nyx_status {
         unsafe {
             entry: raw HostCall~* = CallFromUserdata(userdata);
@@ -513,6 +625,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * Called by Nyx when it lets go of a function: marks the HostCall as released so the Runtime can tell it is safe to free.
+     */
     FreeHostCallTrampoline :: (userdata: raw u8~*) -> void {
         unsafe {
             entry: raw HostCall~* = CallFromUserdata(userdata);
@@ -520,6 +635,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * The same for a host type.
+     */
     FreeHostTypeTrampoline :: (userdata: raw u8~*) -> void {
         unsafe {
             owner: raw HostType~* = TypeFromUserdata(userdata);
@@ -527,6 +645,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * Called by Nyx when a script drops the last reference to a host object: releases its slot.
+     */
     ReleaseInstanceTrampoline :: (instance: raw u8~*, typeUserdata: raw u8~*) -> void {
         unsafe {
             owner: raw HostType~* = TypeFromUserdata(typeUserdata);

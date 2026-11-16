@@ -1,10 +1,19 @@
 lantern:::chaosui :: namespace {
+    /**
+     * The text size, in pixels at scale 1, of text whose style doesn't set `fontSize`.
+     */
     DEFAULT_FONT_SIZE: f32 : 16.0f;
 
+    /**
+     * A rectangle from its top-left corner to its bottom-right, in screen pixels.
+     */
     Rect :: struct {
         min~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
         max~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
 
+        /**
+         * A rectangle from a corner and a size.
+         */
         static FromSize :: (minimum: Vec2, size: Vec2) -> Rect {
             return Rect { min: minimum, max: minimum + size };
         }
@@ -13,10 +22,16 @@ lantern:::chaosui :: namespace {
             return max - min;
         }
 
+        /**
+         * True when the point is inside the rectangle (the left and top edges count, the right and bottom don't).
+         */
         Contains :: (point: Vec2) -> bool {
             return point.x >= min.x && point.y >= min.y && point.x < max.x && point.y < max.y;
         }
 
+        /**
+         * The rectangle shrunk by a distance on each side, never smaller than nothing.
+         */
         Inset :: (left: f32, top: f32, right: f32, bottom: f32) -> Rect {
             insetMinimum: Vec2 = min + Vec2 { x: left, y: top };
             insetMaximum: Vec2 = max - Vec2 { x: right, y: bottom };
@@ -24,6 +39,9 @@ lantern:::chaosui :: namespace {
         }
     }
 
+    /**
+     * The space a box keeps around its content: padding plus border, per side.
+     */
     Edges :: struct {
         left~ f32 = 0.0f;
         top~ f32 = 0.0f;
@@ -31,11 +49,18 @@ lantern:::chaosui :: namespace {
         bottom~ f32 = 0.0f;
     }
 
+    /**
+     * The size to draw text at, as a whole-number multiple of the font's 8 pixel glyphs: the style's font size times the UI
+     * scale, divided by 8 and rounded, and at least 1. So 16 px text is drawn at 2 times the glyph size.
+     */
     TextScale :: (style: Style, scale: f32) -> f32 {
         pixels: f32 = (style.fontSize ?? DEFAULT_FONT_SIZE) * scale;
         return Math:::max(Math:::round(pixels / f32(lantern:::renderer:::GLYPH_SIZE)), 1.0f);
     }
 
+    /**
+     * The part of a size along the layout direction (the width for a Row, the height for a Column).
+     */
     MainOf :: (size: Vec2, direction: Direction) -> f32 {
         if direction == Direction:::Row {
             return size.x;
@@ -43,6 +68,9 @@ lantern:::chaosui :: namespace {
         return size.y;
     }
 
+    /**
+     * The part of a size across the layout direction.
+     */
     CrossOf :: (size: Vec2, direction: Direction) -> f32 {
         if direction == Direction:::Row {
             return size.y;
@@ -50,6 +78,9 @@ lantern:::chaosui :: namespace {
         return size.x;
     }
 
+    /**
+     * Puts a main and a cross measure back into a width and a height.
+     */
     FromMainCross :: (main: f32, cross: f32, direction: Direction) -> Vec2 {
         if direction == Direction:::Row {
             return Vec2 { x: main, y: cross };
@@ -57,6 +88,9 @@ lantern:::chaosui :: namespace {
         return Vec2 { x: cross, y: main };
     }
 
+    /**
+     * A margin's total along the layout direction.
+     */
     MarginMain :: (margin: Insets, direction: Direction) -> f32 {
         if direction == Direction:::Row {
             return margin.Horizontal();
@@ -64,6 +98,10 @@ lantern:::chaosui :: namespace {
         return margin.Vertical();
     }
 
+    /**
+     * What one layout needs to turn lengths into pixels: the screen's size and the UI scale. It also clamps widths to
+     * min and max.
+     */
     LayoutPass :: struct {
         screen~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
         scale~ f32 = 1.0f;
@@ -93,6 +131,9 @@ lantern:::chaosui :: namespace {
         }
     }
 
+    /**
+     * The children that take part in the line (everything but Absolute and Fixed).
+     */
     FlowChildren :: (nodes: Array<UiNode>, styles: Array<Style>, index: usize) -> Array<usize>! {
         flow~ Array<usize>! = [];
         for child in nodes[index].children {
@@ -103,6 +144,9 @@ lantern:::chaosui :: namespace {
         return flow!;
     }
 
+    /**
+     * The children taken out of the line, to be placed afterwards.
+     */
     PositionedChildren :: (nodes: Array<UiNode>, styles: Array<Style>, index: usize) -> Array<usize>! {
         positioned~ Array<usize>! = [];
         for child in nodes[index].children {
@@ -113,6 +157,11 @@ lantern:::chaosui :: namespace {
         return positioned!;
     }
 
+    /**
+     * The size a box wants, given the room its parent offers. A text box is as big as its text. Any other box is as big
+     * as its in-flow children along the main direction (plus gaps and margins), and as the biggest of them across it.
+     * A fixed width or height overrides. It recurses into the children, so the cost is the size of the tree.
+     */
     Measure :: (pass: LayoutPass, nodes: Array<UiNode>, styles: Array<Style>, index: usize, container: Vec2) -> Vec2 {
         style: Style = styles[index];
         edges: Edges = pass.EdgesOf(style);
@@ -145,6 +194,9 @@ lantern:::chaosui :: namespace {
         return Vec2 { x: width, y: height };
     }
 
+    /**
+     * The rectangle moved by its `left` or `top` (or `right` or `bottom`) for Relative and Sticky boxes.
+     */
     Nudged :: (pass: LayoutPass, style: Style, rect: Rect, container: Vec2) -> Rect {
         offsetX~ f32 = 0.0f;
         if left := pass.Resolve(style.left, container.x) {
@@ -162,6 +214,12 @@ lantern:::chaosui :: namespace {
         return Rect { min: rect.min + offset, max: rect.max + offset };
     }
 
+    /**
+     * Places a box and then its children, recording each rectangle in `rects`. This is a small flexbox: measure each
+     * child; share what is left of the main length among the children with `flexGrow` in proportion to it (or, if none
+     * grow, use it for the Justify setting); put each child at the cursor, offset across by Align; and advance by its
+     * size, margins and the gap. Out-of-flow children are placed last by PlacePositioned.
+     */
     Arrange :: (pass: LayoutPass, nodes: Array<UiNode>, styles: Array<Style>, rects: Array<Rect~>, index: usize, rect: Rect, containing: Rect) -> void {
         rects[index] = rect;
         style: Style = styles[index];
@@ -283,6 +341,11 @@ lantern:::chaosui :: namespace {
         delete positioned;
     }
 
+    /**
+     * Places an Absolute or Fixed box. Its block is the nearest placed ancestor (or the whole screen for Fixed). With
+     * both `left` and `right` set and no width, the box stretches between them (same for top and bottom). If neither
+     * edge is given it sits where it would have in the line.
+     */
     PlacePositioned :: (pass: LayoutPass, nodes: Array<UiNode>, styles: Array<Style>, rects: Array<Rect~>, index: usize, containing: Rect, staticPosition: Vec2) -> void {
         style: Style = styles[index];
         block~ Rect = containing;
@@ -325,6 +388,11 @@ lantern:::chaosui :: namespace {
         Arrange(pass, nodes, styles, rects, index, Rect:::FromSize(Vec2 { x: x, y: y }, size), containing);
     }
 
+    /**
+     * Lays out a whole UI for a screen. Returns one rectangle per node, in the same order as `nodes`. Each root
+     * (a node with no parent) is measured against the whole screen and placed at its margin, and its children are
+     * arranged inside it.
+     */
     LayOut :: (nodes: Array<UiNode>, styles: Array<Style>, screen: Vec2, scale: f32) -> Array<Rect>! {
         rects~ Array<Rect>! = [];
         for index~ usize = 0; index < nodes.length(); index++ {
