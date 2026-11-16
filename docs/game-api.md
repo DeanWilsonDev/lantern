@@ -1,9 +1,17 @@
 # Game API
 
 Everything a Nyx game can call in the engine. This is the whole seam: game code (Nyx, in
-`games/<name>/`) reaches engine code (Rust) only through these host types, and the engine reaches
-the game only through the hooks below. The registrations are in `crates/game-host/src/api/`, one
-module per group.
+`games/<name>/`) reaches engine code (Nox) only through these host types, and the engine reaches
+the game only through the hooks below. The registrations are in `engine/src/host/`, one `*Api.nox`
+file per group (`MathApi`, `EngineApi`, `InputApi`, `WorldApi`, `AssetsApi`, `PhysicsApi`, `LightsApi`,
+`GraphicsApi`, `SkyApi`, `AtmosphereApi`, `ParticlesApi`, `GameUiApi`, `DebugApi`).
+
+The complete list, with every signature, is the "Signature index" at the end of this page. It is
+written from `games/platformer/engine-host-surface.json`, the manifest `nyx check` and the language
+server read, and a test (`engine/tests/host/the-engine-api-matches-the-committed-host-surface`) fails
+when the registrations and the manifest differ. After adding or changing a call, run the tests with
+`LANTERN_UPDATE_HOST_SURFACE=1` to rewrite the manifest, then update this page. The tutorial for using
+these calls is `adding-a-level-and-a-mechanic.md`.
 
 Every name the engine gives a script is under `lantern:::`, in a lowercase namespace per group:
 `lantern:::input:::IsDown(...)`, `lantern:::world:::Spawn(...)`, `lantern:::math:::Vec3`. Types
@@ -77,9 +85,9 @@ for fixed steps: a press is seen by exactly one fixed step even if a frame runs 
 | `lantern:::input:::IsPressed(action) / IsReleased(action) / IsHeld(action) -> bool` | button state |
 | `lantern:::input:::Axis(action) -> f32`, `lantern:::input:::Vector(action) -> Vec2` | analogue state |
 
-Keys are `A`..`Z`, `Digit0`..`Digit9`, `Up`, `Down`, `Left`, `Right`, `Space`, `Enter`,
-`Escape`, `Tab`, `Backspace`, `LeftShift`, `LeftControl`, `F1`..`F12` and so on: the names of
-`lantern_core::input::KeyCode`.
+Defining an action twice is a script error (`the action 'jump' is defined twice`), and so is a key, button or axis name the engine doesn't know. Keys are `A`..`Z`, `Digit0`..`Digit9`, `Up`, `Down`, `Left`, `Right`, `Space`, `Enter`,
+`Escape`, `Tab`, `Backspace`, `LeftShift`, `LeftControl`, `F1`..`F12` and so on: the names
+`engine/src/host/DeviceNames.nox` turns into `lantern:::core:::KeyCode`s. An unknown name is a script error.
 
 ## World
 
@@ -109,7 +117,7 @@ Keys are `A`..`Z`, `Digit0`..`Digit9`, `Up`, `Down`, `Left`, `Right`, `Space`, `
 | `lantern:::world:::Teleport(entity, position)` | moves without interpolating from the old place |
 | `lantern:::world:::SetYaw(entity, radians)`, `SetScale(entity, scale: Vec3)` | |
 
-World files are made by the editor (`crates/world-format`). The engine builds what's in them;
+World files are made by the editor (the format is `engine/src/world/WorldFile.nox`). The engine builds what's in them;
 the game decides what a kind means.
 
 ## Assets
@@ -270,3 +278,412 @@ The engine fills the `Frame`, `Script`, `Renderer`, `World`, `Audio` and `Errors
 
 Nyx's own `Math` (`sin`, `cos`, `tan`, `atan2`, `asin`, `acos`, `sqrt`, `min`, `max`, `clamp`,
 `TAU`, ...) needs no host.
+
+## Examples
+
+Each snippet is how the platformer (`games/platformer/`) uses the group; the file is named so you can read it in context.
+Names such as `spawnPosition` stand for values the surrounding code has.
+
+**Input** (`settings/input-settings.nyx`, `main.nyx`): name an action, bind devices to it, ask about it each frame.
+
+```nyx
+lantern:::input:::DefineVector("move");
+lantern:::input:::BindKeys("move", "W", "S", "A", "D");
+lantern:::input:::BindStick("move", "Left", 1.0f);
+
+lantern:::input:::DefineButton("jump");
+lantern:::input:::BindKey("jump", "Space");
+lantern:::input:::BindGamepadButton("jump", "South");
+
+stick: lantern:::math:::Vec2 = lantern:::input:::Vector("move");
+jumpPressed: bool = lantern:::input:::IsPressed("jump");
+```
+
+**Assets and world** (`game-assets/game-assets.nyx`, `game-scenes/level-scene.nyx`): load assets, tell the world which
+texture each material uses, load the level, then find the entities by kind.
+
+```nyx
+lantern:::world:::SetMaterial("ground", lantern:::textures:::Load("textures/ground.png"));
+gemMesh := lantern:::meshes:::Load("models/gem.glb");
+count := lantern:::world:::Load("worlds/course.world.json");
+for entity: i64 in lantern:::world:::FindByKind("gem") {
+    lantern:::world:::SetMesh(entity, gemMesh, "FFFFFF");
+}
+```
+
+(`textures:::Load` and `meshes:::Load` throw `Error:::NotFound` when a file is missing; the platformer catches that with
+`when` and falls back to a generated texture or mesh, `Solid`, `Checker`, `Gem`.)
+
+**Physics** (`game-entities/player.nyx`, `game-systems/third-person-camera.nyx`): a character controller, and a cast that
+keeps the camera out of walls.
+
+```nyx
+controller := new lantern:::physics:::CharacterController(radius, height, spawnPosition);
+step := controller.Step(moveDirection, jumpPressed, jumpHeld, dt);
+if step.Jumped() {
+    lantern:::audio:::Play("jump", 1.0f);
+}
+allowedDistance := when lantern:::physics:::SphereCast(0.2f, pivot, backward * distance) {
+    fraction: f32 -> Math:::max(distance * fraction, 0.5f),
+    null -> distance
+};
+```
+
+**Camera and screen** (`game-systems/third-person-camera.nyx`, `main.nyx`):
+
+```nyx
+lantern:::camera:::LookAt(pivot + backward * currentDistance, pivot);
+lantern:::screen:::SetMouseCaptured(true);
+```
+
+**Lights** (`game-systems/level-lighting.nyx`): the sun once, lamps as handles you can remove.
+
+```nyx
+lantern:::lights:::SetSun(LightingSettings:::SunDirection(), sun, skyAmbient, groundAmbient);
+lampId := lantern:::lights:::AddPoint(lampPosition, LightingSettings:::LAMP_COLOR, LightingSettings:::LAMP_STRENGTH, LightingSettings:::LAMP_RANGE);
+lantern:::lights:::SetShadows(lampId, true);
+lantern:::lights:::Remove(lampId);
+```
+
+**Sky, fog and particles** (`settings/chapter-looks.nyx`, `game-systems/dust.nyx`):
+
+```nyx
+lantern:::sky:::SetColors(zenith, horizon, ground);
+lantern:::renderer:::SetClearColor(horizon);
+lantern:::atmosphere:::SetFogColor(horizon, 0.5f);
+lantern:::renderer:::SetFog(fogStart, fogEnd);
+lantern:::particles:::Emit(at, velocity, "C8B89A", 0.4f, 0.05f, 6.0f);
+```
+
+**Graphics** (`game-entities/player.nyx`): a blob shadow under the player each frame. The other graphics calls are in
+`quality-settings.md`.
+
+```nyx
+lantern:::graphics:::AddBlobShadow(blobCenter, blobRadius, 0.55f);
+```
+
+**Audio, UI and debug** (`main.nyx`, `game-state/`, `game-systems/`):
+
+```nyx
+lantern:::audio:::Load("jump", "sounds/jump.wav");
+lantern:::audio:::PlayMusic("theme");
+lantern:::ui:::SetNavigation("menu_up", "menu_down", "menu_confirm");
+lantern:::ui:::Mount("ui/game-screen.chaos", "GameScreen");
+lantern:::debug:::SetValue("Player/Speed", `${velocity.Horizontal().Length():.2f}`);
+```
+
+`lantern:::overlay:::Text` and `Rect` draw quick text and boxes from `OnRender`; the platformer uses Chaos components for
+all its text instead.
+
+## Signature index
+
+Every function the engine registers, as `games/platformer/engine-host-surface.json` lists it, in the order they are registered. `lantern:::ui:::Element` is the type a Chaos component returns; `Component` is the base class a game application derives from.
+
+
+### `lantern:::angle`
+
+| Function | Signature |
+| --- | --- |
+| `Wrap` | `(radians: f32) -> f32` |
+| `ToDegrees` | `(radians: f32) -> f32` |
+
+### `lantern:::engine`
+
+| Function | Signature |
+| --- | --- |
+| `Log` | `(text: string) -> void` |
+| `Warn` | `(text: string) -> void` |
+| `Quit` | `() -> void` |
+| `Flag` | `(name: string) -> bool` |
+| `Setting` | `(name: string) -> string` |
+
+### `lantern:::input`
+
+| Function | Signature |
+| --- | --- |
+| `DefineButton` | `(name: string) -> void` |
+| `DefineAxis` | `(name: string) -> void` |
+| `DefineVector` | `(name: string) -> void` |
+| `BindKey` | `(action: string, key: string) -> void` |
+| `BindMouseButton` | `(action: string, button: string) -> void` |
+| `BindGamepadButton` | `(action: string, button: string) -> void` |
+| `BindGamepadAxisButton` | `(action: string, axis: string, threshold: f32) -> void` |
+| `BindKeyAxis` | `(action: string, negative: string, positive: string) -> void` |
+| `BindGamepadAxis` | `(action: string, axis: string, scale: f32) -> void` |
+| `BindKeys` | `(action: string, up: string, down: string, left: string, right: string) -> void` |
+| `BindStick` | `(action: string, stick: string, scale: f32) -> void` |
+| `BindMouseMotion` | `(action: string, scale: f32) -> void` |
+| `IsPressed` | `(action: string) -> bool` |
+| `IsReleased` | `(action: string) -> bool` |
+| `IsHeld` | `(action: string) -> bool` |
+| `Axis` | `(action: string) -> f32` |
+| `Vector` | `(action: string) -> lantern:::math:::Vec2` |
+
+### `lantern:::world`
+
+| Function | Signature |
+| --- | --- |
+| `Load` | `(path: string) -> i32` |
+| `Clear` | `() -> void` |
+| `Spawn` | `(name: string, position: lantern:::math:::Vec3) -> i64` |
+| `Despawn` | `(entity: i64) -> void` |
+| `Find` | `(name: string) -> i64` |
+| `FindByKind` | `(kind: string) -> Array<i64>` |
+| `Kind` | `(entity: i64) -> string` |
+| `HasProperty` | `(entity: i64, key: string) -> bool` |
+| `NumberProperty` | `(entity: i64, key: string) -> f32` |
+| `TextProperty` | `(entity: i64, key: string) -> string` |
+| `VectorProperty` | `(entity: i64, key: string) -> lantern:::math:::Vec3` |
+| `SetMaterial` | `(material: string, texture: i64) -> void` |
+| `SetMesh` | `(entity: i64, mesh: i64, tint: string) -> void` |
+| `SetTexturedMesh` | `(entity: i64, mesh: i64, texture: i64, tint: string) -> void` |
+| `SetNormalMap` | `(entity: i64, texture: i64, strength: f32) -> void` |
+| `SetTint` | `(entity: i64, tint: string) -> void` |
+| `SetSurface` | `(entity: i64, metallic: f32, roughness: f32, emissive: string) -> void` |
+| `SetGlow` | `(entity: i64, color: string, strength: f32) -> void` |
+| `SetCastsShadows` | `(entity: i64, castsShadows: bool) -> void` |
+| `SetParent` | `(child: i64, parent: i64) -> void` |
+| `Position` | `(entity: i64) -> lantern:::math:::Vec3` |
+| `WorldPosition` | `(entity: i64) -> lantern:::math:::Vec3` |
+| `InterpolatedPosition` | `(entity: i64, alpha: f32) -> lantern:::math:::Vec3` |
+| `SetPosition` | `(entity: i64, position: lantern:::math:::Vec3) -> void` |
+| `Teleport` | `(entity: i64, position: lantern:::math:::Vec3) -> void` |
+| `SetYaw` | `(entity: i64, yaw: f32) -> void` |
+| `SetScale` | `(entity: i64, scale: lantern:::math:::Vec3) -> void` |
+| `IsVisible` | `(entity: i64) -> bool` |
+| `SetVisible` | `(entity: i64, visible: bool) -> void` |
+
+### `lantern:::textures`
+
+| Function | Signature |
+| --- | --- |
+| `Load` | `(path: string) -> i64` |
+| `Checker` | `(size: i32, cells: i32, first: string, second: string) -> i64` |
+| `Bumps` | `(size: i32, cells: i32, steepness: f32) -> i64` |
+| `Solid` | `(color: string) -> i64` |
+
+### `lantern:::meshes`
+
+| Function | Signature |
+| --- | --- |
+| `Load` | `(path: string) -> i64` |
+| `Capsule` | `(radius: f32, halfHeight: f32, segments: i32, rings: i32) -> i64` |
+| `Sphere` | `(radius: f32, segments: i32, rings: i32) -> i64` |
+| `Cube` | `(size: f32) -> i64` |
+| `Gem` | `(radius: f32, height: f32) -> i64` |
+
+### `lantern:::physics`
+
+| Function | Signature |
+| --- | --- |
+| `Raycast` | `(origin: lantern:::math:::Vec3, direction: lantern:::math:::Vec3, maxDistance: f32) -> lantern:::physics:::RayHit?` |
+| `SphereCast` | `(radius: f32, origin: lantern:::math:::Vec3, motion: lantern:::math:::Vec3) -> f32?` |
+
+### `lantern:::camera`
+
+| Function | Signature |
+| --- | --- |
+| `LookAt` | `(eye: lantern:::math:::Vec3, target: lantern:::math:::Vec3) -> void` |
+
+### `lantern:::renderer`
+
+| Function | Signature |
+| --- | --- |
+| `SetClearColor` | `(color: string) -> void` |
+| `SetFog` | `(start: f32, end: f32) -> void` |
+
+### `lantern:::screen`
+
+| Function | Signature |
+| --- | --- |
+| `Width` | `() -> f32` |
+| `Height` | `() -> f32` |
+| `UiScale` | `() -> f32` |
+| `SetMouseCaptured` | `(captured: bool) -> void` |
+
+### `lantern:::lights`
+
+| Function | Signature |
+| --- | --- |
+| `SetSun` | `(direction: lantern:::math:::Vec3, color: string, skyAmbient: string, groundAmbient: string) -> void` |
+| `SetSunShadows` | `(enabled: bool) -> void` |
+| `SetShadowQuality` | `(enabled: bool, sunMapSize: i64, localTileSize: i64, distance: f32) -> void` |
+| `SetShadowSoftness` | `(softness: f32, samples: i64, blendCascades: bool) -> void` |
+| `AddPoint` | `(position: lantern:::math:::Vec3, color: string, strength: f32, range: f32) -> i64` |
+| `AddSpot` | `(position: lantern:::math:::Vec3, target: lantern:::math:::Vec3, color: string, strength: f32, range: f32, innerDegrees: f32, outerDegrees: f32) -> i64` |
+| `Move` | `(light: i64, position: lantern:::math:::Vec3) -> void` |
+| `Aim` | `(light: i64, target: lantern:::math:::Vec3) -> void` |
+| `SetColor` | `(light: i64, color: string, strength: f32) -> void` |
+| `SetShadows` | `(light: i64, enabled: bool) -> void` |
+| `Remove` | `(light: i64) -> void` |
+| `Count` | `() -> i64` |
+
+### `lantern:::graphics`
+
+| Function | Signature |
+| --- | --- |
+| `SetQuality` | `(level: string) -> void` |
+| `SetBloom` | `(enabled: bool, strength: f32, threshold: f32) -> void` |
+| `SetAntiAliasing` | `(enabled: bool) -> void` |
+| `SetAmbientOcclusion` | `(enabled: bool, radius: f32, intensity: f32) -> void` |
+| `AddBlobShadow` | `(center: lantern:::math:::Vec3, radius: f32, strength: f32) -> void` |
+| `SetBlobShadows` | `(enabled: bool) -> void` |
+| `SetColorGrade` | `(saturation: f32, contrast: f32, tint: string, vignette: f32) -> void` |
+| `SetExposure` | `(exposure: f32) -> void` |
+| `SetToneMapper` | `(name: string) -> void` |
+
+### `lantern:::sky`
+
+| Function | Signature |
+| --- | --- |
+| `SetColors` | `(zenith: string, horizon: string, ground: string) -> void` |
+| `SetSunDisc` | `(radiusDegrees: f32, strength: f32) -> void` |
+| `SetLighting` | `(strength: f32, intensity: f32) -> void` |
+| `SetEnabled` | `(enabled: bool) -> void` |
+
+### `lantern:::atmosphere`
+
+| Function | Signature |
+| --- | --- |
+| `SetHeightFog` | `(enabled: bool, density: f32, heightFalloff: f32, baseHeight: f32) -> void` |
+| `SetFogColor` | `(color: string, sunScattering: f32) -> void` |
+| `SetLightShafts` | `(enabled: bool, strength: f32, decay: f32) -> void` |
+
+### `lantern:::particles`
+
+| Function | Signature |
+| --- | --- |
+| `Emit` | `(position: lantern:::math:::Vec3, velocity: lantern:::math:::Vec3, color: string, life: f32, length: f32, gravity: f32) -> void` |
+| `Clear` | `() -> void` |
+| `Count` | `() -> i64` |
+
+### `lantern:::audio`
+
+| Function | Signature |
+| --- | --- |
+| `Load` | `(name: string, path: string) -> void` |
+| `Play` | `(name: string, volume: f32) -> void` |
+| `PlayMusic` | `(name: string) -> void` |
+| `StopMusic` | `() -> void` |
+
+### `lantern:::overlay`
+
+| Function | Signature |
+| --- | --- |
+| `Rect` | `(x: f32, y: f32, width: f32, height: f32, color: string) -> void` |
+| `Text` | `(text: string, x: f32, y: f32, scale: f32, color: string) -> void` |
+| `TextWidth` | `(text: string, scale: f32) -> f32` |
+| `TextHeight` | `(text: string, scale: f32) -> f32` |
+| `GlyphSize` | `() -> f32` |
+
+### `lantern:::ui`
+
+| Function | Signature |
+| --- | --- |
+| `Mount` | `(file: string, component: string) -> i32` |
+| `Unmount` | `(mount: i32) -> void` |
+| `SetNavigation` | `(previous: string, next: string, confirm: string) -> void` |
+
+### `lantern:::debug`
+
+| Function | Signature |
+| --- | --- |
+| `SetValue` | `(path: string, value: string) -> void` |
+| `IsHudVisible` | `() -> bool` |
+| `SetHudVisible` | `(visible: bool) -> void` |
+| `Capsule` | `(center: lantern:::math:::Vec3, radius: f32, halfSegment: f32, color: string) -> void` |
+| `Sphere` | `(center: lantern:::math:::Vec3, radius: f32, color: string) -> void` |
+| `Arrow` | `(start: lantern:::math:::Vec3, vector: lantern:::math:::Vec3, color: string) -> void` |
+| `Line` | `(start: lantern:::math:::Vec3, end: lantern:::math:::Vec3, color: string) -> void` |
+| `CollisionNear` | `(center: lantern:::math:::Vec3, halfExtent: f32, color: string) -> void` |
+
+### Types
+
+
+#### `lantern:::math:::Vec3`
+
+| Member | Signature |
+| --- | --- |
+| field `x` | `() -> f32` |
+| field `y` | `() -> f32` |
+| field `z` | `() -> f32` |
+| static `Zero` | `() -> lantern:::math:::Vec3` |
+| static `Up` | `() -> lantern:::math:::Vec3` |
+| static `Down` | `() -> lantern:::math:::Vec3` |
+| static `FromYaw` | `(yaw: f32) -> lantern:::math:::Vec3` |
+| method `Cross` | `(other: lantern:::math:::Vec3) -> lantern:::math:::Vec3` |
+| method `Normalized` | `() -> lantern:::math:::Vec3` |
+| method `Horizontal` | `() -> lantern:::math:::Vec3` |
+| method `WithX` | `(x: f32) -> lantern:::math:::Vec3` |
+| method `WithY` | `(y: f32) -> lantern:::math:::Vec3` |
+| method `WithZ` | `(z: f32) -> lantern:::math:::Vec3` |
+| method `ClampLength` | `(maximum: f32) -> lantern:::math:::Vec3` |
+| method `Lerp` | `(other: lantern:::math:::Vec3, t: f32) -> lantern:::math:::Vec3` |
+| method `Clamp` | `(minimum: lantern:::math:::Vec3, maximum: lantern:::math:::Vec3) -> lantern:::math:::Vec3` |
+| method `Dot` | `(other: lantern:::math:::Vec3) -> f32` |
+| method `Length` | `() -> f32` |
+| method `LengthSquared` | `() -> f32` |
+| method `DistanceTo` | `(other: lantern:::math:::Vec3) -> f32` |
+| method `Yaw` | `() -> f32` |
+| operator `+` | `(other: lantern:::math:::Vec3) -> lantern:::math:::Vec3` |
+| operator `-` | `(other: lantern:::math:::Vec3) -> lantern:::math:::Vec3` |
+| operator `*` | `(scalar: f32) -> lantern:::math:::Vec3` |
+| operator `/` | `(scalar: f32) -> lantern:::math:::Vec3` |
+| operator `-` | `() -> lantern:::math:::Vec3` |
+
+#### `lantern:::math:::Vec2`
+
+| Member | Signature |
+| --- | --- |
+| field `x` | `() -> f32` |
+| field `y` | `() -> f32` |
+| static `Zero` | `() -> lantern:::math:::Vec2` |
+| method `Length` | `() -> f32` |
+| method `ClampLength` | `(maximum: f32) -> lantern:::math:::Vec2` |
+| method `Normalized` | `() -> lantern:::math:::Vec2` |
+| operator `-` | `() -> lantern:::math:::Vec2` |
+| operator `+` | `(other: lantern:::math:::Vec2) -> lantern:::math:::Vec2` |
+| operator `-` | `(other: lantern:::math:::Vec2) -> lantern:::math:::Vec2` |
+| operator `*` | `(scalar: f32) -> lantern:::math:::Vec2` |
+| operator `/` | `(scalar: f32) -> lantern:::math:::Vec2` |
+
+#### `lantern:::physics:::RayHit`
+
+| Member | Signature |
+| --- | --- |
+| method `Distance` | `() -> f32` |
+| method `Point` | `() -> lantern:::math:::Vec3` |
+| method `Normal` | `() -> lantern:::math:::Vec3` |
+
+#### `lantern:::physics:::ControllerStep`
+
+| Member | Signature |
+| --- | --- |
+| method `Jumped` | `() -> bool` |
+| method `Landed` | `() -> bool` |
+| method `LandingSpeed` | `() -> f32` |
+| method `HitCeiling` | `() -> bool` |
+
+#### `lantern:::physics:::CharacterController`
+
+| Member | Signature |
+| --- | --- |
+| constructor `constructor` | `(radius: f32, height: f32, feet: lantern:::math:::Vec3) -> void` |
+| method `Step` | `(moveDirection: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> lantern:::physics:::ControllerStep` |
+| method `Teleport` | `(feet: lantern:::math:::Vec3) -> void` |
+| method `FeetPosition` | `() -> lantern:::math:::Vec3` |
+| method `CapsuleCenter` | `() -> lantern:::math:::Vec3` |
+| method `Velocity` | `() -> lantern:::math:::Vec3` |
+| method `GroundNormal` | `() -> lantern:::math:::Vec3` |
+| method `IsGrounded` | `() -> bool` |
+| method `Radius` | `() -> f32` |
+| method `Height` | `() -> f32` |
+| method `HalfSegment` | `() -> f32` |
+| method `SetWalkSpeed` | `(metresPerSecond: f32) -> void` |
+| method `SetJumpHeight` | `(metres: f32) -> void` |
+| method `SetGravity` | `(metresPerSecondSquared: f32) -> void` |
+
+#### `lantern:::ui:::Element`
+
+A handle type with no members of its own; it is only passed around.
+

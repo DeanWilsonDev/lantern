@@ -17,7 +17,8 @@ to be read in order: the first three under "Start here" give you the whole pictu
 
 | Document | What it tells you |
 | --- | --- |
-| [`game-api.md`](game-api.md) | Every host function and type a Nyx game can call, and the hooks the engine calls. |
+| [`game-api.md`](game-api.md) | Every host function and type a Nyx game can call with its signature, examples from the platformer, and the hooks the engine calls. |
+| [`adding-a-level-and-a-mechanic.md`](adding-a-level-and-a-mechanic.md) | A tutorial: make a level, put it on the menu, then add a mechanic through an entity, a system, an event and a rule, and test it. |
 | [`crimson-and-thorn-slice.md`](crimson-and-thorn-slice.md) | Which design mechanics the platformer takes on, in what order, and where each lives in `games/platformer/`. |
 
 ## The renderer's effects
