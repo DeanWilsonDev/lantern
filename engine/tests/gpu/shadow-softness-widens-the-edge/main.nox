@@ -1,0 +1,129 @@
+// A sunlit white cube on a white floor, rendered with a sharp and then a soft shadow filter. The row of pixels across the
+// shadow's far edge goes from dark to lit; a wider filter spreads that change over more pixels, so more of them are
+// neither dark nor lit. Counting those is the test.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+SunWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->post.ambientOcclusionEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: lantern:::core:::Normalize3(Vec3 { x: 1.0f, y: -1.0f, z: 0.0f }),
+        color: lantern:::core:::Color:::White(),
+        ambient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 14.0f, z: 0.01f }, Vec3 { });
+    return world!;
+}
+
+PartlyLitCount :: (pixels: Array<u8>, width: u32, row: u32) -> u32 {
+    darkest~ u8 = 255;
+    brightest~ u8 = 0;
+    for x~ u32 = 0; x < width; x++ {
+        red: u8 = PixelAt(pixels, width, x, row)[0];
+        if red < darkest {
+            darkest = red;
+        }
+        if red > brightest {
+            brightest = red;
+        }
+    }
+    low: u32 = u32(darkest) + (u32(brightest) - u32(darkest)) / 5;
+    high: u32 = u32(brightest) - (u32(brightest) - u32(darkest)) / 5;
+    partly~ u32 = 0;
+    for x~ u32 = 0; x < width; x++ {
+        red: u32 = u32(PixelAt(pixels, width, x, row)[0]);
+        if red > low && red < high {
+            partly++;
+        }
+    }
+    return partly;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(40.0f, 40.0f);
+            defer delete floorData;
+            cubeData := lantern:::renderer:::Cube(2.0f);
+            defer delete cubeData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->CreateMesh(cubeData) {
+                Result:::Ok(handle) -> {
+                    cube = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 256;
+            white := lantern:::core:::Color:::White();
+            world := SunWorld();
+            defer delete world;
+            world->Draw(floor, null, Mat4 { }, white);
+            world->Draw(cube, null, Mat4:::translation(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }), white);
+
+            world->shadows.softness = 0.5f;
+            partlyWithSharp~ u32 = 0;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    partlyWithSharp = PartlyLitCount(pixels, size, 128);
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            world->shadows.softness = 5.0f;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    partlyWithSoft: u32 = PartlyLitCount(pixels, size, 128);
+                    if !(partlyWithSoft > partlyWithSharp + 2) {
+                        print(`partly lit pixels in the row: sharp ${partlyWithSharp}, soft ${partlyWithSoft}`);
+                    }
+                    assert(partlyWithSoft > partlyWithSharp + 2, "a wider shadow filter makes a wider penumbra");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("shadow softness widens the edge");
+    return 0;
+}

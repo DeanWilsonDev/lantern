@@ -143,3 +143,7 @@ The platformer's gems use it: a smooth non-metal that glows pale blue, at four t
 | Shadows missing | `SetSunShadows(true)`, `SetShadows(light, true)` and `SetShadowQuality(true, ...)` must all be on, and the mesh must cast shadows. |
 | A lamp seems to do nothing | Its `range` may be too small, or eight nearer lights took its place. |
 | Shadows too dark | Raise the sky and ground ambient. |
+
+## Soft edges and cascade seams
+
+The shadow filter's width, its sample count and the fade between the sun's cascades are explained in `shadow-softness-and-cascade-blending.md`.

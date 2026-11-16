@@ -138,13 +138,14 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::camera:::LookAt(eye, target)` | this frame's camera |
 | `lantern:::renderer:::SetClearColor(color)`, `lantern:::renderer:::SetFog(start, end)` | |
-| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing, ambient occlusion and light shafts off; see `bloom-and-tone-mapping.md` |
+| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing, ambient occlusion and light shafts off and uses fewer shadow lookups; see `bloom-and-tone-mapping.md` |
 | `lantern:::graphics:::SetAntiAliasing(enabled)` | smooth jagged edges with FXAA (on by default); see `anti-aliasing.md` |
 | `lantern:::graphics:::SetAmbientOcclusion(enabled, radius, intensity)` | darken creases and contact points from the depth buffer (radius in metres, intensity 0 to 1); see `ambient-occlusion.md` |
 | `lantern:::graphics:::SetBloom(enabled, strength, threshold)` | the glow around bright things: how much is added back and the brightness where it starts (1 is a white wall in full sun) |
 | `lantern:::graphics:::SetExposure(exposure)`, `lantern:::graphics:::SetToneMapper(name)` | a brightness knob applied before the curve, and the curve itself: `"none"`, `"neutral"` or `"aces"` |
 | `lantern:::lights:::SetSun(direction, color, skyAmbient, groundAmbient)` | the sun and the ambient light; colours are `"RRGGBB"` |
 | `lantern:::lights:::SetSunShadows(enabled)`, `lantern:::lights:::SetShadowQuality(enabled, sunMapSize, localTileSize, distance)` | whether the sun casts shadows; the shadow master switch, map sizes in pixels (256 to 4096) and how far the sun's shadows reach |
+| `lantern:::lights:::SetShadowSoftness(softness, samples, blendCascades)` | how soft shadow edges are (filter radius in map texels, 0.5 to 6), how many lookups the filter makes (1 to 32) and whether cascades fade into each other; see `shadow-softness-and-cascade-blending.md` |
 | `lantern:::lights:::AddPoint(position, color, strength, range) -> i64` | a point light; the id names it from now on |
 | `lantern:::lights:::AddSpot(position, target, color, strength, range, innerDegrees, outerDegrees) -> i64` | a spot light |
 | `lantern:::lights:::Move(light, position)`, `Aim(light, target)`, `SetColor(light, color, strength)`, `SetShadows(light, enabled)`, `Remove(light)`, `Count() -> i64` | change a light by id; lights stay until removed or the game reloads |
