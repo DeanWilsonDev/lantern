@@ -1,5 +1,8 @@
 Autopilot :: import Autopilot;
+BoostSystem :: import BoostSystem;
+CheckpointSystem :: import CheckpointSystem;
 CollisionView :: import CollisionView;
+Companion :: import Companion;
 GameAssets :: import GameAssets;
 GameEvent :: import GameEvent;
 GameEvents :: import GameEvents;
@@ -13,6 +16,7 @@ MenuChoice :: import MenuChoice;
 MovingPlatform :: import MovingPlatform;
 Player :: import Player;
 PlayerTuning :: import PlayerTuning;
+StreetsAutopilot :: import StreetsAutopilot;
 ThirdPersonCamera :: import ThirdPersonCamera;
 
 // The Lantern platformer. The engine calls the hooks below; everything
@@ -133,11 +137,14 @@ public:
 private:
     static LEVEL_PATH :: "worlds/course.world.json";
 
-    // The world editor's Play button sets LANTERN_LEVEL to the level being edited.
+    // The level the menu picked, else the world editor's Play button's level, else the course.
+    // The editor's Play button sets LANTERN_LEVEL to the level being edited.
     LevelPath:: () -> string {
+        guard pickedLevelPath == "" return pickedLevelPath;
         levelFromSetting := lantern:::engine:::Setting("LANTERN_LEVEL");
         return levelFromSetting == "" ? LEVEL_PATH : levelFromSetting;
     }
+    static STREETS_PATH :: "worlds/streets.world.json";
     static MAIN_MENU_ORBIT_SPEED :: 0.15f;    // radians per second behind the title screen
 
     // The game's modules, one object each, one per folder (assets, scenes, entities, systems,
@@ -148,6 +155,8 @@ private:
     player~ Player = new Player();
     camera~ ThirdPersonCamera = new ThirdPersonCamera();
     gemSystem~ GemSystem = new GemSystem();
+    checkpointSystem~ CheckpointSystem = new CheckpointSystem();
+    companion~ Companion = new Companion();
     rules~ GameRules = new GameRules();
     events~ GameEvents = new GameEvents();
     state~ GameState = GameState:::MainMenu;
@@ -155,15 +164,18 @@ private:
     // (platforms, gems, the autopilot) reads this rather than wall-clock time, so it pauses with
     // the game and plays out identically on every run.
     simulationSeconds~ f32 = 0.0f;
+    // "" until the main menu's "The streets" button picks a level.
+    pickedLevelPath~ string = "";
     isAutoplay~ bool = false;
     showCollisionView~ bool = false;
 
     // Loads the level and puts every module back to its starting state. Used on start, on
     // "Restart level" and on going back to the main menu.
     StartLevel~: () -> void {
-        loaded := level.Load(LevelPath(), assets.gemMesh);
+        loaded := level.Load(LevelPath(), assets.gemMesh, assets.unitCubeMesh);
         guard loaded throw;
         player.Spawn(assets, level.spawnPosition);
+        companion.Spawn(level.companionStops, assets.playerMesh, assets.playerTexture);
         gemSystem.Clear();
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
@@ -196,21 +208,41 @@ private:
 
         // Input is read per fixed step, not per frame: the engine latches presses so each one is
         // seen by exactly one fixed step, even on a frame that runs none.
-        stick := isAutoplay ? Autopilot:::Stick() : lantern:::input:::Vector(InputSettings:::MOVE);
-        jumpPressed := isAutoplay ? Autopilot:::JumpPressed(simulationSeconds) : lantern:::input:::IsPressed(InputSettings:::JUMP);
-        jumpHeld := isAutoplay ? Autopilot:::JumpHeld(simulationSeconds) : lantern:::input:::IsHeld(InputSettings:::JUMP);
+        // The autopilot has one script per level: the course's runs forward and jumps, the
+        // streets' plays the level through (StreetsAutopilot).
+        isStreets := LevelPath() == STREETS_PATH;
+        stick~ lantern:::math:::Vec2 = lantern:::input:::Vector(InputSettings:::MOVE);
+        jumpPressed~ bool = lantern:::input:::IsPressed(InputSettings:::JUMP);
+        jumpHeld~ bool = lantern:::input:::IsHeld(InputSettings:::JUMP);
+        if isAutoplay && isStreets {
+            stick = StreetsAutopilot:::Stick(simulationSeconds);
+            jumpPressed = StreetsAutopilot:::JumpPressed(simulationSeconds);
+            jumpHeld = StreetsAutopilot:::JumpHeld(simulationSeconds);
+        } else if isAutoplay {
+            stick = Autopilot:::Stick();
+            jumpPressed = Autopilot:::JumpPressed(simulationSeconds);
+            jumpHeld = Autopilot:::JumpHeld(simulationSeconds);
+        }
         // The camera's forward and right let "push up" mean "away from the camera", wherever
         // the camera is looking (Player.Move does the conversion).
-        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, dt);
+        // The companion's crouch makes the next jump a boost (BoostSystem), when the player is
+        // standing on her spot and presses jump this step.
+        boostReady := BoostSystem:::IsReady(companion, player.FeetPosition(), player.controller.IsGrounded());
+        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, boostReady, dt);
+        companion.Update(player.FeetPosition(), dt);
 
         if step.Jumped() {
             events.Push(GameEvent:::PlayerJumped);
+            if boostReady && jumpPressed {
+                events.Push(GameEvent:::PlayerBoosted);
+            }
         }
         if step.Landed() {
             events.Push(GameEvent:::PlayerLanded(step.LandingSpeed()));
         }
         controller := player.controller;
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         // The kill plane is just a height: once the feet drop below it, the player has fallen
         // off the course.
         if player.FeetPosition().y < level.killHeight {
@@ -220,7 +252,7 @@ private:
             events.Push(GameEvent:::ResetPressed);
         }
         for event: GameEvent in events.Drain() {
-            rules.Handle(event, level, player, camera);
+            rules.Handle(event, level, player, camera, companion);
         }
         gemSystem.Animate(level.gems, simulationSeconds);
     }
@@ -246,11 +278,22 @@ private:
         camera.Look(lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
     }
 
+    // Starts the level at `path` ("" is the course, or the editor's level) from the main menu.
+    // The title screen's level is loaded already, so choosing the same one again just resumes.
+    PlayLevel~: (path: string) -> void {
+        if path != pickedLevelPath {
+            pickedLevelPath = path;
+            StartLevel();
+        }
+        SetState(GameState:::Playing);
+    }
+
     // Acts on a menu button (ui/main-menu.chaos, ui/pause-menu.chaos). The menus only record
     // what was chosen; the state machine stays here.
     HandleMenuChoice~: (choice: MenuChoice) -> void {
         when choice <MenuChoice> {
-            Play -> { SetState(GameState:::Playing); },
+            Play -> { PlayLevel(""); },
+            PlayStreets -> { PlayLevel(STREETS_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
                 StartLevel();
@@ -278,6 +321,10 @@ private:
         lantern:::debug:::SetValue("Camera/Yaw", `${lantern:::angle:::ToDegrees(camera.yaw):.1f}`);
         lantern:::debug:::SetValue("Camera/Pitch", `${lantern:::angle:::ToDegrees(camera.pitch):.1f}`);
         lantern:::debug:::SetValue("Game/Gems", `${rules.collected:d} / ${level.gems.length():d}`);
+        respawn := rules.respawnPosition;
+        lantern:::debug:::SetValue("Game/Respawn", `${respawn.x:.2f}, ${respawn.y:.2f}, ${respawn.z:.2f}`);
+        lantern:::debug:::SetValue("Companion/Stop", `${companion.stopIndex:d}`);
+        lantern:::debug:::SetValue("Companion/Offering boost", companion.IsOfferingBoost() ? "yes" : "no");
         lantern:::debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
     }
 }

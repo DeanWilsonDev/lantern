@@ -1,0 +1,63 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+HoldTwoKeys :: (platform: lantern:::testing:::ScriptedPlatform~*, first: lantern:::core:::KeyCode, second: lantern:::core:::KeyCode, frames: usize) -> void {
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(first, false));
+    platform->AddEventToLastFrame(lantern:::platform:::PlatformEvent:::KeyDown(second, false));
+    lantern:::testing:::QueueFrames(platform, frames - 1);
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(first));
+    platform->AddEventToLastFrame(lantern:::platform:::PlatformEvent:::KeyUp(second));
+}
+
+FeetHeight :: (host: lantern:::host:::GameHost*) -> f32 {
+    return lantern:::testing:::SecondComponent(lantern:::testing:::DebugText(host, "Player/Position"));
+}
+
+main :: () -> i32 {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, false);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Down);
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Enter);
+    lantern:::testing:::QueueFrames(platform, 30);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    lantern:::testing:::AssertNoScriptError(host, "after choosing the streets");
+    assert(lantern:::testing:::DebugText(host, "Game/Gems") == "0 / 5", "the streets have five gems");
+    assert(lantern:::testing:::DebugText(host, "Companion/Stop") == "0", "the companion waits at her first stop");
+
+    lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::A, 15);
+    lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::W, 80);
+    HoldTwoKeys(platform, lantern:::core:::KeyCode:::W, lantern:::core:::KeyCode:::Space, 24);
+    lantern:::testing:::QueueFrames(platform, 6);
+    HoldTwoKeys(platform, lantern:::core:::KeyCode:::W, lantern:::core:::KeyCode:::Space, 24);
+    lantern:::testing:::QueueFrames(platform, 20);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(FeetHeight(host) > 2.1f, "the crate gets the player up the 2.2 m street, which a normal jump can't");
+    assert(lantern:::testing:::DebugText(host, "Game/Gems") == "1 / 5", "the gem on the crate was collected");
+
+    lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::D, 14);
+    lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::W, 160);
+    lantern:::testing:::QueueFrames(platform, 120);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(lantern:::testing:::DebugText(host, "Companion/Offering boost") == "yes", "the companion crouches at the wall and offers the boost");
+    assert(FeetHeight(host) < 2.3f, "the player is still on the upper street");
+
+    HoldTwoKeys(platform, lantern:::core:::KeyCode:::W, lantern:::core:::KeyCode:::Space, 50);
+    lantern:::testing:::QueueFrames(platform, 40);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    lantern:::testing:::AssertNoScriptError(host, "after the boost");
+    assert(FeetHeight(host) > 5.3f, "the boost reaches the 5.4 m rooftop");
+    assert(lantern:::testing:::DebugText(host, "Companion/Stop") == "3", "the companion followed up to the rooftop");
+    assert(lantern:::testing:::DebugText(host, "Companion/Offering boost") == "no", "the boost was used");
+    assert(lantern:::testing:::DebugText(host, "Game/Respawn") == "0.00, 5.40, -30.50", "the rooftop checkpoint is the respawn point");
+
+    delete frameLoop;
+    delete platform;
+    delete host;
+    delete manifest;
+    print("the streets teach the boost");
+    return 0;
+}

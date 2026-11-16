@@ -921,3 +921,25 @@ Thorn design documents. `crimson-and-thorn-slice.md` maps every mechanic to now,
   on `engine-follow-ups` before it is worked around.
 
 Cards: `platformer-game/crimson-and-thorn-slice`.
+
+## D-059 Slice 1 of the Crimson and Thorn mechanics: the streets
+
+The first slice (`crimson-and-thorn-slice.md`) is playable from the main menu's "The streets" button.
+
+- **The Boost is a taller take-off, not a new move.** The controller works the take-off speed out from its jump height
+  when the jump starts, so `Player.Move` sets `BOOST_JUMP_HEIGHT` (3.6 m) for the one step that starts a boosted jump and
+  puts the normal 1.5 m back. Gravity and the variable-height rule are untouched. 3.6 m is a first guess for Dean to feel:
+  the level's ledges (2.2 m with a crate, 3.2 m with the boost) leave 0.4 m of margin.
+- **The companion is data and a few lines.** Her route is a list of `companion_stop` entities sorted by `order`. She walks
+  when the player is within 4 m along the ground, waits at a `boost` stop until the boost is used, and climbs a stop that is
+  straight above the last one at the stop's `speed`. There is no pathfinding, as the design says.
+- **A fall costs a walk.** Checkpoints keep gems and send the companion back to the stop the checkpoint names. `R` still
+  restarts the whole level.
+- **No `boost_spot` kind.** The boost stop already says where she crouches, so a second marker would only repeat it.
+- **The autopilot has a script per level.** `LANTERN_AUTOPLAY=1` on the streets plays the level through (it is open-loop,
+  a function of the simulation clock), which gives smoke runs and screenshots. The engine test drives the same route
+  with the keyboard.
+- **The menu picks the level.** `Play` loads the course (or the editor's level), `The streets` loads the streets;
+  choosing the one already loaded just resumes.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (checkpoints, companion and the Boost complete).

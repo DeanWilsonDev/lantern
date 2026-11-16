@@ -1,0 +1,58 @@
+// A scripted pilot for the streets level (`LANTERN_AUTOPLAY=1` with `LANTERN_LEVEL` set to the
+// streets world, or after picking "The streets" in the menu). Like Autopilot it is a pure
+// function of the simulation clock, so every run takes the same steps. It plays the level the way
+// the level teaches it:
+// 1. walk to the crate and climb it, then climb from the crate to the upper street (the solo
+//    form of the Boost);
+// 2. walk along the upper street to the wall while the companion walks there too, wait for her to
+//    crouch, then jump off her back onto the rooftop (the cooperative form).
+//
+// Each step is a stretch of fixed steps, counted from the first one. The numbers are the ones the
+// engine test `the-streets-teach-the-boost` uses (engine/tests/host), where each key is held for
+// that many steps. Walking is relative to the camera, which starts looking down the street
+// (-Z), so "forward" runs along it and "left" is -X.
+StreetsAutopilot :: namespace {
+    STEPS_PER_SECOND :: 60.0f;
+
+    // Which fixed step this is, counting from 0 at the first one. The clock has already
+    // advanced by one step when the pilot is asked, so one step is taken away. Adding 0.5 before
+    // the cast rounds to the nearest step instead of always rounding down.
+    StepNumber :: (time: f32) -> i32 {
+        return i32(time * STEPS_PER_SECOND + 0.5f) - 1;
+    }
+
+    IsBetween :: (step: i32, first: i32, last: i32) -> bool {
+        return step >= first && step < last;
+    }
+
+    IsWalkingForward :: (step: i32) -> bool {
+        return IsBetween(step, 16, 96) || IsBetween(step, 97, 121) || IsBetween(step, 128, 152)
+            || IsBetween(step, 188, 348) || IsBetween(step, 469, 519);
+    }
+
+    Stick :: (time: f32) -> lantern:::math:::Vec2 {
+        step := StepNumber(time);
+        if IsBetween(step, 0, 15) {
+            return { x: -1.0f };
+        }
+        if IsBetween(step, 173, 187) {
+            return { x: 1.0f };
+        }
+        if IsWalkingForward(step) {
+            return { y: 1.0f };
+        }
+        return lantern:::math:::Vec2:::Zero();
+    }
+
+    // A press lasts exactly one step: the first of each of the three jumps (onto the crate, onto
+    // the upper street, off the companion's back).
+    JumpPressed :: (time: f32) -> bool {
+        step := StepNumber(time);
+        return step == 97 || step == 128 || step == 469;
+    }
+
+    JumpHeld :: (time: f32) -> bool {
+        step := StepNumber(time);
+        return IsBetween(step, 97, 121) || IsBetween(step, 128, 152) || IsBetween(step, 469, 519);
+    }
+}

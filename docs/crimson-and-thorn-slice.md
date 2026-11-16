@@ -43,12 +43,45 @@ Playable end to end with what the engine has today:
    keeps the gems already collected.
 2. **The companion.** A `companion_stop` world kind with `order` and `wait_seconds`. She stands at a stop, walks to the
    next when the player comes within a few metres of her, and waits less in later chapters.
-3. **The Boost.** A `boost_spot` kind marks where she crouches. Standing on the spot and pressing jump gives a higher
+3. **The Boost.** A `companion_stop` with `boost` set marks where she crouches. Standing beside her and pressing jump gives a higher
    jump than any normal jump (the exact height is a tuning question the design leaves to prototyping). A first ledge is
    one normal jump too high and has a crate stack beside it (the solo form); a second ledge is only reachable through
    the companion (the cooperative form).
 4. **A short level** in `assets/worlds/streets.world.json` that teaches these in order, ending at a goal with gems on the
    way.
+
+### What slice 1 is, in the game
+
+Pick **The streets** on the main menu (or run with `LANTERN_LEVEL=worlds/streets.world.json`). The level is
+`assets/worlds/streets.world.json`, authored like the course: plain blocks plus game kinds.
+
+| World kind | Properties | Meaning |
+|---|---|---|
+| `checkpoint` | `companion_stop` (optional) | A grey post that turns warm when reached. A fall returns the player here with their gems; the companion goes back to the named stop. |
+| `companion_stop` | `order`, `wait_seconds`, `boost` (optional), `speed` (optional) | One stop of the companion's scripted route. She walks to the next stop when the player is within 4 m of her and she has waited; at a `boost` stop she crouches and waits until the player has jumped off her back. |
+
+The route through the level:
+
+1. Walk to the crate and jump onto it, then jump from the crate onto the upper street. The street is 2.2 m up, one
+   normal jump (1.5 m) too high, so this is the solo form of the Boost.
+2. Walk up the street. The companion, waiting at the first stop, follows once you are close, and crouches against the
+   wall at the end. The rooftop is 3.2 m above the street.
+3. Stand beside her and jump: the jump takes you 3.6 m up (`PlayerTuning:::BOOST_JUMP_HEIGHT`), enough for the roof. She
+   then climbs up after you.
+
+Where the code is, one folder per kind of module as in the rest of the game:
+
+| File | Job |
+|---|---|
+| `game-entities/checkpoint.nyx` | the post and its reached state |
+| `game-entities/companion.nyx`, `companion-stop.nyx` | the companion and her route |
+| `game-systems/boost-system.nyx` | whether the player may boost now |
+| `game-systems/checkpoint-system.nyx`, `trigger-test.nyx` | reaching a checkpoint; the capsule-against-sphere test |
+| `game-systems/streets-autopilot.nyx` | `LANTERN_AUTOPLAY=1` plays the streets, for smoke runs and screenshots |
+| `game-rules/game-rules.nyx` | what a checkpoint, a fall and a boost mean |
+
+`engine/tests/host/the-streets-teach-the-boost` plays the level with the keyboard through the headless host: crate, upper
+street, boost, rooftop and checkpoint.
 
 ## Slice 2: light, thorns, chapters
 

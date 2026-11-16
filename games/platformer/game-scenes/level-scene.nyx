@@ -1,3 +1,5 @@
+Checkpoint :: import Checkpoint;
+CompanionStop :: import CompanionStop;
 Gem :: import Gem;
 MovingPlatform :: import MovingPlatform;
 
@@ -6,16 +8,19 @@ MovingPlatform :: import MovingPlatform;
 //
 // The split of work: lantern:::world:::Load (engine) builds everything in the file, meshes and collision
 // included. The game then asks for the kinds it gives meaning to ("spawn", "kill_plane", "gem",
-// "moving_platform") and wraps them in its own classes.
+// "moving_platform", "checkpoint", "companion_stop") and wraps them in its own classes.
 LevelScene :: class {
 public:
     spawnPosition~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     killHeight~ f32 = -10.0f;
     gems~ Array<Gem> = [];
     platforms~ Array<MovingPlatform> = [];
+    checkpoints~ Array<Checkpoint> = [];
+    // The companion's route, sorted by each stop's `order`. Empty when the level has none.
+    companionStops~ Array<CompanionStop> = [];
 
     // Returns the number of entities the file made.
-    Load~: (path: string, gemMesh: i64) -> i32 {
+    Load~: (path: string, gemMesh: i64, cubeMesh: i64) -> i32 {
         Unload();
         loaded := lantern:::world:::Load(path);
         guard loaded throw;
@@ -37,6 +42,16 @@ public:
         for entity: i64 in lantern:::world:::FindByKind("moving_platform") {
             platforms.add(new MovingPlatform(entity));
         }
+        for entity: i64 in lantern:::world:::FindByKind("checkpoint") {
+            checkpoint~ Checkpoint = new Checkpoint(entity);
+            checkpoint.Place(cubeMesh);
+            checkpoints.add(checkpoint);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("companion_stop") {
+            companionStops.add(new CompanionStop(entity));
+        }
+        // The file lists the stops in any order; the route follows their `order` property.
+        companionStops = companionStops.sort((first, second) -> first.order < second.order);
         lantern:::engine:::Log(`level ${path}: ${gems.length():d} gems, ${platforms.length():d} moving platforms`);
         return loaded;
     }
@@ -45,5 +60,7 @@ public:
         lantern:::world:::Clear();
         gems = [];
         platforms = [];
+        checkpoints = [];
+        companionStops = [];
     }
 }
