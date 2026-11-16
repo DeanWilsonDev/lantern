@@ -1034,3 +1034,22 @@ The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter lo
   needs the player close and walks at 70% speed past the rooftop.
 
 Cards: `platformer-game/crimson-and-thorn-slice` (Guide Light, chapter looks and thorns complete; the Anchor waits for Dean).
+
+## D-064 Slice 3 of the Crimson and Thorn mechanics: the Anchor as a set swing arc
+
+Dean chose a set swing arc for the Anchor, over a physics rope or a grapple (`crimson-and-thorn-slice.md`, slice 3).
+
+- **A fixed arc, driven by the game.** Two posts and a circular arc between them; the player's feet are set along it each
+  step while it runs, with no controller movement and no steering. It is deterministic, so it is easy to author in the
+  editor and to test, and it can't strand the player. A physics rope can come later as a different kind.
+- **A pendulum's timing.** The angle follows `-cos(pi t)` over `seconds`, which gives a slow start, a fast bottom and a
+  soft arrival with no velocity to hand back to the controller.
+- **Cooperative first, then solo.** The first arc works only with the companion beside its start post
+  (`needs_companion`), as the Boost and the Guide Light did, and the second is the player's own.
+- **Authored in the world file.** One `swing_arc` entity per swing: its position is the start post and `end` the far one,
+  so the editor places the arc with its ordinary tools and no new engine call is needed.
+- **Slice 2's review nits.** The guide lights are drawn at the blended positions in `OnRender` while the reveal rule keeps
+  the fixed-step ones, a safe spot is never recorded on a glow plate, and the strength comment is corrected.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the Anchor complete).
+

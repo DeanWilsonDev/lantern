@@ -28,7 +28,7 @@ the camera and the level layout explain a puzzle without text.
 | Ability 2, the Guide Light: her glow reveals hidden platforms; solo, a smaller, cooler lantern | Slice 2 | Done. The gameplay is Nyx; the glow is a real point light (`lantern:::lights`). |
 | Chapter looks: palette, fog, tone from neutral to saturated to cold (Game Design, Narrative Structure) | Slice 2 | Done: sky, fog and sun per chapter. |
 | Thorns from Chapter 3 | Slice 2 | Done: a hazard that moves the player back, never one that ends the run. |
-| Ability 3, the Anchor | Later | The 3D form is open in the design (physics rope, set arc or something else). Waiting on Dean (question on the card). |
+| Ability 3, the Anchor | Slice 3 | Done as a set swing arc between two posts (Dean's choice). The companion's form first, then the solo one. |
 | Authored cameras: static shots, player-locked, player-controlled (Camera) | Later | The third-person camera is the only mode today. A shot system needs its own design. |
 | Chapters 1 to 5 as a whole, recurring and unique levels | Later | The slice builds one recurring level (the streets) in two chapter looks. More levels come after the mechanics feel right. |
 | Post-completion changes (the blue and red doors, stripped levels) | Later | Needs saving and a finished first playthrough. |
@@ -120,6 +120,37 @@ The glow platforms use the workaround the engine card `engine-follow-ups/game-co
 names: a hidden piece is moved 1000 m down, and because a `static` collider doesn't move, these pieces are `kinematic` in
 the world file.
 
+## Slice 3: the Anchor
+
+The design leaves the Anchor's 3D form open. Dean chose a **set swing arc**: two posts and a fixed pendulum arc between
+them. It is deterministic, easy to author in the editor and easy to read without text. The streets continue past the
+second checkpoint with two 12 m chasms, one swing across each. `engine/tests/host/the-anchor-swings-across-the-gap` walks
+the whole way with the keyboard.
+
+| World kind | Properties | Meaning |
+|---|---|---|
+| `swing_arc` | `end` (vector), `sag`, `seconds`, `needs_companion` (all optional but `end`) | The entity is the start post, `end` the far post. A jump on the ground beside the start post swings the player to the far post along an arc that dips `sag` metres (2) below the posts and takes `seconds` (1.8). With `needs_companion` set to 1 it only works while the companion stands within 3.5 m of the start post. |
+
+How it plays:
+
+1. The first arc is the companion's form. She walks across the gap to a stop beside the start post (she is scripted, so
+   she crosses the floorless gap above the plates her own light shows), and the post's cap turns warm. The jump swings the
+   player across.
+2. The second arc is the solo form. It has no `needs_companion`, and she is left far behind, so the player does it alone.
+3. During a swing the character controller isn't asked to move the player: the game sets their feet along the arc
+   each step (`Player.SwingTo`) and there is nothing to steer or miss. Gems can hang on the arc, and checkpoints sit on
+   the landings, so a fall can't be a swing's fault.
+4. Beads along the arc and a cap on each post say where the swing goes before anyone tries it.
+
+| File | Job |
+|---|---|
+| `game-entities/anchor.nyx` | the two posts, the beads and the arc maths (`PointAt`) |
+| `game-systems/anchor-system.nyx` | whether a jump would swing, starting it, and advancing it |
+
+The arc is a circle hanging from a point above the middle, so its angle follows `-cos(pi t)`: the swing starts and ends
+slowly and is fastest at the bottom. Posts stand 0.4 m inside each ledge, and a 2 m sag dips the feet about 0.3 m below
+the ledge as the player passes its corner.
+
 ## How it fits the engine
 
 The game keeps to the seam in [`game-api.md`](game-api.md). New world kinds are only labels the editor stores
@@ -129,10 +160,9 @@ offer, the gap is a card first and the workaround is named in the code:
 | Gap | Card |
 |---|---|
 | Switching a world piece's collision on and off (slice 2 moves hidden pieces away instead) | `engine-follow-ups/game-controlled-collision-for-world-entities` |
-| The Anchor's traversal form | `platformer-game/crimson-and-thorn-slice/the-anchor-in-3d` |
 
 ## Open questions
 
 - Boost jump height and trigger (a button press on the spot, or automatic when she crouches), to settle by playing it.
 - Guide Light radii (8 m and 5 m), how long a plate stays (4 s) and the glow's strength, to settle by playing it.
-- The Anchor's form in 3D, for Dean.
+- The Anchor's sag, duration and reach, and whether a swing should carry momentum out of the far post, to settle by playing it.
