@@ -1,4 +1,8 @@
 lantern:::host :: namespace {
+    /**
+     * Reads argument `index` as an entity id and checks that entity still exists, failing the call with not-found if it
+     * doesn't. A script that keeps an id past a despawn gets an error and not a crash.
+     */
     LiveEntity :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, index: usize) -> lantern:::core:::Handle<lantern:::engine:::EntityTag>? {
         id: i64 = context->I64(index);
         if Stopped(context) {
@@ -16,6 +20,9 @@ lantern:::host :: namespace {
         return null;
     }
 
+    /**
+     * The name of what went wrong when setting a parent, or null when nothing did.
+     */
     ParentChangeProblem :: (change: lantern:::engine:::ParentChange) -> string? {
         return when change {
             lantern:::engine:::ParentChange:::Done -> null,
@@ -24,6 +31,9 @@ lantern:::host :: namespace {
         };
     }
 
+    /**
+     * Copies a world entity's kind and properties into the tags the script reads.
+     */
     TagsFromWorldEntity :: (spawned: lantern:::core:::Handle<lantern:::engine:::EntityTag>, entity: lantern:::world:::WorldEntity*) -> EntityTags*! {
         tags := new EntityTags(spawned, entity->kind);
         for index~ usize = 0; index < entity->propertyKeys.length(); index++ {
@@ -32,6 +42,9 @@ lantern:::host :: namespace {
         return tags!;
     }
 
+    /**
+     * The texture for an entity's material name, or null (with a warning) when no texture has that name.
+     */
     PieceTexture :: (state: raw EngineState~*, entity: lantern:::world:::WorldEntity*) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
         guard material := entity->material return null;
         unsafe {
@@ -45,6 +58,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Adds an entity's collider to the collision world: a static one is added where it stands, and a kinematic one becomes a
+     * body that is moved by matrix and is joined to the entity.
+     */
     AddPieceCollider :: (state: raw EngineState~*, piece: lantern:::world:::WorldPiece*, spawned: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> void {
         guard kind := piece->collider return;
         unsafe {
@@ -64,6 +81,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Spawns one entity of a loaded level, with a mesh and renderer when it has a shape.
+     */
     SpawnPiece :: (state: raw EngineState~*, piece: lantern:::world:::WorldPiece*, entity: lantern:::world:::WorldEntity*) -> Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!> {
         transform: lantern:::engine:::Transform = lantern:::engine:::Transform:::FromMatrix(piece->localMatrix);
         unsafe {
@@ -82,6 +102,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Sets each spawned entity's parent from the file's parent ids. A parent loop or a missing entity is reported with the
+     * entity's name.
+     */
     LinkPieceParents :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*, pieces: Array<lantern:::world:::WorldPiece*!>, keys: Array<u64>, spawned: Array<lantern:::core:::Handle<lantern:::engine:::EntityTag>>) -> string!? {
         for index~ usize = 0; index < pieces.length(); index++ {
             piece: lantern:::world:::WorldPiece* = pieces[index];
@@ -121,6 +145,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Turns a loaded world file into live entities: spawns each piece, adds its collider and tags, links parents, settles
+     * the transforms and adds the lights. Returns how many entities were made, or the first error.
+     */
     LoadWorldFile :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> Result<usize, string!> {
         pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(worldFile);
         keys~ Array<u64>! = [];
@@ -165,6 +193,9 @@ lantern:::host :: namespace {
         return Result<usize, string!>:::Ok(count);
     }
 
+    /**
+     * Sets an entity's local position, and moves its collision body with it when it has one.
+     */
     MoveEntity :: (state: raw EngineState~*, entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, position: Vec3) -> void {
         unsafe {
             guard record ~= state->entityWorld->BorrowMutable(entity) return;
@@ -176,6 +207,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Where a property is in an entity's tags, failing the call with not-found when the entity has no such property.
+     */
     PropertyIndexOf :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, key: string) -> usize? {
         unsafe {
             if tags := state->Tags(entity) {
@@ -190,6 +224,9 @@ lantern:::host :: namespace {
         return null;
     }
 
+    /**
+     * The value of an entity's property, failing the call when it has none.
+     */
     PropertyValueOf :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, key: string) -> lantern:::world:::PropertyValue? {
         guard index := PropertyIndexOf(context, state, entity, key) return null;
         unsafe {
@@ -198,12 +235,19 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Fails the call when a property is a different kind from the one asked for (a number read as text, say).
+     */
     WrongPropertyKind :: (context: lantern:::nyx:::CallContext~*, key: string, expected: string) -> void {
         message: string! = `the property '${key}' is not ${expected}`;
         NotFound(context, message);
         delete message;
     }
 
+    /**
+     * Adds `Find`, `FindByKind`, `Kind`, `HasProperty` and the property readers (`NumberProperty`, `TextProperty`,
+     * `VectorProperty`) to `lantern:::world`.
+     */
     RegisterWorldEntityQueries :: (worldNamespace: HostNamespace~*, state: raw EngineState~*, math: MathTypes) -> void {
         worldNamespace->Function("Find", "(name: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             name: string! = context->Text(0);
@@ -311,6 +355,10 @@ lantern:::host :: namespace {
         });
     }
 
+    /**
+     * Adds the functions that change how an entity looks (`SetMaterial`, `SetMesh`, `SetTexturedMesh`, `SetNormalMap`,
+     * `SetTint`, `SetSurface`, `SetGlow`, `SetCastsShadows`).
+     */
     RegisterWorldEntityLooks :: (worldNamespace: HostNamespace~*, state: raw EngineState~*) -> void {
         worldNamespace->Function("SetMaterial", "(material: string, texture: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             material: string! = context->Text(0);
@@ -425,6 +473,9 @@ lantern:::host :: namespace {
         });
     }
 
+    /**
+     * Adds `IsVisible` and `SetVisible`.
+     */
     RegisterWorldEntityVisibility :: (worldNamespace: HostNamespace~*, state: raw EngineState~*) -> void {
         worldNamespace->Function("IsVisible", "(entity: i64) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
@@ -454,6 +505,10 @@ lantern:::host :: namespace {
         });
     }
 
+    /**
+     * Adds the functions that move an entity (`SetParent`, `Position`, `WorldPosition`, `InterpolatedPosition`,
+     * `SetPosition`, `Teleport`, `SetYaw`, `SetScale`).
+     */
     RegisterWorldEntityTransforms :: (worldNamespace: HostNamespace~*, state: raw EngineState~*, math: MathTypes) -> void {
         worldNamespace->Function("SetParent", "(child: i64, parent: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard child := LiveEntity(context, state, 0) return;
@@ -535,6 +590,10 @@ lantern:::host :: namespace {
         });
     }
 
+    /**
+     * Registers `lantern:::world`: `Load` a level file, `Clear` it, `Spawn` and `Despawn` single entities, plus the groups
+     * above. See game-api.md for each function's arguments.
+     */
     RegisterWorldApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
         worldNamespace := new HostNamespace(runtime, "lantern::world");
         worldNamespace->Function("Load", "(path: string) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {

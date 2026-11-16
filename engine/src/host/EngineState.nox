@@ -1,24 +1,50 @@
 lantern:::host :: namespace {
+    /**
+     * The scene id the game's entities are spawned into, so a level can be removed in one call without touching
+     * anything else.
+     */
     GAME_SCENE_VALUE: u32 : 1;
+    /**
+     * The name of the engine's own "reload scripts" action (F5).
+     */
     ENGINE_RELOAD_ACTION_NAME: string : "engine_reload_scripts";
+    /**
+     * The name of the engine's own "toggle the debug HUD" action (F1, the backquote key, or the gamepad's back button).
+     */
     ENGINE_TOGGLE_HUD_ACTION_NAME: string : "engine_toggle_debug_hud";
 
+    /**
+     * The scene id for game entities.
+     */
     GameScene :: () -> lantern:::engine:::SceneId {
         return lantern:::engine:::SceneId { value: GAME_SCENE_VALUE };
     }
 
+    /**
+     * The action id of the reload action. The engine registers its two actions first, so they are always actions 0 and 1
+     * and a game's own actions come after them.
+     */
     EngineReloadAction :: () -> lantern:::core:::ActionId {
         return lantern:::core:::ActionId { value: 0 };
     }
 
+    /**
+     * The action id of the HUD toggle (action 1).
+     */
     EngineToggleHudAction :: () -> lantern:::core:::ActionId {
         return lantern:::core:::ActionId { value: 1 };
     }
 
+    /**
+     * True for the engine's two actions, so the loop handles them itself and doesn't show them to the game.
+     */
     IsEngineAction :: (action: lantern:::core:::ActionId) -> bool {
         return action == EngineReloadAction() || action == EngineToggleHudAction();
     }
 
+    /**
+     * The action set a game starts with: just the engine's two.
+     */
     EngineActions :: () -> lantern:::core:::ActionSet*! {
         actions := new lantern:::core:::ActionSet();
         actions->Register(ENGINE_RELOAD_ACTION_NAME, lantern:::core:::ActionKind:::Button);
@@ -26,6 +52,9 @@ lantern:::host :: namespace {
         return actions!;
     }
 
+    /**
+     * The bindings a game starts with: the engine's two actions on their keys.
+     */
     EngineBindings :: () -> lantern:::core:::Bindings*! {
         bindings := new lantern:::core:::Bindings();
         bindings->Bind(EngineReloadAction(), lantern:::core:::Binding:::Key(lantern:::core:::KeyCode:::F5));
@@ -35,6 +64,10 @@ lantern:::host :: namespace {
         return bindings!;
     }
 
+    /**
+     * The input the engine holds for the script: the actions the game defined, their bindings, whether either changed (so
+     * the router is rebuilt), and the latest snapshot that `lantern:::input` reads from.
+     */
     InputState :: class {
     public:
         actions~ lantern:::core:::ActionSet*!;
@@ -54,6 +87,9 @@ lantern:::host :: namespace {
             delete snapshot;
         }
 
+        /**
+         * Back to just the engine's actions and bindings, for a new session.
+         */
         Reset~: () -> void {
             delete actions;
             delete bindings;
@@ -63,11 +99,17 @@ lantern:::host :: namespace {
             SetSnapshot(new lantern:::core:::InputSnapshot());
         }
 
+        /**
+         * Replaces the snapshot with this frame's.
+         */
         SetSnapshot~: (newSnapshot: lantern:::core:::InputSnapshot*!) -> void {
             delete snapshot;
             snapshot = newSnapshot!;
         }
 
+        /**
+         * Whether an action named `name` went down this frame, or null when the game has no action by that name.
+         */
         Pressed :: (name: string) -> bool? {
             if action := actions->Find(name) {
                 return snapshot->Pressed(action);
@@ -76,6 +118,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * What the script knows about an entity that the engine's own entity world doesn't: its kind (`gem`, `block`) and its
+     * properties from the world file. `lantern:::world` functions read it.
+     */
     EntityTags :: class {
     public:
         entity~ lantern:::core:::Handle<lantern:::engine:::EntityTag> = lantern:::core:::Handle<lantern:::engine:::EntityTag> { };
@@ -112,20 +158,36 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Joins an entity to the physics body that moves with it, for entities such as moving platforms.
+     */
     EntityBody :: struct {
         entity~ lantern:::core:::Handle<lantern:::engine:::EntityTag> = lantern:::core:::Handle<lantern:::engine:::EntityTag> { };
         body~ lantern:::core:::Handle<lantern:::physics:::KinematicBody> = lantern:::core:::Handle<lantern:::physics:::KinematicBody> { };
     }
 
+    /**
+     * What the script asked the platform layer for this frame: quit the game, or capture or release the mouse. The game
+     * loop reads and clears them after the hooks run.
+     */
     PlatformRequests :: struct {
         quit~ bool = false;
         mouseCaptured~ bool? = null;
     }
 
+    /**
+     * A boolean holder that nothing uses at present.
+     */
     FlagOverride :: struct {
         value~ bool = false;
     }
 
+    /**
+     * Everything the host functions act on, in one place: the entity world, the collision world, the render backend and
+     * render world, audio, the debug HUD and its values, input, the screen size and UI scale, the materials, meshes and
+     * textures a script created (so they can be freed), and the entity tags and bodies. The API functions get a pointer
+     * to it. A game restart calls ResetForNewSession, which clears it all without destroying the backend.
+     */
     EngineState :: class {
     public:
         assetsDirectory~ string!? = null;
@@ -189,6 +251,9 @@ lantern:::host :: namespace {
             delete flagValues;
         }
 
+        /**
+         * Builds the state around a backend and an audio system, and uploads the font atlas texture that overlay text uses.
+         */
         static Create :: (backend: lantern:::renderer:::RenderBackend*!, audioSystem: lantern:::engine:::AudioSystem*!, assets: string?) -> Result<EngineState*!, string!> {
             state := new EngineState(backend!, audioSystem!, assets);
             atlas := lantern:::renderer:::FontAtlas();
@@ -207,6 +272,9 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * A path under the game's assets directory. An absolute path is left as it is.
+         */
         AssetPath :: (relative: string) -> string! {
             if directory := assetsDirectory {
                 if relative.length() > 0 && relative.byteAt(0) == u8(47) {
@@ -217,6 +285,10 @@ lantern:::host :: namespace {
             return `${relative}`;
         }
 
+        /**
+         * Sets a named on or off value that the engine publishes for scripts to read with `lantern:::engine:::Flag` (for
+         * example whether an audio device was found).
+         */
         SetFlag~: (name: string, value: bool) -> void {
             for index~ usize = 0; index < flagNames.length(); index++ {
                 if flagNames[index] == name {
@@ -228,6 +300,9 @@ lantern:::host :: namespace {
             flagValues.push(value);
         }
 
+        /**
+         * A flag's value, false when it was never set.
+         */
         Flag :: (name: string) -> bool {
             for index~ usize = 0; index < flagNames.length(); index++ {
                 if flagNames[index] == name {
@@ -237,6 +312,9 @@ lantern:::host :: namespace {
             return EnvironmentFlag(name);
         }
 
+        /**
+         * Names a texture, so levels can refer to a material by name.
+         */
         SetMaterial~: (name: string, texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>) -> void {
             for index~ usize = 0; index < materialNames.length(); index++ {
                 if materialNames[index] == name {
@@ -248,6 +326,9 @@ lantern:::host :: namespace {
             materialTextures.push(texture);
         }
 
+        /**
+         * The texture for a material name, or null.
+         */
         Material :: (name: string) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
             for index~ usize = 0; index < materialNames.length(); index++ {
                 if materialNames[index] == name {
@@ -257,6 +338,9 @@ lantern:::host :: namespace {
             return null;
         }
 
+        /**
+         * Where an entity's tags are in the list, or null.
+         */
         TagsIndex :: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> usize? {
             for index~ usize = 0; index < entityTags.length(); index++ {
                 if entityTags[index]->entity == entity {
@@ -266,6 +350,9 @@ lantern:::host :: namespace {
             return null;
         }
 
+        /**
+         * The tags of an entity, or null.
+         */
         Tags :: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> EntityTags*? {
             if index := TagsIndex(entity) {
                 return entityTags[index];
@@ -273,11 +360,17 @@ lantern:::host :: namespace {
             return null;
         }
 
+        /**
+         * Stores an entity's tags, replacing any it had.
+         */
         SetTags~: (tags: EntityTags*!) -> void {
             RemoveTags(tags->entity);
             entityTags.push(tags!);
         }
 
+        /**
+         * Forgets an entity's tags.
+         */
         RemoveTags~: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> void {
             if index := TagsIndex(entity) {
                 removed := entityTags.remove(index);
@@ -285,6 +378,9 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * The physics body that moves with an entity, or null.
+         */
         Body :: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> lantern:::core:::Handle<lantern:::physics:::KinematicBody>? {
             for entry in entityBodies {
                 if entry.entity == entity {
@@ -294,6 +390,9 @@ lantern:::host :: namespace {
             return null;
         }
 
+        /**
+         * Joins an entity to a body.
+         */
         SetBody~: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, body: lantern:::core:::Handle<lantern:::physics:::KinematicBody>) -> void {
             for index~ usize = 0; index < entityBodies.length(); index++ {
                 if entityBodies[index].entity == entity {
@@ -304,6 +403,10 @@ lantern:::host :: namespace {
             entityBodies.push(EntityBody { entity: entity, body: body });
         }
 
+        /**
+         * Removes the loaded level: the game scene's entities, the level's meshes and lights, the collision world and the tags
+         * and bodies. Meshes and textures the script made itself stay.
+         */
         ClearWorld~: () -> void {
             entityWorld->DespawnScene(GameScene());
             for mesh in worldMeshes {
@@ -321,6 +424,11 @@ lantern:::host :: namespace {
             entityBodies.clear();
         }
 
+        /**
+         * Returns the state to how it was at start, for a script reload: the level is cleared, the script's own meshes, textures
+         * and materials are freed, music stops, the debug values and input are reset, and a fresh render world is made. The
+         * font texture stays.
+         */
         ResetForNewSession~: () -> void {
             ClearWorld();
             for mesh in scriptMeshes {
@@ -345,6 +453,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * True when an environment variable is set to anything but empty or "0".
+     */
     EnvironmentFlag :: (name: string) -> bool {
         value: string!? = environmentVariable(name);
         defer delete value;
@@ -354,6 +465,9 @@ lantern:::host :: namespace {
         return false;
     }
 
+    /**
+     * The value 0 to 15 of a hex digit byte, or null.
+     */
     HexDigit :: (byte: u8) -> u32? {
         if byte >= u8(48) && byte <= u8(57) {
             return u32(byte) - 48;
@@ -367,6 +481,9 @@ lantern:::host :: namespace {
         return null;
     }
 
+    /**
+     * Reads `RRGGBB` or `RRGGBBAA` (a leading `#` is allowed) as a colour, or null.
+     */
     ParseColor :: (text: string) -> lantern:::core:::Color? {
         start~ usize = 0;
         if text.length() > 0 && text.byteAt(0) == u8(35) {

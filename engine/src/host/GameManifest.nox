@@ -1,6 +1,12 @@
 lantern:::host :: namespace {
+    /**
+     * The assets folder a game gets when its `game.json` doesn't name one.
+     */
     DEFAULT_ASSETS_DIRECTORY: string : "assets";
 
+    /**
+     * Where a game's code is: its folder, the entry file in it and the name of the application class to start.
+     */
     ScriptSource :: class {
     public:
         scriptsDirectory~ string!;
@@ -20,6 +26,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * A game's `game.json`: its `title`, the `entry` Nyx file, the `application_class` in it, and optionally an `assets`
+     * folder (default `assets`). It is how the engine knows what to run when given only a game's folder.
+     */
     GameManifest :: class {
     public:
         title~ string!;
@@ -41,6 +51,9 @@ lantern:::host :: namespace {
             delete assets;
         }
 
+        /**
+         * Reads `game.json` from a game's folder.
+         */
         static Load :: (gameDirectory: string) -> Result<GameManifest*!, string!> {
             path: string! = `${gameDirectory}/game.json`;
             defer delete path;
@@ -65,6 +78,10 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * Reads a manifest from JSON text. `title`, `entry` and `application_class` are required text fields; a missing one is
+         * an error naming it.
+         */
         static FromJson :: (text: string, path: string) -> Result<GameManifest*!, string!> {
             when lantern:::json:::Parse(text) {
                 Result:::Ok(document) -> {
@@ -87,6 +104,9 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * The text field of that name, or null when it is missing or isn't text.
+         */
         static ManifestText :: (document: lantern:::json:::JsonDocument*, root: u32, key: string) -> string? {
             guard member := document->Member(root, key) return null;
             if document->Kind(member) != lantern:::json:::JsonKind:::Text {
@@ -95,14 +115,24 @@ lantern:::host :: namespace {
             return document->Text(member);
         }
 
+        /**
+         * The error for a missing field.
+         */
         static MissingField :: (path: string, field: string) -> Result<GameManifest*!, string!> {
             return Result<GameManifest*!, string!>:::Err(`${path}: missing text field '${field}'`);
         }
 
+        /**
+         * Where this game's scripts are, given its folder.
+         */
         ScriptSourceFor :: (gameDirectory: string) -> ScriptSource*! {
             return new ScriptSource(gameDirectory, entry, applicationClass);
         }
 
+        /**
+         * The folder holding the game's assets: `LANTERN_ASSETS` if set, else the manifest's folder under the game's own.
+         * Null when that folder doesn't exist.
+         */
         AssetsDirectory :: (gameDirectory: string) -> string!? {
             explicit: string!? = environmentVariable("LANTERN_ASSETS");
             candidate~ string! = "";

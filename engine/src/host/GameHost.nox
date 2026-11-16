@@ -1,8 +1,21 @@
 lantern:::host :: namespace {
+    /**
+     * The first line of the on-screen script error panel.
+     */
     SCRIPT_ERROR_HEADING: string : "script error (F1 for details, F5 to reload):";
+    /**
+     * How many lines of the error message the panel shows below its heading.
+     */
     SCRIPT_ERROR_LINES: usize : 4;
+    /**
+     * The colour of the panel's text, as a 0xRRGGBB number (a light red).
+     */
     SCRIPT_ERROR_COLOR: u32 : 16737872;
 
+    /**
+     * How many bytes the first `codePoints` characters of a UTF-8 string take, so a long line can be cut between
+     * characters and not through one.
+     */
     ByteLengthOfCodePoints :: (text: string, codePoints: usize) -> usize {
         seen~ usize = 0;
         for index~ usize = 0; index < text.length(); index++ {
@@ -17,6 +30,10 @@ lantern:::host :: namespace {
         return text.length();
     }
 
+    /**
+     * The mouse state the game's UI needs: where it is, and whether the left button went down or up since the last
+     * frame or is held.
+     */
     MouseForUi :: struct {
         position~ Vec2? = null;
         leftWentDown~ bool = false;
@@ -60,6 +77,10 @@ lantern:::host :: namespace {
             delete capturePath;
         }
 
+        /**
+         * A raw pointer to the engine state, for the registered host functions, which hold it for as long as the script
+         * runs.
+         */
         StatePointer~: () -> raw EngineState~* {
             unsafe {
                 pointer: raw EngineState~* = state;
@@ -67,14 +88,24 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * True while a script session is loaded. After a failed load it is false and the screen shows the error.
+         */
         IsRunningScript :: () -> bool {
             return session != null;
         }
 
+        /**
+         * How many script errors there have been, which the debug HUD shows.
+         */
         ScriptErrorCount :: () -> u32 {
             return scriptErrorCount;
         }
 
+        /**
+         * Records a script error: counts it, logs it once (the same message twice in a row isn't logged again) and keeps it
+         * to draw on screen until the next reload.
+         */
         ReportError~: (message: string) -> void {
             scriptErrorCount += 1;
             if current := scriptError {
@@ -87,6 +118,10 @@ lantern:::host :: namespace {
             scriptError = `${message}`;
         }
 
+        /**
+         * Calls a hook on the script, if one is loaded, and reports an error it raises. A script error never stops the
+         * engine; the loop keeps running and the panel shows the message.
+         */
         Call~: (hook: GameHook, arguments: Array<f32>) -> void {
             guard running ~= session return;
             failure: string!? = running->Call(hook, arguments);
@@ -96,6 +131,10 @@ lantern:::host :: namespace {
             delete failure;
         }
 
+        /**
+         * Starts the game's script: resets the engine state, loads the script, calls `OnStart` and runs a first UI update. A
+         * load failure is reported on screen instead of crashing, so the game can be edited and reloaded with F5.
+         */
         StartSession~: () -> void {
             state->ResetForNewSession();
             engineState: raw EngineState~* = StatePointer();
@@ -128,10 +167,17 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * True when the action with this name went down this frame.
+         */
         ActionPressed :: (name: string) -> bool {
             return state->input->Pressed(name) ?? false;
         }
 
+        /**
+         * Gives the game's UI this frame's input: the mouse (unless the game has captured it) and the game's own
+         * previous, next and confirm actions.
+         */
         NavigateUi~: () -> void {
             taken: MouseForUi = mouse;
             mouse = MouseForUi { position: taken.position, leftHeld: taken.leftHeld };
@@ -156,6 +202,10 @@ lantern:::host :: namespace {
             ReportUiMessages();
         }
 
+        /**
+         * Takes the messages Chaos reported. Style (`cosmos:`) messages are only logged as warnings; anything else is shown as a
+         * script error.
+         */
         ReportUiMessages~: () -> void {
             guard running ~= session return;
             messages~ Array<string!>! = running->TakeUiMessages();
@@ -171,6 +221,9 @@ lantern:::host :: namespace {
             messages.freeAll();
         }
 
+        /**
+         * Calls `OnExit`, drops the script and resets the engine state.
+         */
         Shutdown~: () -> void {
             noArguments: Array<f32>! = [];
             Call(GameHook:::OnExit, noArguments);
@@ -180,12 +233,19 @@ lantern:::host :: namespace {
             state->ResetForNewSession();
         }
 
+        /**
+         * Shuts the script down and starts it again from the files on disk (F5).
+         */
         Reload~: () -> void {
             lantern:::core:::LogInfo("script", "reloading the game's scripts");
             Shutdown();
             StartSession();
         }
 
+        /**
+         * Publishes the engine's own debug HUD values: frame rate and times, fixed steps, script time and errors, renderer
+         * draws and triangles, entity count and audio status. The "Errors/" group is removed when there is no error.
+         */
         UpdateEngineDebugValues~: (frame: lantern:::engine:::FrameContext) -> void {
             scriptMilliseconds~ f64 = 0.0f;
             sourceText~ string! = "";
@@ -231,6 +291,10 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * Draws the script error panel along the bottom of the screen: a dark band, a heading and the first few lines of the
+         * message, cut to fit the width.
+         */
         DrawScriptError~: (error: string) -> void {
             screen: Vec2 = state->screenSize;
             scale: f32 = state->uiScale;
@@ -259,6 +323,9 @@ lantern:::host :: namespace {
             lines.freeAll();
         }
 
+        /**
+         * Renders the frame to an image and saves it as a PNG. It is how `LANTERN_CAPTURE_PATH` makes a screenshot.
+         */
         SaveCapture~: (path: string, frame: lantern:::engine:::FrameContext) -> void {
             engineState: raw EngineState~* = StatePointer();
             unsafe {
@@ -443,10 +510,16 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * True when the script has called `lantern:::engine:::Quit`.
+         */
         WantsToQuit :: () -> bool {
             return quit;
         }
 
+        /**
+         * Rebuilds the input router when the game has defined or bound actions since the last frame.
+         */
         UpdateInputConfiguration~: (input: lantern:::engine:::InputRouter~*) -> void {
             if !state->input->configurationChanged {
                 return;
