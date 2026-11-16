@@ -43,6 +43,7 @@ reloads: the editor never asks for one, and the fonts take the window's DPI scal
 | `src/main.nox` | the window, fonts, backends and frame loop; the window requests (title, size, text input, file dialogs) the editor makes |
 | `src/EditorFunctions.nox` | every `editor*` host function, each calling `lantern:::editorbackend` |
 | `src/HostFunctions.nox` | helpers the editor functions share |
+| `src/FrameTimes.nox` | the window loop's own frame clock (average and worst of the last 120 frames), the vertical sync switch, and the host functions `editorFrameStat`, `editorVerticalSync` and `editorSetVerticalSync` |
 | `src/ViewportRenderers.nox` | the level view, the asset preview and each template's thumbnail, drawn by the editor backend into viewport frames |
 | `src/FileDialogs.nox` | SDL3's open and save dialogs, answered back to the editor through `FinishFileDialog` |
 

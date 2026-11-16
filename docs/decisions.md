@@ -1369,3 +1369,26 @@ The chapter progression had one real level played twice. A second level makes it
   `FindByKind`; the test relies on that order.
 
 Cards: `platformer-game/crimson-and-thorn-slice` (the rooftops complete).
+
+## D-078: The editor measures its own frames and honours LANTERN_VSYNC
+
+The editor's status bar read a constant 60 fps on a 120 Hz display with `LANTERN_VSYNC=0`, while the game's HUD read
+185 to 234. Two things caused it. The editor window's SDL renderer was always opened with vertical sync on
+(`SdlWindow.Open`), and `LANTERN_VSYNC` only reached the off-screen GPU renderer that draws the viewport, which has no
+swapchain to sync. And the figure was the time between viewport renders, which in a loop that waits for the display is
+the display's rate whatever the work costs.
+
+- The window's loop times itself, from the start of one frame to the start of the next (wait for the display
+  included), into the same `FrameStats` ring the game's debug HUD uses, and the status bar shows its average and worst
+  milliseconds over 120 frames, the rate the average gives, and whether the window really has vertical sync on. The
+  viewport's own render time and draw count sit in a second chip.
+- `SdlWindow.SetVerticalSync` and `VerticalSyncEnabled` (penumbra-ui-engine) let the editor set vertical sync at
+  start from `LANTERN_VSYNC` and change it from a Vertical sync checkbox in the Graphics tab. The interface asks through
+  `editorSetVerticalSync`; the loop makes the window match once a frame and reports what the window says it has, so a
+  driver that refuses shows as still on.
+- The editor already redraws every frame, so there is no idle mode and no separate redraw toggle: vertical sync is the
+  only pacing. If it becomes event-driven later, the status bar should say "idle" between redraws.
+- The setting is not saved with the preferences. It is a measuring switch, and starting a benchmark with it left off
+  from a previous session would be a surprise. Provisional (2026-11-16): not reviewed by Dean.
+
+Cards: `world-editor/settings-status-bar-and-visual-polish/editor-reports-real-frame-times-and-has-a-vsync-toggle`.

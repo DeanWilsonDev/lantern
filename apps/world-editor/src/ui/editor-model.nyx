@@ -107,6 +107,8 @@ StatusInfo :: data {
     selected: string;
     camera: string;
     frames: string;
+    render: string;
+    verticalSync: bool;
     handle: string;
     playing: bool;
 }
@@ -346,7 +348,11 @@ EditorModel :: namespace {
     }
 
     // Reads the status bar's text: the status line, entity and selection counts, camera, frame
-    // statistics and hovered gizmo handle.
+    // statistics and hovered gizmo handle. `frames` is the editor window's own frame time, measured from
+    // the start of one frame to the start of the next, so it includes any wait for vertical sync (the
+    // average and the worst of the last 120 frames, the rate that average gives, and whether vsync is
+    // on). `render` is what drawing the 3D viewport cost, in milliseconds, and how many draws it made.
+    // `verticalSync` feeds the checkbox in the Graphics settings.
     Status :: () -> StatusInfo {
         selected := editorSelectionCount();
         return StatusInfo {
@@ -354,7 +360,9 @@ EditorModel :: namespace {
             entities: `${editorEntityCount()} entities`,
             selected: selected == 0 ? "" : `${selected} selected`,
             camera: editorCameraDescription(),
-            frames: `${editorStat("fps")} fps · ${editorStat("draws")} draws`,
+            frames: `${editorFrameStat("average_ms")} ms avg · ${editorFrameStat("worst_ms")} ms worst · ${editorFrameStat("fps")} fps · vsync ${editorFrameStat("vsync")}`,
+            render: `viewport ${editorStat("render_ms")} ms · ${editorStat("draws")} draws`,
+            verticalSync: editorVerticalSync(),
             handle: editorHoveredHandle(),
             playing: editorIsPlaying()
         };
