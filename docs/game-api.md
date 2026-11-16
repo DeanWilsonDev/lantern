@@ -143,6 +143,7 @@ the game decides what a kind means.
 | `lantern:::graphics:::SetAmbientOcclusion(enabled, radius, intensity)` | darken creases and contact points from the depth buffer (radius in metres, intensity 0 to 1); see `ambient-occlusion.md` |
 | `lantern:::graphics:::AddBlobShadow(center, radius, strength)` | this frame only: a soft dark patch on the surface around `center` (up to eight); see `blob-shadows.md` |
 | `lantern:::graphics:::SetBlobShadows(enabled)` | switch the frame's blob shadows on or off |
+| `lantern:::graphics:::SetColorGrade(saturation, contrast, tint, vignette)` | the look of the finished picture: saturation 0 to 3, contrast 0.2 to 3, an `"RRGGBB"` tint and a vignette 0 to 1; `1, 1, "FFFFFF", 0` is neutral; see `colour-grade.md` |
 | `lantern:::graphics:::SetBloom(enabled, strength, threshold)` | the glow around bright things: how much is added back and the brightness where it starts (1 is a white wall in full sun) |
 | `lantern:::graphics:::SetExposure(exposure)`, `lantern:::graphics:::SetToneMapper(name)` | a brightness knob applied before the curve, and the curve itself: `"none"`, `"neutral"` or `"aces"` |
 | `lantern:::lights:::SetSun(direction, color, skyAmbient, groundAmbient)` | the sun and the ambient light; colours are `"RRGGBB"` |

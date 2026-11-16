@@ -1157,3 +1157,18 @@ Card: `renderer-visuals/softer-shadows-and-stable-cascades`.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
+
+## D-071: The colour grade is applied after tone mapping, in the composite pass
+
+- **Four controls:** saturation, contrast, tint and vignette, in that order, on the 0 to 1 picture after tone mapping and
+  before the sRGB encode, so each number does the same to what the viewer sees whatever the scene's brightness.
+- **Neutral by default.** Nothing changes for a game that doesn't call it.
+- **The HUD isn't graded.** It is drawn after the composite, as before.
+- **No lookup-table grade.** A 3D colour lookup texture is the usual tool for authored looks, but it needs an asset
+  pipeline for the tables; four numbers are enough for the chapter looks Crimson and Thorn needs and can be blended by hand
+  between chapters. A table is a possible later step.
+- **A game calls it when a chapter changes** (or every frame while easing between looks). The platformer's chapter looks are
+  the other thread's to choose; this adds the hook only.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
