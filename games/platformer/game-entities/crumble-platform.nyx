@@ -1,0 +1,59 @@
+Math :: import standard:::Math;
+PartnerTuning :: import PartnerTuning;
+
+// A platform that gives way: a world-file entity of kind "crumble" with a "kinematic" collider. It
+// shivers for CRUMBLE_DELAY_SECONDS once someone stands on it, drops out of the world, and comes
+// back CRUMBLE_RETURN_SECONDS later, so a fall costs a walk back and nothing else.
+//
+// Property: `half_extents` (vector), the piece's half sizes.
+CrumblePlatform :: class {
+public:
+    entity: i64;
+    home: lantern:::math:::Vec3;
+    halfExtents: lantern:::math:::Vec3;
+    // 0 solid, 1 shivering, 2 gone.
+    phase~ i32 = 0;
+    phaseSeconds~ f32 = 0.0f;
+
+    CrumblePlatform~: (entity: i64) : entity(entity), home(lantern:::world:::Position(entity)),
+        halfExtents(lantern:::world:::VectorProperty(entity, "half_extents")) { }
+
+    // One step. `isStoodOn` is whether anyone's feet are on it.
+    Update~: (isStoodOn: bool, time: f32, dt: f32) -> void {
+        if phase == 0 {
+            if isStoodOn {
+                phase = 1;
+                phaseSeconds = 0.0f;
+            }
+        } else if phase == 1 {
+            phaseSeconds += dt;
+            // A small sideways shake that grows, so the player can see it is about to go.
+            shake: lantern:::math:::Vec3 = { x: Math:::sin(time * 60.0f) * 0.04f * (phaseSeconds / PartnerTuning:::CRUMBLE_DELAY_SECONDS) };
+            lantern:::world:::SetPosition(entity, home + shake);
+            if phaseSeconds >= PartnerTuning:::CRUMBLE_DELAY_SECONDS {
+                phase = 2;
+                phaseSeconds = 0.0f;
+                lantern:::world:::SetVisible(entity, false);
+                far: lantern:::math:::Vec3 = { y: -1000.0f };
+                lantern:::world:::Teleport(entity, home + far);
+            }
+        } else {
+            phaseSeconds += dt;
+            if phaseSeconds >= PartnerTuning:::CRUMBLE_RETURN_SECONDS {
+                Restore();
+            }
+        }
+    }
+
+    Restore~: () -> void {
+        phase = 0;
+        phaseSeconds = 0.0f;
+        lantern:::world:::SetVisible(entity, true);
+        lantern:::world:::Teleport(entity, home);
+    }
+
+    IsStoodOnBy :: (feet: lantern:::math:::Vec3) -> bool {
+        offset := feet - home;
+        return phase != 2 && offset.x > -halfExtents.x && offset.x < halfExtents.x && offset.z > -halfExtents.z && offset.z < halfExtents.z && offset.y > -halfExtents.y - 0.2f && offset.y < halfExtents.y + 0.4f;
+    }
+}

@@ -1,0 +1,121 @@
+Math :: import standard:::Math;
+
+// Something that turns a channel on: a world-file entity of kind "plate", "lever" or "crystal". A
+// gate (game-entities/gate.nyx) listens to a channel number, so any switch can open any gate and
+// two switches on one channel are two ways to open the same door. That is how a puzzle gets a
+// companion way and a solo way: one door, two switches on its channel.
+//
+// - A plate is on while something stands on it, and for `hold_seconds` after. With a hold time it
+//   is a timed plate: step on it and run to the door before it shuts.
+// - A lever is pulled with the use key (by the player) or by the partner at a "pull" point. With
+//   no hold time it stays on; with one it is on for that long.
+// - A crystal is on while a light has a clear line to it (see SwitchSystem), and for `hold_seconds`
+//   after. Because the test is a real ray against the world's collision, the shadow of a pillar
+//   decides where a light must stand.
+//
+// Properties set on the entity in the world editor:
+// - `channel` (number): which gates it works.
+// - `hold_seconds` (number, optional): how long it stays on after it is released.
+// - `half_extents` (vector, plates): half the plate's width and depth (the file says them twice, as for thorns).
+// - `range` (number, crystals, optional): how far a light reaches it.
+Switch :: class {
+public:
+    entity: i64;
+    kind: string;
+    channel: i32;
+    holdSeconds: f32;
+    home: lantern:::math:::Vec3;
+    halfExtents: lantern:::math:::Vec3;
+    range: f32;
+    isOn~ bool = false;
+    // Seconds of "on" left after the trigger lets go. A latched lever has no end.
+    remainingSeconds~ f32 = 0.0f;
+    isLatched~ bool = false;
+    knob~ i64 = 0;
+
+    Switch~: (entity: i64) : entity(entity), kind(lantern:::world:::Kind(entity)),
+        channel(i32(lantern:::world:::NumberProperty(entity, "channel"))),
+        holdSeconds(lantern:::world:::HasProperty(entity, "hold_seconds") ? lantern:::world:::NumberProperty(entity, "hold_seconds") : DefaultHold(lantern:::world:::Kind(entity))),
+        home(lantern:::world:::Position(entity)),
+        halfExtents(lantern:::world:::HasProperty(entity, "half_extents") ? lantern:::world:::VectorProperty(entity, "half_extents") : lantern:::math:::Vec3:::Zero()),
+        range(lantern:::world:::HasProperty(entity, "range") ? lantern:::world:::NumberProperty(entity, "range") : 10.0f) { }
+
+    // Builds what a marker (a lever or a crystal) looks like: a post and a knob for a lever, a
+    // glowing gem for a crystal. A plate is already a piece the world file draws.
+    Place~: (cubeMesh: i64, gemMesh: i64) -> void {
+        if kind == "lever" {
+            post := lantern:::world:::Spawn("lever_post", { y: 0.5f });
+            lantern:::world:::SetMesh(post, cubeMesh, "5A5A66");
+            lantern:::world:::SetScale(post, { x: 0.18f, y: 1.0f, z: 0.18f });
+            lantern:::world:::SetParent(post, entity);
+            knob = lantern:::world:::Spawn("lever_knob", { y: 1.1f });
+            lantern:::world:::SetMesh(knob, cubeMesh, OFF_TINT);
+            lantern:::world:::SetScale(knob, { x: 0.4f, y: 0.22f, z: 0.4f });
+            lantern:::world:::SetParent(knob, entity);
+        } else if kind == "crystal" {
+            knob = lantern:::world:::Spawn("crystal_gem", { y: 1.0f });
+            lantern:::world:::SetMesh(knob, gemMesh, DARK_CRYSTAL_TINT);
+            lantern:::world:::SetScale(knob, { x: 1.6f, y: 1.6f, z: 1.6f });
+            lantern:::world:::SetParent(knob, entity);
+        }
+        Show();
+    }
+
+    // Pulled by the player or the partner. A lever with no hold time latches on.
+    Pull~: () -> void {
+        guard kind == "lever";
+        guard !isOn;
+        if holdSeconds > 0.0f {
+            remainingSeconds = holdSeconds;
+        } else {
+            isLatched = true;
+        }
+        isOn = true;
+        Show();
+    }
+
+    // One fixed step. `isTriggered` is whether a plate is pressed or a crystal is lit now.
+    Tick~: (isTriggered: bool, dt: f32) -> void {
+        if kind != "lever" && isTriggered {
+            remainingSeconds = holdSeconds;
+        } else if remainingSeconds > 0.0f {
+            remainingSeconds -= dt;
+        }
+        nowOn := isLatched || isTriggered || remainingSeconds > 0.0f;
+        guard nowOn != isOn;
+        isOn = nowOn;
+        Show();
+    }
+
+    // Back to the start when the level restarts.
+    Reset~: () -> void {
+        isOn = false;
+        isLatched = false;
+        remainingSeconds = 0.0f;
+        Show();
+    }
+
+    // The switch's look says whether it is on, so a player can read the room.
+    Show~: () -> void {
+        if kind == "plate" {
+            lantern:::world:::SetTint(entity, isOn ? ON_TINT : OFF_TINT);
+        } else if kind == "lever" {
+            lantern:::world:::SetTint(knob, isOn ? ON_TINT : OFF_TINT);
+            lantern:::world:::SetPosition(knob, { y: isOn ? 0.6f : 1.1f });
+        } else if kind == "crystal" {
+            lantern:::world:::SetTint(knob, isOn ? CRYSTAL_TINT : DARK_CRYSTAL_TINT);
+            lantern:::world:::SetGlow(knob, CRYSTAL_TINT, isOn ? 4.0f : 0.0f);
+        }
+    }
+
+private:
+    static ON_TINT :: "FFD25A";
+    static OFF_TINT :: "7A7A88";
+    static CRYSTAL_TINT :: "9CE8FF";
+    static DARK_CRYSTAL_TINT :: "3A4A5A";
+
+    // A plate lets go the moment it is released, a lever stays, and a crystal keeps its glow for a few seconds.
+    DefaultHold :: (kind: string) -> f32 {
+        return kind == "crystal" ? 4.0f : 0.0f;
+    }
+}

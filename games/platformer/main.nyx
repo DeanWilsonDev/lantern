@@ -1,11 +1,14 @@
 AnchorSystem :: import AnchorSystem;
 Autopilot :: import Autopilot;
 BoostSystem :: import BoostSystem;
+BouncePad :: import BouncePad;
+CrumblePlatform :: import CrumblePlatform;
 CheckpointSystem :: import CheckpointSystem;
 CollisionView :: import CollisionView;
 ChapterLooks :: import ChapterLooks;
 Dust :: import Dust;
 Math :: import standard:::Math;
+CommandPoint :: import CommandPoint;
 Companion :: import Companion;
 GameAssets :: import GameAssets;
 GameEvent :: import GameEvent;
@@ -26,9 +29,13 @@ MovingPlatform :: import MovingPlatform;
 NightLights :: import NightLights;
 PhotoMode :: import PhotoMode;
 Player :: import Player;
+Partner :: import Partner;
+PartnerTuning :: import PartnerTuning;
 PlayerTuning :: import PlayerTuning;
 StreetsAutopilot :: import StreetsAutopilot;
+SwitchSystem :: import SwitchSystem;
 ThornSystem :: import ThornSystem;
+Watcher :: import Watcher;
 ThirdPersonCamera :: import ThirdPersonCamera;
 
 // The Lantern platformer. The engine calls the hooks below; everything
@@ -78,7 +85,7 @@ public:
         // The UI is Chaos components styled by Cosmos, in ui/. The engine draws it every frame
         // after OnRender and moves focus between its buttons with these three actions.
         lantern:::ui:::SetNavigation(InputSettings:::MENU_UP, InputSettings:::MENU_DOWN, InputSettings:::MENU_CONFIRM);
-        lantern:::ui:::Mount("ui/game-screen.chaos", "GameScreen");
+        uiMount = lantern:::ui:::Mount("ui/game-screen.chaos", "GameScreen");
         lantern:::audio:::PlayMusic("theme");
     }
 
@@ -121,7 +128,7 @@ public:
         ui.SetStatus(state == GameState:::MainMenu ? "" : `${rules.statusText}${photoMode.StatusSuffix()}`);
         ui.SetAlbum(rules.isLevelComplete ? photoMode.AlbumText() : "");
         photoMode.Publish(ui);
-        ui.SetMessage(rules.IsShowingMessage() ? rules.message : "");
+        ui.SetMessage(rules.IsShowingMessage() ? rules.message : HintText());
         ui.SetDebugHudOn(lantern:::debug:::IsHudVisible());
         PublishDebugValues();
     }
@@ -142,7 +149,8 @@ public:
         // The drawn lights follow their carriers' blended positions, like the camera does. The
         // reveal rule keeps reading the fixed-step positions (UpdateGlows).
         if companionGlow.isOn {
-            companionGlow.ShowAt(lantern:::world:::InterpolatedPosition(companion.root, alpha) + GlowHeight());
+            glowCarrier := partner.isPresent ? partner.root : companion.root;
+            companionGlow.ShowAt(lantern:::world:::InterpolatedPosition(glowCarrier, alpha) + GlowHeight());
         }
         lanternGlow.ShowAt(lantern:::world:::InterpolatedPosition(player.root, alpha) + GlowHeight());
         player.DrawBlobShadow();
@@ -172,6 +180,13 @@ private:
     }
     static STREETS_PATH :: "worlds/streets.world.json";
     static COMPLETE_SECONDS :: 4.0f;     // how long the completion message shows before the next level loads
+    static PROTOTYPE_HOLD_THE_DOOR_PATH :: "worlds/prototypes/hold-the-door.world.json";
+    static PROTOTYPE_NARROW_WAY_PATH :: "worlds/prototypes/the-narrow-way.world.json";
+    static PROTOTYPE_LIGHT_GATE_PATH :: "worlds/prototypes/light-gate.world.json";
+    static PROTOTYPE_HAND_OFF_PATH :: "worlds/prototypes/hand-off.world.json";
+    static PROTOTYPE_WATCHER_PATH :: "worlds/prototypes/the-watcher.world.json";
+    static CROSSING_PATH :: "worlds/the-crossing.world.json";
+    static PROTOTYPE_FLOW_PATH :: "worlds/prototypes/flow-and-fragile.world.json";
     static ROOFTOPS_PATH :: "worlds/rooftops.world.json";
     static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
     // The Guide Light: warm and wide from the companion, cooler and smaller from the lantern the
@@ -210,6 +225,14 @@ private:
     lanternGlow~ GuideLight = new GuideLight();
     checkpointSystem~ CheckpointSystem = new CheckpointSystem();
     companion~ Companion = new Companion();
+    // The companion you command (game-entities/partner.nyx), in the prototype rooms. A level has
+    // either her or the route-following companion above, depending on its markers.
+    partner~ Partner = new Partner();
+    switchSystem~ SwitchSystem = new SwitchSystem();
+    // The rules' restart count the last time the partner was put back, so a restart (R) can bring her too.
+    seenRestartCount~ i32 = 0;
+    // True from a bounce pad launch until the next landing, so the jump is held through the whole rise.
+    isLaunchAirborne~ bool = false;
     rules~ GameRules = new GameRules();
     events~ GameEvents = new GameEvents();
     state~ GameState = GameState:::MainMenu;
@@ -219,6 +242,9 @@ private:
     simulationSeconds~ f32 = 0.0f;
     // "" until the main menu's "The streets" button picks a level.
     pickedLevelPath~ string = "";
+    // The mounted UI, kept so the title screen can start it afresh when it swaps its button lists:
+    // a fresh mount puts focus back on the first button.
+    uiMount~ i32 = 0;
     isAutoplay~ bool = false;
     showCollisionView~ bool = false;
 
@@ -236,12 +262,21 @@ private:
         photoMode.Start(assets.unitCubeMesh);
         player.Spawn(assets, level.spawnPosition);
         companion.Spawn(level.companionStops, assets.playerMesh, assets.playerTexture);
+        if level.hasPartner {
+            partner.Spawn(level.partnerStart, assets.playerMesh, assets.playerTexture);
+        } else {
+            partner.isPresent = false;
+        }
+        for watcher~ Watcher in level.watchers {
+            watcher.TurnOn();
+        }
         gemSystem.Clear();
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
         completeSeconds = 0.0f;
         camera.ResetBehind(0.0f);
         rules.Start(level);
+        seenRestartCount = rules.restartCount;
         // Lights live in the engine until removed, so the last level's glows are turned off
         // here and this level's companion glow starts at her first stop.
         anchorSystem.Cancel();
@@ -249,6 +284,9 @@ private:
         lanternGlow.TurnOff();
         if level.glowPlatforms.length() > 0 {
             companionGlow.TurnOn(companion.position + GlowHeight(), COMPANION_GLOW_COLOR, GLOW_RANGE, COMPANION_GLOW_REVEAL);
+        } else if level.hasPartner {
+            companionGlow.TurnOn(partner.position + GlowHeight(), COMPANION_GLOW_COLOR, GLOW_RANGE, COMPANION_GLOW_REVEAL);
+            companionGlow.EnableShadows();
         }
     }
 
@@ -325,6 +363,8 @@ private:
             MovePlayer(stick, jumpPressed, jumpHeld, dt);
         }
         controller := player.controller;
+        UpdatePuzzle(dt);
+        UpdateCrumbles(dt);
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
@@ -366,17 +406,147 @@ private:
     // her spot and presses jump this step. The camera's forward and right let "push up" mean "away
     // from the camera", wherever it is looking (Player.Move does the conversion).
     MovePlayer~: (stick: lantern:::math:::Vec2, jumpPressed: bool, jumpHeld: bool, dt: f32) -> void {
-        boostReady := BoostSystem:::IsReady(companion, player.FeetPosition(), player.controller.IsGrounded());
-        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, boostReady, dt);
+        isGrounded := player.controller.IsGrounded();
+        partnerBoost := BoostSystem:::IsReady(partner.IsOfferingBoost(), partner.position, player.FeetPosition(), isGrounded);
+        boostReady := partnerBoost || BoostSystem:::IsReady(companion.IsOfferingBoost(), companion.position, player.FeetPosition(), isGrounded);
+        // A bounce pad launches by itself: standing on one while grounded is a jump, held to its full height.
+        bounceHeight := BounceHeightUnderPlayer();
+        launchHeight := boostReady ? PlayerTuning:::BOOST_JUMP_HEIGHT : bounceHeight;
+        isLaunching := bounceHeight > 0.0f && !boostReady;
+        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed || isLaunching, jumpHeld || isLaunching || isLaunchAirborne, launchHeight, dt);
+        if isLaunching {
+            isLaunchAirborne = true;
+        } else if step.Landed() {
+            isLaunchAirborne = false;
+        }
         companion.Update(player.FeetPosition(), player.controller.IsGrounded(), dt);
         // A boosted jump is its own event with its own sound, so it isn't also a plain jump.
         if step.Jumped() {
             Dust:::Puff(player.FeetPosition(), 6, 1.2f, 0.0f);
             events.Push(boostReady ? GameEvent:::PlayerBoosted : GameEvent:::PlayerJumped);
+            if partnerBoost {
+                partner.BoostUsed();
+            }
         }
         if step.Landed() {
             Dust:::Puff(player.FeetPosition(), 10, Math:::min(step.LandingSpeed() * 0.2f, 3.0f) + 0.8f, 0.3f);
             events.Push(GameEvent:::PlayerLanded(step.LandingSpeed()));
+        }
+    }
+
+    // The prototype rooms' step: the partner's commands and walking, then plates, levers, crystals and
+    // gates, then the watchers. Everything here needs the player to have moved already.
+    UpdatePuzzle~: (dt: f32) -> void {
+        if !isAutoplay {
+            HandlePartnerCommands();
+        }
+        if partner.isPresent {
+            partner.RememberTrail(player.FeetPosition(), player.controller.IsGrounded());
+            partner.Update(player.FeetPosition(), dt);
+            if partner.TakePullRequest() {
+                switchSystem.TryPull(level.switches, partner.position, PartnerTuning:::PARTNER_LEVER_REACH);
+            }
+            said := partner.TakeNote();
+            if said != "" {
+                rules.Announce(said, 2.0f);
+            }
+            if rules.restartCount != seenRestartCount {
+                seenRestartCount = rules.restartCount;
+                partner.Reset(level.partnerStart);
+                companionGlow.MoveTo(partner.position + GlowHeight());
+            }
+        }
+        carriers~ Array<lantern:::math:::Vec3> = [player.FeetPosition()];
+        if partner.isPresent {
+            carriers.add(partner.position);
+        }
+        if level.companionStops.length() > 0 {
+            carriers.add(companion.position);
+        }
+        lights: Array<GuideLight> = [companionGlow, lanternGlow];
+        switchSystem.Update(level.switches, level.gates, carriers, lights, dt);
+        lureLift: lantern:::math:::Vec3 = { y: 0.9f };
+        for watcher~ Watcher in level.watchers {
+            if watcher.Update(simulationSeconds, player.controller.CapsuleCenter(), partner.position + lureLift, partner.IsLuring(), dt) {
+                events.Push(GameEvent:::PlayerSeen);
+            }
+        }
+    }
+
+    // Q calls her, E tells her to wait, F pulls a lever you stand beside or else sends her to the
+    // command point you are facing.
+    HandlePartnerCommands~: () -> void {
+        if lantern:::input:::IsPressed(InputSettings:::CALL_PARTNER) {
+            partner.Call();
+        }
+        if lantern:::input:::IsPressed(InputSettings:::WAIT_PARTNER) {
+            partner.Wait();
+        }
+        guard lantern:::input:::IsPressed(InputSettings:::USE);
+        if switchSystem.TryPull(level.switches, player.FeetPosition(), PartnerTuning:::LEVER_REACH) {
+            lantern:::audio:::Play("pickup", 0.6f);
+            return;
+        }
+        guard partner.isPresent;
+        chosen := ChooseCommandPoint();
+        if chosen < 0 {
+            rules.Announce("Nothing to ask her to do over there", 2.0f);
+            return;
+        }
+        partner.Send(level.commandPoints[chosen]);
+    }
+
+    // The nearest command point in front of the camera and within SEND_RANGE, or -1. "In front"
+    // is the dot product of the direction to the point with the camera's flat forward: 1 straight
+    // ahead, 0 square to the side.
+    ChooseCommandPoint :: () -> i32 {
+        feet := player.FeetPosition();
+        forward := camera.Forward().Horizontal().Normalized();
+        best~ i32 = -1;
+        bestDistance~ f32 = PartnerTuning:::SEND_RANGE;
+        index~ i32 = 0;
+        for point: CommandPoint in level.commandPoints {
+            toPoint := (point.position - feet).Horizontal();
+            distance := toPoint.Length();
+            if distance > 0.5f && distance < bestDistance && toPoint.Normalized().Dot(forward) > PartnerTuning:::SEND_FACING_DOT {
+                best = index;
+                bestDistance = distance;
+            }
+            index++;
+        }
+        return best;
+    }
+
+    // The line under the status: the nearest sign, else what F would do right now.
+    HintText :: () -> string {
+        guard state == GameState:::Playing return "";
+        feet := player.FeetPosition();
+        sign := switchSystem.SignText(level.signs, feet);
+        if sign != "" {
+            return sign;
+        }
+        if switchSystem.IsLeverNear(level.switches, feet, PartnerTuning:::LEVER_REACH) {
+            return "F: pull the lever";
+        }
+        return "";
+    }
+
+    // The apex of the pad the player is standing on, or 0.
+    BounceHeightUnderPlayer :: () -> f32 {
+        guard player.controller.IsGrounded() return 0.0f;
+        for pad: BouncePad in level.bouncePads {
+            if pad.IsOn(player.FeetPosition()) {
+                return pad.height;
+            }
+        }
+        return 0.0f;
+    }
+
+    // Crumbling platforms shiver under whoever stands on them.
+    UpdateCrumbles~: (dt: f32) -> void {
+        for platform~ CrumblePlatform in level.crumbles {
+            isStoodOn := platform.IsStoodOnBy(player.FeetPosition()) || (partner.isPresent && platform.IsStoodOnBy(partner.position));
+            platform.Update(isStoodOn, simulationSeconds, dt);
         }
     }
 
@@ -385,7 +555,8 @@ private:
         if rules.isCarryingLantern && !lanternGlow.isOn {
             lanternGlow.TurnOn(player.FeetPosition() + GlowHeight(), LANTERN_GLOW_COLOR, GLOW_RANGE * 0.6f, LANTERN_GLOW_REVEAL);
         }
-        companionGlow.MoveTo(companion.position + GlowHeight());
+        carrierPosition := partner.isPresent ? partner.position : companion.position;
+        companionGlow.MoveTo(carrierPosition + GlowHeight());
         lanternGlow.MoveTo(player.FeetPosition() + GlowHeight());
         lights: Array<GuideLight> = [companionGlow, lanternGlow];
         glowSystem.Update(level.glowPlatforms, lights, dt);
@@ -443,6 +614,11 @@ private:
         SetState(GameState:::Playing);
     }
 
+    RemountUi~: () -> void {
+        lantern:::ui:::Unmount(uiMount);
+        uiMount = lantern:::ui:::Mount("ui/game-screen.chaos", "GameScreen");
+    }
+
     // Acts on a menu button (ui/main-menu.chaos, ui/pause-menu.chaos). The menus only record
     // what was chosen; the state machine stays here.
     HandleMenuChoice~: (choice: MenuChoice) -> void {
@@ -450,6 +626,21 @@ private:
             Play -> { PlayLevel(""); },
             PlayStreets -> { PlayLevel(STREETS_PATH); },
             PlayRooftops -> { PlayLevel(ROOFTOPS_PATH); },
+            OpenPrototypes -> {
+                ui.SetPrototypesOpen(true);
+                RemountUi();
+            },
+            ClosePrototypes -> {
+                ui.SetPrototypesOpen(false);
+                RemountUi();
+            },
+            PlayHoldTheDoor -> { PlayLevel(PROTOTYPE_HOLD_THE_DOOR_PATH); },
+            PlayTheNarrowWay -> { PlayLevel(PROTOTYPE_NARROW_WAY_PATH); },
+            PlayLightGate -> { PlayLevel(PROTOTYPE_LIGHT_GATE_PATH); },
+            PlayHandOff -> { PlayLevel(PROTOTYPE_HAND_OFF_PATH); },
+            PlayTheWatcher -> { PlayLevel(PROTOTYPE_WATCHER_PATH); },
+            PlayFlowAndFragile -> { PlayLevel(PROTOTYPE_FLOW_PATH); },
+            PlayTheCrossing -> { PlayLevel(CROSSING_PATH); },
             PlayStreetsLater -> { PlayLevel(STREETS_LATER_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
@@ -458,6 +649,7 @@ private:
             },
             ToggleDebugHud -> { lantern:::debug:::SetHudVisible(!lantern:::debug:::IsHudVisible()); },
             MainMenu -> {
+                ui.SetPrototypesOpen(false);
                 StartLevel();
                 SetState(GameState:::MainMenu);
             },
@@ -502,6 +694,34 @@ private:
         lantern:::debug:::SetValue("Glow/Platforms shown", `${shownPlatforms:d}`);
         lantern:::debug:::SetValue("Glow/Carrying lantern", rules.isCarryingLantern ? "yes" : "no");
         lantern:::debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
+        if partner.isPresent {
+            lantern:::debug:::SetValue("Partner/Mode", partner.ModeName());
+            lantern:::debug:::SetValue("Partner/Position", `${partner.position.x:.2f}, ${partner.position.y:.2f}, ${partner.position.z:.2f}`);
+        }
+        lantern:::debug:::SetValue("Glow/Companion light", companionGlow.isOn ? `${companionGlow.position.x:.1f}, ${companionGlow.position.y:.1f}, ${companionGlow.position.z:.1f}` : "off");
+        lantern:::debug:::SetValue("Game/Message", rules.IsShowingMessage() ? rules.message : "");
+        watcherNumber~ i32 = 0;
+        for watcher in level.watchers {
+            lantern:::debug:::SetValue(`Watcher/${watcherNumber:d}`, watcher.isLured ? "lured" : "sweeping");
+            watcherNumber++;
+        }
+        // Gates by channel and kind (a stair's pieces all report one value), channels by number.
+        for gate in level.gates {
+            lantern:::debug:::SetValue(`Gate/${gate.channel:d}/${gate.isDoor ? "door" : "bridge"}`, gate.offset < 0.05f ? "solid" : "away");
+        }
+        switchNumber~ i32 = 0;
+        for piece in level.switches {
+            lantern:::debug:::SetValue(`Switch/${switchNumber:d}`, `${piece.kind} ${piece.isOn ? "on" : "off"} ${piece.remainingSeconds:.1f}`);
+            switchNumber++;
+        }
+        crumbleNumber~ i32 = 0;
+        for slab in level.crumbles {
+            lantern:::debug:::SetValue(`Crumble/${crumbleNumber:d}`, slab.phase == 0 ? "solid" : (slab.phase == 1 ? "shivering" : "gone"));
+            crumbleNumber++;
+        }
+        for channel~ i32 = 1; channel <= 4; channel++ {
+            lantern:::debug:::SetValue(`Channel/${channel:d}`, switchSystem.IsChannelOn(level.switches, channel) ? "on" : "off");
+        }
         lantern:::debug:::SetValue("Photo/Camera raised", photoMode.isActive ? "yes" : "no");
         lantern:::debug:::SetValue("Photo/Verdict", photoMode.VerdictName());
         lantern:::debug:::SetValue("Photo/Photos", `${photoMode.takenCount:d} / ${photoMode.sights.length():d}`);

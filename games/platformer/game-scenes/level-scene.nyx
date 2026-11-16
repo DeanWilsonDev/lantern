@@ -1,6 +1,13 @@
 Checkpoint :: import Checkpoint;
 Anchor :: import Anchor;
+BouncePad :: import BouncePad;
+CommandPoint :: import CommandPoint;
+CrumblePlatform :: import CrumblePlatform;
 CompanionStop :: import CompanionStop;
+Gate :: import Gate;
+Sign :: import Sign;
+Switch :: import Switch;
+Watcher :: import Watcher;
 Gem :: import Gem;
 Goal :: import Goal;
 GlowPlatform :: import GlowPlatform;
@@ -32,6 +39,17 @@ public:
     goals~ Array<Goal> = [];
     lanterns~ Array<LanternPickup> = [];
     thorns~ Array<Thorns> = [];
+    // The prototype rooms' pieces (docs/gameplay-prototypes.md): the partner you command and the
+    // places you can send her, plates, levers and crystals, the gates they open, and signs.
+    hasPartner~ bool = false;
+    partnerStart~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    commandPoints~ Array<CommandPoint> = [];
+    switches~ Array<Switch> = [];
+    gates~ Array<Gate> = [];
+    signs~ Array<Sign> = [];
+    watchers~ Array<Watcher> = [];
+    bouncePads~ Array<BouncePad> = [];
+    crumbles~ Array<CrumblePlatform> = [];
     // Which chapter's look the level wears (ChapterLooks): the spawn's `chapter` property, 0 if none.
     chapter~ i32 = 0;
 
@@ -97,6 +115,41 @@ public:
             patch.Grow(chapter);
             thorns.add(patch);
         }
+        for entity: i64 in lantern:::world:::FindByKind("partner_start") {
+            hasPartner = true;
+            partnerStart = lantern:::world:::Position(entity);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("command_point") {
+            point~ CommandPoint = new CommandPoint(entity);
+            point.Place(cubeMesh);
+            commandPoints.add(point);
+        }
+        for kind: string in ["plate", "lever", "crystal"] {
+            for entity: i64 in lantern:::world:::FindByKind(kind) {
+                piece~ Switch = new Switch(entity);
+                piece.Place(cubeMesh, gemMesh);
+                switches.add(piece);
+            }
+        }
+        for entity: i64 in lantern:::world:::FindByKind("gate") {
+            gate~ Gate = new Gate(entity);
+            gate.Start();
+            gates.add(gate);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("sign") {
+            signs.add(new Sign(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("watcher") {
+            watchers.add(new Watcher(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("bounce_pad") {
+            pad~ BouncePad = new BouncePad(entity);
+            pad.Place();
+            bouncePads.add(pad);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("crumble") {
+            crumbles.add(new CrumblePlatform(entity));
+        }
         // The file lists the stops in any order; the route follows their `order` property.
         companionStops = companionStops.sort((first, second) -> first.order < second.order);
         lantern:::engine:::Log(`level ${path}: ${gems.length():d} gems, ${platforms.length():d} moving platforms`);
@@ -114,6 +167,17 @@ public:
         goals = [];
         lanterns = [];
         thorns = [];
+        hasPartner = false;
+        commandPoints = [];
+        switches = [];
+        gates = [];
+        signs = [];
+        for watcher~ Watcher in watchers {
+            watcher.TurnOff();
+        }
+        watchers = [];
+        bouncePads = [];
+        crumbles = [];
         chapter = 0;
     }
 

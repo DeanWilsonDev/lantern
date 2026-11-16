@@ -1,0 +1,123 @@
+Gate :: import Gate;
+GuideLight :: import GuideLight;
+PartnerTuning :: import PartnerTuning;
+Sign :: import Sign;
+Switch :: import Switch;
+
+// The puzzle pieces' rules, run once per fixed step: which plates are pressed, which crystals
+// are lit, which levers are pulled, and so which gates are open.
+//
+// "Carriers" are the feet of everyone who can press a plate: the player, the partner and the
+// route-following companion. A plate doesn't care who stands on it, which is the whole idea of
+// "she holds the door while you walk through".
+SwitchSystem :: class {
+public:
+    // Every switch decides if it is on this step, then every gate follows its channel.
+    Update~: (switches~ Array<Switch>, gates~ Array<Gate>, carriers: Array<lantern:::math:::Vec3>, lights: Array<GuideLight>, dt: f32) -> void {
+        for each~ Switch in switches {
+            isTriggered~ bool = false;
+            if each.kind == "plate" {
+                isTriggered = IsPressed(each, carriers);
+            } else if each.kind == "crystal" {
+                isTriggered = IsLit(each, lights);
+            }
+            each.Tick(isTriggered, dt);
+        }
+        for gate~ Gate in gates {
+            gate.Update(IsChannelOn(switches, gate.channel), carriers, dt);
+        }
+    }
+
+    IsChannelOn :: (switches: Array<Switch>, channel: i32) -> bool {
+        for each: Switch in switches {
+            if each.channel == channel && each.isOn {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The player (or the partner) uses a lever within reach of `feet`. True if one was pulled.
+    TryPull~: (switches~ Array<Switch>, feet: lantern:::math:::Vec3, reach: f32) -> bool {
+        nearest~ i32 = -1;
+        nearestDistance~ f32 = reach;
+        index~ i32 = 0;
+        for each: Switch in switches {
+            if each.kind == "lever" && !each.isOn && each.home.DistanceTo(feet) < nearestDistance {
+                nearest = index;
+                nearestDistance = each.home.DistanceTo(feet);
+            }
+            index++;
+        }
+        guard nearest >= 0 return false;
+        switches[nearest].Pull();
+        return true;
+    }
+
+    // The nearest unpulled lever within reach, so the game can offer "F: pull the lever".
+    IsLeverNear :: (switches: Array<Switch>, feet: lantern:::math:::Vec3, reach: f32) -> bool {
+        for each: Switch in switches {
+            if each.kind == "lever" && !each.isOn && each.home.DistanceTo(feet) < reach {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The text of the nearest sign whose radius the player is inside, or "".
+    SignText :: (signs: Array<Sign>, feet: lantern:::math:::Vec3) -> string {
+        best~ string = "";
+        bestDistance~ f32 = 1000000.0f;
+        for sign: Sign in signs {
+            distance := sign.position.DistanceTo(feet);
+            if distance < sign.radius && distance < bestDistance {
+                best = sign.text;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+private:
+    // Someone's feet are within the plate's footprint and level with its top.
+    IsPressed :: (plate: Switch, carriers: Array<lantern:::math:::Vec3>) -> bool {
+        for feet: lantern:::math:::Vec3 in carriers {
+            offset := feet - plate.home;
+            if offset.x > -plate.halfExtents.x && offset.x < plate.halfExtents.x && offset.z > -plate.halfExtents.z && offset.z < plate.halfExtents.z && offset.y > -PartnerTuning:::PLATE_HEIGHT_BELOW - plate.halfExtents.y && offset.y < PartnerTuning:::PLATE_HEIGHT_ABOVE + plate.halfExtents.y {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // A light is on, close enough, and a ray from it to the crystal reaches it before it reaches
+    // any wall or pillar. The ray is the shadow: where the pillar would throw a shadow of the light,
+    // the crystal is dark.
+    IsLit :: (crystal: Switch, lights: Array<GuideLight>) -> bool {
+        target := crystal.home + GemLift();
+        for light: GuideLight in lights {
+            guard light.isOn continue;
+            toCrystal := target - light.position;
+            distance := toCrystal.Length();
+            guard distance < crystal.range continue;
+            guard distance > 0.01f continue;
+            if RayReaches(light.position, toCrystal.Normalized(), distance) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    RayReaches :: (origin: lantern:::math:::Vec3, direction: lantern:::math:::Vec3, distance: f32) -> bool {
+        return when lantern:::physics:::Raycast(origin, direction, distance) {
+            hit: lantern:::physics:::RayHit -> hit.Distance() > distance - PartnerTuning:::LIGHT_RAY_MARGIN,
+            null -> true
+        };
+    }
+
+    // The crystal's gem floats a metre above its marker; the ray aims at the gem.
+    GemLift :: () -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: 1.0f };
+        return lift;
+    }
+}

@@ -1,0 +1,58 @@
+// A place the partner can be sent to: a world-file entity of kind "command_point". The player faces it
+// and presses the use key; she walks there and then does what `action` says. The game draws it as
+// a faint golden disc, so the places she can go are visible.
+//
+// Properties set on the entity in the world editor:
+// - `action` (text): what she does on arrival.
+//     "stand"  stands there (it holds a plate down, or shines her light from that spot);
+//     "crouch" crouches so the player can jump off her back (the Boost);
+//     "pull"   pulls the lever beside the point, once;
+//     "lure"   stands in the open and is seen (a watcher looks at her instead of you).
+// - `via`, `via2`, `via3` (vectors, optional): places to walk through first, in that order. She
+//   has no path finding, so a point behind a corner, a narrow slot or up a stair names the
+//   doorways to aim for.
+CommandPoint :: class {
+public:
+    entity: i64;
+    position: lantern:::math:::Vec3;
+    action: string;
+    // The places to walk through before the point itself.
+    route: Array<lantern:::math:::Vec3>;
+
+    CommandPoint~: (entity: i64) : entity(entity), position(lantern:::world:::Position(entity)),
+        action(lantern:::world:::HasProperty(entity, "action") ? lantern:::world:::TextProperty(entity, "action") : "stand"),
+        route(RouteOf(entity)) { }
+
+    // The disc: a cube squashed flat, glowing. The crouch spot is a different colour, so a player can
+    // tell "she holds this" from "she kneels here" at a glance.
+    Place~: (cubeMesh: i64) -> void {
+        disc := lantern:::world:::Spawn("command_disc", { y: 0.03f });
+        lantern:::world:::SetMesh(disc, cubeMesh, ColorFor(action));
+        lantern:::world:::SetScale(disc, { x: 1.1f, y: 0.05f, z: 1.1f });
+        lantern:::world:::SetGlow(disc, ColorFor(action), 1.5f);
+        lantern:::world:::SetCastsShadows(disc, false);
+        lantern:::world:::SetParent(disc, entity);
+    }
+
+private:
+    RouteOf :: (entity: i64) -> Array<lantern:::math:::Vec3> {
+        found~ Array<lantern:::math:::Vec3> = [];
+        for key: string in ["via", "via2", "via3"] {
+            if lantern:::world:::HasProperty(entity, key) {
+                found.add(lantern:::world:::VectorProperty(entity, key));
+            }
+        }
+        return found;
+    }
+
+    ColorFor :: (action: string) -> string {
+        if action == "crouch" {
+            return "FFB05A";
+        } else if action == "pull" {
+            return "7AE0FF";
+        } else if action == "lure" {
+            return "FF6A8A";
+        }
+        return "FFE08A";
+    }
+}

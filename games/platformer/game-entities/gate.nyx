@@ -1,0 +1,75 @@
+Math :: import standard:::Math;
+PartnerTuning :: import PartnerTuning;
+
+// A door or a bridge: a world-file piece of kind "gate" that slides away or back as its channel
+// is switched (game-entities/switch.nyx). The piece needs a "kinematic" collider in the world
+// file so that moving it moves its collision, the way a moving platform's is.
+//
+// Properties:
+// - `channel` (number): the channel that works it.
+// - `solid_when` (text, optional): "off" (the default) is a door, solid until its channel is on;
+//   "on" is a bridge, solid only while it is on.
+// - `slide` (number, optional): how many metres down it slides to get out of the way; 4.2 when missing.
+// - `half_extents` (vector): the piece's half sizes, so a door can refuse to shut on someone standing in it.
+Gate :: class {
+public:
+    entity: i64;
+    channel: i32;
+    isDoor: bool;
+    home: lantern:::math:::Vec3;
+    halfExtents: lantern:::math:::Vec3;
+    slide: f32;
+    // How far down it is now: 0 is its place in the world file, `slide` is out of the way.
+    offset~ f32 = 0.0f;
+
+    Gate~: (entity: i64) : entity(entity), channel(i32(lantern:::world:::NumberProperty(entity, "channel"))),
+        isDoor(!lantern:::world:::HasProperty(entity, "solid_when") || lantern:::world:::TextProperty(entity, "solid_when") != "on"),
+        home(lantern:::world:::Position(entity)),
+        halfExtents(lantern:::world:::VectorProperty(entity, "half_extents")),
+        slide(lantern:::world:::HasProperty(entity, "slide") ? lantern:::world:::NumberProperty(entity, "slide") : 4.2f) { }
+
+    // The state it starts in, before the first step: a door shut, a bridge out of the way.
+    Start~: () -> void {
+        offset = isDoor ? 0.0f : slide;
+        Place();
+    }
+
+    // Moves toward open or shut for this step. `isPowered` is its channel; `carriers` are the
+    // feet that must not be caught by a closing door.
+    Update~: (isPowered: bool, carriers: Array<lantern:::math:::Vec3>, dt: f32) -> void {
+        wantsSolid := isDoor ? !isPowered : isPowered;
+        target := wantsSolid ? 0.0f : slide;
+        if wantsSolid && offset > 0.0f && IsAnyoneInside(carriers) {
+            return;
+        }
+        if offset < target {
+            offset = Math:::min(offset + PartnerTuning:::GATE_SPEED * dt, target);
+        } else if offset > target {
+            offset = Math:::max(offset - PartnerTuning:::GATE_SPEED * dt, target);
+        }
+        Place();
+    }
+
+private:
+    // A door sliding shut on a character would shove them about; instead it waits.
+    IsAnyoneInside :: (carriers: Array<lantern:::math:::Vec3>) -> bool {
+        margin := PartnerTuning:::GATE_BLOCK_MARGIN;
+        for feet: lantern:::math:::Vec3 in carriers {
+            offsetFromHome := feet - home;
+            insideWidth := offsetFromHome.x > -(halfExtents.x + margin) && offsetFromHome.x < halfExtents.x + margin;
+            insideDepth := offsetFromHome.z > -(halfExtents.z + margin) && offsetFromHome.z < halfExtents.z + margin;
+            insideHeight := feet.y > home.y - halfExtents.y - 0.5f && feet.y < home.y + halfExtents.y + 0.5f;
+            if insideWidth && insideDepth && insideHeight {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // SetPosition moves the collision body with the piece and carries anyone riding it.
+    Place~: () -> void {
+        lowered: lantern:::math:::Vec3 = { y: -offset };
+        lantern:::world:::SetPosition(entity, home + lowered);
+        lantern:::world:::SetVisible(entity, offset < slide - 0.01f);
+    }
+}
