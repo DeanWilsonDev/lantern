@@ -2,21 +2,31 @@ Math :: import standard:::Math;
 PartnerTuning :: import PartnerTuning;
 
 // A platform that gives way: a world-file entity of kind "crumble" with a "kinematic" collider. It
-// shivers for CRUMBLE_DELAY_SECONDS once someone stands on it, drops out of the world, and comes
-// back CRUMBLE_RETURN_SECONDS later, so a fall costs a walk back and nothing else.
+// shivers for its delay once someone stands on it, drops out of the world, and comes back after its
+// return time, so a fall costs a walk back and nothing else. A slab with no return time is gone for
+// good, until the level is restarted: whoever crosses a row of them first breaks the way for whoever
+// comes after, which is how the companion can lead and the player have to find another way round.
 //
-// Property: `half_extents` (vector), the piece's half sizes.
+// Properties:
+// - `half_extents` (vector): the piece's half sizes.
+// - `delay_seconds` (number, optional): how long it shivers once stood on; CRUMBLE_DELAY_SECONDS when missing.
+// - `return_seconds` (number, optional): how long it stays gone; CRUMBLE_RETURN_SECONDS when missing, and
+//   a negative number means it never comes back.
 CrumblePlatform :: class {
 public:
     entity: i64;
     home: lantern:::math:::Vec3;
     halfExtents: lantern:::math:::Vec3;
+    delaySeconds: f32;
+    returnSeconds: f32;
     // 0 solid, 1 shivering, 2 gone.
     phase~ i32 = 0;
     phaseSeconds~ f32 = 0.0f;
 
     CrumblePlatform~: (entity: i64) : entity(entity), home(lantern:::world:::Position(entity)),
-        halfExtents(lantern:::world:::VectorProperty(entity, "half_extents")) { }
+        halfExtents(lantern:::world:::VectorProperty(entity, "half_extents")),
+        delaySeconds(lantern:::world:::HasProperty(entity, "delay_seconds") ? lantern:::world:::NumberProperty(entity, "delay_seconds") : PartnerTuning:::CRUMBLE_DELAY_SECONDS),
+        returnSeconds(lantern:::world:::HasProperty(entity, "return_seconds") ? lantern:::world:::NumberProperty(entity, "return_seconds") : PartnerTuning:::CRUMBLE_RETURN_SECONDS) { }
 
     // One step. `isStoodOn` is whether anyone's feet are on it.
     Update~: (isStoodOn: bool, time: f32, dt: f32) -> void {
@@ -28,9 +38,9 @@ public:
         } else if phase == 1 {
             phaseSeconds += dt;
             // A small sideways shake that grows, so the player can see it is about to go.
-            shake: lantern:::math:::Vec3 = { x: Math:::sin(time * 60.0f) * 0.04f * (phaseSeconds / PartnerTuning:::CRUMBLE_DELAY_SECONDS) };
+            shake: lantern:::math:::Vec3 = { x: Math:::sin(time * 60.0f) * 0.04f * (phaseSeconds / delaySeconds) };
             lantern:::world:::SetPosition(entity, home + shake);
-            if phaseSeconds >= PartnerTuning:::CRUMBLE_DELAY_SECONDS {
+            if phaseSeconds >= delaySeconds {
                 phase = 2;
                 phaseSeconds = 0.0f;
                 lantern:::world:::SetVisible(entity, false);
@@ -39,7 +49,7 @@ public:
             }
         } else {
             phaseSeconds += dt;
-            if phaseSeconds >= PartnerTuning:::CRUMBLE_RETURN_SECONDS {
+            if returnSeconds >= 0.0f && phaseSeconds >= returnSeconds {
                 Restore();
             }
         }

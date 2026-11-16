@@ -1541,3 +1541,31 @@ was written; another thread's decisions may have used some, in which case the re
   asks for F held with the stick still, so it is an act of stopping, which is the point of a rest.
 - **D-102: romaji until the engine has a font.** The 8x8 bitmap font is ASCII, so the Japanese is written in Latin letters.
   Kana and kanji are an engine card, not a Nyx gap.
+
+## The companion as an equal partner
+
+Dean's play-test (2026-11-16): the player and the companion are equals and a team, so the command model is gone. Nothing in
+this section has been compiled or run (the cloud has no `nox` or `mist`); all of it is provisional and not reviewed by Dean.
+
+- **D-103: she works from `team_beat` markers, not commands.** Beats sorted by `order` say where she goes, what she does
+  there (walk, stand, crouch, pull, lure) and when she moves on. Q, E and F-to-send were removed; F still pulls levers.
+- **D-104: a beat is released by a rule.** `near` the player, `at` a point, a switch `channel` or `seconds`. `at` and
+  `channel` make holds mutual: she holds a door until the player reaches the far side, and the player holds a plate for her.
+- **D-105: she is safe by construction.** A down ray ahead of each step stops her at edges, a stuck timer retries then
+  skips a beat then teleports her to the player's trail, and a fall puts her back. Waypoints (`via`) keep her off pillars.
+- **D-106: she hurries and pauses to stay a team.** She speeds up when the player is far behind, waits when too far
+  ahead, and follows the player's trail after the last beat.
+- **D-107: a goal needs her.** The goal counts only with her within 6 m and 3 m height; alone, the player gets a hint.
+  Provisional: both distances are guesses.
+- **D-108: crumble slabs take their own timing.** `delay_seconds` and `return_seconds` (negative: never returns) so one
+  kind can be a one-way trap she springs for the player.
+- **D-109: rooms were reworked, not patched.** Hold the door has a far plate for her; the narrow way and hand-off keep
+  their solo routes, harder; hand-off's stairs have low risers she can climb; flow and fragile has no bounce pads and
+  crumbling slabs break behind her while the player uses stepping stones; the crossing is rebuilt on the same pieces.
+- **D-110: the light gate is a lit-or-dark gem.** The pillar became a wall of shade and the crystal has a smaller range, so
+  the gem counts only in her light or the lantern's. If this is still confusing the room is a candidate to drop.
+- **D-111: the watcher stays a prototype.** She lures it unprompted; it doesn't fit the game's tone and is kept for the feel
+  of tension only.
+- **D-112: the climb and station have markers on their ground routes.** Her service stair route and the footbridge, as D-099
+  promised.
+
