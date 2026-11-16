@@ -1,0 +1,124 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+HoldTwoKeys :: (platform: lantern:::testing:::ScriptedPlatform~*, first: lantern:::core:::KeyCode, second: lantern:::core:::KeyCode, frames: usize) -> void {
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(first, false));
+    platform->AddEventToLastFrame(lantern:::platform:::PlatformEvent:::KeyDown(second, false));
+    lantern:::testing:::QueueFrames(platform, frames - 1);
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(first));
+    platform->AddEventToLastFrame(lantern:::platform:::PlatformEvent:::KeyUp(second));
+}
+
+FeetHeight :: (host: lantern:::host:::GameHost*) -> f32 {
+    return lantern:::testing:::SecondComponent(lantern:::testing:::DebugText(host, "Player/Position"));
+}
+
+FeetDepth :: (host: lantern:::host:::GameHost*) -> f32 {
+    return lantern:::testing:::ThirdComponent(lantern:::testing:::DebugText(host, "Player/Position"));
+}
+
+PlatformDepth :: (host: lantern:::host:::GameHost*, name: string) -> f32 {
+    return lantern:::testing:::ParseDecimalOrFail(lantern:::testing:::DebugText(host, name), name);
+}
+
+WalkUntilDepth :: (host: lantern:::host:::GameHost~*, platform: lantern:::testing:::ScriptedPlatform~*, frameLoop: lantern:::engine:::GameLoop~*, depth: f32) -> void {
+    attempts~ i32 = 0;
+    while FeetDepth(host) > depth && attempts < 80 {
+        attempts++;
+        lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::W, 4);
+        lantern:::testing:::RunQueued(frameLoop, platform, host);
+    }
+}
+
+WaitForPlatformAtLeast :: (host: lantern:::host:::GameHost~*, platform: lantern:::testing:::ScriptedPlatform~*, frameLoop: lantern:::engine:::GameLoop~*, name: string, depth: f32) -> void {
+    attempts~ i32 = 0;
+    while PlatformDepth(host, name) < depth && attempts < 400 {
+        attempts++;
+        lantern:::testing:::QueueFrames(platform, 2);
+        lantern:::testing:::RunQueued(frameLoop, platform, host);
+    }
+    assert(attempts < 400, "the platform came back within a period");
+}
+
+WaitForPlatformAtMost :: (host: lantern:::host:::GameHost~*, platform: lantern:::testing:::ScriptedPlatform~*, frameLoop: lantern:::engine:::GameLoop~*, name: string, depth: f32) -> void {
+    attempts~ i32 = 0;
+    while PlatformDepth(host, name) > depth && attempts < 400 {
+        attempts++;
+        lantern:::testing:::QueueFrames(platform, 2);
+        lantern:::testing:::RunQueued(frameLoop, platform, host);
+    }
+    assert(attempts < 400, "the platform reached the far end within a period");
+}
+
+main :: () -> i32 {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, false);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Down);
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Down);
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Enter);
+    lantern:::testing:::QueueFrames(platform, 30);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    lantern:::testing:::AssertNoScriptError(host, "after choosing the rooftops");
+    assert(lantern:::testing:::DebugText(host, "Game/Level") == "worlds/rooftops.world.json", "the third menu button plays the rooftops");
+    assert(lantern:::testing:::DebugText(host, "Game/Gems") == "0 / 6", "the rooftops have six gems");
+
+    WalkUntilDepth(host, platform, frameLoop, -11.2f);
+    WaitForPlatformAtLeast(host, platform, frameLoop, "Platform/1", -14.5f);
+    HoldTwoKeys(platform, lantern:::core:::KeyCode:::W, lantern:::core:::KeyCode:::Space, 22);
+    lantern:::testing:::QueueFrames(platform, 20);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(FeetDepth(host) < -12.5f && FeetDepth(host) > -22.0f, "the player is over the first gap, on the moving platform");
+    assert(FeetHeight(host) > -0.1f, "riding the platform, not falling");
+
+    WaitForPlatformAtMost(host, platform, frameLoop, "Platform/1", -19.4f);
+    lantern:::testing:::HoldKey(platform, lantern:::core:::KeyCode:::W, 12);
+    HoldTwoKeys(platform, lantern:::core:::KeyCode:::W, lantern:::core:::KeyCode:::Space, 20);
+    lantern:::testing:::QueueFrames(platform, 30);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(FeetDepth(host) < -22.5f, "the platform's far end delivers the player to the second roof");
+    assert(FeetHeight(host) > -0.1f, "standing on the second roof");
+    lantern:::testing:::AssertNoScriptError(host, "after the first platform");
+
+    WalkUntilDepth(host, platform, frameLoop, -35.0f);
+    WaitForPlatformAtLeast(host, platform, frameLoop, "Platform/0", -39.0f);
+    HoldTwoKeys(platform, lantern:::core:::KeyCode:::W, lantern:::core:::KeyCode:::Space, 22);
+    lantern:::testing:::QueueFrames(platform, 20);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(FeetDepth(host) < -36.0f && FeetDepth(host) > -51.0f, "the player is over the second gap, on the long platform");
+    assert(FeetHeight(host) > -0.1f, "riding the long platform, not falling");
+
+    WaitForPlatformAtMost(host, platform, frameLoop, "Platform/0", -49.3f);
+    HoldTwoKeys(platform, lantern:::core:::KeyCode:::W, lantern:::core:::KeyCode:::Space, 20);
+    lantern:::testing:::QueueFrames(platform, 30);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(FeetDepth(host) < -51.5f, "the player reached the third roof");
+    assert(FeetHeight(host) > -0.1f, "standing on the third roof");
+    lantern:::testing:::AssertNoScriptError(host, "after the second platform");
+
+    WalkUntilDepth(host, platform, frameLoop, -60.4f);
+    lantern:::testing:::QueueFrames(platform, 20);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(lantern:::testing:::DebugText(host, "Anchor/Ready") == "yes", "the swing post is ready with no companion needed");
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Space);
+    lantern:::testing:::QueueFrames(platform, 150);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(FeetDepth(host) < -73.0f, "the swing carried the player across the third gap");
+    assert(FeetHeight(host) > -0.1f, "landed on the last roof");
+
+    WalkUntilDepth(host, platform, frameLoop, -86.8f);
+    lantern:::testing:::QueueFrames(platform, 10);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(lantern:::testing:::DebugText(host, "Game/Complete") == "yes", "touching the goal completes the rooftops");
+    assert(lantern:::testing:::DebugText(host, "Game/Level") == "worlds/rooftops.world.json", "the level has not changed yet");
+    lantern:::testing:::QueueFrames(platform, 270);
+    lantern:::testing:::RunQueued(frameLoop, platform, host);
+    assert(lantern:::testing:::DebugText(host, "Game/Level") == "worlds/streets-later.world.json", "the rooftops lead into the streets, later");
+    assert(lantern:::testing:::DebugText(host, "Game/Complete") == "no", "the next level starts fresh");
+    lantern:::testing:::AssertNoScriptError(host, "after the hand-over");
+
+    return 0;
+}

@@ -133,12 +133,20 @@ saves the rendered viewport.
   adds it where it lands.
 - **Console**: the status line's history with info, warning and error filters.
 - **History**: every undo step by label; click one to jump to it.
-- **Settings** (Ctrl/Cmd + ,): Viewport (view options, grid spacing), Snapping (steps),
-  Camera (presets, orthographic, bookmarks), Editor (recent files, preferences file).
+- **Settings** (Ctrl/Cmd + ,): Viewport (view options, grid spacing), Graphics (quality level, bloom, ambient
+  occlusion, anti-aliasing, light shafts, shadow quality), Snapping (steps), Camera (presets, orthographic,
+  bookmarks), Editor (recent files, preferences file).
 - **Command palette** (Ctrl/Cmd + Shift + P): every command by name. Click the field, type,
   then Enter runs the first match.
 - **Status bar**: the last message, entity and selection counts, tool, space, snap, camera,
   frames per second and draw count.
+
+The Graphics tab changes how the editor viewport is drawn, with the same levels and effects as
+`lantern:::graphics:::SetQuality` in a game (`docs/graphics-effects.md`). Choosing a quality level sets the four effect
+checkboxes and the shadow quality together; a checkbox or the shadow quality can then be changed on its own. The
+default is medium, which is what the viewport drew before the tab existed. The options are the view options `quality`,
+`shadow_quality`, `bloom`, `ambient_occlusion`, `anti_aliasing` and `light_shafts`, so they are saved with the other
+preferences.
 
 Preferences (window size, snapping, view options, bookmarks, the open bottom panel and recent
 files) are saved to `~/.config/lantern/world-editor.json` on quit and from the settings dialog.

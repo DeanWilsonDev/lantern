@@ -118,7 +118,42 @@ LightEntitiesLightTheViewport :: () -> void {
     }
 }
 
+QualitySettingsReachTheViewport :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = FallbackSession();
+    guard session return;
+    defer delete session;
+    resources := new CountingResources();
+    defer delete resources;
+    renderWorld := new lantern:::renderer:::RenderWorld();
+    defer delete renderWorld;
+    lantern:::editor:::BuildViewport(session, resources, renderWorld);
+    assert(renderWorld->post.bloomEnabled && renderWorld->post.ambientOcclusionEnabled && renderWorld->post.antiAliasingEnabled && renderWorld->atmosphere.lightShaftsEnabled, "the default is medium, with every effect on");
+    assert(renderWorld->shadows.filterSamples == 12, "medium shadows filter with 12 lookups");
+    acceptedQualityLow: bool = session->SetViewOption("quality", "low");
+    assert(acceptedQualityLow, "low is a quality level");
+    lantern:::editor:::BuildViewport(session, resources, renderWorld);
+    assert(!renderWorld->post.bloomEnabled && !renderWorld->post.ambientOcclusionEnabled && !renderWorld->post.antiAliasingEnabled && !renderWorld->atmosphere.lightShaftsEnabled, "low turns the costly effects off");
+    assert(renderWorld->shadows.filterSamples == 4, "low shadows filter with 4 lookups");
+    acceptedAmbientocclusionOn: bool = session->SetViewOption("ambient_occlusion", "on");
+    assert(acceptedAmbientocclusionOn, "one effect can be turned back on");
+    acceptedShadowqualityHigh: bool = session->SetViewOption("shadow_quality", "high");
+    assert(acceptedShadowqualityHigh, "shadows have a quality of their own");
+    lantern:::editor:::BuildViewport(session, resources, renderWorld);
+    assert(renderWorld->post.ambientOcclusionEnabled && !renderWorld->post.bloomEnabled, "a toggle overrides the level for that effect only");
+    assert(renderWorld->shadows.filterSamples == 20, "high shadows filter with 20 lookups");
+    acceptedQualityUltra: bool = session->SetViewOption("quality", "ultra");
+    assert(!acceptedQualityUltra, "an unknown level is refused");
+    currentLevel: string!? = session->view.Get("quality");
+    assert(currentLevel == "low", "the level stays as it was");
+    delete currentLevel;
+    acceptedQualityHigh: bool = session->SetViewOption("quality", "high");
+    assert(acceptedQualityHigh, "high is a quality level");
+    lantern:::editor:::BuildViewport(session, resources, renderWorld);
+    assert(renderWorld->post.bloomEnabled && renderWorld->shadows.filterSamples == 20, "high turns everything on");
+}
+
 main :: () -> i32 {
+    QualitySettingsReachTheViewport();
     LightEntitiesLightTheViewport();
     TheCourseDrawsEveryShapeAndMarker();
     ViewOptionsChangeWhatIsDrawn();

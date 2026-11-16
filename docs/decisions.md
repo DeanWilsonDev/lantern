@@ -1297,3 +1297,73 @@ Date: 2026-11-16.
 
 Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
 
+## D-074 Slice 3 of the Crimson and Thorn mechanics: the Anchor as a set swing arc
+
+Dean chose a set swing arc for the Anchor, over a physics rope or a grapple (`crimson-and-thorn-slice.md`, slice 3).
+
+- **A fixed arc, driven by the game.** Two posts and a circular arc between them; the player's feet are set along it each
+  step while it runs, with no controller movement and no steering. It is deterministic, so it is easy to author in the
+  editor and to test, and it can't strand the player. A physics rope can come later as a different kind.
+- **A pendulum's timing.** The angle follows `-cos(pi t)` over `seconds`, which gives a slow start, a fast bottom and a
+  soft arrival with no velocity to hand back to the controller.
+- **Cooperative first, then solo.** The first arc works only with the companion beside its start post
+  (`needs_companion`), as the Boost and the Guide Light did, and the second is the player's own.
+- **Authored in the world file.** One `swing_arc` entity per swing: its position is the start post and `end` the far one,
+  so the editor places the arc with its ordinary tools and no new engine call is needed.
+- **Slice 2's review nits.** The guide lights are drawn at the blended positions in `OnRender` while the reveal rule keeps
+  the fixed-step ones, a safe spot is never recorded on a glow plate, and the strength comment is corrected.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the Anchor complete).
+
+
+## D-075: The editor's quality settings are view options on the session
+
+Date: 2026-11-16.
+
+- **View options, not a new host function.** `quality`, `shadow_quality`, `bloom`, `ambient_occlusion`,
+  `anti_aliasing` and `light_shafts` go through `editorSetViewOption` and `editorViewOption` like the grid does, so the
+  committed host surface is unchanged and the choices are saved and restored with the other view options.
+- **A level is a preset, the checkboxes are overrides.** Setting `quality` sets the four effect toggles and the shadow
+  quality the way `SetQuality` does (low turns the four effects off, medium and high turn them on); the toggles and
+  `shadow_quality` can then differ from it. Names are listed with `quality` first, so loading preferences applies the
+  level before the individual choices.
+- **Default medium,** the settings the viewport drew with before, so nothing changes for anyone who doesn't open the tab.
+- **Applied every frame in `BuildViewport`** to the viewport's `RenderWorld`, so a change shows on the next frame.
+- **A Graphics tab,** not more rows on Viewport: the Viewport tab is about what is drawn, the new one about how well.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/editor-quality-settings`.
+
+## D-076: Slice 4 of the Crimson and Thorn mechanics: a goal ends the level and chains to the next
+
+The streets needed an end, and the game needed a loop (`crimson-and-thorn-slice.md`, slice 4).
+
+- **The next level is data.** A `goal` entity's optional `next_level` text property names the world file to load, so a
+  chapter progression is authored in the editor and needs no engine call. Without it the game returns to the main menu.
+- **A pause, then the hand-over.** Reaching the goal shows the gem tally for 4 s while the player can still move, then
+  the level changes. Nothing is saved yet (saving is a later feature), so the gem count starts again with the new level.
+- **Tolerate bad authoring.** A `swing_arc` with no usable `end` is skipped and logged, because a world file edited by
+  hand should not stop the level loading. This has no host test (the host tests cannot choose a level); the log line
+  is the check.
+- **Slice 3's review nits.** The `SwingTo` comment sits above the right method, and the missing `end` is the guard above.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the goal and the swing arc diagnostics complete).
+
+## D-077: Slice 5 of the Crimson and Thorn mechanics: the rooftops, a solo level of moving platforms
+
+The chapter progression had one real level played twice. A second level makes it a progression
+(`crimson-and-thorn-slice.md`, slice 5).
+
+- **Solo, with no companion.** The level lists no companion stops, so no companion appears. The design teaches solo
+  first, and a level without her shows the other kinds working alone; the Anchor's solo arc is used for the same reason.
+- **Moving platforms, not a new kind.** The platforms are the engine's existing `moving_platform`, whose position is a
+  function of time. Timing a crossing needs no new input: the player waits for the platform, which the test does
+  from the debug overlay's `Platform/N` values.
+- **World files are the chain.** streets -> rooftops -> streets-later is two `next_level` properties, so the order is
+  edited in the world files and the menu buttons are shortcuts.
+- **No autopilot for it.** The scripted pilot plays only the streets; with `LANTERN_AUTOPLAY` the rooftops run the
+  course's pilot. The keyboard test is its check.
+- **Moving platform order is the level's.** `Platform/0` is the last platform listed in the world file, found by
+  `FindByKind`; the test relies on that order.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the rooftops complete).

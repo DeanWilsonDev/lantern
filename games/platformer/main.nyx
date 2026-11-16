@@ -1,3 +1,4 @@
+AnchorSystem :: import AnchorSystem;
 Autopilot :: import Autopilot;
 BoostSystem :: import BoostSystem;
 CheckpointSystem :: import CheckpointSystem;
@@ -14,6 +15,7 @@ GameState :: import GameState;
 GameUiModel :: import GameUiModel;
 GemSystem :: import GemSystem;
 GlowSystem :: import GlowSystem;
+GoalSystem :: import GoalSystem;
 GuideLight :: import GuideLight;
 InputSettings :: import InputSettings;
 LanternSystem :: import LanternSystem;
@@ -128,6 +130,12 @@ public:
     // position, or the player would jitter against the background.
     OnRender~: (alpha: f32, frameSeconds: f32) -> void {
         camera.Follow(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds);
+        // The drawn lights follow their carriers' blended positions, like the camera does. The
+        // reveal rule keeps reading the fixed-step positions (UpdateGlows).
+        if companionGlow.isOn {
+            companionGlow.ShowAt(lantern:::world:::InterpolatedPosition(companion.root, alpha) + GlowHeight());
+        }
+        lanternGlow.ShowAt(lantern:::world:::InterpolatedPosition(player.root, alpha) + GlowHeight());
         player.DrawBlobShadow();
         if showCollisionView {
             CollisionView:::Draw(player.controller, level.gems);
@@ -154,6 +162,8 @@ private:
         return levelFromSetting == "" ? LEVEL_PATH : levelFromSetting;
     }
     static STREETS_PATH :: "worlds/streets.world.json";
+    static COMPLETE_SECONDS :: 4.0f;     // how long the completion message shows before the next level loads
+    static ROOFTOPS_PATH :: "worlds/rooftops.world.json";
     static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
     // The Guide Light: warm and wide from the companion, cooler and smaller from the lantern the
     // player carries. `range` is how far the light is drawn, `reveal` how far it makes hidden
@@ -177,6 +187,10 @@ private:
     player~ Player = new Player();
     camera~ ThirdPersonCamera = new ThirdPersonCamera();
     gemSystem~ GemSystem = new GemSystem();
+    anchorSystem~ AnchorSystem = new AnchorSystem();
+    goalSystem~ GoalSystem = new GoalSystem();
+    // How long the level has been complete, in simulation seconds (see Simulate).
+    completeSeconds~ f32 = 0.0f;
     glowSystem~ GlowSystem = new GlowSystem();
     lanternSystem~ LanternSystem = new LanternSystem();
     thornSystem~ ThornSystem = new ThornSystem();
@@ -211,10 +225,12 @@ private:
         gemSystem.Clear();
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
+        completeSeconds = 0.0f;
         camera.ResetBehind(0.0f);
         rules.Start(level);
         // Lights live in the engine until removed, so the last level's glows are turned off
         // here and this level's companion glow starts at her first stop.
+        anchorSystem.Cancel();
         companionGlow.TurnOff();
         lanternGlow.TurnOff();
         if level.glowPlatforms.length() > 0 {
@@ -267,29 +283,33 @@ private:
             jumpPressed = Autopilot:::JumpPressed(simulationSeconds);
             jumpHeld = Autopilot:::JumpHeld(simulationSeconds);
         }
-        // The camera's forward and right let "push up" mean "away from the camera", wherever
-        // the camera is looking (Player.Move does the conversion).
-        // The companion's crouch makes the next jump a boost (BoostSystem), when the player is
-        // standing on her spot and presses jump this step.
-        boostReady := BoostSystem:::IsReady(companion, player.FeetPosition(), player.controller.IsGrounded());
-        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, boostReady, dt);
-        companion.Update(player.FeetPosition(), player.controller.IsGrounded(), dt);
-
-        // A boosted jump is its own event with its own sound, so it isn't also a plain jump.
-        if step.Jumped() {
-            Dust:::Puff(player.FeetPosition(), 6, 1.2f, 0.0f);
-            events.Push(boostReady ? GameEvent:::PlayerBoosted : GameEvent:::PlayerJumped);
+        // The Anchor (game-systems/anchor-system.nyx): a jump beside a start post swings the player
+        // along its arc, and while it does the controller isn't asked to move them at all.
+        // The caps on the start posts glow when a jump here would swing.
+        feetBefore := player.FeetPosition();
+        isGroundedBefore := player.controller.IsGrounded();
+        anchorSystem.ShowReady(level.anchors, feetBefore, isGroundedBefore, companion.position);
+        if anchorSystem.TryStart(level.anchors, feetBefore, isGroundedBefore, companion.position, jumpPressed) {
+            events.Push(GameEvent:::PlayerSwingStarted);
         }
-        if step.Landed() {
-            Dust:::Puff(player.FeetPosition(), 10, Math:::min(step.LandingSpeed() * 0.2f, 3.0f) + 0.8f, 0.3f);
-            events.Push(GameEvent:::PlayerLanded(step.LandingSpeed()));
+        if anchorSystem.isSwinging {
+            swingYaw := anchorSystem.Yaw(level.anchors);
+            player.SwingTo(anchorSystem.Advance(level.anchors, dt), swingYaw);
+            companion.Update(player.FeetPosition(), false, dt);
+            if !anchorSystem.isSwinging {
+                Dust:::Puff(player.FeetPosition(), 8, 1.0f, 0.2f);
+                events.Push(GameEvent:::PlayerSwingLanded);
+            }
+        } else {
+            MovePlayer(stick, jumpPressed, jumpHeld, dt);
         }
         controller := player.controller;
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         lanternSystem.DetectTaken(level.lanterns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         thornSystem.DetectTouches(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
-        if controller.IsGrounded() && !thornSystem.IsNearAny(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), SAFE_SPOT_MARGIN) {
+        if controller.IsGrounded() && !anchorSystem.isSwinging && !glowSystem.IsStandingOnAny(level.glowPlatforms, player.FeetPosition()) && !thornSystem.IsNearAny(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), SAFE_SPOT_MARGIN) {
             rules.NoteSafeSpot(player.FeetPosition());
         }
         // The kill plane is just a height: once the feet drop below it, the player has fallen
@@ -304,11 +324,40 @@ private:
             rules.Handle(event, level, player, camera, companion);
         }
         UpdateGlows(dt);
+        for goal in level.goals {
+            goal.Animate(simulationSeconds);
+        }
+        // A completed level waits a few seconds so the message can be read, then moves on.
+        if rules.isLevelComplete {
+            completeSeconds += dt;
+            if completeSeconds >= COMPLETE_SECONDS {
+                AdvanceLevel();
+            }
+        }
         gemSystem.Animate(level.gems, simulationSeconds);
     }
 
     // Each light follows whoever carries it, then the glow system shows or hides the
     // platforms the lights reach.
+    // The ordinary step of the player: the controller moves them, and a jump becomes an event. The
+    // companion's crouch makes the next jump a boost (BoostSystem), when the player is standing on
+    // her spot and presses jump this step. The camera's forward and right let "push up" mean "away
+    // from the camera", wherever it is looking (Player.Move does the conversion).
+    MovePlayer~: (stick: lantern:::math:::Vec2, jumpPressed: bool, jumpHeld: bool, dt: f32) -> void {
+        boostReady := BoostSystem:::IsReady(companion, player.FeetPosition(), player.controller.IsGrounded());
+        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, boostReady, dt);
+        companion.Update(player.FeetPosition(), player.controller.IsGrounded(), dt);
+        // A boosted jump is its own event with its own sound, so it isn't also a plain jump.
+        if step.Jumped() {
+            Dust:::Puff(player.FeetPosition(), 6, 1.2f, 0.0f);
+            events.Push(boostReady ? GameEvent:::PlayerBoosted : GameEvent:::PlayerJumped);
+        }
+        if step.Landed() {
+            Dust:::Puff(player.FeetPosition(), 10, Math:::min(step.LandingSpeed() * 0.2f, 3.0f) + 0.8f, 0.3f);
+            events.Push(GameEvent:::PlayerLanded(step.LandingSpeed()));
+        }
+    }
+
     UpdateGlows~: (dt: f32) -> void {
         // The rules mark the lantern taken; its light starts the step after, in the player's hand.
         if rules.isCarryingLantern && !lanternGlow.isOn {
@@ -344,6 +393,20 @@ private:
         camera.Look(lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
     }
 
+    // The goal's level is done: play the level it names, or go back to the main menu when it names
+    // none. Playing the same level again starts it over.
+    AdvanceLevel~: () -> void {
+        next := rules.nextLevel;
+        if next == "" {
+            StartLevel();
+            SetState(GameState:::MainMenu);
+        } else {
+            pickedLevelPath = next;
+            StartLevel();
+            SetState(GameState:::Playing);
+        }
+    }
+
     // Starts the level at `path` ("" is the course, or the editor's level) from the main menu.
     // The title screen's level is loaded already, so choosing the same one again just resumes.
     PlayLevel~: (path: string) -> void {
@@ -360,6 +423,7 @@ private:
         when choice <MenuChoice> {
             Play -> { PlayLevel(""); },
             PlayStreets -> { PlayLevel(STREETS_PATH); },
+            PlayRooftops -> { PlayLevel(ROOFTOPS_PATH); },
             PlayStreetsLater -> { PlayLevel(STREETS_LATER_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
@@ -390,6 +454,17 @@ private:
         lantern:::debug:::SetValue("Game/Gems", `${rules.collected:d} / ${level.gems.length():d}`);
         respawn := rules.respawnPosition;
         lantern:::debug:::SetValue("Game/Respawn", `${respawn.x:.2f}, ${respawn.y:.2f}, ${respawn.z:.2f}`);
+        companionAt := companion.position;
+        lantern:::debug:::SetValue("Companion/Position", `${companionAt.x:.2f}, ${companionAt.y:.2f}, ${companionAt.z:.2f}`);
+        lantern:::debug:::SetValue("Anchor/Ready", anchorSystem.IsAnyReady(level.anchors, feet, controller.IsGrounded(), companion.position) ? "yes" : "no");
+        lantern:::debug:::SetValue("Anchor/Swinging", anchorSystem.isSwinging ? "yes" : "no");
+        lantern:::debug:::SetValue("Game/Complete", rules.isLevelComplete ? "yes" : "no");
+        lantern:::debug:::SetValue("Game/Level", LevelPath());
+        platformNumber~ i32 = 0;
+        for platform: MovingPlatform in level.platforms {
+            lantern:::debug:::SetValue(`Platform/${platformNumber:d}`, `${platform.PositionAt(simulationSeconds).z:.2f}`);
+            platformNumber++;
+        }
         lantern:::debug:::SetValue("Companion/Stop", `${companion.stopIndex:d}`);
         lantern:::debug:::SetValue("Companion/Offering boost", companion.IsOfferingBoost() ? "yes" : "no");
         shownPlatforms~ i32 = 0;

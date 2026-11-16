@@ -35,6 +35,8 @@ Height fog, blob shadows, the colour grade, the sky and normal maps are cheap an
 is medium. Each effect's own call, such as `SetBloom` or `SetAntiAliasing`, tunes or overrides one effect and may be called
 before or after `SetQuality`; a later `SetQuality` sets every row above again.
 
+The world editor's Graphics settings tab sets the same effects for its viewport; see `docs/editor.md`.
+
 ## Requirements
 
 The scene is drawn into a 16-bit float colour target so light brighter than 1 survives to the tone map, so the renderer
