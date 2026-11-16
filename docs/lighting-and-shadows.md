@@ -52,6 +52,14 @@ lantern:::lights:::SetShadows(lamp, true);
 - A spot light takes a target point and two angles. Inside `innerDegrees` it is full strength, and it fades to
   nothing by `outerDegrees`.
 
+## One set of lights per level
+
+Lights stay in the engine until they are removed, so a game with more than one level must take the old level's lamps
+down when it loads the next. The platformer does this in `game-systems/level-lighting.nyx`: `LevelLighting.Apply`
+removes the lamps it added last time, sets the sun and adds the lamps `LightingSettings:::LampPositions` lists for
+the level being loaded. A level with no entry there is lit by the sun alone. Keep the ids `AddPoint` and `AddSpot`
+return so the lamps can be removed later.
+
 ## Shadows
 
 The sun casts shadows once `SetSunShadows(true)` is called. Lamps cast shadows only after `SetShadows(light, true)`,
