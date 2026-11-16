@@ -8,6 +8,9 @@ Playing and judging each room is the point; [`playtest-checklist.md`](playtest-c
 Everything here is Nyx game code over the API in [`game-api.md`](game-api.md). Where the engine can't do something,
 the workaround is named in the code and the gap is a card on `engine-follow-ups`.
 
+> After the first play-test the direction moved toward an action adventure with grounded movement; the newer prototypes
+> (the climb, the word market and the station) are in [`grounded-adventure.md`](grounded-adventure.md).
+
 ## The rules every idea follows
 
 1. **Solvable alone.** The companion makes a puzzle shorter, safer or more interesting; she never gates progress. A solo

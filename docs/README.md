@@ -21,6 +21,8 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`adding-a-level-and-a-mechanic.md`](adding-a-level-and-a-mechanic.md) | A tutorial: make a level, put it on the menu, then add a mechanic through an entity, a system, an event and a rule, and test it. |
 | [`crimson-and-thorn-slice.md`](crimson-and-thorn-slice.md) | Which design mechanics the platformer takes on, in what order, and where each lives in `games/platformer/`. |
 | [`gameplay-prototypes.md`](gameplay-prototypes.md) | Twelve gameplay ideas, the companion's command model, the six prototype rooms, the crossing level and every tunable. |
+| [`grounded-adventure.md`](grounded-adventure.md) | The grounded feel, player-only climbing, the word and food minigames, the station and its trains, and every tunable. |
+| [`grounded-adventure-ideas.md`](grounded-adventure-ideas.md) | Five more ideas to test for the action-adventure direction, with how each would be fun and what it costs. |
 | [`playtest-checklist.md`](playtest-checklist.md) | What to try in each prototype room, with and without her, and what to note. |
 | [`night-look.md`](night-look.md) | Why the platformer is played at night, the moon, sky and lamps that make it readable, and the day look. |
 | [`photo-mode.md`](photo-mode.md) | The photo collectable: raising the camera, what counts as a photo, and how sights are authored. |

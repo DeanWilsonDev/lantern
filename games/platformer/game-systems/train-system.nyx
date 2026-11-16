@@ -1,0 +1,48 @@
+AdventureTuning :: import AdventureTuning;
+GameEvent :: import GameEvent;
+GameEvents :: import GameEvents;
+MovingPlatform :: import MovingPlatform;
+
+// The danger on a train's track (docs/gameplay-prototypes.md, "The station"). A train is a moving platform whose
+// `train` property is set: a long solid block that slides along its track, with its undercarriage below platform
+// height. It can't be walked on or into, but a player who has climbed down onto the track is in its way.
+//
+// Standing on the track (feet below the platform height, `lane_top`) within AdventureTuning:::TRAIN_LANE_MARGIN of a
+// train's footprint sends the player back to the last safe spot, exactly as thorns do: a nudge, not a death, and
+// nothing is lost. The game decides the outcome because a kinematic body shoving a character controller isn't
+// something the engine promises to resolve safely.
+//
+// Train properties set on the entity in the world editor, besides a moving platform's `travel` and `period_seconds`:
+// - `train` (number): 1 marks the platform as a train.
+// - `half_extents` (vector): the block's half sizes (the file says them twice, as for thorns).
+// - `lane_top` (number): the platform surface's height, such as 0; feet below it are on the track.
+TrainSystem :: class {
+public:
+    DetectHits~: (trains: Array<MovingPlatform>, feet: lantern:::math:::Vec3, time: f32, events~ GameEvents) -> void {
+        for train: MovingPlatform in trains {
+            half := lantern:::world:::VectorProperty(train.entity, "half_extents");
+            laneTop := lantern:::world:::NumberProperty(train.entity, "lane_top");
+            at := train.PositionAt(time);
+            offset := feet - at;
+            margin := AdventureTuning:::TRAIN_LANE_MARGIN;
+            isInsideFootprint := offset.x > -(half.x + margin) && offset.x < half.x + margin && offset.z > -(half.z + margin) && offset.z < half.z + margin;
+            isOnTrack := feet.y < laneTop - AdventureTuning:::TRAIN_TRACK_DEPTH;
+            if isInsideFootprint && isOnTrack {
+                events.Push(GameEvent:::ThornsTouched);
+                return;
+            }
+        }
+    }
+
+    // Whether `feet` are below the platform height of any train: down on a track. The game doesn't remember such a place
+    // as a safe spot to come back to, or a nudge would send the player straight back to the track.
+    IsOnTrack :: (trains: Array<MovingPlatform>, feet: lantern:::math:::Vec3) -> bool {
+        for train: MovingPlatform in trains {
+            laneTop := lantern:::world:::NumberProperty(train.entity, "lane_top");
+            if feet.y < laneTop - AdventureTuning:::TRAIN_TRACK_DEPTH {
+                return true;
+            }
+        }
+        return false;
+    }
+}

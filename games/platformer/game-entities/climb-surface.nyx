@@ -1,0 +1,150 @@
+Math :: import standard:::Math;
+AdventureTuning :: import AdventureTuning;
+
+// Something the player can climb and the companion cannot: a world-file entity of kind
+// "climb_surface", a thin box (it has an ordinary static collider, so it is a wall you can't walk
+// through) standing against a taller wall, with the ledge it leads to on top of that wall.
+//
+// She never climbs. Her way round is on the ground, by stairs or a lift that a lever works, so
+// every climb has a bypass (docs/gameplay-prototypes.md, "Climbing").
+//
+// Properties set on the entity in the world editor:
+// - `half_extents` (vector): the box's half sizes. The game can't read a shape back from the engine, so the file says
+//   them twice, as for thorns.
+// - `normal` (vector, x and z): the direction pointing away from the wall, the way the player stands to climb. It
+//   must be one of the four axes (such as 0, 0, 1) so the box's depth and width line up with the world's axes.
+// - `climb_kind` (text, optional): "ladder" (the default, up and down at 1.8 m/s), "pipe" (up and down at 1.1 m/s and
+//   shimmy sideways) or "ledge" (a wide handhold wall: pipe rules, any width).
+// - `from_top` (number, optional): 1 lets the player grab it from the ledge at its top and climb down over the edge,
+//   such as the ladder down from a station platform to the track; 0 when missing.
+// - `mount_forward` (number, optional): how far past the surface, into the wall, the player lands at the top; 0.7 when
+//   missing.
+//
+// Measuring along the surface. `normal` points away from the wall. `across` is the direction along the surface, and
+// is chosen so that a player facing the wall has it on their right: (normal.z, -normal.x). `lateral` is how far
+// along `across`, from the surface's centre, a point is, and `outward` is how far along `normal`, from the
+// surface's front face.
+ClimbSurface :: class {
+public:
+    entity: i64;
+    center: lantern:::math:::Vec3;
+    halfExtents: lantern:::math:::Vec3;
+    normal: lantern:::math:::Vec3;
+    across: lantern:::math:::Vec3;
+    kind: string;
+    depthHalf: f32;
+    widthHalf: f32;
+    bottomY: f32;
+    topY: f32;
+    mountForward: f32;
+    // True for a surface that can also be grabbed from the top, from the ledge it leads to, to climb down over the edge.
+    canGrabFromTop: bool;
+
+    ClimbSurface~: (entity: i64) : entity(entity), center(lantern:::world:::Position(entity)),
+        halfExtents(lantern:::world:::VectorProperty(entity, "half_extents")),
+        normal(NormalOf(entity)),
+        across(AcrossOf(entity)),
+        kind(lantern:::world:::HasProperty(entity, "climb_kind") ? lantern:::world:::TextProperty(entity, "climb_kind") : "ladder"),
+        depthHalf(DepthOf(entity)),
+        widthHalf(WidthOf(entity)),
+        bottomY(lantern:::world:::Position(entity).y - lantern:::world:::VectorProperty(entity, "half_extents").y),
+        topY(lantern:::world:::Position(entity).y + lantern:::world:::VectorProperty(entity, "half_extents").y),
+        mountForward(lantern:::world:::HasProperty(entity, "mount_forward") ? lantern:::world:::NumberProperty(entity, "mount_forward") : AdventureTuning:::CLIMB_DEFAULT_MOUNT_FORWARD),
+        canGrabFromTop(lantern:::world:::HasProperty(entity, "from_top") && lantern:::world:::NumberProperty(entity, "from_top") > 0.5f) { }
+
+    // A ladder and a pipe are the colours of what they are, so a player reads "that is climbable" from a distance.
+    Place~: () -> void {
+        lantern:::world:::SetTint(entity, kind == "ladder" ? LADDER_TINT : PIPE_TINT);
+    }
+
+    // How fast the player moves up or down it, metres per second.
+    ClimbSpeed :: () -> f32 {
+        return kind == "ladder" ? AdventureTuning:::CLIMB_LADDER_SPEED : AdventureTuning:::CLIMB_PIPE_SPEED;
+    }
+
+    // Whether the player can move sideways along it: ladders have one line of rungs, pipes and ledges have a width of holds.
+    CanShimmy :: () -> bool {
+        return kind != "ladder";
+    }
+
+    // How far, along `across`, `point` is from the surface's centre.
+    LateralOf :: (point: lantern:::math:::Vec3) -> f32 {
+        offset := point - center;
+        return offset.x * across.x + offset.z * across.z;
+    }
+
+    // How far in front of the surface's front face `point` is (negative inside the box).
+    OutwardOf :: (point: lantern:::math:::Vec3) -> f32 {
+        offset := point - center;
+        return offset.x * normal.x + offset.z * normal.z - depthHalf;
+    }
+
+    // Where the player's feet are while holding the surface at `lateral` along it and `height` up: against its
+    // front face, with the gap that keeps the capsule clear of the collider.
+    HoldPoint :: (lateral: f32, height: f32, capsuleRadius: f32) -> lantern:::math:::Vec3 {
+        gap := depthHalf + capsuleRadius + AdventureTuning:::CLIMB_HOLD_OFFSET;
+        point: lantern:::math:::Vec3 = { x: center.x + normal.x * gap + across.x * lateral, y: height, z: center.z + normal.z * gap + across.z * lateral };
+        return point;
+    }
+
+    // Where the player stands after climbing over the top: into the wall by `mountForward`, on top of it.
+    MountPoint :: (lateral: f32) -> lantern:::math:::Vec3 {
+        into := depthHalf + mountForward;
+        point: lantern:::math:::Vec3 = { x: center.x - normal.x * into + across.x * lateral, y: topY + 0.05f, z: center.z - normal.z * into + across.z * lateral };
+        return point;
+    }
+
+    // Where the player stands after letting go: out from the surface by CLIMB_LET_GO_PUSH, at the height they were.
+    LetGoPoint :: (lateral: f32, height: f32, capsuleRadius: f32) -> lantern:::math:::Vec3 {
+        gap := depthHalf + capsuleRadius + AdventureTuning:::CLIMB_HOLD_OFFSET + AdventureTuning:::CLIMB_LET_GO_PUSH;
+        point: lantern:::math:::Vec3 = { x: center.x + normal.x * gap + across.x * lateral, y: height, z: center.z + normal.z * gap + across.z * lateral };
+        return point;
+    }
+
+    // Whether a player standing with their feet at `feet` can grab it: beside it (in front, within reach, along its
+    // width) and between its foot and just under its top.
+    CanGrab :: (feet: lantern:::math:::Vec3) -> bool {
+        outward := OutwardOf(feet);
+        lateral := LateralOf(feet);
+        isInFront := outward > -0.1f && outward < AdventureTuning:::CLIMB_GRAB_REACH;
+        isAlong := Math:::abs(lateral) < widthHalf + AdventureTuning:::CLIMB_GRAB_SIDE_MARGIN;
+        isAtHeight := feet.y > bottomY - 0.1f && feet.y < topY - AdventureTuning:::CLIMB_GRAB_BELOW_TOP;
+        if isInFront && isAlong && isAtHeight {
+            return true;
+        }
+        // From the top: standing on the ledge, behind the surface's front face by up to a metre, level with its top.
+        isBehindFace := outward < -0.1f && outward > -1.1f;
+        isLevelWithTop := Math:::abs(feet.y - topY) < 0.15f;
+        return canGrabFromTop && isBehindFace && isAlong && isLevelWithTop;
+    }
+
+private:
+    // The `normal` property flattened and made length 1, so a careless (0, 0.3, 2) still means "+z".
+    NormalOf :: (entity: i64) -> lantern:::math:::Vec3 {
+        return lantern:::world:::VectorProperty(entity, "normal").Horizontal().Normalized();
+    }
+
+    // Along the surface, with a player facing the wall having it on their right: (normal.z, -normal.x).
+    AcrossOf :: (entity: i64) -> lantern:::math:::Vec3 {
+        facingOut := NormalOf(entity);
+        result: lantern:::math:::Vec3 = { x: facingOut.z, z: -facingOut.x };
+        return result;
+    }
+
+    // The box's half size measured along the normal: the x half for a normal on the x axis, the z half for the z axis.
+    DepthOf :: (entity: i64) -> f32 {
+        facingOut := NormalOf(entity);
+        half := lantern:::world:::VectorProperty(entity, "half_extents");
+        return Math:::abs(facingOut.x) * half.x + Math:::abs(facingOut.z) * half.z;
+    }
+
+    // The half size across the surface, the other horizontal axis.
+    WidthOf :: (entity: i64) -> f32 {
+        facingOut := NormalOf(entity);
+        half := lantern:::world:::VectorProperty(entity, "half_extents");
+        return Math:::abs(facingOut.z) * half.x + Math:::abs(facingOut.x) * half.z;
+    }
+
+    static LADDER_TINT :: "B8864A";
+    static PIPE_TINT :: "6F7F8C";
+}

@@ -1,0 +1,105 @@
+AdventureTuning :: import AdventureTuning;
+FoodStall :: import FoodStall;
+WordToken :: import WordToken;
+TriggerTest :: import TriggerTest;
+
+// The small games (docs/gameplay-prototypes.md, "Minigames"): collecting words and phrases, and eating at a
+// stall. They are rests between the hard stretches of a level, and they cost nothing if skipped: nothing
+// in a level needs a word or a meal.
+//
+// Like the other systems it keeps its own counts and says what happened as a line of text for the game to show
+// (TakeNote); the rules decide nothing here because no rule depends on a word or a meal.
+MinigameSystem :: class {
+public:
+    wordsFound~ i32 = 0;
+    mealsFinished~ i32 = 0;
+    // True on a step the player is eating, so the game can slow the camera or play a sound.
+    isEating~ bool = false;
+    // A line to show once, or "" (TakeNote hands it over and clears it).
+    pendingNote~ string = "";
+
+    // The start of a level (or a restart): nothing found, every meal whole.
+    Start~: (words~ Array<WordToken>, stalls~ Array<FoodStall>) -> void {
+        wordsFound = 0;
+        mealsFinished = 0;
+        isEating = false;
+        pendingNote = "";
+        for word~ WordToken in words {
+            word.Restore();
+        }
+        for stall~ FoodStall in stalls {
+            stall.Reset();
+        }
+    }
+
+    // One fixed step. `isUseHeld` is the use key, and `isStill` whether the stick is at rest: eating needs both.
+    Update~: (words~ Array<WordToken>, stalls~ Array<FoodStall>, capsuleCenter: lantern:::math:::Vec3, halfSegment: f32, capsuleRadius: f32, feet: lantern:::math:::Vec3, isUseHeld: bool, isStill: bool, dt: f32) -> void {
+        CollectWords(words, capsuleCenter, halfSegment, capsuleRadius);
+        isEating = false;
+        for stall~ FoodStall in stalls {
+            if stall.IsFinished() || !stall.IsReachedBy(feet) {
+                continue;
+            }
+            if isUseHeld && isStill {
+                isEating = true;
+                if stall.bitesTaken == 0 && stall.biteProgress == 0.0f {
+                    pendingNote = "Itadakimasu! (let's eat)";
+                }
+                if stall.Eat(dt) {
+                    lantern:::audio:::Play("pickup", 0.4f);
+                    if stall.IsFinished() {
+                        mealsFinished++;
+                        lantern:::audio:::Play("pickup", 0.9f);
+                        pendingNote = `Gochisousama deshita! (thanks for the meal) ${stall.dish} done`;
+                    } else {
+                        pendingNote = `${stall.dish} (${stall.meaning}): bite ${stall.bitesTaken:d} / ${stall.bites:d}`;
+                    }
+                }
+            } else {
+                stall.Pause(dt);
+            }
+        }
+    }
+
+    // The line to show now, once.
+    TakeNote~: () -> string {
+        note := pendingNote;
+        pendingNote = "";
+        return note;
+    }
+
+    // " Words 3 / 8  Meals 1 / 2" for the status line; only the parts the level has.
+    StatusSuffix :: (wordTotal: i32, stallTotal: i32) -> string {
+        text~ string = "";
+        if wordTotal > 0 {
+            text = `${text}  Words ${wordsFound:d} / ${wordTotal:d}`;
+        }
+        if stallTotal > 0 {
+            text = `${text}  Meals ${mealsFinished:d} / ${stallTotal:d}`;
+        }
+        return text;
+    }
+
+    // "Hold F: eat the onigiri" while the player stands at an unfinished stall.
+    HintFor :: (stalls: Array<FoodStall>, feet: lantern:::math:::Vec3) -> string {
+        for stall: FoodStall in stalls {
+            if !stall.IsFinished() && stall.IsReachedBy(feet) {
+                return `Hold F and stand still: eat the ${stall.dish}`;
+            }
+        }
+        return "";
+    }
+
+private:
+    CollectWords~: (words~ Array<WordToken>, capsuleCenter: lantern:::math:::Vec3, halfSegment: f32, capsuleRadius: f32) -> void {
+        for word~ WordToken in words {
+            guard !word.isCollected continue;
+            if TriggerTest:::Overlaps(word.home, AdventureTuning:::WORD_PICKUP_RADIUS, capsuleCenter, halfSegment, capsuleRadius) {
+                word.Collect();
+                wordsFound++;
+                lantern:::audio:::Play("pickup", 0.8f);
+                pendingNote = `${word.romaji}: ${word.meaning}`;
+            }
+        }
+    }
+}

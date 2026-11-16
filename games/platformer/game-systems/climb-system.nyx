@@ -1,0 +1,105 @@
+ClimbOutcome :: import ClimbOutcome;
+ClimbSurface :: import ClimbSurface;
+AdventureTuning :: import AdventureTuning;
+Math :: import standard:::Math;
+
+// Player-only climbing (docs/gameplay-prototypes.md, "Climbing"). While the player holds a surface the character
+// controller is not asked to move them at all, as for the Anchor's swing: this system says where their feet are each
+// step and the game places them there (Player.SwingTo).
+//
+// The model, in the words a player would use:
+// - F beside a ladder, pipe or ledge grabs it. You can grab from the ground or from a ledge just below it.
+// - Forward and back move up and down; on a pipe or ledge, left and right shimmy sideways.
+// - Jump lets go and drops you a short way out from the wall.
+// - Reaching the top climbs you up and over onto the ledge. Climbing down to the ground steps you off.
+//
+// She never climbs. The level gives her a way round on the ground (a lift or a stair a lever opens), so a climb is the
+// player's shortcut and a lever is her gift; neither is the only way.
+ClimbSystem :: class {
+public:
+    isClimbing~ bool = false;
+    // Index into the level's climb surfaces of the one being held, -1 when none.
+    surfaceIndex~ i32 = -1;
+    // Where the player is along the surface (from its centre) and how high their feet are.
+    lateral~ f32 = 0.0f;
+    height~ f32 = 0.0f;
+    // Where the player's feet are, and which way they face, as of the last TryGrab or Advance.
+    feet~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    yaw~ f32 = 0.0f;
+
+    // The index of the nearest surface the player at `playerFeet` could grab now, or -1.
+    NearestGrabbable :: (surfaces: Array<ClimbSurface>, playerFeet: lantern:::math:::Vec3) -> i32 {
+        best~ i32 = -1;
+        bestDistance~ f32 = 1000.0f;
+        index~ i32 = 0;
+        for surface: ClimbSurface in surfaces {
+            if surface.CanGrab(playerFeet) {
+                distance := Math:::abs(surface.LateralOf(playerFeet)) + Math:::max(surface.OutwardOf(playerFeet), 0.0f);
+                if distance < bestDistance {
+                    best = index;
+                    bestDistance = distance;
+                }
+            }
+            index++;
+        }
+        return best;
+    }
+
+    // F is pressed: grab the nearest surface in reach. True when the player is now holding one, in which case `feet` and
+    // `yaw` say where to put them.
+    TryGrab~: (surfaces: Array<ClimbSurface>, playerFeet: lantern:::math:::Vec3, usePressed: bool, capsuleRadius: f32) -> bool {
+        guard usePressed return false;
+        guard !isClimbing return false;
+        index := NearestGrabbable(surfaces, playerFeet);
+        guard index >= 0 return false;
+        surface := surfaces[index];
+        isClimbing = true;
+        surfaceIndex = index;
+        lateral = Math:::clamp(surface.LateralOf(playerFeet), -surface.widthHalf, surface.widthHalf);
+        height = Math:::clamp(playerFeet.y, surface.bottomY, surface.topY - AdventureTuning:::CLIMB_GRAB_BELOW_TOP);
+        Place(surface, capsuleRadius);
+        return true;
+    }
+
+    // One step of holding on. `stick` is the movement input (y is forward, which is up the surface). Returns what happened;
+    // `feet` and `yaw` are where to put the player (after a mount or a let go, where they land).
+    Advance~: (surfaces: Array<ClimbSurface>, stick: lantern:::math:::Vec2, jumpPressed: bool, capsuleRadius: f32, dt: f32) -> ClimbOutcome {
+        guard isClimbing return ClimbOutcome:::LetGo;
+        surface := surfaces[surfaceIndex];
+        height += stick.y * surface.ClimbSpeed() * dt;
+        if surface.CanShimmy() {
+            lateral = Math:::clamp(lateral + stick.x * AdventureTuning:::CLIMB_SHIMMY_SPEED * dt, -surface.widthHalf, surface.widthHalf);
+        }
+        if jumpPressed {
+            feet = surface.LetGoPoint(lateral, height, capsuleRadius);
+            Release();
+            return ClimbOutcome:::LetGo;
+        }
+        if height >= surface.topY - AdventureTuning:::CLIMB_TOP_MARGIN {
+            feet = surface.MountPoint(lateral);
+            Release();
+            return ClimbOutcome:::MountedTop;
+        }
+        if height <= surface.bottomY + 0.02f && stick.y < 0.0f {
+            feet = surface.LetGoPoint(lateral, surface.bottomY + 0.02f, capsuleRadius);
+            Release();
+            return ClimbOutcome:::SteppedDown;
+        }
+        Place(surface, capsuleRadius);
+        return ClimbOutcome:::Holding;
+    }
+
+    // Lets go without moving the player (a respawn or a restart).
+    Release~: () -> void {
+        isClimbing = false;
+        surfaceIndex = -1;
+    }
+
+private:
+    // Puts `feet` against the surface at the current lateral and height, facing the wall.
+    Place~: (surface: ClimbSurface, capsuleRadius: f32) -> void {
+        feet = surface.HoldPoint(lateral, height, capsuleRadius);
+        towardWall: lantern:::math:::Vec3 = { x: -surface.normal.x, z: -surface.normal.z };
+        yaw = towardWall.Yaw();
+    }
+}
