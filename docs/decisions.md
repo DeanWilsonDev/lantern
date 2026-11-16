@@ -1520,24 +1520,24 @@ cloud, so Dean's Mac check is the first look.
 ## Grounded adventure prototypes
 
 Dean's play-test (2026-11-16): the game has more action-adventure than puzzle-platformer in it, wants grounded movement and
-challenge from places and small games. Details in `docs/grounded-adventure.md`. Numbers D-094 to D-100 were free when this
+challenge from places and small games. Details in `docs/grounded-adventure.md`. Numbers D-096 to D-102 were free when this
 was written; another thread's decisions may have used some, in which case the reviewer renumbers.
 
-- **D-094: the feel is chosen per level.** A spawn's `movement` property set to `"grounded"` asks for a lower jump, a slower
+- **D-096: the feel is chosen per level.** A spawn's `movement` property set to `"grounded"` asks for a lower jump, a slower
   walk and momentum; every other level keeps the platformer feel because its gaps need a 1.5 m jump. A global change would
   have made every existing level impossible. Provisional: not reviewed by Dean.
-- **D-095: momentum is the game's, not the controller's.** The engine controller reaches speed in 0.12 s and offers no way to
+- **D-097: momentum is the game's, not the controller's.** The engine controller reaches speed in 0.12 s and offers no way to
   change its acceleration, so the game eases the direction it hands over (0.4 s on the ground, 1.6 s in the air). This needs no
   engine change and no new host function. If a later controller exposes accelerations, this moves there.
-- **D-096: climbing is the game placing the player.** While a surface is held, the controller isn't stepped; the game puts
+- **D-098: climbing is the game placing the player.** While a surface is held, the controller isn't stepped; the game puts
   the feet where the climb says (`Player.SwingTo`, as the Anchor does). The alternative, a climbing mode in the controller,
   was left until the feel is proven. Provisional.
-- **D-097: she never climbs, and every climb has a ground route.** The ground route is linked to the climb by a lever and a
+- **D-099: she never climbs, and every climb has a ground route.** The ground route is linked to the climb by a lever and a
   gate on one channel, so each of them can open the way for the other. Her `team_beat` markers go on the ground route.
-- **D-098: a train's danger is a rule, not physics.** A moving platform marked `train` sends a player on the track back to the
+- **D-100: a train's danger is a rule, not physics.** A moving platform marked `train` sends a player on the track back to the
   last safe spot, as thorns do. A kinematic block shoving a character controller isn't something the engine promises to
   resolve safely, and a nudge fits "never punish the player". Track positions are never remembered as safe spots.
-- **D-099: the small games are rests.** Words and meals are counted in the status line and cost nothing if skipped. Eating
+- **D-101: the small games are rests.** Words and meals are counted in the status line and cost nothing if skipped. Eating
   asks for F held with the stick still, so it is an act of stopping, which is the point of a rest.
-- **D-100: romaji until the engine has a font.** The 8x8 bitmap font is ASCII, so the Japanese is written in Latin letters.
+- **D-102: romaji until the engine has a font.** The 8x8 bitmap font is ASCII, so the Japanese is written in Latin letters.
   Kana and kanji are an engine card, not a Nyx gap.
