@@ -138,8 +138,9 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::camera:::LookAt(eye, target)` | this frame's camera |
 | `lantern:::renderer:::SetClearColor(color)`, `lantern:::renderer:::SetFog(start, end)` | |
-| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom and anti-aliasing off; see `bloom-and-tone-mapping.md` |
+| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing and ambient occlusion off; see `bloom-and-tone-mapping.md` |
 | `lantern:::graphics:::SetAntiAliasing(enabled)` | smooth jagged edges with FXAA (on by default); see `anti-aliasing.md` |
+| `lantern:::graphics:::SetAmbientOcclusion(enabled, radius, intensity)` | darken creases and contact points from the depth buffer (radius in metres, intensity 0 to 1); see `ambient-occlusion.md` |
 | `lantern:::graphics:::SetBloom(enabled, strength, threshold)` | the glow around bright things: how much is added back and the brightness where it starts (1 is a white wall in full sun) |
 | `lantern:::graphics:::SetExposure(exposure)`, `lantern:::graphics:::SetToneMapper(name)` | a brightness knob applied before the curve, and the curve itself: `"none"`, `"neutral"` or `"aces"` |
 | `lantern:::lights:::SetSun(direction, color, skyAmbient, groundAmbient)` | the sun and the ambient light; colours are `"RRGGBB"` |

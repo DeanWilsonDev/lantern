@@ -10,6 +10,7 @@
 //   scene pass     lit meshes -> `hdrTexture`                (GpuRenderer.RecordFrame)
 //   bloom passes   `hdrTexture` -> level 0 -> level 1 -> ... -> level 4, then back up, adding   (RecordBloom)
 //   composite      `hdrTexture` + level 0 -> the screen: exposure, tone mapping, sRGB            (RecordComposite)
+//   ambient occ.   the scene's depth -> `occlusionRaw` -> `occlusionBlurred`, read by the composite            (RecordAmbientOcclusion)
 //   anti-alias     with anti-aliasing on, the composite writes `ldrTexture` and FXAA smooths it onto the screen  (RecordAntiAlias)
 //   overlay pass   debug lines, HUD and menus on top of the screen image, untouched by any of it  (GpuRenderer)
 //
@@ -40,6 +41,10 @@ lantern:::gpu :: namespace {
     PostTargets :: struct {
         /** The scene's light, unclamped. The lit pass draws into it and the composite pass reads it. */
         hdrTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** Ambient occlusion before and after its blur: one 8-bit channel, 1 where nothing is blocked. Frame-sized. */
+        occlusionRaw~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** The blurred occlusion the composite pass multiplies the scene by. */
+        occlusionBlurred~ raw Sdl:::SDL_GPUTexture~* = null;
         /** The composite's picture when anti-aliasing is on, in the screen's format; FXAA reads it. Null when it's off. */
         ldrTexture~ raw Sdl:::SDL_GPUTexture~* = null;
         /** The bloom chain, largest first. */
@@ -54,6 +59,12 @@ lantern:::gpu :: namespace {
             unsafe {
                 if hdrTexture != null {
                     Sdl:::SDL_ReleaseGPUTexture(device, hdrTexture);
+                }
+                if occlusionRaw != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, occlusionRaw);
+                }
+                if occlusionBlurred != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, occlusionBlurred);
                 }
                 if ldrTexture != null {
                     Sdl:::SDL_ReleaseGPUTexture(device, ldrTexture);
@@ -103,10 +114,12 @@ lantern:::gpu :: namespace {
         }
         targets->Release(device);
         targets->ldrTexture = CreatePostTexture(device, colorFormat, width, height);
+        targets->occlusionRaw = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R8_UNORM, width, height);
+        targets->occlusionBlurred = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R8_UNORM, width, height);
         targets->hdrTexture = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, width, height);
         targets->width = width;
         targets->height = height;
-        failed~ bool = targets->hdrTexture == null || targets->ldrTexture == null;
+        failed~ bool = targets->hdrTexture == null || targets->ldrTexture == null || targets->occlusionRaw == null || targets->occlusionBlurred == null;
         for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
             levelWidth: u32 = width >> u32(levelIndex + 1);
             levelHeight: u32 = height >> u32(levelIndex + 1);
@@ -124,6 +137,8 @@ lantern:::gpu :: namespace {
             targets->Release(device);
             targets->hdrTexture = null;
             targets->ldrTexture = null;
+            targets->occlusionRaw = null;
+            targets->occlusionBlurred = null;
             targets->width = 0;
             targets->height = 0;
             for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
@@ -191,7 +206,7 @@ lantern:::gpu :: namespace {
      * the screen's colour texture. With bloom off the glow texture bound is the scene itself and its strength is 0, so the
      * shader skips it; a shader can't have a texture slot unbound.
      */
-    RecordComposite :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, destination: raw Sdl:::SDL_GPUTexture~*, post: lantern:::renderer:::PostSettings, bloomDrawn: bool, encodeFlag: f32) -> void {
+    RecordComposite :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, destination: raw Sdl:::SDL_GPUTexture~*, post: lantern:::renderer:::PostSettings, bloomDrawn: bool, occlusionDrawn: bool, encodeFlag: f32) -> void {
         unsafe {
             colorTarget := Sdl:::SDL_GPUColorTargetInfo {
                 texture: destination,
@@ -215,14 +230,17 @@ lantern:::gpu :: namespace {
                     toneMappingFlag = 2.0f;
                 }
             }
-            settings := VectorUniforms { values: [post.exposure, glowStrength, toneMappingFlag, encodeFlag] };
-            PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(settings), 16);
-            bindings: Sdl:::SDL_GPUTextureSamplerBinding[2] = [
+            occlusionTexture: raw Sdl:::SDL_GPUTexture~* = occlusionDrawn ? targets->occlusionBlurred : targets->hdrTexture;
+            occlusionFlag: f32 = occlusionDrawn ? 1.0f : 0.0f;
+            settings := CompositeUniforms { exposureGlowToneMapEncode: [post.exposure, glowStrength, toneMappingFlag, encodeFlag], occlusionFlag: [occlusionFlag, 0.0f, 0.0f, 0.0f] };
+            PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(settings), 32);
+            bindings: Sdl:::SDL_GPUTextureSamplerBinding[3] = [
                 Sdl:::SDL_GPUTextureSamplerBinding { texture: targets->hdrTexture, sampler: samplers->linearClamp },
-                Sdl:::SDL_GPUTextureSamplerBinding { texture: glowTexture, sampler: samplers->linearClamp }
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: glowTexture, sampler: samplers->linearClamp },
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: occlusionTexture, sampler: samplers->linearClamp }
             ];
             firstBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(bindings);
-            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, firstBinding, 2);
+            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, firstBinding, 3);
             Sdl:::SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
             Sdl:::SDL_EndGPURenderPass(pass);
         }
@@ -234,5 +252,48 @@ lantern:::gpu :: namespace {
      */
     RecordAntiAlias :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, destination: raw Sdl:::SDL_GPUTexture~*) -> void {
         RecordFullscreenPass(commandBuffer, pipelines->antiAlias, samplers->linearClamp, targets->ldrTexture, destination, false, [1.0f / f32(targets->width), 1.0f / f32(targets->height), 0.0f, 0.0f]);
+    }
+
+    /**
+     * One ambient-occlusion pass: draw the full-screen triangle into `destination` reading `firstSource` (and
+     * `secondSource` when `sourceCount` is 2) with the occlusion uniforms. Depth is read with the nearest sampler, because
+     * blending two depths gives a depth nothing has.
+     */
+    RecordOcclusionPass :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipeline: raw Sdl:::SDL_GPUGraphicsPipeline~*, firstSource: Sdl:::SDL_GPUTextureSamplerBinding, secondSource: Sdl:::SDL_GPUTextureSamplerBinding, sourceCount: u32, destination: raw Sdl:::SDL_GPUTexture~*, uniforms: OcclusionUniforms) -> void {
+        unsafe {
+            colorTarget := Sdl:::SDL_GPUColorTargetInfo {
+                texture: destination,
+                clear_color: Sdl:::SDL_FColor { r: 1.0f, g: 1.0f, b: 1.0f, a: 1.0f },
+                load_op: Sdl:::SDL_GPU_LOADOP_DONT_CARE,
+                store_op: Sdl:::SDL_GPU_STOREOP_STORE
+            };
+            pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, null);
+            Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipeline);
+            PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(uniforms), 48);
+            bindings: Sdl:::SDL_GPUTextureSamplerBinding[2] = [firstSource, secondSource];
+            firstBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(bindings);
+            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, firstBinding, sourceCount);
+            Sdl:::SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+            Sdl:::SDL_EndGPURenderPass(pass);
+        }
+    }
+
+    /**
+     * Ambient occlusion: estimate from the scene's depth how much light each pixel's surroundings block, then average
+     * that over 4x4 pixels without crossing depth edges. Afterwards `occlusionBlurred` holds 1 where nothing is blocked
+     * and less where something is. See `ao.frag` and `ao-blur.frag`.
+     */
+    RecordAmbientOcclusion :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, depthTexture: raw Sdl:::SDL_GPUTexture~*, camera: lantern:::renderer:::Camera, aspect: f32, post: lantern:::renderer:::PostSettings) -> void {
+        tanHalfVertical: f32 = Math:::tan(camera.verticalFieldOfViewRadians * 0.5f);
+        depthRange: f32 = camera.farPlane / (camera.nearPlane - camera.farPlane);
+        uniforms := OcclusionUniforms {
+            projectionTerms: [tanHalfVertical * Math:::max(aspect, 0.001f), tanHalfVertical, camera.nearPlane, depthRange],
+            look: [post.ambientOcclusionRadius, Math:::clamp(post.ambientOcclusionIntensity, 0.0f, 1.0f), post.ambientOcclusionBias, 0.0f],
+            texel: [1.0f / f32(targets->width), 1.0f / f32(targets->height), 0.0f, 0.0f]
+        };
+        depthBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: depthTexture, sampler: samplers->nearestClamp };
+        occlusionBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: targets->occlusionRaw, sampler: samplers->nearestClamp };
+        RecordOcclusionPass(commandBuffer, pipelines->ambientOcclusion, depthBinding, depthBinding, 1, targets->occlusionRaw, uniforms);
+        RecordOcclusionPass(commandBuffer, pipelines->ambientOcclusionBlur, occlusionBinding, depthBinding, 2, targets->occlusionBlurred, uniforms);
     }
 }

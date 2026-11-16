@@ -4,10 +4,15 @@
 // it writes into is a 16-bit float texture, so those values survive instead of being cut off at 1. This pass reads that
 // texture and does three things to each pixel, in this order:
 //
+//   0. multiply by the ambient-occlusion picture, when there is one (1 where nothing is blocked, darker in creases);
 //   1. add the bloom picture (the blurred bright parts) scaled by a strength;
 //   2. multiply by an exposure, the camera's brightness knob: 2 makes the whole picture twice as bright before step 3;
 //   3. tone map: squeeze 0..infinity into 0..1 with a curve that keeps dark and middle values nearly as they were and
 //      rolls bright ones off smoothly towards white, instead of clipping them flat.
+//
+// The occlusion multiplies the lit scene as a whole, before bloom is added, so a glowing gem's halo is not darkened by it.
+// (A renderer that lit in several passes would apply it to the ambient light alone; this one lights in a single pass, so
+// it takes the simpler route and darkens direct light in creases a little too.)
 //
 // Three curves are available, picked by a number in the uniforms:
 //   0  none: clamp to 1, the look of a renderer without high dynamic range;
@@ -22,10 +27,13 @@
 
 layout(set = 2, binding = 0) uniform sampler2D scene_image;
 layout(set = 2, binding = 1) uniform sampler2D bloom_image;
+layout(set = 2, binding = 2) uniform sampler2D occlusion_image;
 
 // Slot 0: x: exposure, y: bloom strength (0 when bloom is off), z: the tone mapper (0, 1 or 2 above), w: 1 to sRGB-encode.
 layout(set = 3, binding = 0) uniform CompositeUniforms {
     vec4 exposure_bloom_tonemap_encode;
+    // x: 1 when the ambient-occlusion picture is drawn this frame (it is the scene itself otherwise, and unread).
+    vec4 occlusion_flag;
 } settings;
 
 layout(location = 0) in vec2 source_uv;
@@ -72,6 +80,9 @@ vec3 ToneMap(vec3 exposed, float mapper) {
 
 void main() {
     vec3 scene = texture(scene_image, source_uv).rgb;
+    if (settings.occlusion_flag.x > 0.5) {
+        scene *= texture(occlusion_image, source_uv).r;
+    }
     float bloom_strength = settings.exposure_bloom_tonemap_encode.y;
     if (bloom_strength > 0.0) {
         scene += texture(bloom_image, source_uv).rgb * bloom_strength;

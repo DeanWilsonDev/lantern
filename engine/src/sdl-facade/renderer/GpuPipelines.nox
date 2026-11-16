@@ -71,6 +71,10 @@ lantern:::gpu :: namespace {
         bloomUpsample~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Scene plus glow to the screen: exposure, tone mapping and sRGB encoding. */
         composite~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** Ambient occlusion: reads the depth buffer and writes one channel of "how much is blocked". */
+        ambientOcclusion~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** The occlusion's depth-aware 4x4 average. */
+        ambientOcclusionBlur~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** FXAA: smooths the composite's picture onto the screen when anti-aliasing is on. */
         antiAlias~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
 
@@ -100,6 +104,12 @@ lantern:::gpu :: namespace {
                 }
                 if composite != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, composite);
+                }
+                if ambientOcclusion != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, ambientOcclusion);
+                }
+                if ambientOcclusionBlur != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, ambientOcclusionBlur);
                 }
                 if antiAlias != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, antiAlias);
@@ -441,9 +451,27 @@ lantern:::gpu :: namespace {
                 return Result<Pipelines, string!>:::Err(message!);
             }
         }
-        when CreatePipeline(device, format, colorFormat, depthFormat, FullscreenPipelineDescription("composite", 2, false)) {
+        when CreatePipeline(device, format, colorFormat, depthFormat, FullscreenPipelineDescription("composite", 3, false)) {
             Result:::Ok(pipeline) -> {
                 pipelines.composite = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, Sdl:::SDL_GPU_TEXTUREFORMAT_R8_UNORM, depthFormat, FullscreenPipelineDescription("ao", 1, false)) {
+            Result:::Ok(pipeline) -> {
+                pipelines.ambientOcclusion = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, Sdl:::SDL_GPU_TEXTUREFORMAT_R8_UNORM, depthFormat, FullscreenPipelineDescription("ao-blur", 2, false)) {
+            Result:::Ok(pipeline) -> {
+                pipelines.ambientOcclusionBlur = pipeline;
             },
             Result:::Err(message) -> {
                 pipelines.Release(device);
