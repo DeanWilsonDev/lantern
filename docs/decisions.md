@@ -1003,7 +1003,7 @@ unchanged.
   editor shows what the game draws.
 - **Load adds, clear removes.** `lantern:::world:::Load` adds the file's lights to the render world and remembers
   their ids, and `lantern:::world:::Clear` removes exactly those, so lights a game adds itself stay. A `sun` entity
-  replaces the sun and ambient light for as long as the level is loaded; the last one in the file wins.
+  replaces the sun and ambient light; the last one in the file wins. Clearing the world does not put the old sun back, so a game that loads more than one level sets its own sun before each load, as the platformer does.
 - **A parent's transform is not applied in the game.** The editor places a light through its parents, the game load
   by the light's own transform. Keep lights unparented until the game load composes parents.
 - **Left out:** a light that follows another entity, lights switched on and off by game events from the file alone
