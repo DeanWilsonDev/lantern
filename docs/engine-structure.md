@@ -32,7 +32,8 @@ engine/src/
   platform/                    the platform vocabulary: WindowConfig, WindowMetrics, PlatformEvent, and the
                                PlatformBackend and AudioSink interfaces
   renderer/                    the backend-neutral renderer: the RenderBackend interface, RenderWorld (one frame's
-                               draw list), Camera, Frustum, meshes, textures, primitives, glTF and PNG loading,
+                               draw list, its lights and its materials), ShadowPlan (which shadow maps a frame
+                               needs), Camera, Frustum, meshes, textures, primitives, glTF and PNG loading,
                                the bitmap font, and HeadlessRenderer for tests
   sdl-facade/                  everything SDL
     core/                      SdlContext: SDL's start and shutdown
@@ -40,7 +41,7 @@ engine/src/
     platform/                  SdlPlatform and SdlEvents: events, the clock, gamepad, mouse capture
     audio/                     SdlAudioOutput, an AudioSink
     renderer/                  GpuRenderer, the RenderBackend over SDL GPU, and its device, pipeline, shader,
-                               resource, uniform and draw-list files
+                               resource, uniform and draw-list files, and GpuShadows (the shadow atlases and the shadow pass)
   engine/
     loop/                      the Game interface and the GameLoop (events, fixed steps, frame update, render)
     input/                     InputRouter: platform events to each step's action snapshot
