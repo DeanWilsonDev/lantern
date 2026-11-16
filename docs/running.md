@@ -22,8 +22,10 @@ locked commit. Links live in `mist.local.json`, which isn't committed. `engine/R
 
 - `nox` on your `PATH`, built from [nox-systems-language](https://github.com/fearlessgamelabs/nox-systems-language)
   on its `proto` branch:
+  `git clone -b proto https://github.com/fearlessgamelabs/nox-systems-language && cd nox-systems-language`, then
   `cmake -B build -G Ninja && cmake --build build && cmake --install build --component nox --prefix ~/.local`
 - `mist` on your `PATH`, from [mist-package-manager](https://github.com/fearlessgamelabs/mist-package-manager):
+  `git clone https://github.com/fearlessgamelabs/mist-package-manager && cd mist-package-manager`, then
   `git submodule update --init --recursive && cmake -B build -G Ninja && cmake --build build && cmake --install build --component mist --prefix ~/.local`
 - CMake 3.30 or later, Ninja, and a C++26 compiler (GCC 14, Clang 19 or later, or a recent AppleClang). Mist uses them
   to build SDL3 and `lantern-native`, which builds Nyx.
@@ -63,12 +65,14 @@ Wayland backend by itself; `SDL_VIDEO_DRIVER=x11` forces XWayland for comparison
 ## Other Linux (Ubuntu and Debian)
 
 ```sh
-sudo apt install build-essential cmake ninja-build g++-14 glslang-tools spirv-cross \
+sudo apt install build-essential ninja-build g++-14 glslang-tools spirv-cross \
     libwayland-dev wayland-protocols libxkbcommon-dev libdecor-0-dev \
     libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev \
     libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libvulkan1 mesa-vulkan-drivers
 export CC=gcc-14 CXX=g++-14
 ```
+
+Ubuntu 24.04's `cmake` package is 3.28, older than the 3.30 Mist and Nox need. Install a newer one with `pip install --user 'cmake>=3.30'` (put `~/.local/bin` first on `PATH`) or from Kitware's apt repository, and check `cmake --version`.
 
 `mesa-vulkan-drivers` includes lavapipe, a software Vulkan driver, so the engine and its GPU tests also run on a
 machine with no GPU. Package names vary by release; if SDL's configure step reports a missing library, install its
@@ -114,7 +118,7 @@ These environment variables are read by the engine and the game:
 | Variable | Effect |
 | --- | --- |
 | `LANTERN_LOG` | Log level: `error`, `warn`, `info` (default), `debug`, `trace` or `off`. |
-| `LANTERN_LEVEL` | A world file inside the assets directory to load instead of the menu's choice, such as `worlds/streets.world.json`. The editor's Play button sets it. |
+| `LANTERN_LEVEL` | A world file inside the assets directory to start on, such as `worlds/streets.world.json`, used when the menu has not picked a level. A level picked from the menu (such as The streets) takes precedence. The editor's Play button sets it. |
 | `LANTERN_ASSETS` | The assets directory, overriding `game.json`'s `assets`. |
 | `LANTERN_AUTOPLAY=1` | The platformer plays itself (a scripted pilot), for smoke runs and screenshots. |
 | `LANTERN_DEBUG_HUD=1` | Start with the debug HUD showing. |
@@ -143,7 +147,7 @@ mist run editor assets/worlds/streets.world.json
 ```
 
 `docs/editor.md` has the controls and how the editor is built, and `apps/world-editor/nox/README.md` the host's files.
-The Play button saves the level and starts the game on it, so build the game first (`mist run editor` does).
+The Play button writes a separate snapshot, `.editor-play.world.json`, and starts the game on it. It does not save your world file, so save your edits yourself. Build the game first (`mist run editor` does).
 
 ## Tests
 

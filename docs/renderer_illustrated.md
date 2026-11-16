@@ -25,7 +25,7 @@ p.cap { text-align:center; color:#a3a3a8; font-size:9.5pt; font-style:italic; ma
 # The renderer, one frame at a time
 
 > **An illustrated edition of the walkthrough as it stood before the post-processing effects.** The scene pass, culling,
-> sorting and the shaders still work as drawn here, but the frame now continues through shadow maps, a high dynamic range scene,
+> sorting and the shaders still work as drawn here. The frame now draws shadow maps before the scene pass, then continues through a high dynamic range scene,
 > ambient occlusion, bloom, a composite pass and FXAA. `renderer.md` is the current text.
 
 
