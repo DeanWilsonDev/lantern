@@ -60,6 +60,31 @@ removes the lamps it added last time, sets the sun and adds the lamps `LightingS
 the level being loaded. A level with no entry there is lit by the sun alone. Keep the ids `AddPoint` and `AddSpot`
 return so the lamps can be removed later.
 
+## Lights in a world file
+
+The world editor places lights, so a level can carry its own. A light is an entity in the world file, and its numbers
+are the entity's properties, edited in the inspector like a moving platform's period.
+
+| Kind | Properties (default) | Shines |
+| --- | --- | --- |
+| `point_light` | `color` (`"#FFFFFF"`), `strength` (8), `range` (12), `casts_shadows` (false) | in every direction from the entity |
+| `spot_light` | the point light's, plus `inner_degrees` (20) and `outer_degrees` (35) | the way the entity points |
+| `sun` | `color`, `sky_ambient`, `ground_ambient`, `casts_shadows` (true) | the way the entity points |
+
+With no rotation a spot light and the sun point straight down; rotate the entity to aim it. Colours are `"#RRGGBB"`
+text, like a tint. `assets/worlds/lamp-yard.world.json` is a small level with a sun, a red lamp and a torch.
+
+In the editor, **Point light**, **Spot light** and **Sun** are in the palette. The viewport lights the scene with
+them as you edit, so what you see is what the game draws, hiding a light in the outliner puts it out, and a selected
+light draws what it reaches: a point light's range, a spot light's cone, the sun's rays.
+
+When the game loads the file (`lantern:::world:::Load`), the point and spot lights are added to the scene and a `sun`
+replaces the sun and ambient light. `lantern:::world:::Clear` removes them again, and lights the game added itself stay.
+The light entities exist in the world too, so a script can find them with `lantern:::world:::FindByKind("point_light")`.
+Load a level after setting the game's own sun, as the platformer does, because the file's `sun` wins.
+
+Keep light entities unparented: the game places a light by its own transform and ignores its parent's.
+
 ## Shadows
 
 The sun casts shadows once `SetSunShadows(true)` is called. Lamps cast shadows only after `SetShadows(light, true)`,

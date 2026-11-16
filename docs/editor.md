@@ -69,6 +69,10 @@ Nothing by name. The game ships `assets/editor/palette.json`, which lists:
   by kind;
 - **materials**: the names the inspector offers, each a texture in `assets/textures/`.
 
+The palette also offers **Point light**, **Spot light** and **Sun**. They are entities like any other (their kinds
+are `point_light`, `spot_light` and `sun`), their numbers are properties in the inspector, and the viewport lights the
+scene with them as you edit. See `lighting-and-shadows.md`.
+
 Without a palette the editor still works, with generic blocks, ramps and markers.
 
 ## Build and run
