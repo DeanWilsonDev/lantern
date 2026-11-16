@@ -173,7 +173,7 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
    multiplies in the ambient occlusion, darkens under blob shadows (`blob-shadows.md`), adds height fog and light shafts
    (`fog-and-light-shafts.md`), adds the glow,
    multiplies by the exposure, applies the tone-mapping curve and writes the swapchain image. When the target can't
-   sRGB-encode, the shader does it here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
+   applies the colour grade (`colour-grade.md`), and, when the target can't sRGB-encode, does that here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
    texture of its own and **the FXAA pass** (`RecordAntiAlias`) smooths it onto the screen image; see `anti-aliasing.md`.
 10. **Overlay pass**, only if there are lines or overlay quads: it loads the swapchain image and the scene's depth,
    then **draws the lines** (`DrawLines`), depth-tested against the meshes but not writing depth, and **the overlay**

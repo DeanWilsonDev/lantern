@@ -23,6 +23,8 @@
 //   2  an ACES fit by Krzysztof Narkowicz: f(x) = (x (2.51 x + 0.03)) / (x (2.43 x + 0.59) + 0.14). An "S": a lifted toe, a
 //      contrasty middle and a long shoulder. More cinematic, but it brightens and desaturates pastel colours.
 //
+// After the tone mapping comes the colour grade (saturation, contrast, tint, vignette), a game's hook for a chapter's look.
+//
 // The output is encoded to sRGB here when the target can't do it itself (see GpuDevice.nox), so the lit pass can stay in
 // linear light.
 #version 450
@@ -54,6 +56,10 @@ layout(set = 3, binding = 0) uniform CompositeUniforms {
     vec4 sun_color_and_shaft_strength;
     // x: the height where fog has its full density, y: how much of the shaft's light survives each step towards the sun.
     vec4 fog_base_and_shaft_decay;
+    // The colour grade: x: saturation (1 leaves colours as they are), y: contrast (1 leaves it), z: vignette strength, w: unused.
+    vec4 grade_saturation_contrast_vignette;
+    // rgb: the colour the picture is multiplied by after grading; white leaves it as it is.
+    vec4 grade_tint;
     // Blob shadows, two vec4s each: xyz the point on the ground it sits on and w its radius in metres, then x its darkness (0
     // to 1) and y how far above and below that point, in metres, it still darkens. flags.w says how many are used.
     vec4 blobs[16];
@@ -189,6 +195,25 @@ vec3 ApplyBlobShadows(vec3 scene, vec3 world_position) {
     return scene * (1.0 - darkness);
 }
 
+// The colour grade: the look a chapter or a place wants, applied to the finished 0 to 1 picture, after tone mapping and before
+// the sRGB encoding, so the numbers act on what the viewer sees. In order:
+//   saturation: blend between the pixel's grey (its luma) and its colour. 0 is black and white, 1 is unchanged, above 1 is vivid;
+//   contrast:   scale how far each channel is from middle grey, 0.5. Above 1 pushes darks darker and lights lighter;
+//   tint:       multiply by a colour, to warm or cool the whole picture;
+//   vignette:   darken towards the corners, which draws the eye to the middle.
+vec3 ColorGrade(vec3 color, vec2 uv) {
+    float saturation = settings.grade_saturation_contrast_vignette.x;
+    float contrast = settings.grade_saturation_contrast_vignette.y;
+    float vignette = settings.grade_saturation_contrast_vignette.z;
+    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    color = mix(vec3(luma), color, saturation);
+    color = (color - 0.5) * contrast + 0.5;
+    color *= settings.grade_tint.rgb;
+    float corner_distance = length(uv - 0.5) * 1.41421356;
+    color *= 1.0 - vignette * smoothstep(0.35, 1.0, corner_distance);
+    return clamp(color, 0.0, 1.0);
+}
+
 void main() {
     vec3 scene = texture(scene_image, source_uv).rgb;
     if (settings.flags.x > 0.5) {
@@ -215,6 +240,7 @@ void main() {
     }
     vec3 exposed = scene * settings.exposure_bloom_tonemap_encode.x;
     vec3 display = ToneMap(exposed, settings.exposure_bloom_tonemap_encode.z);
+    display = ColorGrade(display, source_uv);
     if (settings.exposure_bloom_tonemap_encode.w > 0.5) {
         display = EncodeSrgb(display);
     }
