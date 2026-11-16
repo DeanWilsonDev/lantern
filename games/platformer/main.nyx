@@ -2,6 +2,7 @@ Autopilot :: import Autopilot;
 BoostSystem :: import BoostSystem;
 CheckpointSystem :: import CheckpointSystem;
 CollisionView :: import CollisionView;
+ChapterLooks :: import ChapterLooks;
 Companion :: import Companion;
 GameAssets :: import GameAssets;
 GameEvent :: import GameEvent;
@@ -10,7 +11,10 @@ GameRules :: import GameRules;
 GameState :: import GameState;
 GameUiModel :: import GameUiModel;
 GemSystem :: import GemSystem;
+GlowSystem :: import GlowSystem;
+GuideLight :: import GuideLight;
 InputSettings :: import InputSettings;
+LanternSystem :: import LanternSystem;
 LevelLighting :: import LevelLighting;
 LevelScene :: import LevelScene;
 MenuChoice :: import MenuChoice;
@@ -18,6 +22,7 @@ MovingPlatform :: import MovingPlatform;
 Player :: import Player;
 PlayerTuning :: import PlayerTuning;
 StreetsAutopilot :: import StreetsAutopilot;
+ThornSystem :: import ThornSystem;
 ThirdPersonCamera :: import ThirdPersonCamera;
 
 // The Lantern platformer. The engine calls the hooks below; everything
@@ -147,6 +152,18 @@ private:
         return levelFromSetting == "" ? LEVEL_PATH : levelFromSetting;
     }
     static STREETS_PATH :: "worlds/streets.world.json";
+    static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
+    // The Guide Light: warm and wide from the companion, cooler and smaller from the lantern the
+    // player carries. `range` is how far the light is drawn, `reveal` how far it makes hidden
+    // platforms solid (the two differ so a platform appears just before the glow reaches it).
+    static COMPANION_GLOW_COLOR :: "FFC27A";
+    static COMPANION_GLOW_REVEAL :: 8.0f;
+    static LANTERN_GLOW_COLOR :: "9CC4FF";
+    static LANTERN_GLOW_REVEAL :: 5.0f;
+    static GLOW_RANGE :: 11.0f;
+    static GLOW_HEIGHT :: 2.4f;           // metres above the carrier's feet
+    // A fall or a thorn sends the player back to the last place they stood safely.
+    static SAFE_SPOT_MARGIN :: 1.6f;      // metres from any thorn that still counts as safe
     static MAIN_MENU_ORBIT_SPEED :: 0.15f;    // radians per second behind the title screen
 
     // The game's modules, one object each, one per folder (assets, scenes, entities, systems,
@@ -158,6 +175,11 @@ private:
     player~ Player = new Player();
     camera~ ThirdPersonCamera = new ThirdPersonCamera();
     gemSystem~ GemSystem = new GemSystem();
+    glowSystem~ GlowSystem = new GlowSystem();
+    lanternSystem~ LanternSystem = new LanternSystem();
+    thornSystem~ ThornSystem = new ThornSystem();
+    companionGlow~ GuideLight = new GuideLight();
+    lanternGlow~ GuideLight = new GuideLight();
     checkpointSystem~ CheckpointSystem = new CheckpointSystem();
     companion~ Companion = new Companion();
     rules~ GameRules = new GameRules();
@@ -180,6 +202,8 @@ private:
         levelLighting.Apply(LevelPath());
         loaded := level.Load(LevelPath(), assets.gemMesh, assets.unitCubeMesh);
         guard loaded throw;
+        // The level says which chapter it is, and the chapter sets the sky, fog and sun.
+        ChapterLooks:::Apply(level.chapter);
         player.Spawn(assets, level.spawnPosition);
         companion.Spawn(level.companionStops, assets.playerMesh, assets.playerTexture);
         gemSystem.Clear();
@@ -187,6 +211,18 @@ private:
         simulationSeconds = 0.0f;
         camera.ResetBehind(0.0f);
         rules.Start(level);
+        // Lights live in the engine until removed, so the last level's glows are turned off
+        // here and this level's companion glow starts at her first stop.
+        companionGlow.TurnOff();
+        lanternGlow.TurnOff();
+        if level.glowPlatforms.length() > 0 {
+            companionGlow.TurnOn(companion.position + GlowHeight(), COMPANION_GLOW_COLOR, GLOW_RANGE, COMPANION_GLOW_REVEAL);
+        }
+    }
+
+    GlowHeight :: () -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: GLOW_HEIGHT };
+        return lift;
     }
 
     SetState~: (next: GameState) -> void {
@@ -216,7 +252,7 @@ private:
         // seen by exactly one fixed step, even on a frame that runs none.
         // The autopilot has one script per level: the course's runs forward and jumps, the
         // streets' plays the level through (StreetsAutopilot).
-        isStreets := LevelPath() == STREETS_PATH;
+        isStreets := LevelPath() == STREETS_PATH || LevelPath() == STREETS_LATER_PATH;
         stick~ lantern:::math:::Vec2 = lantern:::input:::Vector(InputSettings:::MOVE);
         jumpPressed~ bool = lantern:::input:::IsPressed(InputSettings:::JUMP);
         jumpHeld~ bool = lantern:::input:::IsHeld(InputSettings:::JUMP);
@@ -247,6 +283,11 @@ private:
         controller := player.controller;
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        lanternSystem.DetectTaken(level.lanterns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        thornSystem.DetectTouches(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        if controller.IsGrounded() && !thornSystem.IsNearAny(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), SAFE_SPOT_MARGIN) {
+            rules.NoteSafeSpot(player.FeetPosition());
+        }
         // The kill plane is just a height: once the feet drop below it, the player has fallen
         // off the course.
         if player.FeetPosition().y < level.killHeight {
@@ -258,7 +299,24 @@ private:
         for event: GameEvent in events.Drain() {
             rules.Handle(event, level, player, camera, companion);
         }
+        UpdateGlows(dt);
         gemSystem.Animate(level.gems, simulationSeconds);
+    }
+
+    // Each light follows whoever carries it, then the glow system shows or hides the
+    // platforms the lights reach.
+    UpdateGlows~: (dt: f32) -> void {
+        // The rules mark the lantern taken; its light starts the step after, in the player's hand.
+        if rules.isCarryingLantern && !lanternGlow.isOn {
+            lanternGlow.TurnOn(player.FeetPosition() + GlowHeight(), LANTERN_GLOW_COLOR, GLOW_RANGE * 0.6f, LANTERN_GLOW_REVEAL);
+        }
+        companionGlow.MoveTo(companion.position + GlowHeight());
+        lanternGlow.MoveTo(player.FeetPosition() + GlowHeight());
+        lights: Array<GuideLight> = [companionGlow, lanternGlow];
+        glowSystem.Update(level.glowPlatforms, lights, dt);
+        for pickup in level.lanterns {
+            pickup.Animate(simulationSeconds);
+        }
     }
 
     UpdatePlaying~: (frameSeconds: f32) -> void {
@@ -298,6 +356,7 @@ private:
         when choice <MenuChoice> {
             Play -> { PlayLevel(""); },
             PlayStreets -> { PlayLevel(STREETS_PATH); },
+            PlayStreetsLater -> { PlayLevel(STREETS_LATER_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
                 StartLevel();
@@ -329,6 +388,14 @@ private:
         lantern:::debug:::SetValue("Game/Respawn", `${respawn.x:.2f}, ${respawn.y:.2f}, ${respawn.z:.2f}`);
         lantern:::debug:::SetValue("Companion/Stop", `${companion.stopIndex:d}`);
         lantern:::debug:::SetValue("Companion/Offering boost", companion.IsOfferingBoost() ? "yes" : "no");
+        shownPlatforms~ i32 = 0;
+        for platform in level.glowPlatforms {
+            if platform.isShown {
+                shownPlatforms++;
+            }
+        }
+        lantern:::debug:::SetValue("Glow/Platforms shown", `${shownPlatforms:d}`);
+        lantern:::debug:::SetValue("Glow/Carrying lantern", rules.isCarryingLantern ? "yes" : "no");
         lantern:::debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
     }
 }

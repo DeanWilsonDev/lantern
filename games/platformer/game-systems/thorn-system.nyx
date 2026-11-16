@@ -1,0 +1,45 @@
+GameEvent :: import GameEvent;
+GameEvents :: import GameEvents;
+Math :: import standard:::Math;
+Thorns :: import Thorns;
+
+// Finds the player touching a patch of thorns, and answers "is the player near thorns?" so the
+// game only remembers safe spots that are really safe.
+ThornSystem :: class {
+public:
+    // The capsule touches a box when two things hold: seen from above, the capsule's axis is
+    // within its radius (plus `margin`) of the box's footprint, and in height the capsule's
+    // span overlaps the box's span. The closest point of a rectangle to a point is the point
+    // squeezed (clamped) into the rectangle, per axis.
+    IsTouching :: (patch: Thorns, capsuleCenter: lantern:::math:::Vec3, halfSegment: f32, capsuleRadius: f32, margin: f32) -> bool {
+        guard patch.isActive return false;
+        closestX := Math:::clamp(capsuleCenter.x, patch.center.x - patch.halfExtents.x, patch.center.x + patch.halfExtents.x);
+        closestZ := Math:::clamp(capsuleCenter.z, patch.center.z - patch.halfExtents.z, patch.center.z + patch.halfExtents.z);
+        deltaX := capsuleCenter.x - closestX;
+        deltaZ := capsuleCenter.z - closestZ;
+        reach := capsuleRadius + margin;
+        guard deltaX * deltaX + deltaZ * deltaZ < reach * reach return false;
+        patchTop := patch.center.y + patch.halfExtents.y;
+        patchBottom := patch.center.y - patch.halfExtents.y;
+        return capsuleCenter.y - halfSegment - capsuleRadius < patchTop && capsuleCenter.y + halfSegment + capsuleRadius > patchBottom;
+    }
+
+    DetectTouches~: (patches: Array<Thorns>, capsuleCenter: lantern:::math:::Vec3, halfSegment: f32, capsuleRadius: f32, events~ GameEvents) -> void {
+        for patch: Thorns in patches {
+            if IsTouching(patch, capsuleCenter, halfSegment, capsuleRadius, 0.0f) {
+                events.Push(GameEvent:::ThornsTouched);
+            }
+        }
+    }
+
+    // True when the capsule is within `margin` metres of any active patch. The game stores the
+    // player's position as a safe spot only when this is false.
+    IsNearAny :: (patches: Array<Thorns>, capsuleCenter: lantern:::math:::Vec3, halfSegment: f32, capsuleRadius: f32, margin: f32) -> bool {
+        for patch: Thorns in patches {
+            if IsTouching(patch, capsuleCenter, halfSegment, capsuleRadius, margin) {
+                return true;
+            }
+        }
+        return false;
+    }
+}

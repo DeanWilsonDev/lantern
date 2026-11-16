@@ -1003,7 +1003,7 @@ unchanged.
   editor shows what the game draws.
 - **Load adds, clear removes.** `lantern:::world:::Load` adds the file's lights to the render world and remembers
   their ids, and `lantern:::world:::Clear` removes exactly those, so lights a game adds itself stay. A `sun` entity
-  replaces the sun and ambient light for as long as the level is loaded; the last one in the file wins.
+  replaces the sun and ambient light; the last one in the file wins. Clearing the world does not put the old sun back, so a game that loads more than one level sets its own sun before each load, as the platformer does.
 - **A parent's transform is not applied in the game.** The editor places a light through its parents, the game load
   by the light's own transform. Keep lights unparented until the game load composes parents.
 - **Left out:** a light that follows another entity, lights switched on and off by game events from the file alone
@@ -1012,8 +1012,31 @@ unchanged.
 
 Card: `lighting-and-shadows/lights-in-the-world-editor`.
 
+## D-063 Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters
 
-## D-063 The scene is drawn in high dynamic range, then tone mapped, with bloom as an optional pass
+The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter looks and thorns to the streets.
+
+- **The Guide Light is a point light with a reveal radius.** `GuideLight` adds a light (`lantern:::lights:::AddPoint`),
+  moves it with its carrier each step and removes it on reload. Hidden `glow_platform` pieces are lit when they are
+  within any light's radius (8 m for the companion, 5 m for the lantern) and stay for 4 s, which covers a player a few
+  metres behind the light. The radius is the rule and the light is only how it looks, so the two can be tuned apart.
+- **Hiding a platform moves it.** There is no engine call to switch collision off, so a hidden piece is teleported
+  1000 m down and its mesh hidden, as the engine card says. A static collider doesn't follow a teleport, so these pieces
+  are `kinematic` in the world file. `SetSolid` on the card replaces this.
+- **The lantern is what the second gap is for.** The companion's last stop is before it, so only the lantern's light
+  shows those plates: her form of the puzzle first, then the player's own.
+- **The level says its chapter.** The spawn's `chapter` property picks the sky, fog and sun in `chapter-looks.nyx`.
+  Level lamps stay with `LightingSettings`. The streets are chapter 1; `streets-later` is the same geometry as chapter 3,
+  which is also when thorns appear (`min_chapter`, default 3).
+- **Thorns nudge.** The game remembers the last place the player stood on the ground at least 1.6 m from any thorn and a
+  touch sends them there. Gems, checkpoints and the companion are untouched, so it can't end a run.
+- **The streets autopilot is companion-aware.** It still is a function of the clock, but it waits where the companion
+  needs the player close and walks at 70% speed past the rooftop.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (Guide Light, chapter looks and thorns complete; the Anchor waits for Dean).
+
+
+## D-064 The scene is drawn in high dynamic range, then tone mapped, with bloom as an optional pass
 
 (Provisional, 2026-11-16, not yet reviewed by Dean.)
 
@@ -1042,7 +1065,7 @@ three more steps turn it into the picture. `bloom-and-tone-mapping.md` is the gu
 
 Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
 
-## D-064: A procedural sky that lights the scene
+## D-065: A procedural sky that lights the scene
 
 - **The sky is a formula, not a cubemap.** `SkyGradient(direction, zenith, horizon, ground, blur)` in
   `engine/shaders/sky-common.glsl` is shared by the backdrop shader and the lit shader, so what you see behind the world
@@ -1059,7 +1082,7 @@ Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
 
 Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
 
-## D-065: FXAA, not MSAA or TAA
+## D-066: FXAA, not MSAA or TAA
 
 - **FXAA runs on the tone-mapped picture** as one extra full-screen pass (`fxaa.frag`). The composite writes a texture of
   the screen's size and format and FXAA reads it into the screen image.
@@ -1073,7 +1096,7 @@ Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
 
 Card: `renderer-visuals/anti-aliasing`.
 
-## D-066: Screen-space ambient occlusion over the depth buffer
+## D-067: Screen-space ambient occlusion over the depth buffer
 
 - **Twelve hemisphere samples per pixel** read the scene's depth, with a range check, then a depth-aware 4x4 average
   removes the 4x4 sample-turning pattern. Two full-screen passes on one-channel textures.
@@ -1088,7 +1111,7 @@ Card: `renderer-visuals/anti-aliasing`.
 
 Card: `renderer-visuals/ambient-occlusion`.
 
-## D-067: Height fog and light shafts in the composite pass
+## D-068: Height fog and light shafts in the composite pass
 
 - **Both are done in `composite.frag`**, which already reads the scene, so it also reads the depth buffer. Each pixel's
   distance comes from its stored depth and its ray from the camera basis, as the sky does it.
@@ -1104,7 +1127,7 @@ Card: `renderer-visuals/ambient-occlusion`.
 
 Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
 
-## D-068: A spiral shadow filter and cascade blending, not contact-hardening shadows
+## D-069: A spiral shadow filter and cascade blending, not contact-hardening shadows
 
 - **The 3x3 filter becomes a spiral of 4, 12 or 20 lookups** over a disc of `softness` texels (default 2), turned by a
   different angle per pixel, so the edge is softer and the banding becomes fine noise. Quality sets the count.
@@ -1118,7 +1141,7 @@ Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
 
 Card: `renderer-visuals/softer-shadows-and-stable-cascades`.
 
-## D-069: Blob shadows darken surfaces by distance to a point, in the composite pass
+## D-070: Blob shadows darken surfaces by distance to a point, in the composite pass
 
 - **A blob is a point, a radius and a darkness**, and the composite pass darkens each pixel by how near its world position
   (rebuilt from the depth buffer) is to the point, as an ellipse that reaches only a short way above and below it. No mesh,
