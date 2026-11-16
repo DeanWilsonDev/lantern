@@ -173,6 +173,14 @@ Height fog and light shafts (guide: `fog-and-light-shafts.md`).
 - `SetFogColor(color, sunScattering)`: an `"RRGGBB"` string, and how much brighter fog is looking towards the sun.
 - `SetLightShafts(enabled, strength, decay)`: streaks of sunlight away from the sun where objects block it.
 
+### Particles, `lantern::particles`
+
+Dust, sparks and trails (guide: `particles.md`).
+
+- `Emit(position, velocity, color, life, length, gravity)`: one particle; `color` is an `"RRGGBB"` string, `life` is seconds, `length` is the streak's length in seconds of travel and `gravity` is metres per second squared. Dropped when the quality budget is full.
+- `Clear()`: removes every particle.
+- `Count()`: how many are alive, as an i64.
+
 ## UI (Chaos and Cosmos), `lantern:::ui`
 
 The game's menus and HUD are Chaos components (`.chaos`) styled by Cosmos stylesheets

@@ -1,0 +1,75 @@
+lantern:::renderer :: namespace {
+    /** The most particles `ParticleSystem` ever holds, whatever the quality asks for. */
+    MAX_PARTICLES: usize = 512;
+
+    /**
+     * One short-lived speck: where it is, how fast it moves, how long it has lived and how long it will. Gravity pulls
+     * it down; `length` is how long a streak it draws, in seconds of its own travel, so a fast spark is a long line and
+     * a drifting mote is nearly a dot.
+     */
+    Particle :: struct {
+        position~ Vec3 = Vec3 { };
+        velocity~ Vec3 = Vec3 { };
+        color~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f };
+        age~ f32 = 0.0f;
+        life~ f32 = 1.0f;
+        gravity~ f32 = 0.0f;
+        length~ f32 = 0.05f;
+    }
+
+    /**
+     * Dust, sparks and trails. A game emits particles; the system moves them each frame and draws each as a short
+     * streak along its travel that fades out over its life. `budget` caps how many are alive, so the quality setting
+     * can make them cheaper: an emit past the budget is dropped. The guide is `docs/particles.md`.
+     */
+    ParticleSystem :: class {
+        /** The live particles. */
+        particles~ Array<Particle>! = [];
+        /** How many may be alive at once; `SetQuality` sets it. */
+        budget~ usize = 256;
+
+        !ParticleSystem~: () {
+            delete particles;
+        }
+
+        /** Adds one particle, unless the budget is full. */
+        Emit~: (position: Vec3, velocity: Vec3, color: lantern:::core:::Color, life: f32, length: f32, gravity: f32) -> void {
+            if particles.length() < budget && particles.length() < MAX_PARTICLES {
+                particles.push(Particle {
+                    position: position,
+                    velocity: velocity,
+                    color: color,
+                    life: Math:::max(life, 0.05f),
+                    gravity: gravity,
+                    length: Math:::max(length, 0.0f)
+                });
+            }
+        }
+
+        /** Moves every particle on by `seconds` and drops the ones that have lived their life or fallen below the world. */
+        Step~: (seconds: f32) -> void {
+            index~ usize = 0;
+            while index < particles.length() {
+                particle~ Particle = particles[index];
+                particle.age += seconds;
+                particle.velocity.y -= particle.gravity * seconds;
+                particle.position = Vec3 {
+                    x: particle.position.x + particle.velocity.x * seconds,
+                    y: particle.position.y + particle.velocity.y * seconds,
+                    z: particle.position.z + particle.velocity.z * seconds
+                };
+                if particle.age >= particle.life || particle.position.y < -100.0f {
+                    particles.remove(index);
+                } else {
+                    particles[index] = particle;
+                    index += 1;
+                }
+            }
+        }
+
+        /** Removes every particle. */
+        Clear~: () -> void {
+            particles.clear();
+        }
+    }
+}

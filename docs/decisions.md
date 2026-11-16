@@ -1172,3 +1172,22 @@ Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
+
+## D-072: Particles are simulated in the engine and drawn as fading line streaks
+
+Date: 2026-11-16.
+
+- **The engine moves them, the game emits them.** `lantern:::particles:::Emit` hands over a start, a velocity, a colour, a
+  life, a streak length and a gravity; `RenderWorld.StepParticles` steps and draws them once per frame after `OnRender`. Doing
+  it in Nyx would cost an interpreted loop per particle per frame, which the 60 fps target can't spare.
+- **Drawn with the existing line pipeline.** It needs no new shader, pipeline or vertex layout, and a streak is the right look
+  for sparks and thrown dust. The cost is that particles skip bloom, grading and anti-aliasing and can't be soft or textured.
+  A billboard quad pipeline is the later step and is listed in `particles.md`.
+- **The quality setting is a budget**, 64, 256 or 512 live particles, rather than a switch: the effect thins out instead of
+  disappearing. A hard ceiling of 512 keeps the per-frame line count bounded.
+- **Stepped by display time, not fixed steps**, so they are smooth at any refresh rate and can't affect gameplay.
+- **Platformer:** dust on every jump and landing only (`game-systems/dust.nyx`), kept small. Trails and sparks are available
+  to the game but unused.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
