@@ -1,0 +1,92 @@
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+SkyWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+        color: lantern:::core:::Color:::Black(),
+        ambient: lantern:::core:::Color:::Black(),
+        groundAmbient: lantern:::core:::Color:::Black()
+    };
+    world->post.bloomEnabled = false;
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 0.0f, z: 5.0f }, Vec3 { x: 0.0f, y: 0.5f, z: 0.0f });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            sphereData := lantern:::renderer:::Sphere(1.0f, 32, 16);
+            defer delete sphereData;
+            sphere~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(sphereData) {
+                Result:::Ok(handle) -> {
+                    sphere = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+
+            skyOnly := SkyWorld();
+            defer delete skyOnly;
+            when renderer->RenderOffscreen(skyOnly, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    top: u8[4] = PixelAt(pixels, size, 64, 2);
+                    middle: u8[4] = PixelAt(pixels, size, 64, 60);
+                    assert(top[2] > top[0] + 40, "straight up the sky is blue");
+                    assert(i32(middle[0]) - i32(top[0]) > 20, "at the horizon the sky is paler than at the top");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            metalWorld := SkyWorld();
+            defer delete metalWorld;
+            metalWorld->DrawWithMaterial(sphere, null, Mat4:::translation(Vec3 { x: 0.0f, y: 0.5f, z: 0.0f }), lantern:::core:::Color:::White(), lantern:::renderer:::Material { metallic: 1.0f, roughness: 0.15f });
+            when renderer->RenderOffscreen(metalWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    reflected: u8[4] = PixelAt(pixels, size, 64, 64);
+                    assert(reflected[2] > 60, "a metal sphere with no lights reflects the sky");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            metalWorld->sky.lightingStrength = 0.0f;
+            when renderer->RenderOffscreen(metalWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(PixelAt(pixels, size, 64, 64)[2] < 10, "with the sky's light off the same sphere is dark");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("the sky draws behind meshes and lights them");
+    return 0;
+}

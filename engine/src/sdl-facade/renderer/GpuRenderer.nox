@@ -907,11 +907,13 @@ lantern:::gpu :: namespace {
                 return report;
             }
             post: lantern:::renderer:::PostSettings = renderWorld->post;
+            skyDrawn: bool = SkyIsDrawn(renderWorld);
+            backdrop: lantern:::core:::Color = skyDrawn ? renderWorld->sky.horizon : renderWorld->clearColor;
             bloomDrawn: bool = post.bloomEnabled && post.bloomStrength > 0.0f;
             unsafe {
                 sceneTarget := Sdl:::SDL_GPUColorTargetInfo {
                     texture: postTargets.hdrTexture,
-                    clear_color: Sdl:::SDL_FColor { r: renderWorld->clearColor.r, g: renderWorld->clearColor.g, b: renderWorld->clearColor.b, a: 1.0f },
+                    clear_color: Sdl:::SDL_FColor { r: backdrop.r, g: backdrop.g, b: backdrop.b, a: 1.0f },
                     load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
                     store_op: Sdl:::SDL_GPU_STOREOP_STORE
                 };
@@ -925,7 +927,10 @@ lantern:::gpu :: namespace {
                     cycle: true
                 };
                 scenePass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, sceneTarget, 1, depthTargetInfo);
-                DrawMeshes(commandBuffer, scenePass, renderWorld, visibleDraws, chosenLights, shadowPlan, viewProjection, encodeFlag, report);
+                DrawMeshes(commandBuffer, scenePass, renderWorld, visibleDraws, chosenLights, shadowPlan, viewProjection, backdrop, encodeFlag, report);
+                if skyDrawn {
+                    DrawSky(commandBuffer, scenePass, renderWorld, aspect);
+                }
                 Sdl:::SDL_EndGPURenderPass(scenePass);
             }
             if bloomDrawn {
@@ -1047,17 +1052,22 @@ lantern:::gpu :: namespace {
          * tint) and issue one indexed draw. The byte counts pushed (80, 112, 528, 1008, 128, 48) are the uniform structs' sizes. The two shadow maps bind once,
          * to sampler slots 1 and 2 (slot 0 is the draw's texture).
          */
-        DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, chosenLights: Array<u32>, shadowPlan: lantern:::renderer:::ShadowPlan*, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
+        DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, chosenLights: Array<u32>, shadowPlan: lantern:::renderer:::ShadowPlan*, viewProjection: Mat4, fogColor: lantern:::core:::Color, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
             cameraPosition: Vec3 = renderWorld->camera.position;
             frameUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f] };
             directionToLight: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - renderWorld->light.direction, lantern:::core:::WorldUp());
+            skyLight: SkyLightUniforms = PackSkyLightUniforms(renderWorld);
             lightUniforms := LightUniforms {
                 directionToLight: [directionToLight.x, directionToLight.y, directionToLight.z, 0.0f],
                 lightColor: renderWorld->light.color.ToArray(),
                 ambientColor: renderWorld->light.ambient.ToArray(),
                 groundAmbientColor: renderWorld->light.groundAmbient.ToArray(),
-                fogColor: renderWorld->clearColor.ToArray(),
+                fogColor: fogColor.ToArray(),
                 fogAndOutput: [renderWorld->fogStart, renderWorld->fogEnd, 0.0f, encodeFlag],
+                skyZenith: skyLight.zenith,
+                skyHorizon: skyLight.horizon,
+                skyGround: skyLight.ground,
+                skyStrengthAndIntensity: skyLight.strengthAndIntensity,
                 cameraPosition: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f]
             };
             localLightUniforms: LocalLightUniforms = PackLocalLights(renderWorld->lights, chosenLights, shadowPlan);
@@ -1065,7 +1075,7 @@ lantern:::gpu :: namespace {
             unsafe {
                 Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lit);
                 PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(frameUniforms), 80);
-                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 112);
+                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 176);
                 PushFragmentUniforms(commandBuffer, 2, reinterpret<u8>(localLightUniforms), 528);
                 PushFragmentUniforms(commandBuffer, 3, reinterpret<u8>(shadowUniforms), 1008);
                 shadowBindings: Sdl:::SDL_GPUTextureSamplerBinding[2] = [
@@ -1107,6 +1117,19 @@ lantern:::gpu :: namespace {
                         report->triangles += u64(mesh.indexCount / 3);
                     }
                 }
+            }
+        }
+
+        /**
+         * The sky, drawn into the scene pass after the meshes. One draw of the full-screen triangle at the far plane: the
+         * depth test (less or equal, against a buffer cleared to 1) lets it colour only the pixels no mesh covered.
+         */
+        DrawSky~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, aspect: f32) -> void {
+            skyUniforms := PackSkyUniforms(renderWorld, aspect);
+            unsafe {
+                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.sky);
+                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(skyUniforms), 128);
+                Sdl:::SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
             }
         }
 

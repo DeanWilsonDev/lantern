@@ -150,6 +150,15 @@ the game decides what a kind means.
 | `lantern:::screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `lantern:::screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |
 
+### Sky, `lantern::sky`
+
+The sky behind the world and the light it gives (guide: `sky-and-image-based-lighting.md`).
+
+- `SetColors(zenith, horizon, ground)`: three `"RRGGBB"` strings.
+- `SetSunDisc(radiusDegrees, strength)`: the sun's disc; a strength above 1 blooms.
+- `SetLighting(strength, intensity)`: how much of the ambient light comes from the sky, and how bright it is.
+- `SetEnabled(enabled)`: off brings back the clear colour and the flat ambient pair.
+
 ## UI (Chaos and Cosmos), `lantern:::ui`
 
 The game's menus and HUD are Chaos components (`.chaos`) styled by Cosmos stylesheets

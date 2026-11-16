@@ -159,7 +159,10 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
    matrix and camera position for the vertex shader, and the sun, the ambient light, fog and the chosen local lights
    for the fragment shader. Then for each draw, bind its mesh's buffers and its texture only if they differ from the
    previous draw's, push the per-draw uniforms (the model matrix and its normal matrix, then the tint and material)
-   and issue one indexed draw. The pass keeps its depth, because the lines test against it next.
+   and issue one indexed draw. The pass keeps its depth, because the lines test against it next. After the meshes,
+   **draw the sky** (`DrawSky`, if the sky is on and the camera is perspective): a fullscreen triangle at the far
+   depth that fills only the pixels no mesh covered. The same sky function lights the meshes. See
+   `sky-and-image-based-lighting.md`.
 7. **Bloom passes** (`RecordBloom`), if bloom is on: shrink the scene through five textures, each half the size of
    the last, keeping only its bright part in the first shrink, then grow them back one at a time adding each to the
    next larger. Every step is a full-screen pass: one oversized triangle drawn by `fullscreen.vert`, with no vertex
