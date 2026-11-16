@@ -904,3 +904,44 @@ and the editor run as before.
 - **Tutorial comments** in the renderer, the application and the loop, as the game code has (D-042).
 
 Card: `engine-follow-ups/engine-structure-and-a-renderer-to-learn-from`.
+
+## D-058 Lights are plain data in RenderWorld: one sun, up to eight local lights, a PBR-lite material
+
+Dean asked for proper lighting and shadows so a full 3D platformer can be built on the engine. The light model stays
+data in the `RenderWorld`, like everything else the renderer reads, and nothing above `renderer/` touches the GPU.
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+- **One sun plus local lights.** `DirectionalLight` stays the sun and the ambient term. A new `Light` struct covers
+  point and spot lights (position, direction, colour times intensity, range, cone angles, a shadow flag).
+  `RenderWorld.lights` holds them; the shader takes the eight that matter most to the camera
+  (`MAX_LOCAL_LIGHTS`). Many lights would need clustered or deferred shading, which this tutorial renderer leaves out.
+- **Forward shading, PBR-lite.** Cook-Torrance with GGX, Smith visibility and Schlick Fresnel, driven by a metallic
+  and a roughness value, plus an emissive colour. Chosen over Blinn-Phong because it is a few more lines and
+  behaves under any light, and over full PBR because there are no image-based lights, normal maps or clear coat.
+- **Material on the draw.** `DrawItem` gets a `Material` (metallic, roughness, emissive) with defaults that look
+  like the old matte surfaces, so existing games and tests don't change. The tint stays on the draw.
+- **Ambient is a sky and ground colour pair**, blended by the normal's height, instead of one colour times a fixed
+  hemisphere factor. The old single `ambient` stays valid and is used for both.
+- **Nyx sees it as `lantern::lights`**, with handles for local lights, so game code sets the sun, adds, moves and
+  removes lights and sets a material; the engine remains Nox.
+
+Card: `lighting-and-shadows/light-model-and-materials`.
+
+## D-059 Shadows come from depth maps in two atlases, filtered with PCF
+
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+- **A depth-only pass before the main pass.** Casting draws are rendered from the light into a depth texture that the
+  lit shader then samples with a comparison sampler.
+- **Atlases, not texture arrays.** Cascades, spot lights and point-light faces are tiles of one depth texture each,
+  drawn by setting the viewport per tile inside a single render pass. One texture and one pass per atlas keeps the
+  code short and the resource count low.
+- **Sun: three cascades** fitted to slices of the camera's view, with texel snapping so edges don't shimmer.
+- **Local lights:** the shadowed spot lights use one tile each; a shadowed point light uses six (a cube laid out as
+  tiles, face picked by the larger axis of the light-to-pixel vector). The local atlas has 12 tiles (`MAX_LOCAL_SHADOW_TILES`), so a frame shadows at most twelve spot lights, or two point lights.
+- **Filtering and bias.** Hardware 2x2 comparison filtering plus a 3x3 PCF loop. Acne is handled by a rasteriser
+  constant and slope bias in the shadow pipeline, plus a normal-offset push and a small fixed depth bias in the shader.
+- **Opt-out per draw.** `DrawItem.castsShadows` and `ShadowSettings` on the `RenderWorld` (map size, distance, on or off).
+- **Left out:** soft shadows from area lights (PCSS), shadow caching, translucent shadows and cascade blending.
+
+Card: `lighting-and-shadows/shadow-maps`.

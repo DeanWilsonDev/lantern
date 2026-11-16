@@ -887,10 +887,10 @@ lantern:::gpu :: namespace {
         }
 
         /**
-         * Step 1: the lit meshes. The per-frame uniforms (view-projection, camera position, light and fog) are pushed
-         * once. Then for each visible draw, in sorted order: rebind the mesh's vertex and index buffers only if the
+         * Step 1: the lit meshes. The per-frame uniforms (view-projection, camera position, the sun, the local lights
+         * and fog) are pushed once. Then for each visible draw, in sorted order: rebind the mesh's vertex and index buffers only if the
          * mesh changed, rebind the texture only if it changed, push the per-draw uniforms (model matrix, normal matrix,
-         * tint) and issue one indexed draw. The byte counts pushed (80, 96, 128, 16) are the uniform structs' sizes.
+         * tint) and issue one indexed draw. The byte counts pushed (80, 112, 528, 128, 48) are the uniform structs' sizes.
          */
         DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
             cameraPosition: Vec3 = renderWorld->camera.position;
@@ -900,14 +900,19 @@ lantern:::gpu :: namespace {
                 directionToLight: [directionToLight.x, directionToLight.y, directionToLight.z, 0.0f],
                 lightColor: renderWorld->light.color.ToArray(),
                 ambientColor: renderWorld->light.ambient.ToArray(),
+                groundAmbientColor: renderWorld->light.groundAmbient.ToArray(),
                 fogColor: renderWorld->clearColor.ToArray(),
                 fogAndOutput: [renderWorld->fogStart, renderWorld->fogEnd, 0.0f, encodeFlag],
                 cameraPosition: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f]
             };
+            chosenLights: Array<u32>! = lantern:::renderer:::SelectLocalLights(renderWorld->lights, cameraPosition);
+            defer delete chosenLights;
+            localLightUniforms: LocalLightUniforms = PackLocalLights(renderWorld->lights, chosenLights);
             unsafe {
                 Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lit);
                 PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(frameUniforms), 80);
-                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 96);
+                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 112);
+                PushFragmentUniforms(commandBuffer, 2, reinterpret<u8>(localLightUniforms), 528);
                 boundMesh~ u32 = NO_BINDING;
                 boundTexture~ u32 = NO_BINDING;
                 textureBound~ bool = false;
@@ -929,9 +934,13 @@ lantern:::gpu :: namespace {
                             textureBound = true;
                         }
                         objectUniforms := ObjectUniforms { model: draw.transform.elements, normalMatrix: NormalMatrix4(draw.transform) };
-                        colorUniforms := VectorUniforms { values: draw.color.ToArray() };
+                        materialUniforms := MaterialUniforms {
+                            tint: draw.color.ToArray(),
+                            surface: [draw.material.metallic, draw.material.roughness, 0.0f, 0.0f],
+                            emissive: draw.material.emissive.ToArray()
+                        };
                         PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 128);
-                        PushFragmentUniforms(commandBuffer, 1, reinterpret<u8>(colorUniforms), 16);
+                        PushFragmentUniforms(commandBuffer, 1, reinterpret<u8>(materialUniforms), 48);
                         Sdl:::SDL_DrawGPUIndexedPrimitives(pass, mesh.indexCount, 1, 0, 0, 0);
                         report->drawsSubmitted += 1;
                         report->triangles += u64(mesh.indexCount / 3);

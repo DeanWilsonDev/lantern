@@ -32,6 +32,53 @@ lantern:::renderer :: namespace {
         transform~ Mat4 = Mat4 { };
         /** A tint multiplied into the texture and vertex colour, in linear RGB. */
         color~ lantern:::core:::Color = lantern:::core:::Color { };
+        /** How the surface reacts to light: shiny or rough, metal or not, and whether it glows. */
+        material~ Material = Material { };
+        /** Whether this draw blocks light, so it leaves a shadow on what is behind it. Off for a sky dome or a decal. */
+        castsShadows~ bool = true;
+    }
+
+    /**
+     * What a surface is made of, as far as light is concerned. Two numbers and a colour describe nearly everything the
+     * renderer can show; the surface's own colour is the texture times the tint, not part of the material.
+     *
+     * This is "PBR-lite": the metallic and roughness parameters of physically based rendering, without the image
+     * based lighting, normal maps and layered coatings a full renderer adds.
+     */
+    Material :: struct {
+        /**
+         * 0 for paint, wood, stone and skin (a dielectric: the surface colour is diffuse and a faint white highlight sits
+         * on top), 1 for bare metal (no diffuse at all; the highlight carries the surface colour). In between is rare
+         * and mostly means dirty metal.
+         */
+        metallic~ f32 = 0.0f;
+        /**
+         * 0 is a mirror: a tiny sharp highlight. 1 is chalk: a broad dim one. Clamped to 0.04 and above in the
+         * shader, since a perfect mirror needs a reflection to show.
+         */
+        roughness~ f32 = 0.8f;
+        /** Light the surface gives off by itself, in linear RGB, added after the lighting. Not a light for other things. */
+        emissive~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+
+        /** Painted wood or stone: not metal, and rough. The default. */
+        static Matte :: () -> Material {
+            return Material { };
+        }
+
+        /** A smooth non-metal, like glazed tile or plastic. */
+        static Glossy :: () -> Material {
+            return Material { metallic: 0.0f, roughness: 0.3f };
+        }
+
+        /** Polished metal. */
+        static Metal :: () -> Material {
+            return Material { metallic: 1.0f, roughness: 0.25f };
+        }
+
+        /** A surface that glows `color` and is otherwise matte, like a gem or a lamp's bulb. */
+        static Glowing :: (color: lantern:::core:::Color) -> Material {
+            return Material { emissive: color };
+        }
     }
 
     /**
@@ -44,9 +91,15 @@ lantern:::renderer :: namespace {
         /** The light's colour times its strength, in linear RGB. */
         color~ lantern:::core:::Color = lantern:::core:::Color { };
         /**
-         * Light added to every surface regardless of facing, a cheap stand-in for light bounced off the sky and ground.
+         * Light from the sky, added to every surface regardless of the sun: a cheap stand-in for the light that bounces
+         * around. Surfaces facing up get all of it, surfaces facing down get `groundAmbient`, and the ones between get
+         * a blend.
          */
         ambient~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+        /** The ambient light for surfaces facing down: light bounced off the ground, so usually dimmer and warmer. */
+        groundAmbient~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+        /** Whether the sun casts shadows. The shadow settings live on the `RenderWorld`. */
+        castsShadows~ bool = true;
 
         /**
          * A warm sun high overhead, slightly to the right of and behind the default camera, with a cool sky-blue
@@ -56,9 +109,110 @@ lantern:::renderer :: namespace {
             return DirectionalLight {
                 direction: lantern:::core:::Normalize3(Vec3 { x: -0.4f, y: -1.0f, z: -0.3f }),
                 color: lantern:::core:::Color:::Rgb(1.0f, 0.96f, 0.88f),
-                ambient: lantern:::core:::Color:::Rgb(0.28f, 0.32f, 0.4f)
+                ambient: lantern:::core:::Color:::Rgb(0.28f, 0.32f, 0.4f),
+                groundAmbient: lantern:::core:::Color:::Rgb(0.084f, 0.096f, 0.12f)
             };
         }
+    }
+
+
+    /** What shape of light a `Light` is. The sun is separate: see `DirectionalLight`. */
+    LightKind :: enum {
+        /** Shines the same in every direction from a position, like a bare bulb or a torch flame. */
+        Point,
+        /** Shines in a cone from a position along a direction, like a lamp shade or a flashlight. */
+        Spot
+    }
+
+    /** The most local lights one frame lights with. The shader loops over exactly this many at most. */
+    MAX_LOCAL_LIGHTS: u32 : 8;
+
+    /** The smallest range a light is given, in metres: a range of zero would divide by zero in the shader. */
+    MINIMUM_LIGHT_RANGE: f32 : 0.01f;
+
+    /**
+     * A light with a position: a point light or a spot light. Unlike the sun it gets dimmer with distance, reaching
+     * nothing at `range`.
+     *
+     * Colour and brightness are one thing: `color` is the colour in linear RGB multiplied by the light's strength.
+     * A strength of 1 lights a white surface facing it at about half brightness 1 unit away (the shader adds 1 to
+     * the squared distance so a light's centre stays finite). Brightness falls with the
+     * square of the distance, so the lamps in a course 10 units across want a strength near 20.
+     */
+    Light :: struct {
+        /** Names the light for `RenderWorld.RemoveLight` and friends. Set by `AddLight`; never reused. */
+        id~ u32 = 0;
+        /** Point or spot. */
+        kind~ LightKind = LightKind:::Point;
+        /** Where the light is, in world units. */
+        position~ Vec3 = Vec3 { };
+        /** For a spot light, the way the cone points, unit length. Unused by a point light. */
+        direction~ Vec3 = Vec3 { x: 0.0f, y: -1.0f, z: 0.0f };
+        /** Colour times strength, in linear RGB. */
+        color~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f };
+        /** The distance where the light has faded to nothing; past it, the shader skips the light. */
+        range~ f32 = 10.0f;
+        /** For a spot light, the angle from the axis inside which the light is at full strength, in radians. */
+        innerConeRadians~ f32 = 0.35f;
+        /** For a spot light, the angle from the axis where the light has faded out, in radians. */
+        outerConeRadians~ f32 = 0.6f;
+        /** Whether things block this light. Off by default: every shadow costs a pass over the scene. */
+        castsShadows~ bool = false;
+
+        /** A point light. */
+        static Point :: (position: Vec3, color: lantern:::core:::Color, range: f32) -> Light {
+            return Light { kind: LightKind:::Point, position: position, color: color, range: Math:::max(range, MINIMUM_LIGHT_RANGE) };
+        }
+
+        /**
+         * A spot light at `position` pointing at `target`, with the given cone angles in radians. The inner angle is
+         * held at or below the outer one, because the shader fades between them and needs the inner edge inside.
+         */
+        static Spot :: (position: Vec3, target: Vec3, color: lantern:::core:::Color, range: f32, innerConeRadians: f32, outerConeRadians: f32) -> Light {
+            outerConeClamped: f32 = Math:::min(Math:::max(outerConeRadians, 0.0f), 3.14159265f);
+            innerConeClamped: f32 = Math:::min(Math:::max(innerConeRadians, 0.0f), outerConeClamped);
+            return Light {
+                kind: LightKind:::Spot,
+                position: position,
+                direction: lantern:::core:::NormalizeOr3(target - position, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }),
+                color: color,
+                range: Math:::max(range, MINIMUM_LIGHT_RANGE),
+                innerConeRadians: innerConeClamped,
+                outerConeRadians: outerConeClamped
+            };
+        }
+    }
+
+    /**
+     * Picks which of `lights` the shader gets when there are more than `MAX_LOCAL_LIGHTS`: the ones nearest the
+     * camera, counting a light's range as part of its reach, so a big lamp a little far away beats a candle farther
+     * still. Returns indices into `lights`, nearest first. With few lights it returns them all, in order.
+     */
+    SelectLocalLights :: (lights: Array<Light>, cameraPosition: Vec3) -> Array<u32>! {
+        chosen~ Array<u32>! = [];
+        taken~ Array<bool>! = [];
+        for index~ usize = 0; index < lights.length(); index++ {
+            taken.push(false);
+        }
+        while chosen.length() < usize(MAX_LOCAL_LIGHTS) && chosen.length() < lights.length() {
+            best~ i64 = -1;
+            bestReach~ f32 = 0.0f;
+            for index~ usize = 0; index < lights.length(); index++ {
+                if taken[index] {
+                    continue;
+                }
+                offset: Vec3 = lights[index].position - cameraPosition;
+                reach: f32 = Math:::sqrt(offset.dot(offset)) - lights[index].range;
+                if best < 0 || reach < bestReach {
+                    best = i64(index);
+                    bestReach = reach;
+                }
+            }
+            taken[usize(best)] = true;
+            chosen.push(u32(best));
+        }
+        delete taken;
+        return chosen!;
     }
 
     /** One end of a debug line, laid out exactly as the GPU reads it (28 bytes). */
@@ -145,15 +299,22 @@ lantern:::renderer :: namespace {
      * GPU object, only handles, so the same frame can go to the GPU renderer, the headless renderer or a capture
      * unchanged.
      *
-     * Each frame: `Clear`, then the game sets the camera, light and fog and adds draws, lines and overlay, then
+     * Each frame: `Clear`, then the game sets the camera, sun and fog and adds draws, lines and overlay, then
      * `RenderBackend.Render`. The lists keep their memory between frames, so a steady scene allocates nothing.
      */
     RenderWorld :: class {
     public:
         /** Where the frame is seen from. */
         camera~ Camera = Camera { };
-        /** The one directional light, and the ambient light. */
+        /** The sun, and the ambient light. */
         light~ DirectionalLight = DirectionalLight { };
+        /**
+         * The point and spot lights. Unlike the draws, these stay from frame to frame: add a light once with
+         * `AddLight`, and move or remove it by the id that returns. `Clear` leaves them alone.
+         */
+        lights~ Array<Light>! = [];
+        /** The next id `AddLight` hands out. Starts at 1 so 0 can mean "no light". */
+        nextLightId~ u32 = 1;
         /** The colour the frame starts as before anything is drawn (the sky), in linear RGB. Fog fades to it too. */
         clearColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.42f, g: 0.6f, b: 0.85f };
         /** The distance from the camera where fog begins. */
@@ -180,7 +341,38 @@ lantern:::renderer :: namespace {
         !RenderWorld~: () {
             delete draws;
             delete lines;
+            delete lights;
             delete overlay;
+        }
+
+        /** Adds a local light and returns the id that names it from now on. */
+        AddLight~: (light: Light) -> u32 {
+            added~ Light = light;
+            added.id = nextLightId;
+            nextLightId += 1;
+            lights.push(added);
+            return added.id;
+        }
+
+        /** Removes the light with this id. Returns false when there is none, such as a light already removed. */
+        RemoveLight~: (id: u32) -> bool {
+            for index~ usize = 0; index < lights.length(); index++ {
+                if lights[index].id == id {
+                    lights.remove(index);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** The index in `lights` of the light with this id, or null. */
+        FindLight :: (id: u32) -> usize? {
+            for index~ usize = 0; index < lights.length(); index++ {
+                if lights[index].id == id {
+                    return index;
+                }
+            }
+            return null;
         }
 
         /**
@@ -193,9 +385,14 @@ lantern:::renderer :: namespace {
             overlay->Clear();
         }
 
-        /** Adds one mesh draw. */
+        /** Adds one mesh draw with the default matte material. */
         Draw~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color) -> void {
             draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color });
+        }
+
+        /** Adds one mesh draw with a material. */
+        DrawWithMaterial~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color, material: Material) -> void {
+            draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color, material: material });
         }
 
         /** Adds one debug line between two world points. */

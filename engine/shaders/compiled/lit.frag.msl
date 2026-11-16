@@ -8,6 +8,8 @@ using namespace metal;
 struct MaterialUniforms
 {
     float4 color;
+    float4 surface;
+    float4 emissive;
 };
 
 struct LightUniforms
@@ -15,9 +17,32 @@ struct LightUniforms
     float4 direction_to_light;
     float4 light_color;
     float4 ambient_color;
+    float4 ground_ambient_color;
     float4 fog_color;
     float4 fog_and_output;
     float4 camera_position;
+};
+
+struct LocalLight
+{
+    float4 position_and_range;
+    float4 color_and_kind;
+    float4 direction_and_outer_cosine;
+    float4 cone;
+};
+
+struct LocalLightUniforms
+{
+    float4 header;
+    LocalLight lights[8];
+};
+
+struct LocalLight_1
+{
+    float4 position_and_range;
+    float4 color_and_kind;
+    float4 direction_and_outer_cosine;
+    float4 cone;
 };
 
 struct main0_out
@@ -34,6 +59,61 @@ struct main0_in
 };
 
 static inline __attribute__((always_inline))
+float3 FresnelSchlick(thread const float& view_dot_half, thread const float3& f0)
+{
+    return f0 + ((float3(1.0) - f0) * pow(fast::clamp(1.0 - view_dot_half, 0.0, 1.0), 5.0));
+}
+
+static inline __attribute__((always_inline))
+float DistributionGgx(thread const float& normal_dot_half, thread const float& alpha)
+{
+    float alpha_squared = alpha * alpha;
+    float denominator = ((normal_dot_half * normal_dot_half) * (alpha_squared - 1.0)) + 1.0;
+    return alpha_squared / ((3.1415927410125732421875 * denominator) * denominator);
+}
+
+static inline __attribute__((always_inline))
+float VisibilitySmith(thread const float& normal_dot_light, thread const float& normal_dot_view, thread const float& alpha)
+{
+    float smith_view = normal_dot_light * mix(normal_dot_view, 1.0, alpha);
+    float smith_light = normal_dot_view * mix(normal_dot_light, 1.0, alpha);
+    return 0.5 / fast::max(smith_view + smith_light, 9.9999997473787516355514526367188e-05);
+}
+
+static inline __attribute__((always_inline))
+float3 EvaluateLight(thread const float3& normal, thread const float3& view, thread const float3& to_light, thread const float3& radiance, thread const float3& diffuse_color, thread const float3& f0, thread const float& alpha)
+{
+    float normal_dot_light = fast::max(dot(normal, to_light), 0.0);
+    if (normal_dot_light <= 0.0)
+    {
+        return float3(0.0);
+    }
+    float3 half_vector = fast::normalize(view + to_light);
+    float normal_dot_view = fast::max(dot(normal, view), 9.9999997473787516355514526367188e-05);
+    float normal_dot_half = fast::max(dot(normal, half_vector), 0.0);
+    float view_dot_half = fast::max(dot(view, half_vector), 0.0);
+    float param = view_dot_half;
+    float3 param_1 = f0;
+    float3 fresnel = FresnelSchlick(param, param_1);
+    float param_2 = normal_dot_half;
+    float param_3 = alpha;
+    float param_4 = normal_dot_light;
+    float param_5 = normal_dot_view;
+    float param_6 = alpha;
+    float3 specular = fresnel * (DistributionGgx(param_2, param_3) * VisibilitySmith(param_4, param_5, param_6));
+    float3 diffuse = ((float3(1.0) - fresnel) * diffuse_color) / float3(3.1415927410125732421875);
+    return (((diffuse + specular) * 3.1415927410125732421875) * radiance) * normal_dot_light;
+}
+
+static inline __attribute__((always_inline))
+float DistanceAttenuation(thread const float& distance_to_light, thread const float& range)
+{
+    float ratio = distance_to_light / fast::max(range, 9.9999997473787516355514526367188e-05);
+    float window = fast::clamp(1.0 - (((ratio * ratio) * ratio) * ratio), 0.0, 1.0);
+    return (window * window) / ((distance_to_light * distance_to_light) + 1.0);
+}
+
+static inline __attribute__((always_inline))
 float3 EncodeSrgb(thread const float3& linear_color)
 {
     float3 low = linear_color * 12.9200000762939453125;
@@ -41,22 +121,81 @@ float3 EncodeSrgb(thread const float3& linear_color)
     return select(high, low, linear_color <= float3(0.003130800090730190277099609375));
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light [[buffer(0)]], constant MaterialUniforms& material [[buffer(1)]], texture2d<float> albedo_texture [[texture(0)]], sampler albedo_textureSmplr [[sampler(0)]])
+fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light [[buffer(0)]], constant MaterialUniforms& material [[buffer(1)]], constant LocalLightUniforms& locals [[buffer(2)]], texture2d<float> albedo_texture [[texture(0)]], sampler albedo_textureSmplr [[sampler(0)]])
 {
     main0_out out = {};
     float4 albedo = (albedo_texture.sample(albedo_textureSmplr, in.surface_uv) * in.surface_color) * material.color;
     float3 normal = fast::normalize(in.world_normal);
-    float diffuse = fast::max(dot(normal, light.direction_to_light.xyz), 0.0);
-    float hemisphere = 0.64999997615814208984375 + (0.3499999940395355224609375 * normal.y);
-    float3 lit = albedo.xyz * ((light.ambient_color.xyz * hemisphere) + (light.light_color.xyz * diffuse));
+    float3 view = fast::normalize(light.camera_position.xyz - in.world_position);
+    float metallic = fast::clamp(material.surface.x, 0.0, 1.0);
+    float roughness = fast::clamp(material.surface.y, 0.039999999105930328369140625, 1.0);
+    float alpha = roughness * roughness;
+    float3 diffuse_color = albedo.xyz * (1.0 - metallic);
+    float3 f0 = mix(float3(0.039999999105930328369140625), albedo.xyz, float3(metallic));
+    float up_amount = 0.5 + (0.5 * normal.y);
+    float3 ambient = mix(light.ground_ambient_color.xyz, light.ambient_color.xyz, float3(up_amount));
+    float3 lit = ambient * (diffuse_color + (f0 * (1.0 - roughness)));
+    float3 param = normal;
+    float3 param_1 = view;
+    float3 param_2 = light.direction_to_light.xyz;
+    float3 param_3 = light.light_color.xyz;
+    float3 param_4 = diffuse_color;
+    float3 param_5 = f0;
+    float param_6 = alpha;
+    lit += EvaluateLight(param, param_1, param_2, param_3, param_4, param_5, param_6);
+    int local_count = min(int(locals.header.x), 8);
+    LocalLight_1 local;
+    float _432;
+    for (int index = 0; index < local_count; index++)
+    {
+        local.position_and_range = locals.lights[index].position_and_range;
+        local.color_and_kind = locals.lights[index].color_and_kind;
+        local.direction_and_outer_cosine = locals.lights[index].direction_and_outer_cosine;
+        local.cone = locals.lights[index].cone;
+        float3 to_light = local.position_and_range.xyz - in.world_position;
+        float distance_to_light = length(to_light);
+        if (distance_to_light >= local.position_and_range.w)
+        {
+            continue;
+        }
+        to_light /= float3(fast::max(distance_to_light, 9.9999997473787516355514526367188e-05));
+        float param_7 = distance_to_light;
+        float param_8 = local.position_and_range.w;
+        float strength = DistanceAttenuation(param_7, param_8);
+        if (local.color_and_kind.w > 0.5)
+        {
+            float cosine_to_axis = dot(-to_light, local.direction_and_outer_cosine.xyz);
+            float outer_cosine = local.direction_and_outer_cosine.w;
+            float inner_cosine = local.cone.x;
+            if ((inner_cosine - outer_cosine) > 9.9999997473787516355514526367188e-05)
+            {
+                _432 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
+            }
+            else
+            {
+                _432 = step(outer_cosine, cosine_to_axis);
+            }
+            float cone_fade = _432;
+            strength *= cone_fade;
+        }
+        float3 param_9 = normal;
+        float3 param_10 = view;
+        float3 param_11 = to_light;
+        float3 param_12 = local.color_and_kind.xyz * strength;
+        float3 param_13 = diffuse_color;
+        float3 param_14 = f0;
+        float param_15 = alpha;
+        lit += EvaluateLight(param_9, param_10, param_11, param_12, param_13, param_14, param_15);
+    }
+    lit += material.emissive.xyz;
     float distance_to_camera = distance(in.world_position, light.camera_position.xyz);
     float fog_range = fast::max(light.fog_and_output.y - light.fog_and_output.x, 0.001000000047497451305389404296875);
     float fog = fast::clamp((distance_to_camera - light.fog_and_output.x) / fog_range, 0.0, 1.0);
     lit = mix(lit, light.fog_color.xyz, float3(fog));
     if (light.fog_and_output.w > 0.5)
     {
-        float3 param = lit;
-        lit = EncodeSrgb(param);
+        float3 param_16 = lit;
+        lit = EncodeSrgb(param_16);
     }
     out.output_color = float4(lit, 1.0);
     return out;

@@ -26,7 +26,7 @@ lantern:::gpu :: namespace {
         vector~ f32[4] = filled<f32, 4>(0.0f);
     }
 
-    /** The lit fragment shader's per-frame block: one directional light, ambient light and fog. 96 bytes. */
+    /** The lit fragment shader's per-frame block: the sun, ambient light and fog. 112 bytes. */
     LightUniforms :: struct {
         /**
          * The unit direction from a surface towards the light. `DirectionalLight` stores the direction light travels,
@@ -36,10 +36,12 @@ lantern:::gpu :: namespace {
         /** The sun's colour times its intensity, in linear RGB. */
         lightColor~ f32[4] = filled<f32, 4>(0.0f);
         /**
-         * Light that reaches every surface regardless of facing, standing in for light bounced around the scene, so
-         * shadowed sides aren't black.
+         * Sky light for surfaces facing up. Ambient light reaches every surface regardless of the sun, standing in for
+         * light bounced around the scene, so shadowed sides aren't black.
          */
         ambientColor~ f32[4] = filled<f32, 4>(0.0f);
+        /** The ambient light for surfaces facing down; sloping surfaces blend between this and `ambientColor`. */
+        groundAmbientColor~ f32[4] = filled<f32, 4>(0.0f);
         /**
          * The colour distant surfaces fade to: the clear colour, so the far plane cutting the world off isn't visible.
          */
@@ -60,7 +62,64 @@ lantern:::gpu :: namespace {
         normalMatrix~ f32[16] = filled<f32, 16>(0.0f);
     }
 
-    /** A single vec4: the lit fragment shader's per-draw tint, or the overlay's target size. */
+    /**
+     * The lit fragment shader's per-draw block, 48 bytes: the tint, then the material (x: metallic, y: roughness), then
+     * the emissive colour.
+     */
+    MaterialUniforms :: struct {
+        /** The draw's tint, linear RGBA. */
+        tint~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: metallic, y: roughness. */
+        surface~ f32[4] = filled<f32, 4>(0.0f);
+        /** Light the surface gives off, linear RGB. */
+        emissive~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    /** Floats in one local light's entry in `LocalLightUniforms`: four vec4s. */
+    LOCAL_LIGHT_FLOATS: usize : 16;
+
+    /**
+     * The lit fragment shader's local lights, 528 bytes: one vec4 header (x: how many lights are used), then room for
+     * `MAX_LOCAL_LIGHTS` lights of four vec4s each, as `LocalLight` in lit.frag lays them out. It is a flat list of
+     * floats so one struct covers any count; `PackLocalLights` fills it.
+     */
+    LocalLightUniforms :: struct {
+        /** The header and then each light's sixteen floats. */
+        values~ f32[132] = filled<f32, 132>(0.0f);
+    }
+
+    /**
+     * Packs `lights` (the indices `SelectLocalLights` chose) into the block the shader reads. Each light becomes four
+     * vec4s: position and range, colour and kind, direction and the outer cone's cosine, the inner cone's cosine.
+     * The shader compares cosines of the angles, so they are worked out here once, not per pixel.
+     */
+    PackLocalLights :: (lights: Array<lantern:::renderer:::Light>, chosen: Array<u32>) -> LocalLightUniforms {
+        packed~ LocalLightUniforms = LocalLightUniforms { };
+        count: usize = chosen.length();
+        packed.values[0] = f32(count);
+        for slot~ usize = 0; slot < count; slot++ {
+            light: lantern:::renderer:::Light = lights[usize(chosen[slot])];
+            base: usize = 4 + slot * LOCAL_LIGHT_FLOATS;
+            packed.values[base] = light.position.x;
+            packed.values[base + 1] = light.position.y;
+            packed.values[base + 2] = light.position.z;
+            packed.values[base + 3] = light.range;
+            packed.values[base + 4] = light.color.r;
+            packed.values[base + 5] = light.color.g;
+            packed.values[base + 6] = light.color.b;
+            if light.kind == lantern:::renderer:::LightKind:::Spot {
+                packed.values[base + 7] = 1.0f;
+            }
+            packed.values[base + 8] = light.direction.x;
+            packed.values[base + 9] = light.direction.y;
+            packed.values[base + 10] = light.direction.z;
+            packed.values[base + 11] = Math:::cos(light.outerConeRadians);
+            packed.values[base + 12] = Math:::cos(light.innerConeRadians);
+        }
+        return packed;
+    }
+
+    /** A single vec4: the overlay's target size, or the lines' sRGB flag. */
     VectorUniforms :: struct {
         /** The four floats. */
         values~ f32[4] = filled<f32, 4>(0.0f);
