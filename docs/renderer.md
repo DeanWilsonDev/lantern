@@ -154,7 +154,7 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
 5. **Make sure the post targets match** the frame's size (`EnsurePostTargets`): the high dynamic range scene texture
    and the bloom chain.
 6. **Scene pass.** One render pass with the scene texture cleared to the world's clear colour and depth cleared to
-   1.0, the far plane. The scene texture is 16-bit float per channel, so light brighter than 1 is kept as it is and
+   1.0, the far plane. The scene texture is 16-bit float per channel (RGBA16F, which the GPU must be able to render to; see `graphics-effects.md`), so light brighter than 1 is kept as it is and
    not cut off. Then **draw the meshes** (`DrawMeshes`). Push the per-frame uniforms once: the view-projection
    matrix and camera position for the vertex shader, and the sun, the ambient light, fog and the chosen local lights
    for the fragment shader. Then for each draw, bind its mesh's buffers and its texture only if they differ from the
