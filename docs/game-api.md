@@ -97,6 +97,8 @@ Keys are `A`..`Z`, `Digit0`..`Digit9`, `Up`, `Down`, `Left`, `Right`, `Space`, `
 | `lantern:::world:::SetMaterial(material, texture: i64)` | the texture world-file pieces with that material use (set before `Load`) |
 | `lantern:::world:::SetMesh(entity, mesh, tint)`, `SetTexturedMesh(entity, mesh, texture, tint)` | |
 | `lantern:::world:::SetTint(entity, tint)`, `SetVisible(entity, visible)`, `IsVisible(entity) -> bool` | |
+| `lantern:::world:::SetSurface(entity, metallic, roughness, emissive)` | the entity's material: 0 to 1 metallic and roughness, an "RRGGBB" emissive glow; see `lighting-and-shadows.md` |
+| `lantern:::world:::SetCastsShadows(entity, castsShadows)` | whether the entity blocks light |
 | `lantern:::world:::SetParent(child, parent)` | transforms become relative to the parent |
 | `lantern:::world:::Position(entity) -> Vec3` | local position |
 | `lantern:::world:::WorldPosition(entity) -> Vec3` | |
@@ -135,6 +137,11 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::camera:::LookAt(eye, target)` | this frame's camera |
 | `lantern:::renderer:::SetClearColor(color)`, `lantern:::renderer:::SetFog(start, end)` | |
+| `lantern:::lights:::SetSun(direction, color, skyAmbient, groundAmbient)` | the sun and the ambient light; colours are `"RRGGBB"` |
+| `lantern:::lights:::SetSunShadows(enabled)`, `lantern:::lights:::SetShadowQuality(enabled, sunMapSize, localTileSize, distance)` | whether the sun casts shadows; the shadow master switch, map sizes in pixels (256 to 4096) and how far the sun's shadows reach |
+| `lantern:::lights:::AddPoint(position, color, strength, range) -> i64` | a point light; the id names it from now on |
+| `lantern:::lights:::AddSpot(position, target, color, strength, range, innerDegrees, outerDegrees) -> i64` | a spot light |
+| `lantern:::lights:::Move(light, position)`, `Aim(light, target)`, `SetColor(light, color, strength)`, `SetShadows(light, enabled)`, `Remove(light)`, `Count() -> i64` | change a light by id; lights stay until removed or the game reloads |
 | `lantern:::screen:::Width() / Height() -> f32` | pixels |
 | `lantern:::screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `lantern:::screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |

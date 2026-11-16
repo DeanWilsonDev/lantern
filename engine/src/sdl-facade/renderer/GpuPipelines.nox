@@ -37,9 +37,15 @@ lantern:::gpu :: namespace {
         depthWrite~ bool = false;
         /** Mix the fragment over what's there by its alpha, instead of replacing it. */
         alphaBlend~ bool = false;
+        /**
+         * Draw into a depth texture only, with no colour target: a shadow map. Such a pipeline also pushes every depth
+         * it writes slightly farther away, in proportion to how steeply the triangle tilts from the light. That slope
+         * bias stops a surface from shadowing itself, which would speckle it.
+         */
+        depthOnly~ bool = false;
     }
 
-    /** The three pipelines the renderer uses, created once at start-up. */
+    /** The four pipelines the renderer uses, created once at start-up. */
     Pipelines :: struct {
         /** Lit, textured, opaque meshes: back faces culled, depth tested and written. */
         lit~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
@@ -47,6 +53,8 @@ lantern:::gpu :: namespace {
         lines~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** The 2D overlay: no depth at all, alpha blended, drawn last. */
         overlay~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** Shadow maps: the lit meshes' geometry drawn into a depth texture alone, from a light's point of view. */
+        shadow~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
 
         /** Releases the pipelines that were created. */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
@@ -60,6 +68,9 @@ lantern:::gpu :: namespace {
                 if overlay != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, overlay);
                 }
+                if shadow != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, shadow);
+                }
             }
         }
     }
@@ -71,7 +82,7 @@ lantern:::gpu :: namespace {
     LitPipelineDescription :: () -> PipelineDescription {
         return PipelineDescription {
             vertex: ShaderDescription { name: "lit", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 2 },
-            fragment: ShaderDescription { name: "lit", stage: ShaderStageKind:::Fragment, samplerCount: 1, uniformBufferCount: 2 },
+            fragment: ShaderDescription { name: "lit", stage: ShaderStageKind:::Fragment, samplerCount: 3, uniformBufferCount: 4 },
             stride: lantern:::renderer:::VERTEX_STRIDE,
             attributes: [
                 VertexAttributeLayout { format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offset: 0 },
@@ -85,6 +96,29 @@ lantern:::gpu :: namespace {
             depthTest: true,
             depthWrite: true,
             alphaBlend: false
+        };
+    }
+
+    /**
+     * The shadow pipeline. It reads the same 48-byte vertex as the lit pipeline, so the same mesh buffers bind to both,
+     * but its shader only uses the position. Depth is tested and written; there is no colour target and no blending.
+     * Back faces are not culled: a ground plane is a single sheet, and culling its one side would leave it casting no
+     * shadow.
+     */
+    ShadowPipelineDescription :: () -> PipelineDescription {
+        litDescription: PipelineDescription = LitPipelineDescription();
+        return PipelineDescription {
+            vertex: ShaderDescription { name: "shadow", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 2 },
+            fragment: ShaderDescription { name: "shadow", stage: ShaderStageKind:::Fragment, samplerCount: 0, uniformBufferCount: 0 },
+            stride: litDescription.stride,
+            attributes: litDescription.attributes,
+            attributeCount: litDescription.attributeCount,
+            primitive: Sdl:::SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            cullBackFaces: false,
+            depthTest: true,
+            depthWrite: true,
+            alphaBlend: false,
+            depthOnly: true
         };
     }
 
@@ -189,6 +223,14 @@ lantern:::gpu :: namespace {
         if description.cullBackFaces {
             cullMode = Sdl:::SDL_GPU_CULLMODE_BACK;
         }
+        colorTargetCount~ u32 = 1;
+        depthBiasConstant~ f32 = 0.0f;
+        depthBiasSlope~ f32 = 0.0f;
+        if description.depthOnly {
+            colorTargetCount = 0;
+            depthBiasConstant = 2.0f;
+            depthBiasSlope = 2.5f;
+        }
         pipeline~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         unsafe {
             bufferDescription := Sdl:::SDL_GPUVertexBufferDescription {
@@ -211,7 +253,10 @@ lantern:::gpu :: namespace {
                 rasterizer_state: Sdl:::SDL_GPURasterizerState {
                     fill_mode: Sdl:::SDL_GPU_FILLMODE_FILL,
                     cull_mode: cullMode,
-                    front_face: Sdl:::SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE
+                    front_face: Sdl:::SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE,
+                    depth_bias_constant_factor: depthBiasConstant,
+                    depth_bias_slope_factor: depthBiasSlope,
+                    enable_depth_bias: description.depthOnly
                 },
                 depth_stencil_state: Sdl:::SDL_GPUDepthStencilState {
                     compare_op: Sdl:::SDL_GPU_COMPAREOP_LESS,
@@ -220,7 +265,7 @@ lantern:::gpu :: namespace {
                 },
                 target_info: Sdl:::SDL_GPUGraphicsPipelineTargetInfo {
                     color_target_descriptions: colorTarget,
-                    num_color_targets: 1,
+                    num_color_targets: colorTargetCount,
                     depth_stencil_format: depthFormat,
                     has_depth_stencil_target: true
                 }
@@ -238,7 +283,7 @@ lantern:::gpu :: namespace {
         return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Ok(pipeline);
     }
 
-    /** Builds all three pipelines, releasing any already built if one fails. */
+    /** Builds all four pipelines, releasing any already built if one fails. */
     CreatePipelines :: (device: raw Sdl:::SDL_GPUDevice~*, format: ShaderFormat, colorFormat: Sdl:::SDL_GPUTextureFormat, depthFormat: Sdl:::SDL_GPUTextureFormat) -> Result<Pipelines, string!> {
         pipelines~ Pipelines = Pipelines { };
         when CreatePipeline(device, format, colorFormat, depthFormat, LitPipelineDescription()) {
@@ -261,6 +306,15 @@ lantern:::gpu :: namespace {
         when CreatePipeline(device, format, colorFormat, depthFormat, OverlayPipelineDescription()) {
             Result:::Ok(pipeline) -> {
                 pipelines.overlay = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, colorFormat, depthFormat, ShadowPipelineDescription()) {
+            Result:::Ok(pipeline) -> {
+                pipelines.shadow = pipeline;
             },
             Result:::Err(message) -> {
                 pipelines.Release(device);
