@@ -1,0 +1,75 @@
+lantern :: import lantern;
+
+InsideClipVolume :: (matrix: Mat4, point: Vec3) -> bool {
+    clip: Vec3 = lantern:::core:::TransformPoint3(matrix, point);
+    return clip.x >= -1.0f && clip.x <= 1.0f && clip.y >= -1.0f && clip.y <= 1.0f && clip.z >= 0.0f && clip.z <= 1.0f;
+}
+
+main :: () -> i32 {
+    world := new lantern:::renderer:::RenderWorld();
+    defer delete world;
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 3.0f, z: 10.0f }, Vec3 { x: 0.0f, y: 0.0f, z: 0.0f });
+    noLights: Array<u32>! = [];
+    defer delete noLights;
+
+    plan := lantern:::renderer:::BuildShadowPlan(world, 16.0f / 9.0f, noLights);
+    defer delete plan;
+    assert(plan->sunEnabled, "the sun shadows by default");
+    assert(plan->sunTiles.length() == usize(lantern:::renderer:::SHADOW_CASCADE_COUNT), "one tile per cascade");
+    assert(plan->cascadeEnds[0] < plan->cascadeEnds[1] && plan->cascadeEnds[1] < plan->cascadeEnds[2], "the cascades end farther and farther out");
+    assert(plan->cascadeEnds[2] == world->shadows.distance, "the last cascade ends at the shadow distance");
+    forward: Vec3 = world->camera.forward;
+    nearPoint: Vec3 = world->camera.position + forward * 3.0f;
+    farPoint: Vec3 = world->camera.position + forward * 50.0f;
+    assert(InsideClipVolume(plan->sunTiles[0].viewProjection, nearPoint), "a point 3 units ahead is inside the first cascade");
+    assert(InsideClipVolume(plan->sunTiles[2].viewProjection, farPoint), "a point 50 units ahead is inside the last cascade");
+
+    nudged := new lantern:::renderer:::RenderWorld();
+    defer delete nudged;
+    nudged->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.001f, y: 3.0f, z: 10.0f }, Vec3 { x: 0.001f, y: 0.0f, z: 0.0f });
+    nudgedPlan := lantern:::renderer:::BuildShadowPlan(nudged, 16.0f / 9.0f, noLights);
+    defer delete nudgedPlan;
+    firstElements: f32[16] = plan->sunTiles[0].viewProjection.elements;
+    nudgedElements: f32[16] = nudgedPlan->sunTiles[0].viewProjection.elements;
+    assert(firstElements[0] == nudgedElements[0] && firstElements[5] == nudgedElements[5], "the cascade's size doesn't change when the camera moves");
+    assert(firstElements[12] == nudgedElements[12] && firstElements[13] == nudgedElements[13], "a tiny camera move leaves the cascade on the same texel, so edges don't shimmer");
+
+    world->light.castsShadows = false;
+    quiet := lantern:::renderer:::BuildShadowPlan(world, 16.0f / 9.0f, noLights);
+    defer delete quiet;
+    assert(!quiet->sunEnabled && quiet->sunTiles.length() == 0, "a sun that casts no shadow gets no cascades");
+    world->light.castsShadows = true;
+
+    for index~ u32 = 0; index < 3; index++ {
+        light := lantern:::renderer:::Light:::Point(Vec3 { x: f32(index) * 4.0f, y: 2.0f, z: 0.0f }, lantern:::core:::Color:::White(), 8.0f);
+        world->AddLight(light);
+    }
+    spot := lantern:::renderer:::Light:::Spot(Vec3 { y: 5.0f }, Vec3 { }, lantern:::core:::Color:::White(), 10.0f, 0.2f, 0.4f);
+    world->AddLight(spot);
+    world->lights[0].castsShadows = true;
+    world->lights[1].castsShadows = true;
+    world->lights[2].castsShadows = true;
+    world->lights[3].castsShadows = true;
+    chosen: Array<u32>! = lantern:::renderer:::SelectLocalLights(world->lights, world->camera.position);
+    defer delete chosen;
+    lit := lantern:::renderer:::BuildShadowPlan(world, 16.0f / 9.0f, chosen);
+    defer delete lit;
+    assert(lit->localFirstTile.length() == chosen.length(), "one entry per chosen light");
+    tilesGiven~ u32 = 0;
+    shadowedLights~ u32 = 0;
+    for slot~ usize = 0; slot < chosen.length(); slot++ {
+        if lit->localFirstTile[slot] >= 0 {
+            shadowedLights += 1;
+        }
+    }
+    assert(lit->localTiles.length() <= usize(lantern:::renderer:::MAX_LOCAL_SHADOW_TILES), "no more tiles than the texture holds");
+    assert(shadowedLights == 2, "the spot light and the nearest point light are shadowed; five tiles are left, too few for a second point light");
+    assert(lit->localTiles.length() == 7, "one tile for the spot light and six for the point light");
+
+    world->shadows.enabled = false;
+    off := lantern:::renderer:::BuildShadowPlan(world, 16.0f / 9.0f, chosen);
+    defer delete off;
+    assert(!off->sunEnabled && off->localTiles.length() == 0, "switching shadows off removes every tile");
+    print("the shadow plan covers the view and shares out tiles");
+    return 0;
+}

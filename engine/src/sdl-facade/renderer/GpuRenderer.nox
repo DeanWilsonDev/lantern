@@ -72,8 +72,13 @@ lantern:::gpu :: namespace {
         windowClaimed~ bool = false;
         /** The three pipelines: lit meshes, debug lines and the 2D overlay. */
         pipelines~ Pipelines = Pipelines { };
-        /** The four samplers (linear or nearest, repeat or clamp); every texture uses the one matching its settings. */
+        /**
+         * The four samplers (linear or nearest, repeat or clamp) every texture uses the matching one of, and the
+         * comparing sampler the shadow maps are read with.
+         */
         samplers~ Samplers = Samplers { };
+        /** The sun's and the local lights' shadow textures, sized by the frame's `ShadowSettings`. */
+        shadowTargets~ ShadowTargets = ShadowTargets { };
         /**
          * Every uploaded mesh, in a pool so the game names them by generational handle. A stale handle finds nothing
          * instead of a freed buffer.
@@ -347,6 +352,7 @@ lantern:::gpu :: namespace {
                     Sdl:::SDL_ReleaseGPUTexture(device, depthTexture);
                 }
             }
+            shadowTargets.Release(device);
             samplers.Release(device);
             pipelines.Release(device);
             ReleaseOffscreenTarget();
@@ -861,6 +867,21 @@ lantern:::gpu :: namespace {
             frustum: lantern:::renderer:::Frustum = lantern:::renderer:::Frustum:::FromViewProjection(viewProjection);
             visibleDraws: Array<VisibleDraw>! = CollectVisibleDraws(renderWorld, frustum, report);
             defer delete visibleDraws;
+            chosenLights: Array<u32>! = lantern:::renderer:::SelectLocalLights(renderWorld->lights, renderWorld->camera.position);
+            defer delete chosenLights;
+            shadowPlan := lantern:::renderer:::BuildShadowPlan(renderWorld, aspect, chosenLights);
+            defer delete shadowPlan;
+            sunTileSize~ u32 = 256;
+            localTileSize~ u32 = 256;
+            if renderWorld->shadows.enabled {
+                sunTileSize = lantern:::renderer:::ClampMapSize(renderWorld->shadows.sunMapSize);
+                localTileSize = lantern:::renderer:::ClampMapSize(renderWorld->shadows.localTileSize);
+            }
+            if !EnsureShadowTargets(device, depthFormat, shadowTargets, sunTileSize, localTileSize) {
+                lantern:::core:::LogWarn("renderer", "the GPU refused the shadow maps; drawing this frame without shadows");
+                shadowPlan->Disable();
+            }
+            RecordShadowPasses(commandBuffer, renderWorld, shadowPlan, report);
             unsafe {
                 colorTarget := Sdl:::SDL_GPUColorTargetInfo {
                     texture: colorTexture,
@@ -878,7 +899,7 @@ lantern:::gpu :: namespace {
                     cycle: true
                 };
                 pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, depthTargetInfo);
-                DrawMeshes(commandBuffer, pass, renderWorld, visibleDraws, viewProjection, encodeFlag, report);
+                DrawMeshes(commandBuffer, pass, renderWorld, visibleDraws, chosenLights, shadowPlan, viewProjection, encodeFlag, report);
                 DrawLines(commandBuffer, pass, renderWorld, viewProjection, encodeFlag, report);
                 DrawOverlay(commandBuffer, pass, renderWorld, width, height, encodeFlag);
                 Sdl:::SDL_EndGPURenderPass(pass);
@@ -887,12 +908,96 @@ lantern:::gpu :: namespace {
         }
 
         /**
+         * The shadow passes, recorded before the main pass because the main pass reads their results. One pass draws
+         * the sun's three cascades into the sun map, another draws every shadowed light's tiles into the local map;
+         * a pass with nothing to draw is skipped. See `GpuShadows.nox` for what each map holds.
+         */
+        RecordShadowPasses~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, renderWorld: lantern:::renderer:::RenderWorld*, shadowPlan: lantern:::renderer:::ShadowPlan*, report: lantern:::renderer:::RenderReport~*) -> void {
+            if shadowPlan->sunEnabled {
+                RecordShadowMap(commandBuffer, shadowTargets.sunTexture, shadowPlan->sunTiles, shadowTargets.sunTileSize, lantern:::renderer:::SHADOW_CASCADE_COUNT, renderWorld, report);
+            }
+            if shadowPlan->localTiles.length() > 0 {
+                RecordShadowMap(commandBuffer, shadowTargets.localTexture, shadowPlan->localTiles, shadowTargets.localTileSize, lantern:::renderer:::LOCAL_SHADOW_COLUMNS, renderWorld, report);
+            }
+        }
+
+        /**
+         * One shadow pass into `texture`. It clears the depth to 1.0 (the far plane, so anything the tiles don't
+         * cover reads as lit) and keeps the result, since the main pass reads it. There is no colour target. Each tile
+         * `index` is the square at column `index % columns`, row `index / columns`: the viewport and scissor
+         * confine drawing to it, so tiles never spill into one another.
+         */
+        RecordShadowMap~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, texture: raw Sdl:::SDL_GPUTexture~*, tiles: Array<lantern:::renderer:::ShadowTile>, tileSize: u32, columns: u32, renderWorld: lantern:::renderer:::RenderWorld*, report: lantern:::renderer:::RenderReport~*) -> void {
+            unsafe {
+                depthTargetInfo := Sdl:::SDL_GPUDepthStencilTargetInfo {
+                    texture: texture,
+                    clear_depth: 1.0f,
+                    load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
+                    store_op: Sdl:::SDL_GPU_STOREOP_STORE,
+                    stencil_load_op: Sdl:::SDL_GPU_LOADOP_DONT_CARE,
+                    stencil_store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE,
+                    cycle: true
+                };
+                pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, null, 0, depthTargetInfo);
+                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.shadow);
+                for tileIndex~ usize = 0; tileIndex < tiles.length(); tileIndex++ {
+                    column: u32 = u32(tileIndex) % columns;
+                    row: u32 = u32(tileIndex) / columns;
+                    viewport := Sdl:::SDL_GPUViewport { x: f32(column * tileSize), y: f32(row * tileSize), w: f32(tileSize), h: f32(tileSize), min_depth: 0.0f, max_depth: 1.0f };
+                    scissor := Sdl:::SDL_Rect { x: i32(column * tileSize), y: i32(row * tileSize), w: i32(tileSize), h: i32(tileSize) };
+                    Sdl:::SDL_SetGPUViewport(pass, viewport);
+                    Sdl:::SDL_SetGPUScissor(pass, scissor);
+                    RecordShadowTile(commandBuffer, pass, tiles[tileIndex], renderWorld, report);
+                }
+                Sdl:::SDL_EndGPURenderPass(pass);
+            }
+        }
+
+        /**
+         * Draws every shadow-casting mesh that could land in one tile. The tile's view-projection goes up once; then each
+         * draw whose bounds meet the tile's view volume binds its mesh (only when it changed since the last draw) and
+         * pushes its model matrix.
+         */
+        RecordShadowTile~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, tile: lantern:::renderer:::ShadowTile, renderWorld: lantern:::renderer:::RenderWorld*, report: lantern:::renderer:::RenderReport~*) -> void {
+            tileFrustum: lantern:::renderer:::Frustum = lantern:::renderer:::Frustum:::FromViewProjection(tile.viewProjection);
+            tileUniforms := MatrixUniforms { matrix: tile.viewProjection.elements };
+            boundMesh~ u32 = NO_BINDING;
+            unsafe {
+                PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(tileUniforms), 64);
+                for drawIndex~ usize = 0; drawIndex < renderWorld->draws.length(); drawIndex++ {
+                    draw: lantern:::renderer:::DrawItem = renderWorld->draws[drawIndex];
+                    if !draw.castsShadows {
+                        continue;
+                    }
+                    if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
+                        if !tileFrustum.Intersects(mesh.bounds.Transformed(draw.transform)) {
+                            continue;
+                        }
+                        if draw.mesh.Index() != boundMesh {
+                            vertexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.vertexBuffer, offset: 0 };
+                            indexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.indexBuffer, offset: 0 };
+                            Sdl:::SDL_BindGPUVertexBuffers(pass, 0, vertexBinding, 1);
+                            Sdl:::SDL_BindGPUIndexBuffer(pass, indexBinding, Sdl:::SDL_GPU_INDEXELEMENTSIZE_32BIT);
+                            boundMesh = draw.mesh.Index();
+                        }
+                        objectUniforms := MatrixUniforms { matrix: draw.transform.elements };
+                        PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 64);
+                        Sdl:::SDL_DrawGPUIndexedPrimitives(pass, mesh.indexCount, 1, 0, 0, 0);
+                        report->shadowDraws += 1;
+                    }
+                }
+            }
+            report->shadowTiles += 1;
+        }
+
+        /**
          * Step 1: the lit meshes. The per-frame uniforms (view-projection, camera position, the sun, the local lights
          * and fog) are pushed once. Then for each visible draw, in sorted order: rebind the mesh's vertex and index buffers only if the
          * mesh changed, rebind the texture only if it changed, push the per-draw uniforms (model matrix, normal matrix,
-         * tint) and issue one indexed draw. The byte counts pushed (80, 112, 528, 128, 48) are the uniform structs' sizes.
+         * tint) and issue one indexed draw. The byte counts pushed (80, 112, 528, 1008, 128, 48) are the uniform structs' sizes. The two shadow maps bind once,
+         * to sampler slots 1 and 2 (slot 0 is the draw's texture).
          */
-        DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
+        DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, chosenLights: Array<u32>, shadowPlan: lantern:::renderer:::ShadowPlan*, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
             cameraPosition: Vec3 = renderWorld->camera.position;
             frameUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f] };
             directionToLight: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - renderWorld->light.direction, lantern:::core:::WorldUp());
@@ -905,14 +1010,20 @@ lantern:::gpu :: namespace {
                 fogAndOutput: [renderWorld->fogStart, renderWorld->fogEnd, 0.0f, encodeFlag],
                 cameraPosition: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f]
             };
-            chosenLights: Array<u32>! = lantern:::renderer:::SelectLocalLights(renderWorld->lights, cameraPosition);
-            defer delete chosenLights;
-            localLightUniforms: LocalLightUniforms = PackLocalLights(renderWorld->lights, chosenLights);
+            localLightUniforms: LocalLightUniforms = PackLocalLights(renderWorld->lights, chosenLights, shadowPlan);
+            shadowUniforms: ShadowUniforms = PackShadowUniforms(shadowPlan, renderWorld->camera.forward);
             unsafe {
                 Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lit);
                 PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(frameUniforms), 80);
                 PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 112);
                 PushFragmentUniforms(commandBuffer, 2, reinterpret<u8>(localLightUniforms), 528);
+                PushFragmentUniforms(commandBuffer, 3, reinterpret<u8>(shadowUniforms), 1008);
+                shadowBindings: Sdl:::SDL_GPUTextureSamplerBinding[2] = [
+                    Sdl:::SDL_GPUTextureSamplerBinding { texture: shadowTargets.sunTexture, sampler: samplers.shadow },
+                    Sdl:::SDL_GPUTextureSamplerBinding { texture: shadowTargets.localTexture, sampler: samplers.shadow }
+                ];
+                firstShadowBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(shadowBindings);
+                Sdl:::SDL_BindGPUFragmentSamplers(pass, 1, firstShadowBinding, 2);
                 boundMesh~ u32 = NO_BINDING;
                 boundTexture~ u32 = NO_BINDING;
                 textureBound~ bool = false;

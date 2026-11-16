@@ -1,0 +1,264 @@
+lantern:::renderer :: namespace {
+    /** How many cascades the sun's shadow is split into: near, middle and far slices of the camera's view. */
+    SHADOW_CASCADE_COUNT: u32 : 3;
+    /** The local-light shadow texture is this many tiles wide... */
+    LOCAL_SHADOW_COLUMNS: u32 : 6;
+    /** ...and this many tall. */
+    LOCAL_SHADOW_ROWS: u32 : 2;
+    /** Tiles in the local-light shadow texture: twelve spot lights, or two point lights, or a mix. */
+    MAX_LOCAL_SHADOW_TILES: u32 : 12;
+    /** A point light's shadow is a cube, so it takes this many tiles: one per face. */
+    POINT_LIGHT_FACE_COUNT: u32 : 6;
+    /**
+     * How far, in world units, toward the sun a sun cascade reaches beyond its slice of the view. A tall tower out of
+     * view can still shadow the ground in view, so its box has to be in the map.
+     */
+    SUN_SHADOW_DEPTH_PADDING: f32 : 60.0f;
+    /** How near a spot or point light's shadow camera starts, in world units. Nearer than this, nothing shadows. */
+    LOCAL_SHADOW_NEAR_PLANE: f32 : 0.1f;
+    /**
+     * The widest angle a spot light's shadow camera may open to, in radians (about 150 degrees). Past it a perspective
+     * projection stretches the edges until texels are useless.
+     */
+    SPOT_SHADOW_MAXIMUM_ANGLE: f32 : 2.6f;
+    /**
+     * The angle each face of a point light's shadow cube opens to, in radians: 95 degrees, a little over the 90 that
+     * tiles a cube exactly, so the filter at a face's edge still has depth to read.
+     */
+    POINT_SHADOW_FACE_ANGLE: f32 : 1.658f;
+
+    /**
+     * One rectangle of a shadow texture: the matrix that takes a world position to the light's clip space, and for the
+     * sun how big one texel of the map is in the world, which the shader uses to push surfaces off the map's edge.
+     */
+    ShadowTile :: struct {
+        /** World space to the light's clip space. Orthographic for the sun, perspective for local lights. */
+        viewProjection~ Mat4 = Mat4 { };
+        /** For a sun cascade: the world distance one texel covers. Zero for a local light's tile. */
+        texelWorldSize~ f32 = 0.0f;
+    }
+
+    /**
+     * Everything the renderer needs to draw one frame's shadows, worked out from the `RenderWorld` before any GPU
+     * work: which tiles to render and from where. It is plain data, so tests can check it with no GPU.
+     */
+    ShadowPlan :: class {
+    public:
+        /** Whether the sun shadows this frame: shadows on, the sun casting, and the sun pointing somewhere. */
+        sunEnabled~ bool = false;
+        /** The sun's cascades, nearest first, `SHADOW_CASCADE_COUNT` of them when `sunEnabled`. */
+        sunTiles~ Array<ShadowTile>! = [];
+        /** Where each cascade ends, as a distance from the camera along the way it looks. */
+        cascadeEnds~ f32[3] = [0.0f, 0.0f, 0.0f];
+        /** The tiles of the shadowed local lights, in the order they were given out. */
+        localTiles~ Array<ShadowTile>! = [];
+        /**
+         * One entry per light `SelectLocalLights` chose, in the same order: the index in `localTiles` of its first tile,
+         * or -1 when it casts no shadow this frame.
+         */
+        localFirstTile~ Array<i32>! = [];
+        /**
+         * One entry per chosen light: the world size of a texel of its shadow map one unit away from it, which grows
+         * in proportion to the distance. The shader uses it to push surfaces off the map's edge.
+         */
+        localTexelAngle~ Array<f32>! = [];
+
+        /** Drops every tile, for a frame whose shadow maps couldn't be made: the lights stay, unshadowed. */
+        Disable~: () -> void {
+            sunEnabled = false;
+            sunTiles.clear();
+            localTiles.clear();
+            for slot~ usize = 0; slot < localFirstTile.length(); slot++ {
+                localFirstTile[slot] = -1;
+            }
+        }
+
+        /** An empty plan: no shadows. */
+        ShadowPlan~: () { }
+
+        /** Frees the lists. */
+        !ShadowPlan~: () {
+            delete sunTiles;
+            delete localTiles;
+            delete localFirstTile;
+            delete localTexelAngle;
+        }
+    }
+
+    /**
+     * Works out the frame's shadows. `chosen` is what `SelectLocalLights` returned: only those lights are lit this
+     * frame, so only they get tiles. Lights take tiles in that order until the twelve are used up, so the lights nearest
+     * the camera shadow first.
+     */
+    BuildShadowPlan :: (renderWorld: RenderWorld*, aspectRatio: f32, chosen: Array<u32>) -> ShadowPlan*! {
+        plan := new ShadowPlan();
+        settings: ShadowSettings = renderWorld->shadows;
+        if !settings.enabled {
+            for slot~ usize = 0; slot < chosen.length(); slot++ {
+                plan->localFirstTile.push(-1);
+                plan->localTexelAngle.push(0.0f);
+            }
+            return plan!;
+        }
+        sunMapSize: u32 = ClampMapSize(settings.sunMapSize);
+        if renderWorld->light.castsShadows {
+            BuildSunTiles(plan, renderWorld, aspectRatio, sunMapSize);
+        }
+        localTileSize: u32 = ClampMapSize(settings.localTileSize);
+        BuildLocalTiles(plan, renderWorld, chosen, localTileSize);
+        return plan!;
+    }
+
+    /** Keeps a map size inside what the renderer supports: 256 to 4096 pixels. */
+    ClampMapSize :: (size: u32) -> u32 {
+        return u32(Math:::clamp(i32(size), 256, 4096));
+    }
+
+    /**
+     * The sun's cascades. The camera's view is cut into three slices by distance, the near ones thin so shadows close
+     * to the player get the most map. Each slice gets an orthographic camera looking along the sun, just big enough to
+     * hold a sphere around the slice. The sphere's size doesn't change as the camera turns, and the box's position is
+     * rounded to whole texels, so a shadow's edge doesn't crawl and shimmer as the player moves.
+     */
+    BuildSunTiles :: (plan: ShadowPlan~*, renderWorld: RenderWorld*, aspectRatio: f32, mapSize: u32) -> void {
+        camera: Camera = renderWorld->camera;
+        sunDirection: Vec3 = lantern:::core:::NormalizeOr3(renderWorld->light.direction, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f });
+        nearDistance~ f32 = camera.nearPlane;
+        if camera.IsOrthographic() {
+            nearDistance = 0.0f;
+        }
+        farDistance: f32 = Math:::min(renderWorld->shadows.distance, camera.farPlane);
+        if farDistance <= nearDistance + 0.01f {
+            return;
+        }
+        right: Vec3 = lantern:::core:::NormalizeOr3(camera.forward.cross(lantern:::core:::WorldUp()), lantern:::core:::AnyOrthonormalVector3(camera.forward));
+        up: Vec3 = right.cross(camera.forward);
+        lightUp~ Vec3 = lantern:::core:::WorldUp();
+        if Math:::abs(sunDirection.y) > 0.99f {
+            lightUp = lantern:::core:::WorldForward();
+        }
+        lightView: Mat4 = lantern:::core:::LookToRightHanded(Vec3 { }, sunDirection, lightUp);
+        sliceStart~ f32 = nearDistance;
+        for cascade~ u32 = 0; cascade < SHADOW_CASCADE_COUNT; cascade++ {
+            sliceEnd: f32 = CascadeEnd(nearDistance, farDistance, cascade + 1);
+            plan->cascadeEnds[usize(cascade)] = sliceEnd;
+            center~ Vec3 = Vec3 { };
+            corners~ Array<Vec3>! = SliceCorners(camera, right, up, aspectRatio, sliceStart, sliceEnd);
+            for corner in corners {
+                center = center + corner;
+            }
+            center = center * (1.0f / f32(corners.length()));
+            radius~ f32 = 0.0f;
+            for corner in corners {
+                radius = Math:::max(radius, Math:::sqrt(lantern:::core:::LengthSquared3(corner - center)));
+            }
+            delete corners;
+            radius = Math:::ceil(radius * 16.0f) / 16.0f;
+            texelWorldSize: f32 = 2.0f * radius / f32(mapSize);
+            centerInLight: Vec3 = lantern:::core:::TransformPoint3(lightView, center);
+            snappedX: f32 = Math:::floor(centerInLight.x / texelWorldSize + 0.5f) * texelWorldSize;
+            snappedY: f32 = Math:::floor(centerInLight.y / texelWorldSize + 0.5f) * texelWorldSize;
+            centerAhead: f32 = -centerInLight.z;
+            projection: Mat4 = lantern:::core:::OrthographicRightHanded(snappedX - radius, snappedX + radius, snappedY - radius, snappedY + radius, centerAhead - radius - SUN_SHADOW_DEPTH_PADDING, centerAhead + radius);
+            plan->sunTiles.push(ShadowTile { viewProjection: projection * lightView, texelWorldSize: texelWorldSize });
+            sliceStart = sliceEnd;
+        }
+        plan->sunEnabled = true;
+    }
+
+    /**
+     * Where cascade `boundary` of `SHADOW_CASCADE_COUNT` ends: halfway between an even split of the distance and a
+     * logarithmic one. Even slices give far shadows too little map; logarithmic ones give the near slice almost none.
+     */
+    CascadeEnd :: (nearDistance: f32, farDistance: f32, boundary: u32) -> f32 {
+        fraction: f32 = f32(boundary) / f32(SHADOW_CASCADE_COUNT);
+        even: f32 = nearDistance + (farDistance - nearDistance) * fraction;
+        logarithmicNear: f32 = Math:::max(nearDistance, 0.5f);
+        logarithmic: f32 = logarithmicNear * Math:::pow(farDistance / logarithmicNear, fraction);
+        return 0.5f * even + 0.5f * logarithmic;
+    }
+
+    /** The eight corners of the slice of the camera's view between two distances. */
+    SliceCorners :: (camera: Camera, right: Vec3, up: Vec3, aspectRatio: f32, startDistance: f32, endDistance: f32) -> Array<Vec3>! {
+        corners~ Array<Vec3>! = [];
+        distances: f32[2] = [startDistance, endDistance];
+        for distance in distances {
+            halfHeight~ f32 = 0.0f;
+            if orthographicHalfHeight := camera.orthographicHalfHeight {
+                halfHeight = orthographicHalfHeight;
+            } else {
+                halfHeight = Math:::tan(camera.verticalFieldOfViewRadians * 0.5f) * distance;
+            }
+            halfWidth: f32 = halfHeight * aspectRatio;
+            middle: Vec3 = camera.position + camera.forward * distance;
+            corners.push(middle - right * halfWidth - up * halfHeight);
+            corners.push(middle + right * halfWidth - up * halfHeight);
+            corners.push(middle - right * halfWidth + up * halfHeight);
+            corners.push(middle + right * halfWidth + up * halfHeight);
+        }
+        return corners!;
+    }
+
+    /**
+     * Gives tiles to the chosen lights that cast shadows. A spot light gets one tile, looking down its cone. A point
+     * light gets six, one for each of +X, -X, +Y, -Y, +Z and -Z; the shader picks the face from the larger axis of the
+     * vector from the light to the pixel.
+     */
+    BuildLocalTiles :: (plan: ShadowPlan~*, renderWorld: RenderWorld*, chosen: Array<u32>, tileSize: u32) -> void {
+        for slot~ usize = 0; slot < chosen.length(); slot++ {
+            light: Light = renderWorld->lights[usize(chosen[slot])];
+            tilesNeeded~ u32 = 1;
+            if light.kind == LightKind:::Point {
+                tilesNeeded = POINT_LIGHT_FACE_COUNT;
+            }
+            if !light.castsShadows || plan->localTiles.length() + usize(tilesNeeded) > usize(MAX_LOCAL_SHADOW_TILES) {
+                plan->localFirstTile.push(-1);
+                plan->localTexelAngle.push(0.0f);
+                continue;
+            }
+            plan->localFirstTile.push(i32(plan->localTiles.length()));
+            farPlane: f32 = Math:::max(light.range, LOCAL_SHADOW_NEAR_PLANE * 2.0f);
+            if light.kind == LightKind:::Spot {
+                angle: f32 = Math:::min(light.outerConeRadians * 2.0f + 0.1f, SPOT_SHADOW_MAXIMUM_ANGLE);
+                plan->localTexelAngle.push(2.0f * Math:::tan(angle * 0.5f) / f32(tileSize));
+                plan->localTiles.push(LocalTile(light.position, light.direction, angle, farPlane));
+            } else {
+                plan->localTexelAngle.push(2.0f * Math:::tan(POINT_SHADOW_FACE_ANGLE * 0.5f) / f32(tileSize));
+                for face~ u32 = 0; face < POINT_LIGHT_FACE_COUNT; face++ {
+                    plan->localTiles.push(LocalTile(light.position, CubeFaceDirection(face), POINT_SHADOW_FACE_ANGLE, farPlane));
+                }
+            }
+        }
+    }
+
+    /** One local light tile: a square perspective camera at `position` looking along `direction`. */
+    LocalTile :: (position: Vec3, direction: Vec3, angle: f32, farPlane: f32) -> ShadowTile {
+        up~ Vec3 = lantern:::core:::WorldUp();
+        if Math:::abs(direction.y) > 0.99f {
+            up = lantern:::core:::WorldForward();
+        }
+        view: Mat4 = lantern:::core:::LookToRightHanded(position, direction, up);
+        projection: Mat4 = lantern:::core:::Perspective(angle, 1.0f, LOCAL_SHADOW_NEAR_PLANE, farPlane);
+        return ShadowTile { viewProjection: projection * view };
+    }
+
+    /** The direction face `face` of a point light's shadow cube looks: +X, -X, +Y, -Y, +Z, -Z in that order. */
+    CubeFaceDirection :: (face: u32) -> Vec3 {
+        if face == 0 {
+            return Vec3 { x: 1.0f };
+        }
+        if face == 1 {
+            return Vec3 { x: -1.0f };
+        }
+        if face == 2 {
+            return Vec3 { y: 1.0f };
+        }
+        if face == 3 {
+            return Vec3 { y: -1.0f };
+        }
+        if face == 4 {
+            return Vec3 { z: 1.0f };
+        }
+        return Vec3 { z: -1.0f };
+    }
+}

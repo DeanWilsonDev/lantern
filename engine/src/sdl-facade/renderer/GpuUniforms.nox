@@ -90,10 +90,11 @@ lantern:::gpu :: namespace {
 
     /**
      * Packs `lights` (the indices `SelectLocalLights` chose) into the block the shader reads. Each light becomes four
-     * vec4s: position and range, colour and kind, direction and the outer cone's cosine, the inner cone's cosine.
+     * vec4s: position and range, colour and kind, direction and the outer cone's cosine, then the inner cone's cosine, the index of its first shadow tile (-1 for none)
+     * and the size of a texel of its shadow map.
      * The shader compares cosines of the angles, so they are worked out here once, not per pixel.
      */
-    PackLocalLights :: (lights: Array<lantern:::renderer:::Light>, chosen: Array<u32>) -> LocalLightUniforms {
+    PackLocalLights :: (lights: Array<lantern:::renderer:::Light>, chosen: Array<u32>, plan: lantern:::renderer:::ShadowPlan*) -> LocalLightUniforms {
         packed~ LocalLightUniforms = LocalLightUniforms { };
         count: usize = chosen.length();
         packed.values[0] = f32(count);
@@ -115,6 +116,8 @@ lantern:::gpu :: namespace {
             packed.values[base + 10] = light.direction.z;
             packed.values[base + 11] = Math:::cos(light.outerConeRadians);
             packed.values[base + 12] = Math:::cos(light.innerConeRadians);
+            packed.values[base + 13] = f32(plan->localFirstTile[slot]);
+            packed.values[base + 14] = plan->localTexelAngle[slot];
         }
         return packed;
     }

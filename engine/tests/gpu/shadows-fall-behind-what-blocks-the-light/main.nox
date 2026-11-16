@@ -1,0 +1,191 @@
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+SunWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: lantern:::core:::Normalize3(Vec3 { x: 1.0f, y: -1.0f, z: 0.0f }),
+        color: lantern:::core:::Color:::White(),
+        ambient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 14.0f, z: 0.01f }, Vec3 { });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(40.0f, 40.0f);
+            defer delete floorData;
+            cubeData := lantern:::renderer:::Cube(2.0f);
+            defer delete cubeData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->CreateMesh(cubeData) {
+                Result:::Ok(handle) -> {
+                    cube = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+            white := lantern:::core:::Color:::White();
+            cubePlace: Mat4 = Mat4:::translation(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+
+            sunWorld := SunWorld();
+            defer delete sunWorld;
+            sunWorld->Draw(floor, null, Mat4 { }, white);
+            sunWorld->Draw(cube, null, cubePlace, white);
+            when renderer->Capture(sunWorld, 512, 512) {
+                Result:::Ok(image) -> {
+                    capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+                    if path := capturePath {
+                        bytes: Array<u8>! = image->ToPngBytes();
+                        assert(lantern:::core:::WriteBytes(path, bytes), "the capture is written");
+                        delete bytes;
+                    }
+                    delete capturePath;
+                    delete image;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->RenderOffscreen(sunWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(report.shadowTiles == 3, "the sun's three cascades are drawn");
+                    inShadow: u8[4] = PixelAt(pixels, size, 76, 64);
+                    inSun: u8[4] = PixelAt(pixels, size, 120, 64);
+                    onCubeSide: u8[4] = PixelAt(pixels, size, 64, 64);
+                    if !(inShadow[0] < 80 && inSun[0] > 100) {
+                        print(`sun: shadow ${inShadow[0]}, lit ${inSun[0]}`);
+                    }
+                    assert(inShadow[0] < 80, "the floor beside the cube, away from the sun, is in its shadow");
+                    assert(inSun[0] > 100, "the floor farther along is lit");
+                    sunWorld->shadows.enabled = false;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->RenderOffscreen(sunWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(report.shadowTiles == 0, "no shadow tiles are drawn with shadows off");
+                    unshadowed: u8[4] = PixelAt(pixels, size, 76, 64);
+                    assert(unshadowed[0] > 100, "with shadows off the same floor is lit");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            lampWorld := new lantern:::renderer:::RenderWorld();
+            defer delete lampWorld;
+            lampWorld->light.castsShadows = false;
+            lampWorld->light.color = lantern:::core:::Color:::Black();
+            lampWorld->light.ambient = lantern:::core:::Color:::Black();
+            lampWorld->light.groundAmbient = lantern:::core:::Color:::Black();
+            lampWorld->clearColor = lantern:::core:::Color:::Black();
+            lampWorld->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 14.0f, z: 0.01f }, Vec3 { });
+            lampWorld->Draw(floor, null, Mat4 { }, white);
+            lampWorld->Draw(cube, null, cubePlace, white);
+            lampId: u32 = lampWorld->AddLight(lantern:::renderer:::Light:::Point(Vec3 { x: -4.0f, y: 4.0f, z: 0.0f }, lantern:::core:::Color:::Rgb(60.0f, 60.0f, 60.0f), 20.0f));
+            lampWorld->lights[0].castsShadows = true;
+            when renderer->RenderOffscreen(lampWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(report.shadowTiles == 6, "a shadowed point light draws six faces");
+                    behindCube: u8[4] = PixelAt(pixels, size, 85, 64);
+                    sideLit: u8[4] = PixelAt(pixels, size, 30, 64);
+                    if !(behindCube[0] < 15 && sideLit[0] > 60) {
+                        print(`point: shadow ${behindCube[0]}, lit ${sideLit[0]}`);
+                    }
+                    assert(behindCube[0] < 15, "the floor behind the cube, away from a point light, is shadowed");
+                    assert(sideLit[0] > 60, "the floor on the lamp's side of the cube is lit");
+                    lampWorld->lights[0].castsShadows = false;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->RenderOffscreen(lampWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    behindUnshadowed: u8[4] = PixelAt(pixels, size, 85, 64);
+                    assert(behindUnshadowed[0] > 20, "with the light's shadow off, the floor behind the cube is lit");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            spotWorld := new lantern:::renderer:::RenderWorld();
+            defer delete spotWorld;
+            spotWorld->light.castsShadows = false;
+            spotWorld->light.color = lantern:::core:::Color:::Black();
+            spotWorld->light.ambient = lantern:::core:::Color:::Black();
+            spotWorld->light.groundAmbient = lantern:::core:::Color:::Black();
+            spotWorld->clearColor = lantern:::core:::Color:::Black();
+            spotWorld->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 14.0f, z: 0.01f }, Vec3 { });
+            spotWorld->Draw(floor, null, Mat4 { }, white);
+            spotWorld->Draw(cube, null, Mat4:::translation(Vec3 { x: 0.0f, y: 3.0f, z: 0.0f }), white);
+            spotLight := lantern:::renderer:::Light:::Spot(Vec3 { x: 0.0f, y: 8.0f, z: 0.0f }, Vec3 { }, lantern:::core:::Color:::Rgb(60.0f, 60.0f, 60.0f), 20.0f, 0.5f, 0.7f);
+            spotWorld->AddLight(spotLight);
+            spotWorld->lights[0].castsShadows = true;
+            when renderer->RenderOffscreen(spotWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(report.shadowTiles == 1, "a shadowed spot light draws one tile");
+                    underCube: u8[4] = PixelAt(pixels, size, 78, 64);
+                    aside: u8[4] = PixelAt(pixels, size, 100, 64);
+                    if !(underCube[0] < 15 && aside[0] > 30) {
+                        print(`spot: shadow ${underCube[0]}, lit ${aside[0]}`);
+                    }
+                    assert(underCube[0] < 15, "the floor under the cube, away from the spot light's axis, is shadowed");
+                    assert(aside[0] > 30, "the floor in the cone but clear of the cube is lit");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("shadows fall behind what blocks the light");
+    return 0;
+}
