@@ -1011,6 +1011,7 @@ unchanged.
   light preview off.
 
 Card: `lighting-and-shadows/lights-in-the-world-editor`.
+
 ## D-063 Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters
 
 The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter looks and thorns to the streets.
