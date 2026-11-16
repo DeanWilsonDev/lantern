@@ -239,6 +239,68 @@ lantern:::renderer :: namespace {
         distance~ f32 = 60.0f;
     }
 
+    /**
+     * How much the renderer spends on looks. Each effect that costs frame time picks its setting from the level, so one
+     * call turns a whole set of effects up or down. The game sets it with `lantern:::graphics:::SetQuality`.
+     */
+    QualityLevel :: enum {
+        /** The cheapest: only what the picture needs to be correct. No bloom. */
+        Low,
+        /** Bloom on, at its default strength. */
+        Medium,
+        /** Everything Medium has; later effects join here. */
+        High
+    }
+
+    /**
+     * The curve that squeezes the scene's light (any brightness) into the 0 to 1 a display shows. Each keeps dark and
+     * middle colours close to how they were and treats bright ones differently.
+     */
+    ToneMapper :: enum {
+        /** No curve: values above 1 are cut off flat. The look of a renderer with no high dynamic range. */
+        Clamp,
+        /**
+         * Colours below about 0.8 are left exactly as they are, and only brighter light is rolled off towards white,
+         * losing a little saturation as it goes (Khronos PBR Neutral). The least change to a scene lit for a clamped
+         * target, so it's the default.
+         */
+        Neutral,
+        /**
+         * A filmic S-curve (an ACES fit): a lifted toe, a contrasty middle and a long shoulder. More dramatic, and it
+         * brightens and desaturates pastels, so lights and colours tuned without it need re-balancing.
+         */
+        Aces
+    }
+
+    /**
+     * How the finished frame is processed before it reaches the screen. The scene is drawn as light in a high dynamic
+     * range target, where values can go far above 1; these settings say how that light becomes the 0 to 1 colours a
+     * display shows, and whether the bright parts bloom.
+     */
+    PostSettings :: struct {
+        /** Glow around bright surfaces: the bright parts are blurred and added back. Costs nine small full-screen passes. */
+        bloomEnabled~ bool = true;
+        /** How much of the blurred glow is added back. 0.04 is a faint halo; 0.2 is a hazy one. */
+        bloomStrength~ f32 = 0.1f;
+        /** The brightness (in the scene's light units, 1 being a white wall in full sun) where glow starts. */
+        bloomThreshold~ f32 = 1.5f;
+        /** A brightness knob applied before tone mapping: 2 shows the scene twice as bright. */
+        exposure~ f32 = 1.0f;
+        /** The curve that maps light to colour; see `ToneMapper`. */
+        toneMapper~ ToneMapper = ToneMapper:::Neutral;
+
+        /** These settings with every quality-dependent effect set for `level`. The look settings (exposure, curve) stay. */
+        WithQuality :: (level: QualityLevel) -> PostSettings {
+            return PostSettings {
+                bloomEnabled: level != QualityLevel:::Low,
+                bloomStrength: bloomStrength,
+                bloomThreshold: bloomThreshold,
+                exposure: exposure,
+                toneMapper: toneMapper
+            };
+        }
+    }
+
     /** One end of a debug line, laid out exactly as the GPU reads it (28 bytes). */
     LineVertex :: struct {
         /** World position. */
@@ -339,6 +401,8 @@ lantern:::renderer :: namespace {
         lights~ Array<Light>! = [];
         /** How shadows are drawn; see `ShadowSettings`. */
         shadows~ ShadowSettings = ShadowSettings { };
+        /** How the frame is tone mapped and bloomed; see `PostSettings`. */
+        post~ PostSettings = PostSettings { };
         /** The next id `AddLight` hands out. Starts at 1 so 0 can mean "no light". */
         nextLightId~ u32 = 1;
         /** The colour the frame starts as before anything is drawn (the sky), in linear RGB. Fog fades to it too. */

@@ -1034,3 +1034,33 @@ The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter lo
   needs the player close and walks at 70% speed past the rooftop.
 
 Cards: `platformer-game/crimson-and-thorn-slice` (Guide Light, chapter looks and thorns complete; the Anchor waits for Dean).
+
+
+## D-064 The scene is drawn in high dynamic range, then tone mapped, with bloom as an optional pass
+
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+Dean asked for the renderer to be improved step by step, starting with emissive gems that glow. A glow needs light
+brighter than white, and an 8-bit target throws that away, so the lit pass now draws into a 16-bit float texture and
+three more steps turn it into the picture. `bloom-and-tone-mapping.md` is the guide.
+
+- **Pass order.** Shadows, the scene pass (lit meshes into the HDR texture), bloom (nine small full-screen passes),
+  the composite pass (glow, exposure, tone map, sRGB into the swapchain image), then a last pass for debug lines and
+  the overlay. Lines and overlay stay out of the HDR path, so a HUD colour reaches the screen as written and the
+  editor's gizmo colours don't change.
+- **The default tone mapper is Khronos PBR Neutral, not ACES.** ACES was tried first and washed the platformer out: its
+  curve brightens middle values and desaturates pastels, and the game's colours were tuned for a clamped target. Neutral
+  leaves everything below about 0.8 alone. ACES stays one call away (`SetToneMapper("aces")`), and so does "none".
+- **Bloom is 13-tap shrink and tent-filter grow**, five levels, with a soft-knee threshold and Karis averaging on the
+  first shrink so a single bright pixel can't sparkle. Defaults: threshold 1.5, strength 0.1, so a sunlit wall doesn't
+  glow and a gem does.
+- **`SetGlow(entity, color, strength)`** lets a material's emissive light exceed 1 (the `"RRGGBB"` string can't). The
+  gems glow at 4 times their colour.
+- **`lantern:::graphics`** holds the settings and `SetQuality("low" | "medium" | "high")` is the one switch effects join
+  as they are added. Low turns bloom off. HDR and tone mapping stay on at every level.
+- **A GPU that can't draw into and sample RGBA16F is refused at start-up** with a clear error. SDL GPU's Vulkan and Metal
+  devices all support it, so there is no 8-bit fallback to maintain.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU. The cloud renders with lavapipe, a software
+  Vulkan driver, so the 60 fps goal needs Dean's Mac.
+
+Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.

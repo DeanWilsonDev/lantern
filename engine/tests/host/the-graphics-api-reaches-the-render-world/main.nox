@@ -1,0 +1,67 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Low :: () -> void { lantern:::graphics:::SetQuality(\"low\"); }\nHigh :: () -> void { lantern:::graphics:::SetQuality(\"high\"); }\nBloom :: () -> void { lantern:::graphics:::SetBloom(true, 0.3f, 2.0f); }\nLook :: () -> void { lantern:::graphics:::SetExposure(1.5f); lantern:::graphics:::SetToneMapper(\"aces\"); }\nBadQuality :: () -> string { caught~ string = \"no failure\"; when lantern:::graphics:::SetQuality(\"ultra\") { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }";
+
+BoolResult :: (program: lantern:::nyx:::Program*, name: string) -> bool {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: bool = lantern:::testing:::BoolOrFail(value->Bool());
+    delete value;
+    return result;
+}
+
+TextResult :: (program: lantern:::nyx:::Program*, name: string) -> string! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: string! = lantern:::testing:::TextOrFail(value->Text());
+    delete value;
+    return result!;
+}
+
+ExpectFailure :: (program: lantern:::nyx:::Program*, name: string, expected: string) -> void {
+    failure: string! = TextResult(program, name);
+    if failure != expected {
+        print(`${name} failed with '${failure}'`);
+    }
+    assert(failure == expected, "the call fails with the engine's message");
+    delete failure;
+}
+
+
+IntegerResult :: (program: lantern:::nyx:::Program*, name: string) -> i64 {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: i64 = lantern:::testing:::I64OrFail(value->I64());
+    delete value;
+    return result;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    gameUi := lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    assert(state->renderWorld->post.bloomEnabled, "bloom starts on");
+    assert(state->renderWorld->post.toneMapper == lantern:::renderer:::ToneMapper:::Neutral, "the neutral curve is the default");
+    lantern:::testing:::CallOrFail(program, "Low");
+    assert(!state->renderWorld->post.bloomEnabled, "the low quality level turns bloom off");
+    lantern:::testing:::CallOrFail(program, "High");
+    assert(state->renderWorld->post.bloomEnabled, "a higher level turns it on again");
+    lantern:::testing:::CallOrFail(program, "Bloom");
+    assert(state->renderWorld->post.bloomStrength == 0.3f && state->renderWorld->post.bloomThreshold == 2.0f, "the bloom strength and threshold are set");
+    lantern:::testing:::CallOrFail(program, "Look");
+    assert(state->renderWorld->post.exposure == 1.5f, "the exposure is set");
+    assert(state->renderWorld->post.toneMapper == lantern:::renderer:::ToneMapper:::Aces, "the tone mapper is chosen by name");
+    ExpectFailure(program, "BadQuality", "Unknown: 'ultra' is not a quality level; write \"low\", \"medium\" or \"high\"");
+    delete program;
+    delete runtime;
+    delete gameUi;
+    delete state;
+    print("the graphics API reaches the render world");
+    return 0;
+}

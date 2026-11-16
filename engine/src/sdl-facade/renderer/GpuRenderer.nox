@@ -11,8 +11,9 @@
 //   1. Acquire a command buffer: a list of GPU work recorded on the CPU and submitted in one go.
 //   2. Copy this frame's line and overlay vertices into their GPU buffers (a copy pass).
 //   3. Acquire the swapchain image to draw into, and make sure the depth buffer is the same size.
-//   4. Record the frame (RecordFrame): cull and sort the meshes, then one render pass that draws the meshes, the
-//      lines over them and the overlay on top.
+//   4. Record the frame (RecordFrame): shadow passes, then the scene pass (the lit meshes into a high dynamic range
+//      texture), the bloom and composite passes (GpuPost.nox: glow, exposure, tone mapping) that write the screen
+//      image, and last a pass that draws the debug lines and the overlay on top of it.
 //   5. Submit the command buffer. SDL presents the swapchain image when the GPU finishes.
 //
 // Capture and RenderOffscreen record the same frame into a texture of their own instead of the swapchain, then copy
@@ -49,8 +50,9 @@ lantern:::gpu :: namespace {
      * 1. Acquire a command buffer: GPU work is recorded on the CPU and submitted in one go.
      * 2. Copy this frame's line and overlay vertices into their GPU buffers (a copy pass).
      * 3. Acquire the swapchain image to draw into, and make sure the depth buffer is the same size.
-     * 4. Record the frame (`RecordFrame`): cull and sort the meshes, then one render pass that draws the meshes, the
-     *    lines over them and the overlay on top.
+     * 4. Record the frame (`RecordFrame`): shadow passes, then the scene pass (the lit meshes into a high dynamic range
+     *    texture), the bloom and composite passes (`GpuPost.nox`) that write the screen image, and last a pass that
+     *    draws the debug lines and the overlay on top of it.
      * 5. Submit. SDL presents the swapchain image when the GPU finishes.
      *
      * The CPU doesn't wait for the GPU to finish a frame: it records the next while the GPU draws the last. SDL keeps a
@@ -79,6 +81,8 @@ lantern:::gpu :: namespace {
         samplers~ Samplers = Samplers { };
         /** The sun's and the local lights' shadow textures, sized by the frame's `ShadowSettings`. */
         shadowTargets~ ShadowTargets = ShadowTargets { };
+        /** The high dynamic range scene texture and the bloom chain; see `GpuPost.nox`. Sized to each frame's target. */
+        postTargets~ PostTargets = PostTargets { };
         /**
          * Every uploaded mesh, in a pool so the game names them by generational handle. A stale handle finds nothing
          * instead of a freed buffer.
@@ -109,6 +113,11 @@ lantern:::gpu :: namespace {
          * are built for exactly this format.
          */
         colorFormat~ Sdl:::SDL_GPUTextureFormat = 0;
+        /**
+         * The scene's format: 16-bit float per channel, so light brighter than 1 survives until tone mapping. The lit
+         * pipeline and the bloom passes are built for it.
+         */
+        hdrFormat~ Sdl:::SDL_GPUTextureFormat = 0;
         /** The depth buffer's format, the most precise the card supports; see `ChooseDepthFormat`. */
         depthFormat~ Sdl:::SDL_GPUTextureFormat = 0;
         /**
@@ -281,7 +290,12 @@ lantern:::gpu :: namespace {
             message: string! = `GPU driver: ${gpuRenderer->driverName} (${ShaderFormatName(shaderFormat)} shaders), debugEnabled ${debugName}, ${targetName} format ${gpuRenderer->colorFormat}, depth format ${gpuRenderer->depthFormat}, ${outputName} output`;
             lantern:::core:::LogInfo("renderer", message);
             delete message;
-            when CreatePipelines(gpuRenderer->device, shaderFormat, gpuRenderer->colorFormat, gpuRenderer->depthFormat) {
+            if !SupportsHdrFormat(gpuRenderer->device) {
+                delete gpuRenderer;
+                return Result<GpuRenderer*!, string!>:::Err("the GPU can't draw into and sample 16-bit float textures, which the renderer's high dynamic range scene needs" + "");
+            }
+            gpuRenderer->hdrFormat = Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+            when CreatePipelines(gpuRenderer->device, shaderFormat, gpuRenderer->colorFormat, gpuRenderer->hdrFormat, gpuRenderer->depthFormat) {
                 Result:::Ok(created) -> {
                     gpuRenderer->pipelines = created;
                 },
@@ -353,6 +367,7 @@ lantern:::gpu :: namespace {
                 }
             }
             ReleaseShadowTargets(device, shadowTargets);
+            postTargets.Release(device);
             samplers.Release(device);
             pipelines.Release(device);
             ReleaseOffscreenTarget();
@@ -840,22 +855,27 @@ lantern:::gpu :: namespace {
          * Records one whole frame into `colorTexture`, which is the swapchain image or an off-screen texture.
          *
          * It builds the view-projection matrix from the camera and the target's aspect ratio, culls and sorts the
-         * draws, then records one render pass. A render pass is a stretch of drawing into a fixed set of targets. Its
-         * load op says what the targets start as (CLEAR: the clear colour, and depth 1.0, the far plane) and its store
-         * op whether to keep them afterwards (the colour, yes; the depth, no one reads it again, so DONT_CARE lets
-         * tiled mobile and Apple GPUs skip writing it out). `cycle` on the depth target lets SDL hand over a fresh
-         * depth texture if the previous frame's is still in use, rather than stalling.
+         * draws, and records these passes in order:
          *
-         * Inside the one pass, three steps draw in order, each with its own pipeline: the lit meshes, the debug lines,
-         * then the 2D overlay on top. When the target can't sRGB-encode, the clear colour is encoded here on the CPU,
-         * since a clear doesn't run a shader.
+         * 1. The shadow passes, which the scene pass reads.
+         * 2. The scene pass: the lit meshes, drawn into `postTargets.hdrTexture`, a 16-bit float texture, so light
+         *    brighter than 1 survives. A render pass is a stretch of drawing into a fixed set of targets. Its load op
+         *    says what the targets start as (CLEAR: the clear colour, and depth 1.0, the far plane) and its store op
+         *    whether to keep them afterwards. The colour is kept because the next passes read it, and so is the depth,
+         *    because the line pass tests against it. `cycle` on the depth target lets SDL hand over a fresh depth
+         *    texture if the previous frame's is still in use, rather than stalling.
+         * 3. Bloom, when it's on (`RecordBloom`): the scene's bright parts are shrunk and blurred through a chain of
+         *    smaller textures and added back up.
+         * 4. The composite pass (`RecordComposite`): scene plus glow, exposed and tone mapped into `colorTexture`. The
+         *    colour is sRGB-encoded there when the target can't do it itself (`encodeFlag`).
+         * 5. The overlay pass, only if there are lines or overlay quads: the debug lines (depth-tested against the
+         *    scene's depth) and then the 2D overlay, drawn straight onto the screen image. They skip steps 3 and 4 on
+         *    purpose, so a debug colour or a menu's colour reaches the screen exactly as written.
          */
         RecordFrame~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, colorTexture: raw Sdl:::SDL_GPUTexture~*, depthTarget: raw Sdl:::SDL_GPUTexture~*, width: u32, height: u32, renderWorld: lantern:::renderer:::RenderWorld*) -> lantern:::renderer:::RenderReport {
             report~ lantern:::renderer:::RenderReport = lantern:::renderer:::RenderReport { };
-            clear~ lantern:::core:::Color = renderWorld->clearColor;
             encodeFlag~ f32 = 0.0f;
             if encodeSrgbInShader {
-                clear = EncodeSrgb(renderWorld->clearColor);
                 encodeFlag = 1.0f;
             }
             safeHeight~ u32 = height;
@@ -882,10 +902,16 @@ lantern:::gpu :: namespace {
                 shadowPlan->Disable();
             }
             RecordShadowPasses(commandBuffer, renderWorld, shadowPlan, report);
+            if !EnsurePostTargets(device, postTargets, width, height) {
+                lantern:::core:::LogWarn("renderer", "the GPU refused the post-processing textures; skipping this frame");
+                return report;
+            }
+            post: lantern:::renderer:::PostSettings = renderWorld->post;
+            bloomDrawn: bool = post.bloomEnabled && post.bloomStrength > 0.0f;
             unsafe {
-                colorTarget := Sdl:::SDL_GPUColorTargetInfo {
-                    texture: colorTexture,
-                    clear_color: Sdl:::SDL_FColor { r: clear.r, g: clear.g, b: clear.b, a: 1.0f },
+                sceneTarget := Sdl:::SDL_GPUColorTargetInfo {
+                    texture: postTargets.hdrTexture,
+                    clear_color: Sdl:::SDL_FColor { r: renderWorld->clearColor.r, g: renderWorld->clearColor.g, b: renderWorld->clearColor.b, a: 1.0f },
                     load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
                     store_op: Sdl:::SDL_GPU_STOREOP_STORE
                 };
@@ -893,16 +919,40 @@ lantern:::gpu :: namespace {
                     texture: depthTarget,
                     clear_depth: 1.0f,
                     load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
-                    store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE,
+                    store_op: Sdl:::SDL_GPU_STOREOP_STORE,
                     stencil_load_op: Sdl:::SDL_GPU_LOADOP_DONT_CARE,
                     stencil_store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE,
                     cycle: true
                 };
-                pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, depthTargetInfo);
-                DrawMeshes(commandBuffer, pass, renderWorld, visibleDraws, chosenLights, shadowPlan, viewProjection, encodeFlag, report);
-                DrawLines(commandBuffer, pass, renderWorld, viewProjection, encodeFlag, report);
-                DrawOverlay(commandBuffer, pass, renderWorld, width, height, encodeFlag);
-                Sdl:::SDL_EndGPURenderPass(pass);
+                scenePass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, sceneTarget, 1, depthTargetInfo);
+                DrawMeshes(commandBuffer, scenePass, renderWorld, visibleDraws, chosenLights, shadowPlan, viewProjection, encodeFlag, report);
+                Sdl:::SDL_EndGPURenderPass(scenePass);
+            }
+            if bloomDrawn {
+                RecordBloom(commandBuffer, pipelines, samplers, postTargets, post.bloomThreshold);
+            }
+            RecordComposite(commandBuffer, pipelines, samplers, postTargets, colorTexture, post, bloomDrawn, encodeFlag);
+            if renderWorld->lines.length() > 0 || renderWorld->overlay->vertices.length() > 0 {
+                unsafe {
+                    colorTarget := Sdl:::SDL_GPUColorTargetInfo {
+                        texture: colorTexture,
+                        clear_color: Sdl:::SDL_FColor { r: 0.0f, g: 0.0f, b: 0.0f, a: 1.0f },
+                        load_op: Sdl:::SDL_GPU_LOADOP_LOAD,
+                        store_op: Sdl:::SDL_GPU_STOREOP_STORE
+                    };
+                    keptDepth := Sdl:::SDL_GPUDepthStencilTargetInfo {
+                        texture: depthTarget,
+                        clear_depth: 1.0f,
+                        load_op: Sdl:::SDL_GPU_LOADOP_LOAD,
+                        store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE,
+                        stencil_load_op: Sdl:::SDL_GPU_LOADOP_DONT_CARE,
+                        stencil_store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE
+                    };
+                    overlayPass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, keptDepth);
+                    DrawLines(commandBuffer, overlayPass, renderWorld, viewProjection, encodeFlag, report);
+                    DrawOverlay(commandBuffer, overlayPass, renderWorld, width, height, encodeFlag);
+                    Sdl:::SDL_EndGPURenderPass(overlayPass);
+                }
             }
             return report;
         }
@@ -991,7 +1041,7 @@ lantern:::gpu :: namespace {
         }
 
         /**
-         * Step 1: the lit meshes. The per-frame uniforms (view-projection, camera position, the sun, the local lights
+         * The scene pass's draw: the lit meshes. The per-frame uniforms (view-projection, camera position, the sun, the local lights
          * and fog) are pushed once. Then for each visible draw, in sorted order: rebind the mesh's vertex and index buffers only if the
          * mesh changed, rebind the texture only if it changed, push the per-draw uniforms (model matrix, normal matrix,
          * tint) and issue one indexed draw. The byte counts pushed (80, 112, 528, 1008, 128, 48) are the uniform structs' sizes. The two shadow maps bind once,
@@ -1061,7 +1111,7 @@ lantern:::gpu :: namespace {
         }
 
         /**
-         * Step 2: debug lines, two vertices each, already uploaded to `lineBuffer`. They test against the depth the
+         * The overlay pass's first draw: debug lines, two vertices each, already uploaded to `lineBuffer`. They test against the depth the
          * meshes wrote, so walls hide them, but don't write depth themselves. One draw call for all of them.
          */
         DrawLines~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, viewProjection: Mat4, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
@@ -1081,7 +1131,7 @@ lantern:::gpu :: namespace {
         }
 
         /**
-         * Step 3: the 2D overlay (HUD, menus, text) in screen pixels, with no depth test so it lands on top of
+         * The overlay pass's second draw: the 2D overlay (HUD, menus, text) in screen pixels, with no depth test so it lands on top of
          * everything. The vertex shader turns pixels into clip space from the target size it is given. Every quad
          * samples the font atlas; solid quads use its white cell. One draw call for all of it.
          */

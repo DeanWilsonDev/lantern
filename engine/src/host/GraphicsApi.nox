@@ -1,0 +1,85 @@
+lantern:::host :: namespace {
+    /**
+     * The picture-quality settings a game can set from Nyx, as `lantern::graphics`. They live in the frame's
+     * `RenderWorld` like the lights do, so the game sets them once and they stay until it changes them.
+     *
+     * `SetQuality` is the one switch for how much the renderer spends: "low", "medium" or "high". The other calls tune
+     * one effect and may follow it. The guide is `docs/graphics-effects.md`.
+     */
+    RegisterGraphicsApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+        graphicsNamespace := new HostNamespace(runtime, "lantern::graphics");
+        graphicsNamespace->Function("SetQuality", "(level: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            defer delete name;
+            if Stopped(context) {
+                return;
+            }
+            level~ lantern:::renderer:::QualityLevel = lantern:::renderer:::QualityLevel:::Medium;
+            if name == "low" {
+                level = lantern:::renderer:::QualityLevel:::Low;
+            } else if name == "medium" {
+                level = lantern:::renderer:::QualityLevel:::Medium;
+            } else if name == "high" {
+                level = lantern:::renderer:::QualityLevel:::High;
+            } else {
+                message: string! = `'${name}' is not a quality level; write "low", "medium" or "high"`;
+                Invalid(context, message);
+                delete message;
+                return;
+            }
+            unsafe {
+                state->renderWorld->post = state->renderWorld->post.WithQuality(level);
+            }
+        });
+        graphicsNamespace->Function("SetBloom", "(enabled: bool, strength: f32, threshold: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            enabled: bool = context->Bool(0);
+            strength: f32 = context->F32(1);
+            threshold: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                post~ lantern:::renderer:::PostSettings = state->renderWorld->post;
+                post.bloomEnabled = enabled;
+                post.bloomStrength = strength > 0.0f ? strength : 0.0f;
+                post.bloomThreshold = threshold > 0.0f ? threshold : 0.0f;
+                state->renderWorld->post = post;
+            }
+        });
+        graphicsNamespace->Function("SetExposure", "(exposure: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            exposure: f32 = context->F32(0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->post.exposure = exposure > 0.0f ? exposure : 0.0f;
+            }
+        });
+        graphicsNamespace->Function("SetToneMapper", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            defer delete name;
+            if Stopped(context) {
+                return;
+            }
+            mapper~ lantern:::renderer:::ToneMapper = lantern:::renderer:::ToneMapper:::Neutral;
+            if name == "none" {
+                mapper = lantern:::renderer:::ToneMapper:::Clamp;
+            } else if name == "neutral" {
+                mapper = lantern:::renderer:::ToneMapper:::Neutral;
+            } else if name == "aces" {
+                mapper = lantern:::renderer:::ToneMapper:::Aces;
+            } else {
+                message: string! = `'${name}' is not a tone mapper; write "none", "neutral" or "aces"`;
+                Invalid(context, message);
+                delete message;
+                return;
+            }
+            unsafe {
+                state->renderWorld->post.toneMapper = mapper;
+            }
+        });
+        failure := graphicsNamespace->Finish();
+        delete graphicsNamespace;
+        return failure!;
+    }
+}

@@ -1,0 +1,222 @@
+// Post-processing on the GPU: the high dynamic range target the scene is drawn into, the chain of shrinking pictures bloom
+// uses, and the passes that turn them into the final image.
+//
+// Why the scene isn't drawn straight to the screen any more. A screen can only show brightness from 0 to 1, and an
+// ordinary 8-bit target can only store that range, so a surface lit to "5 times white" would be cut off at 1 and look
+// the same as one lit to 1. That throws away exactly the information that tells a lamp from a wall. So the lit pass draws
+// into a 16-bit float texture (RGBA16F) that keeps the real values, and a few extra passes afterwards decide how that light
+// becomes a picture:
+//
+//   scene pass     lit meshes -> `hdrTexture`                (GpuRenderer.RecordFrame)
+//   bloom passes   `hdrTexture` -> level 0 -> level 1 -> ... -> level 4, then back up, adding   (RecordBloom)
+//   composite      `hdrTexture` + level 0 -> the screen: exposure, tone mapping, sRGB            (RecordComposite)
+//   overlay pass   debug lines, HUD and menus on top of the screen image, untouched by any of it  (GpuRenderer)
+//
+// Each pass is one render pass. A render pass writes into a fixed set of textures, so "reading the picture a previous pass
+// made" always means binding it as a texture in the next pass, never reading and writing the same texture at once.
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    /** How many shrinking pictures bloom makes. Level 0 is half the frame's size and each level after is half the one before. */
+    BLOOM_LEVELS: usize : 5;
+
+    /** One picture in the bloom chain. */
+    BloomLevel :: struct {
+        /** A float texture that is both drawn into and sampled. Null until `EnsurePostTargets` runs. */
+        texture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** Width in pixels. */
+        width~ u32 = 1;
+        /** Height in pixels. */
+        height~ u32 = 1;
+    }
+
+    /**
+     * The textures the post passes use. They're the frame's size (the bloom chain smaller), so they're recreated when the
+     * window's pixel size changes, and released with the rest of the renderer's resources.
+     */
+    PostTargets :: struct {
+        /** The scene's light, unclamped. The lit pass draws into it and the composite pass reads it. */
+        hdrTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** The bloom chain, largest first. */
+        levels~ BloomLevel[5] = filled<BloomLevel, 5>(BloomLevel { });
+        /** Width in pixels of `hdrTexture`, to notice a resize. */
+        width~ u32 = 0;
+        /** Height in pixels of `hdrTexture`. */
+        height~ u32 = 0;
+
+        /** Releases every texture. SDL frees them once any frame still reading them is done. */
+        Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if hdrTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, hdrTexture);
+                }
+                for level in levels {
+                    if level.texture != null {
+                        Sdl:::SDL_ReleaseGPUTexture(device, level.texture);
+                    }
+                }
+            }
+        }
+    }
+
+    /** The format of the scene texture and the bloom chain: 16-bit float per channel. Null-safe check for the device. */
+    SupportsHdrFormat :: (device: raw Sdl:::SDL_GPUDevice~*) -> bool {
+        unsafe {
+            return Sdl:::SDL_GPUTextureSupportsFormat(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, Sdl:::SDL_GPU_TEXTURETYPE_2D, Sdl:::SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | Sdl:::SDL_GPU_TEXTUREUSAGE_SAMPLER);
+        }
+    }
+
+    /** A float colour texture that a pass draws into and a later pass samples. At least 1x1. */
+    CreatePostTexture :: (device: raw Sdl:::SDL_GPUDevice~*, format: Sdl:::SDL_GPUTextureFormat, width: u32, height: u32) -> raw Sdl:::SDL_GPUTexture~* {
+        targetWidth: u32 = width < 1 ? 1 : width;
+        targetHeight: u32 = height < 1 ? 1 : height;
+        unsafe {
+            info := Sdl:::SDL_GPUTextureCreateInfo {
+                type: Sdl:::SDL_GPU_TEXTURETYPE_2D,
+                format: format,
+                usage: Sdl:::SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | Sdl:::SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                width: targetWidth,
+                height: targetHeight,
+                layer_count_or_depth: 1,
+                num_levels: 1,
+                sample_count: Sdl:::SDL_GPU_SAMPLECOUNT_1
+            };
+            return Sdl:::SDL_CreateGPUTexture(device, info);
+        }
+    }
+
+    /**
+     * Makes the post textures match the frame's size, or leaves them if they already do. Returns false when the GPU refuses
+     * one, with everything released.
+     */
+    EnsurePostTargets :: (device: raw Sdl:::SDL_GPUDevice~*, targets: PostTargets~*, width: u32, height: u32) -> bool {
+        if targets->hdrTexture != null && targets->width == width && targets->height == height {
+            return true;
+        }
+        targets->Release(device);
+        targets->hdrTexture = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, width, height);
+        targets->width = width;
+        targets->height = height;
+        failed~ bool = targets->hdrTexture == null;
+        for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
+            levelWidth: u32 = width >> u32(levelIndex + 1);
+            levelHeight: u32 = height >> u32(levelIndex + 1);
+            level := BloomLevel {
+                texture: CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, levelWidth, levelHeight),
+                width: levelWidth < 1 ? 1 : levelWidth,
+                height: levelHeight < 1 ? 1 : levelHeight
+            };
+            targets->levels[levelIndex] = level;
+            if level.texture == null {
+                failed = true;
+            }
+        }
+        if failed {
+            targets->Release(device);
+            targets->hdrTexture = null;
+            targets->width = 0;
+            targets->height = 0;
+            for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
+                targets->levels[levelIndex] = BloomLevel { };
+            }
+            return false;
+        }
+        message: string! = `post targets recreated at ${width}x${height}`;
+        lantern:::core:::LogDebug("renderer", message);
+        delete message;
+        return true;
+    }
+
+    /**
+     * One full-screen pass: draw the three vertices of the full-screen triangle into `destination`, reading `source`
+     * through `uniforms` (four floats). `keepDestination` loads what the destination already holds instead of clearing it,
+     * which is how the additive upsample pass piles glow onto the picture it writes into.
+     */
+    RecordFullscreenPass :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipeline: raw Sdl:::SDL_GPUGraphicsPipeline~*, sampler: raw Sdl:::SDL_GPUSampler~*, source: raw Sdl:::SDL_GPUTexture~*, destination: raw Sdl:::SDL_GPUTexture~*, keepDestination: bool, uniforms: f32[4]) -> void {
+        unsafe {
+            colorTarget := Sdl:::SDL_GPUColorTargetInfo {
+                texture: destination,
+                clear_color: Sdl:::SDL_FColor { r: 0.0f, g: 0.0f, b: 0.0f, a: 1.0f },
+                load_op: keepDestination ? Sdl:::SDL_GPU_LOADOP_LOAD : Sdl:::SDL_GPU_LOADOP_CLEAR,
+                store_op: Sdl:::SDL_GPU_STOREOP_STORE
+            };
+            pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, null);
+            Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipeline);
+            settings := VectorUniforms { values: uniforms };
+            PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(settings), 16);
+            binding := Sdl:::SDL_GPUTextureSamplerBinding { texture: source, sampler: sampler };
+            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, binding, 1);
+            Sdl:::SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+            Sdl:::SDL_EndGPURenderPass(pass);
+        }
+    }
+
+    /**
+     * Bloom: shrink the scene through the chain (the first shrink keeps only the part brighter than the threshold), then
+     * grow it back one level at a time, adding each blurrier picture to the next larger. Afterwards `levels[0]` holds the
+     * glow, ready for the composite pass. That is `BLOOM_LEVELS` shrinks and `BLOOM_LEVELS - 1` growths.
+     */
+    RecordBloom :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, threshold: f32) -> void {
+        for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
+            sourceTexture~ raw Sdl:::SDL_GPUTexture~* = targets->hdrTexture;
+            sourceWidth~ u32 = targets->width;
+            sourceHeight~ u32 = targets->height;
+            if levelIndex > 0 {
+                sourceTexture = targets->levels[levelIndex - 1].texture;
+                sourceWidth = targets->levels[levelIndex - 1].width;
+                sourceHeight = targets->levels[levelIndex - 1].height;
+            }
+            firstFlag: f32 = levelIndex == 0 ? 1.0f : 0.0f;
+            RecordFullscreenPass(commandBuffer, pipelines->bloomDownsample, samplers->linearClamp, sourceTexture, targets->levels[levelIndex].texture, false, [1.0f / f32(sourceWidth), 1.0f / f32(sourceHeight), threshold, firstFlag]);
+        }
+        for step~ usize = 0; step + 1 < BLOOM_LEVELS; step++ {
+            levelIndex: usize = BLOOM_LEVELS - 2 - step;
+            smaller: BloomLevel = targets->levels[levelIndex + 1];
+            RecordFullscreenPass(commandBuffer, pipelines->bloomUpsample, samplers->linearClamp, smaller.texture, targets->levels[levelIndex].texture, true, [1.0f / f32(smaller.width), 1.0f / f32(smaller.height), 0.0f, 0.0f]);
+        }
+    }
+
+    /**
+     * The composite pass: scene plus glow, exposed, tone mapped and (when the target can't do it) sRGB-encoded, written to
+     * the screen's colour texture. With bloom off the glow texture bound is the scene itself and its strength is 0, so the
+     * shader skips it; a shader can't have a texture slot unbound.
+     */
+    RecordComposite :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, destination: raw Sdl:::SDL_GPUTexture~*, post: lantern:::renderer:::PostSettings, bloomDrawn: bool, encodeFlag: f32) -> void {
+        unsafe {
+            colorTarget := Sdl:::SDL_GPUColorTargetInfo {
+                texture: destination,
+                clear_color: Sdl:::SDL_FColor { r: 0.0f, g: 0.0f, b: 0.0f, a: 1.0f },
+                load_op: Sdl:::SDL_GPU_LOADOP_DONT_CARE,
+                store_op: Sdl:::SDL_GPU_STOREOP_STORE
+            };
+            pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, null);
+            Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines->composite);
+            glowTexture: raw Sdl:::SDL_GPUTexture~* = bloomDrawn ? targets->levels[0].texture : targets->hdrTexture;
+            glowStrength: f32 = bloomDrawn ? post.bloomStrength : 0.0f;
+            toneMappingFlag~ f32 = 0.0f;
+            when post.toneMapper {
+                lantern:::renderer:::ToneMapper:::Clamp -> {
+                    toneMappingFlag = 0.0f;
+                },
+                lantern:::renderer:::ToneMapper:::Neutral -> {
+                    toneMappingFlag = 1.0f;
+                },
+                lantern:::renderer:::ToneMapper:::Aces -> {
+                    toneMappingFlag = 2.0f;
+                }
+            }
+            settings := VectorUniforms { values: [post.exposure, glowStrength, toneMappingFlag, encodeFlag] };
+            PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(settings), 16);
+            bindings: Sdl:::SDL_GPUTextureSamplerBinding[2] = [
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: targets->hdrTexture, sampler: samplers->linearClamp },
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: glowTexture, sampler: samplers->linearClamp }
+            ];
+            firstBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(bindings);
+            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, firstBinding, 2);
+            Sdl:::SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+            Sdl:::SDL_EndGPURenderPass(pass);
+        }
+    }
+}

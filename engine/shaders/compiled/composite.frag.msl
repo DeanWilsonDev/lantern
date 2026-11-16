@@ -1,0 +1,102 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct CompositeUniforms
+{
+    float4 exposure_bloom_tonemap_encode;
+};
+
+struct main0_out
+{
+    float4 output_color [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 source_uv [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+float3 AcesFilmic(thread const float3& x)
+{
+    return fast::clamp((x * ((x * 2.5099999904632568359375) + float3(0.02999999932944774627685546875))) / ((x * ((x * 2.4300000667572021484375) + float3(0.589999973773956298828125))) + float3(0.14000000059604644775390625)), float3(0.0), float3(1.0));
+}
+
+static inline __attribute__((always_inline))
+float3 PbrNeutral(thread float3& color)
+{
+    float lowest = fast::min(color.x, fast::min(color.y, color.z));
+    float _94;
+    if (lowest < 0.07999999821186065673828125)
+    {
+        _94 = lowest - ((6.25 * lowest) * lowest);
+    }
+    else
+    {
+        _94 = 0.039999999105930328369140625;
+    }
+    float offset = _94;
+    color -= float3(offset);
+    float peak = fast::max(color.x, fast::max(color.y, color.z));
+    if (peak < 0.7599999904632568359375)
+    {
+        return color;
+    }
+    float room = 0.23999999463558197021484375;
+    float new_peak = 1.0 - ((room * room) / ((peak + room) - 0.7599999904632568359375));
+    color *= (new_peak / peak);
+    float blend_to_white = 1.0 - (1.0 / ((0.1500000059604644775390625 * (peak - new_peak)) + 1.0));
+    return mix(color, float3(1.0) * new_peak, float3(blend_to_white));
+}
+
+static inline __attribute__((always_inline))
+float3 ToneMap(thread const float3& exposed, thread const float& mapper)
+{
+    if (mapper > 1.5)
+    {
+        float3 param = exposed;
+        return AcesFilmic(param);
+    }
+    if (mapper > 0.5)
+    {
+        float3 param_1 = exposed;
+        float3 _178 = PbrNeutral(param_1);
+        return fast::clamp(_178, float3(0.0), float3(1.0));
+    }
+    return fast::clamp(exposed, float3(0.0), float3(1.0));
+}
+
+static inline __attribute__((always_inline))
+float3 EncodeSrgb(thread const float3& linear_color)
+{
+    float3 low = linear_color * 12.9200000762939453125;
+    float3 high = (pow(linear_color, float3(0.4166666567325592041015625)) * 1.05499994754791259765625) - float3(0.054999999701976776123046875);
+    return select(high, low, linear_color <= float3(0.003130800090730190277099609375));
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& settings [[buffer(0)]], texture2d<float> scene_image [[texture(0)]], texture2d<float> bloom_image [[texture(1)]], sampler scene_imageSmplr [[sampler(0)]], sampler bloom_imageSmplr [[sampler(1)]])
+{
+    main0_out out = {};
+    float3 scene = scene_image.sample(scene_imageSmplr, in.source_uv).xyz;
+    float bloom_strength = settings.exposure_bloom_tonemap_encode.y;
+    if (bloom_strength > 0.0)
+    {
+        scene += (bloom_image.sample(bloom_imageSmplr, in.source_uv).xyz * bloom_strength);
+    }
+    float3 exposed = scene * settings.exposure_bloom_tonemap_encode.x;
+    float3 param = exposed;
+    float param_1 = settings.exposure_bloom_tonemap_encode.z;
+    float3 display = ToneMap(param, param_1);
+    if (settings.exposure_bloom_tonemap_encode.w > 0.5)
+    {
+        float3 param_2 = display;
+        display = EncodeSrgb(param_2);
+    }
+    out.output_color = float4(display, 1.0);
+    return out;
+}
+

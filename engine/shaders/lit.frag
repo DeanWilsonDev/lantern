@@ -26,8 +26,8 @@
 // everything by pi to cancel that, so the numbers an artist writes mean what they look like.
 //
 // All of this is in linear colour, where adding and multiplying light is physically meaningful. Textures are sRGB
-// formats, so sampling decodes them to linear. Output is encoded back to sRGB either by the swapchain (SDR_LINEAR)
-// or, when the target can't, by EncodeSrgb below.
+// formats, so sampling decodes them to linear. The output stays linear and unclamped, in a high dynamic range target;
+// composite.frag tone maps it and encodes it to sRGB later (see GpuPost.nox).
 //
 // SDL GPU fixes where resources live in SPIR-V for a fragment shader: texture-sampler pairs are set 2, uniform blocks
 // are set 3, binding n for push slot n.
@@ -56,7 +56,7 @@ layout(set = 3, binding = 0) uniform LightUniforms {
     // Ground light, for surfaces facing down.
     vec4 ground_ambient_color;
     vec4 fog_color;
-    // x: fog start distance, y: fog end distance, w: 1 when this shader must sRGB-encode its output.
+    // x: fog start distance, y: fog end distance.
     vec4 fog_and_output;
     vec4 camera_position;
 } light;
@@ -112,14 +112,6 @@ layout(location = 3) in vec4 surface_color;
 
 // The colour written to the colour target.
 layout(location = 0) out vec4 output_color;
-
-// The exact sRGB transfer function: linear light to the encoded values screens expect. A straight line near black,
-// a 1/2.4 power curve above.
-vec3 EncodeSrgb(vec3 linear_color) {
-    vec3 low = linear_color * 12.92;
-    vec3 high = 1.055 * pow(linear_color, vec3(1.0 / 2.4)) - 0.055;
-    return mix(high, low, lessThanEqual(linear_color, vec3(0.0031308)));
-}
 
 // The GGX normal distribution: how much of the surface's microscopic mirrors face along the half vector. Rougher
 // surfaces (larger alpha) spread it out, giving a broad dim highlight.
@@ -314,9 +306,8 @@ void main() {
     float fog = clamp((distance_to_camera - light.fog_and_output.x) / fog_range, 0.0, 1.0);
     lit = mix(lit, light.fog_color.rgb, fog);
 
-    if (light.fog_and_output.w > 0.5) {
-        lit = EncodeSrgb(lit);
-    }
+    // The value goes out as linear light, which can be far above 1: the target is a 16-bit float texture, and
+    // composite.frag tone maps it to the screen's range and encodes it to sRGB.
     // Meshes are opaque: the lit pipeline doesn't blend, so alpha is written as 1.
     output_color = vec4(lit, 1.0);
 }
