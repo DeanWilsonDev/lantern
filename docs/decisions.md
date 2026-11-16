@@ -1250,3 +1250,18 @@ Date: 2026-11-16.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/editor-quality-settings`.
+
+## D-076: Slice 4 of the Crimson and Thorn mechanics: a goal ends the level and chains to the next
+
+The streets needed an end, and the game needed a loop (`crimson-and-thorn-slice.md`, slice 4).
+
+- **The next level is data.** A `goal` entity's optional `next_level` text property names the world file to load, so a
+  chapter progression is authored in the editor and needs no engine call. Without it the game returns to the main menu.
+- **A pause, then the hand-over.** Reaching the goal shows the gem tally for 4 s while the player can still move, then
+  the level changes. Nothing is saved yet (saving is a later feature), so the gem count starts again with the new level.
+- **Tolerate bad authoring.** A `swing_arc` with no usable `end` is skipped and logged, because a world file edited by
+  hand should not stop the level loading. This has no host test (the host tests cannot choose a level); the log line
+  is the check.
+- **Slice 3's review nits.** The `SwingTo` comment sits above the right method, and the missing `end` is the guard above.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the goal and the swing arc diagnostics complete).

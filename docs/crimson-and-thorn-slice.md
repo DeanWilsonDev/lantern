@@ -29,6 +29,7 @@ the camera and the level layout explain a puzzle without text.
 | Chapter looks: palette, fog, tone from neutral to saturated to cold (Game Design, Narrative Structure) | Slice 2 | Done: sky, fog and sun per chapter. |
 | Thorns from Chapter 3 | Slice 2 | Done: a hazard that moves the player back, never one that ends the run. |
 | Ability 3, the Anchor | Slice 3 | Done as a set swing arc between two posts (Dean's choice). The companion's form first, then the solo one. |
+| A goal, a win state and a chapter progression | Slice 4 | Done: a gold goal at the end of the streets ends the level and loads the next one. |
 | Authored cameras: static shots, player-locked, player-controlled (Camera) | Later | The third-person camera is the only mode today. A shot system needs its own design. |
 | Chapters 1 to 5 as a whole, recurring and unique levels | Later | The slice builds one recurring level (the streets) in two chapter looks. More levels come after the mechanics feel right. |
 | Post-completion changes (the blue and red doors, stripped levels) | Later | Needs saving and a finished first playthrough. |
@@ -150,6 +151,35 @@ How it plays:
 The arc is a circle hanging from a point above the middle, so its angle follows `-cos(pi t)`: the swing starts and ends
 slowly and is fastest at the bottom. Posts stand 0.4 m inside each ledge, and a 2 m sag dips the feet about 0.3 m below
 the ledge as the player passes its corner.
+
+## Slice 4: a goal and the next level
+
+Until now the streets had no end. Slice 4 gives them one, and gives the game a loop: reach the goal, see the gem tally,
+and the next level loads. `engine/tests/host/the-anchor-swings-across-the-gap` carries on past the second swing, walks
+into the goal and checks the hand-over.
+
+| World kind | Properties | Meaning |
+|---|---|---|
+| `goal` | `next_level` (text, optional) | A gold plate and post. Touching it completes the level. `next_level` is a world file path; without it the game returns to the main menu. |
+
+How it plays:
+
+1. The goal stands at the far end of the streets (z -145.5). It is a trigger like a checkpoint: the player's capsule
+   overlapping a 1.3 m sphere above the plate reaches it (`GoalSystem.DetectReached`).
+2. `GameRules.Finish` marks the level complete once, tints the goal pale gold, plays the pickup sound and shows
+   `Level complete! Gems N / M` for 6 s. Falling or restarting afterwards resets the goal (`Goal.Restore`).
+3. After 4 s the game loads `next_level` and keeps playing. `streets-later` is the same street with no `next_level`,
+   so finishing it returns to the main menu: the chapter progression has one link now and more can be chained by
+   editing the world files.
+4. A `swing_arc` whose `end` is missing or less than half a metre away along the ground is skipped with a log line
+   naming the entity, instead of breaking the level (`Anchor.isValid`).
+
+| File | Job |
+|---|---|
+| `game-entities/goal.nyx` | the plate and post, the reached tint, the spin |
+| `game-systems/goal-system.nyx` | the overlap test that raises `GameEvent.GoalReached` |
+
+The debug overlay has `Game/Complete` and `Game/Level` for tests and tuning.
 
 ## How it fits the engine
 
