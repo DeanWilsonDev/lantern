@@ -1,13 +1,26 @@
+// The C library's memcpy, used to copy pixel bytes into a buffer the caller owns.
 lantern:::editorapicopy :: foreign "c" {
     memcpy :: (destination: Array<u8~>, source: Array<u8>, byteCount: usize) -> raw u8~*;
 }
 
+// The editor's C API. This is the one door between the editor (Nox code in engine/src/editor and
+// engine/src/editorbackend) and its interface: the world editor's Nox host calls these functions and
+// sets them up as host functions for the interface's Nyx code. It is built to be called from C (the editor-backend folder
+// has a C test of it), so it uses only plain things: numbers, text, and a handle to the editor. Rules that follow from that:
+// - entities are named by a whole number key (0 means none), and lists are read one item at a time
+// (a count, then an item by index), with a part number to say which piece of an item you want;
+// - a function that cannot do its job returns false or an empty value, and the reason is put in the
+// status line, which the interface shows;
+// - pictures are drawn into the editor's own memory and then copied into a buffer the caller gives.
+// See docs/editor.md for the full list of rules.
 lantern:::editorapi :: namespace {
     EditorBackend :: import lantern:::editorbackend:::EditorBackend;
     EditorSession :: import lantern:::editor:::EditorSession;
     OutlineRow :: import lantern:::editor:::OutlineRow;
     InspectorField :: import lantern:::editor:::InspectorField;
 
+    // The parts of an inspector field that Field can be asked for, and of a template that Template can be
+    // asked for.
     FIELD_KEY: u32 : 0;
     FIELD_LABEL: u32 : 1;
     FIELD_GROUP: u32 : 2;
@@ -19,6 +32,7 @@ lantern:::editorapi :: namespace {
     TEMPLATE_LABEL: u32 : 1;
     TEMPLATE_KIND: u32 : 2;
 
+    // Turns the API's signed entity number into the editor's key; a negative number becomes 0 (no entity).
     EntityKey :: (entity: i64) -> u64 {
         if entity < 0 {
             return 0;
@@ -26,6 +40,7 @@ lantern:::editorapi :: namespace {
         return u64(entity);
     }
 
+    // The reverse: an optional key as a number, with none as 0.
     EntityId :: (key: u64?) -> i64 {
         if found := key {
             return i64(found);
@@ -33,6 +48,7 @@ lantern:::editorapi :: namespace {
         return 0;
     }
 
+    // "true" or "false" as text, for the bool values returned in text form.
     BoolText :: (value: bool) -> string! {
         if value {
             return "true".copy();
@@ -40,6 +56,7 @@ lantern:::editorapi :: namespace {
         return "false".copy();
     }
 
+    // Copies bytes into the caller's buffer, which must be at least as big; false if it is too small.
     CopyInto :: (source: Array<u8>, target: Array<u8~>) -> bool {
         if target.length() < source.length() {
             return false;
@@ -53,6 +70,10 @@ lantern:::editorapi :: namespace {
         return true;
     }
 
+    // What the C handle points at: the backend, an optional message of the API's own (such as a drawing
+    // failure, which the session knows nothing of), and caches of the outline rows and inspector fields.
+    // The caches are rebuilt only when the editor's revision number changes, so the interface can ask
+    // for row 0, row 1, row 2 and so on without the list being rebuilt for each.
     export Editor :: class {
     public:
         backend~ EditorBackend*!;
@@ -74,15 +95,18 @@ lantern:::editorapi :: namespace {
             inspector.freeAll();
         }
 
+        // The editor's session.
         Session :: () -> EditorSession~* {
             return backend->session;
         }
 
+        // Forgets the API's own message. Actions the person takes clear it.
         ClearApiStatus~: () -> void {
             delete apiStatus;
             apiStatus = null;
         }
 
+        // Keeps an API error to show as the status line, unless it is already showing.
         ShowError~: (error: string!) -> void {
             if current := apiStatus {
                 if current == error {
@@ -94,6 +118,7 @@ lantern:::editorapi :: namespace {
             apiStatus = error!;
         }
 
+        // Rebuilds the outline rows if the revision has moved on.
         RefreshOutline~: () -> void {
             revision: u64 = backend->session->UiRevision();
             if cached := outlineRevision {
@@ -106,6 +131,7 @@ lantern:::editorapi :: namespace {
             outlineRevision = revision;
         }
 
+        // Rebuilds the inspector fields if the revision has moved on.
         RefreshInspector~: () -> void {
             revision: u64 = backend->session->UiRevision();
             if cached := inspectorRevision {
@@ -118,6 +144,7 @@ lantern:::editorapi :: namespace {
             inspectorRevision = revision;
         }
 
+        // The outline row at a position, or null past the end.
         OutlineRowAt~: (row: u32) -> OutlineRow*? {
             RefreshOutline();
             if usize(row) >= outline.length() {
@@ -126,6 +153,7 @@ lantern:::editorapi :: namespace {
             return outline[usize(row)];
         }
 
+        // The inspector field at a position, or null past the end.
         InspectorFieldAt~: (index: u32) -> InspectorField*? {
             RefreshInspector();
             if usize(index) >= inspector.length() {
@@ -134,6 +162,7 @@ lantern:::editorapi :: namespace {
             return inspector[usize(index)];
         }
 
+        // An entity's name or kind, or empty if there is no such entity.
         EntityText :: (entity: i64, wantKind: bool) -> string! {
             worldFile := backend->session->World();
             guard index := worldFile->IndexOf(EntityKey(entity)) return "".copy();
@@ -144,19 +173,24 @@ lantern:::editorapi :: namespace {
         }
     }
 
+    // Makes an editor for an assets folder and a level file (empty for the default level).
     export Create :: (assets: string, worldPath: string) -> Editor*! {
         return new Editor(assets, worldPath);
     }
 
+    // Frees an editor.
     export Destroy :: (editorInstance: Editor*!) -> void {
         delete editorInstance;
     }
 
+    // The number that changes whenever anything the interface shows may have changed. An API message
+    // counts as a change.
     export Revision :: (editorInstance: Editor*) -> u64 {
         extra: u64 = when (editorInstance->apiStatus == null) { true -> 0, false -> 1 };
         return editorInstance->backend->session->UiRevision() + extra;
     }
 
+    // The status line: the API's message if it has one, else the session's.
     export Status :: (editorInstance: Editor*) -> string! {
         if status := editorInstance->apiStatus {
             return status.copy();
@@ -179,6 +213,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->session->document->IsDirty();
     }
 
+    // Opens a level file.
     export Open :: (editorInstance: Editor~*, path: string) -> bool {
         editorInstance->ClearApiStatus();
         return editorInstance->Session()->Load(path);
@@ -206,6 +241,8 @@ lantern:::editorapi :: namespace {
         }
     }
 
+    // Draws the viewport at a size into the editor's pixel buffer. A failure is shown in the status line
+    // and false is returned.
     export Render :: (editorInstance: Editor~*, width: u32, height: u32) -> bool {
         failure: string!? = editorInstance->backend->Render(width, height);
         if problem := failure {
@@ -216,6 +253,7 @@ lantern:::editorapi :: namespace {
         return true;
     }
 
+    // The size of the last picture drawn, or 0 if none has been drawn.
     export PixelWidth :: (editorInstance: Editor*) -> u32 {
         if editorInstance->backend->pixels.length() == 0 {
             return 0;
@@ -230,10 +268,12 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->pixelHeight;
     }
 
+    // Copies the last picture's RGBA bytes into a buffer.
     export CopyPixels :: (editorInstance: Editor*, target: Array<u8~>) -> bool {
         return CopyInto(editorInstance->backend->pixels, target);
     }
 
+    // Pointer, wheel, key and tick input from the viewport. They are handed straight to the session.
     export PointerMove :: (editorInstance: Editor~*, x: f32, y: f32) -> void {
         editorInstance->Session()->PointerMoved(Vec2 { x: x, y: y });
     }
@@ -257,6 +297,9 @@ lantern:::editorapi :: namespace {
         editorInstance->Session()->ReleaseKeys();
     }
 
+    // One tick of time, limited to between 0 and a quarter of a second so a long pause (a window being
+    // dragged, a breakpoint) does not fling the fly camera. It also checks whether the game being
+    // played has quit.
     export Update :: (editorInstance: Editor~*, seconds: f32) -> void {
         clamped~ f32 = seconds;
         if !(clamped >= 0.0f) {
@@ -290,6 +333,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->session->snap.enabled;
     }
 
+    // The outliner: rows are read by position; ids, depths and parents are returned as numbers.
     export OutlineCount :: (editorInstance: Editor*) -> u32 {
         return u32(editorInstance->backend->session->World()->entities.length());
     }
@@ -326,6 +370,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->session->IsSelected(EntityKey(entity));
     }
 
+    // Selects an entity (adding to the selection if `additive`).
     export Select :: (editorInstance: Editor~*, entity: i64, additive: bool) -> void {
         if additive {
             editorInstance->Session()->ToggleSelected(EntityKey(entity));
@@ -346,6 +391,8 @@ lantern:::editorapi :: namespace {
         return u32(editorInstance->backend->session->selection.length());
     }
 
+    // The inspector: how many fields there are, and one piece of a field (`part` is one of the
+    // FIELD_ numbers) as text. Booleans come back as "true" or "false".
     export FieldCount :: (editorInstance: Editor~*) -> u32 {
         editorInstance->RefreshInspector();
         return u32(editorInstance->inspector.length());
@@ -374,6 +421,7 @@ lantern:::editorapi :: namespace {
         return "".copy();
     }
 
+    // The choices of a drop down field, one at a time.
     export FieldChoiceCount :: (editorInstance: Editor~*, index: u32) -> u32 {
         guard field := editorInstance->InspectorFieldAt(index) return 0;
         return u32(field->choices.length());
@@ -387,6 +435,8 @@ lantern:::editorapi :: namespace {
         return field->choices[usize(choice)].copy();
     }
 
+    // Sets one field of an entity from text typed in the inspector, and CommitField ends the typing so
+    // the next change is a new undo step.
     export SetField :: (editorInstance: Editor~*, entity: i64, field: string, text: string) -> bool {
         editorInstance->ClearApiStatus();
         return editorInstance->Session()->SetField(EntityKey(entity), field, text);
@@ -396,6 +446,7 @@ lantern:::editorapi :: namespace {
         editorInstance->Session()->CommitField();
     }
 
+    // The palette: how many templates there are, and one piece of one (TEMPLATE_ID, LABEL or KIND).
     export TemplateCount :: (editorInstance: Editor*) -> u32 {
         return u32(editorInstance->backend->session->palette->templates.length());
     }
@@ -418,6 +469,7 @@ lantern:::editorapi :: namespace {
         return "".copy();
     }
 
+    // Places a new entity from a template at the centre of the view and returns its key, or 0.
     export AddEntity :: (editorInstance: Editor~*, templateId: string) -> i64 {
         editorInstance->ClearApiStatus();
         return EntityId(editorInstance->Session()->AddEntity(templateId, false));
@@ -431,6 +483,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->Session()->DuplicateSelection();
     }
 
+    // Undo and redo, and whether either is possible.
     export Undo :: (editorInstance: Editor~*) -> bool {
         editorInstance->ClearApiStatus();
         return editorInstance->Session()->Undo();
@@ -449,6 +502,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->session->document->CanRedo();
     }
 
+    // The recent files list.
     export RecentFileCount :: (editorInstance: Editor*) -> u32 {
         return u32(editorInstance->backend->session->recentFiles.length());
     }
@@ -461,6 +515,7 @@ lantern:::editorapi :: namespace {
         return files->recentFiles[usize(index)].copy();
     }
 
+    // Saved preferences, read and written by name.
     export Preference :: (editorInstance: Editor*, name: string) -> string! {
         if value := editorInstance->backend->preferences->Get(name) {
             return value.copy();
@@ -480,6 +535,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->assetsDirectory.copy();
     }
 
+    // The gizmo's space, pivot mode and snap steps, by name (see Gizmo.nox for the names).
     export SetSpace :: (editorInstance: Editor~*, name: string) -> void {
         guard space := lantern:::editor:::GizmoSpaceNamed(name) return;
         editorInstance->Session()->SetSpace(space);
@@ -513,6 +569,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->Session()->SetViewOption(name, value);
     }
 
+    // View menu options, by name.
     export ViewOption :: (editorInstance: Editor*, name: string) -> string! {
         valueFound: string!? = editorInstance->backend->session->view.Get(name);
         if value := valueFound {
@@ -523,6 +580,7 @@ lantern:::editorapi :: namespace {
         return "".copy();
     }
 
+    // The gizmo handle under the mouse as a short text ("X", "XZ", "all"), or empty.
     export HoveredHandle :: (editorInstance: Editor*) -> string! {
         if handle := editorInstance->backend->session->HoveredHandle() {
             return handle.Describe();
@@ -530,6 +588,7 @@ lantern:::editorapi :: namespace {
         return "".copy();
     }
 
+    // Camera presets, orthographic switch, a description for the status bar and bookmarks.
     export CameraPreset :: (editorInstance: Editor~*, name: string) -> bool {
         return editorInstance->Session()->CameraPreset(name);
     }
@@ -578,6 +637,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->session->IsHidden(EntityKey(entity));
     }
 
+    // Hiding and locking, one entity or the whole selection.
     export SetHidden :: (editorInstance: Editor~*, entity: i64, hidden: bool) -> void {
         editorInstance->Session()->SetHidden(EntityKey(entity), hidden);
     }
@@ -602,6 +662,7 @@ lantern:::editorapi :: namespace {
         editorInstance->Session()->LockSelection(locked);
     }
 
+    // Selection helpers: all, inverted, by kind, and the children of the selection.
     export SelectAll :: (editorInstance: Editor~*) -> void {
         editorInstance->Session()->SelectAll();
     }
@@ -618,6 +679,8 @@ lantern:::editorapi :: namespace {
         editorInstance->Session()->SelectChildren();
     }
 
+    // Moves an entity under another (parent 0 or less means the top level), after ending any typing in
+    // the inspector.
     export SetParent :: (editorInstance: Editor~*, child: i64, parent: i64) -> bool {
         editorInstance->Session()->CommitField();
         parentKey~ u64? = null;
@@ -627,6 +690,8 @@ lantern:::editorapi :: namespace {
         return editorInstance->Session()->SetParent(EntityKey(child), parentKey);
     }
 
+    // Moves an entity to just before another in the list (sibling 0 or less means the end), as the
+    // outliner's drag and drop does.
     export MoveBefore :: (editorInstance: Editor~*, child: i64, sibling: i64) -> bool {
         editorInstance->Session()->CommitField();
         siblingKey~ u64? = null;
@@ -636,6 +701,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->Session()->MoveBefore(EntityKey(child), siblingKey);
     }
 
+    // Sets an inspector field on every selected entity.
     export SetSelectionField :: (editorInstance: Editor~*, field: string, text: string) -> bool {
         return editorInstance->Session()->SetFieldOnSelection(field, text);
     }
@@ -644,11 +710,13 @@ lantern:::editorapi :: namespace {
         return editorInstance->Session()->RenameProperty(oldName, newName);
     }
 
+    // Places a new entity under the mouse pointer and not at the centre.
     export AddEntityAtCursor :: (editorInstance: Editor~*, templateId: string) -> i64 {
         editorInstance->Session()->CommitField();
         return EntityId(editorInstance->Session()->AddEntity(templateId, true));
     }
 
+    // Level editing actions on the selection that need an axis, given by name ("x", "y" or "z").
     export DuplicateAlong :: (editorInstance: Editor~*, axisName: string) -> bool {
         guard axis := lantern:::editor:::AxisNamed(axisName) return false;
         return editorInstance->Session()->DuplicateSelectionAlong(axis);
@@ -685,6 +753,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->Session()->ApplyPrimaryToTemplate();
     }
 
+    // The undo history for the history panel: the step labels, the current position, and jumping.
     export HistoryCount :: (editorInstance: Editor*) -> u32 {
         labels~ Array<string!>! = editorInstance->backend->session->document->HistoryLabels();
         count: u32 = u32(labels.length());
@@ -712,6 +781,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->Session()->JumpHistory(usize(position));
     }
 
+    // The console's lines, with their level as text, and clearing it.
     export LogCount :: (editorInstance: Editor*) -> u32 {
         return u32(editorInstance->backend->session->log.length());
     }
@@ -736,6 +806,7 @@ lantern:::editorapi :: namespace {
         editorInstance->Session()->ClearLog();
     }
 
+    // Play in editor: starts the game on the current level, stops it, or asks whether it is running.
     export Play :: (editorInstance: Editor~*) -> bool {
         return editorInstance->backend->StartPlay();
     }
@@ -748,6 +819,8 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->IsPlaying();
     }
 
+    // A number for the stats readout: the entity count, the selection count, the play time, or one of the
+    // render statistics by name. Unknown names give empty text.
     export Stat :: (editorInstance: Editor*, name: string) -> string! {
         if name == "entities" {
             return `${editorInstance->backend->session->World()->entities.length()}`;
@@ -767,6 +840,7 @@ lantern:::editorapi :: namespace {
         return "".copy();
     }
 
+    // Draws the spinning template preview. `spin` is the angle in radians.
     export RenderPreview :: (editorInstance: Editor~*, templateId: string, width: u32, height: u32, spin: f32) -> bool {
         failure: string!? = editorInstance->backend->RenderTemplatePreview(templateId, width, height, spin);
         if problem := failure {
@@ -791,10 +865,12 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->previewHeight;
     }
 
+    // Copies the preview's RGBA bytes into a buffer.
     export CopyPreviewPixels :: (editorInstance: Editor*, target: Array<u8~>) -> bool {
         return CopyInto(editorInstance->backend->previewPixels, target);
     }
 
+    // Draws a palette thumbnail if it is out of date, and returns its side in pixels (0 on failure).
     export Thumbnail :: (editorInstance: Editor~*, templateId: string, size: u32) -> u32 {
         failure: string!? = editorInstance->backend->RenderThumbnail(templateId, size);
         if problem := failure {
@@ -806,6 +882,7 @@ lantern:::editorapi :: namespace {
         return editorInstance->backend->thumbnails[index]->size;
     }
 
+    // Copies a thumbnail's RGBA bytes into a buffer.
     export CopyThumbnailPixels :: (editorInstance: Editor*, templateId: string, target: Array<u8~>) -> bool {
         guard index := editorInstance->backend->ThumbnailIndex(templateId) return false;
         return CopyInto(editorInstance->backend->thumbnails[index]->pixels, target);
