@@ -38,7 +38,7 @@ if(LANTERN_NYX_SOURCE_DIR)
     set(FETCHCONTENT_SOURCE_DIR_NYX "${LANTERN_NYX_SOURCE_DIR}")
 endif()
 FetchContent_Declare(nyx
-    GIT_REPOSITORY https://github.com/fearlessgamedev/nyx-scripting-language.git
+    GIT_REPOSITORY https://github.com/fearlessgamelabs/nyx-scripting-language.git
     GIT_TAG        f068b4263ccbd7d5c452019d09bdadd4182a28cf
     GIT_SUBMODULES external/firefly external/lucis-proto
     GIT_SUBMODULES_RECURSE TRUE)
@@ -48,7 +48,7 @@ if(LANTERN_CHAOS_SOURCE_DIR)
     set(FETCHCONTENT_SOURCE_DIR_CHAOS "${LANTERN_CHAOS_SOURCE_DIR}")
 endif()
 FetchContent_Declare(chaos
-    GIT_REPOSITORY https://github.com/fearlessgamedev/chaos-ui-framework.git
+    GIT_REPOSITORY https://github.com/fearlessgamelabs/chaos-ui-framework.git
     GIT_TAG        a2de61b9ae94f830551c0cd414fc007aa4b44d56
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(chaos)
@@ -57,7 +57,7 @@ if(LANTERN_COSMOS_SOURCE_DIR)
     set(FETCHCONTENT_SOURCE_DIR_COSMOS "${LANTERN_COSMOS_SOURCE_DIR}")
 endif()
 FetchContent_Declare(cosmos
-    GIT_REPOSITORY https://github.com/fearlessgamedev/cosmos-styling-language.git
+    GIT_REPOSITORY https://github.com/fearlessgamelabs/cosmos-styling-language.git
     GIT_TAG        7dabd4d2c66d18517716f4e1a5891f31cce66a32
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(cosmos)

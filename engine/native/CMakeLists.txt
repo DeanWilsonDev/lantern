@@ -23,13 +23,13 @@ set(COSMOS_BUILD_LSP OFF CACHE BOOL "" FORCE)
 
 include(FetchContent)
 set(FETCHCONTENT_SOURCE_DIR_NYX "${LANTERN_NYX_SOURCE_DIR}")
-FetchContent_Declare(nyx GIT_REPOSITORY https://github.com/fearlessgamedev/nyx-scripting-language.git GIT_TAG proto)
+FetchContent_Declare(nyx GIT_REPOSITORY https://github.com/fearlessgamelabs/nyx-scripting-language.git GIT_TAG proto)
 FetchContent_MakeAvailable(nyx)
 set(FETCHCONTENT_SOURCE_DIR_CHAOS "${LANTERN_CHAOS_SOURCE_DIR}")
-FetchContent_Declare(chaos GIT_REPOSITORY https://github.com/fearlessgamedev/chaos-ui-framework.git GIT_TAG proto EXCLUDE_FROM_ALL)
+FetchContent_Declare(chaos GIT_REPOSITORY https://github.com/fearlessgamelabs/chaos-ui-framework.git GIT_TAG proto EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(chaos)
 set(FETCHCONTENT_SOURCE_DIR_COSMOS "${LANTERN_COSMOS_SOURCE_DIR}")
-FetchContent_Declare(cosmos GIT_REPOSITORY https://github.com/fearlessgamedev/cosmos-styling-language.git GIT_TAG proto EXCLUDE_FROM_ALL)
+FetchContent_Declare(cosmos GIT_REPOSITORY https://github.com/fearlessgamelabs/cosmos-styling-language.git GIT_TAG proto EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(cosmos)
 
 add_library(lantern-native SHARED
