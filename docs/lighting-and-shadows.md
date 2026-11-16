@@ -100,7 +100,8 @@ The platformer's gems use it: a smooth non-metal that glows pale blue.
 - Prefer few shadowed lamps to many. Start with the sun only, then add a lamp shadow where it makes the scene
   clearer.
 - Eight local lights are lit per frame. With more in the scene the nearest eight win, so lights near the player are
-  the ones that count.
+  the ones that count. Shadowed lamps are picked from those eight by the same distance, so a far lamp can lose its
+  shadow, and which lamps have shadows can change as the camera moves.
 - Lower `distance` and the map sizes before removing a light.
 - The renderer reports how much shadow work a frame did in `RenderReport.shadowTiles` and `shadowDraws` (see `renderer.md`), which is what the tests check.
 
