@@ -45,7 +45,7 @@ has to come back with its times intact, and the git cache is only needed when `m
 The bundle records the Nox and Mist commits it was built from, the hash of `mist.lock`, and the home, Lantern and
 install directories. The bootstrap uses it only when the three directories match this session, and warns when
 `nox-systems-language` `proto` or `mist-package-manager` `main` has moved on. A newer `mist.lock` still works: `mist
-install` fetches and builds what changed. When a test needs a newer compiler, run with `LANTERN_BUILD_FROM_SOURCE=1`.
+install` fetches and builds what changed. When a test needs a newer compiler, update the sibling checkout (`git -C ../nox-systems-language pull --ff-only`) and run with `LANTERN_BUILD_FROM_SOURCE=1`, which rebuilds the checkout as it stands.
 
 Refresh it after Nox, Mist or the mist dependencies change:
 

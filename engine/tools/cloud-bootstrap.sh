@@ -54,7 +54,11 @@ install_prebuilt_toolchain() {
         grep -qxF "$expected_line" <<<"$manifest_text" \
             || { echo "cloud-bootstrap: prebuilt toolchain was made for a different layout ($expected_line); building from source" >&2; rm -rf "$download_directory"; return 1; }
     done
-    tar -C / -xzf "$archive_path" --exclude=toolchain-manifest.txt
+    if ! tar -C / -xzf "$archive_path" --exclude=toolchain-manifest.txt; then
+        echo "cloud-bootstrap: could not unpack the prebuilt toolchain; building from source" >&2
+        rm -rf "$download_directory"
+        return 1
+    fi
     rm -rf "$download_directory"
     warn_when_prebuilt_toolchain_is_stale "$manifest_text"
 }
@@ -66,7 +70,7 @@ warn_when_prebuilt_toolchain_is_stale() {
         built_commit="$(sed -n "s/^$key=//p" <<<"$manifest_text")"
         live_commit="$(git ls-remote "https://github.com/fearlessgamelabs/$repository_name" "refs/heads/$branch_name" 2>/dev/null | cut -f1)"
         [[ -z "$live_commit" || "$live_commit" == "$built_commit" ]] \
-            || echo "cloud-bootstrap: warning: prebuilt $repository_name is $built_commit but $branch_name is $live_commit; rerun with LANTERN_BUILD_FROM_SOURCE=1 if a test needs the newer compiler" >&2
+            || echo "cloud-bootstrap: warning: prebuilt $repository_name is $built_commit but $branch_name is $live_commit; if a test needs the newer one, run git -C $workspace_directory/$repository_name pull --ff-only and rerun with LANTERN_BUILD_FROM_SOURCE=1" >&2
     done
 }
 
