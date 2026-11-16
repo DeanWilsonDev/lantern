@@ -6,7 +6,7 @@ lantern:::host :: namespace {
      * `SetQuality` is the one switch for how much the renderer spends: "low", "medium" or "high". The other calls tune
      * one effect and may follow it. The guide is `docs/graphics-effects.md`.
      */
-    RegisterGraphicsApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+    RegisterGraphicsApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
         graphicsNamespace := new HostNamespace(runtime, "lantern::graphics");
         graphicsNamespace->Function("SetQuality", "(level: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             name: string! = context->Text(0);
@@ -70,6 +70,26 @@ lantern:::host :: namespace {
                 post.ambientOcclusionRadius = radius > 0.01f ? radius : 0.01f;
                 post.ambientOcclusionIntensity = Math:::clamp(intensity, 0.0f, 1.0f);
                 state->renderWorld->post = post;
+            }
+        });
+        graphicsNamespace->Function("AddBlobShadow", "(center: lantern:::math:::Vec3, radius: f32, strength: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            center: Vec3 = Vec3Argument(context, 0, math);
+            radius: f32 = context->F32(1);
+            strength: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->AddBlobShadow(center, radius, strength);
+            }
+        });
+        graphicsNamespace->Function("SetBlobShadows", "(enabled: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            enabled: bool = context->Bool(0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->post.blobShadowsEnabled = enabled;
             }
         });
         graphicsNamespace->Function("SetExposure", "(exposure: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {

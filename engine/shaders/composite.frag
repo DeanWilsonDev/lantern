@@ -5,7 +5,8 @@
 // texture and does three things to each pixel, in this order:
 //
 //   0. multiply by the ambient-occlusion picture, when there is one (1 where nothing is blocked, darker in creases), then
-//      add height fog and light shafts, which need each pixel's distance and so read the depth buffer too;
+//      darken under blob shadows, add height fog and light shafts, which need each pixel's distance and so read the depth
+//      buffer too;
 //   1. add the bloom picture (the blurred bright parts) scaled by a strength;
 //   2. multiply by an exposure, the camera's brightness knob: 2 makes the whole picture twice as bright before step 3;
 //   3. tone map: squeeze 0..infinity into 0..1 with a curve that keeps dark and middle values nearly as they were and
@@ -35,7 +36,7 @@ layout(set = 2, binding = 3) uniform sampler2D depth_image;
 layout(set = 3, binding = 0) uniform CompositeUniforms {
     vec4 exposure_bloom_tonemap_encode;
     // x: 1 when the ambient-occlusion picture is drawn this frame (it is the scene itself otherwise, and unread),
-    // y: 1 when height fog is on, z: 1 when light shafts are on.
+    // y: 1 when height fog is on, z: 1 when light shafts are on, w: how many blob shadows there are (0 to 8).
     vec4 flags;
     // x: tan(half the horizontal field of view), y: tan(half the vertical), z: the near plane, w: the projection's depth range.
     vec4 projection_terms;
@@ -53,6 +54,9 @@ layout(set = 3, binding = 0) uniform CompositeUniforms {
     vec4 sun_color_and_shaft_strength;
     // x: the height where fog has its full density, y: how much of the shaft's light survives each step towards the sun.
     vec4 fog_base_and_shaft_decay;
+    // Blob shadows, two vec4s each: xyz the point on the ground it sits on and w its radius in metres, then x its darkness (0
+    // to 1) and y how far above and below that point, in metres, it still darkens. flags.w says how many are used.
+    vec4 blobs[16];
 } settings;
 
 layout(location = 0) in vec2 source_uv;
@@ -160,16 +164,44 @@ vec3 LightShafts(vec2 uv, vec3 ray) {
     return settings.sun_color_and_shaft_strength.rgb * (settings.sun_color_and_shaft_strength.w * toward_sun * fade_in * total / total_weight);
 }
 
+// Blob shadows: soft dark ellipses on the ground under things, so a character looks planted and a jump shows where it will
+// land. Each is a point, a radius and a darkness. A pixel's world position is rebuilt from its depth and compared with each
+// point: how far away it is across the ground, scaled by the radius, and how far above or below, scaled by the blob's
+// vertical reach. Inside the ellipse the pixel is darkened, most at the centre and falling off smoothly to nothing at the
+// rim. Because it works on whatever surface is there, a blob lies correctly over slopes, steps and walls without a decal
+// mesh to place.
+vec3 ApplyBlobShadows(vec3 scene, vec3 world_position) {
+    int count = int(settings.flags.w);
+    float darkness = 0.0;
+    for (int blob_index = 0; blob_index < 8; blob_index++) {
+        if (blob_index >= count) {
+            break;
+        }
+        vec4 where_and_radius = settings.blobs[blob_index * 2];
+        vec4 strength_and_reach = settings.blobs[blob_index * 2 + 1];
+        vec3 offset = world_position - where_and_radius.xyz;
+        float across = length(offset.xz) / max(where_and_radius.w, 0.001);
+        float vertical = abs(offset.y) / max(strength_and_reach.y, 0.001);
+        float edge = clamp(sqrt(across * across + vertical * vertical), 0.0, 1.0);
+        float falloff = 1.0 - edge;
+        darkness = max(darkness, strength_and_reach.x * falloff * falloff * (3.0 - 2.0 * falloff));
+    }
+    return scene * (1.0 - darkness);
+}
+
 void main() {
     vec3 scene = texture(scene_image, source_uv).rgb;
     if (settings.flags.x > 0.5) {
         scene *= texture(occlusion_image, source_uv).r;
     }
-    if (settings.flags.y > 0.5 || settings.flags.z > 0.5) {
+    if (settings.flags.y > 0.5 || settings.flags.z > 0.5 || settings.flags.w > 0.5) {
         float depth = texture(depth_image, source_uv).r;
         vec2 ndc = vec2(source_uv.x * 2.0 - 1.0, 1.0 - source_uv.y * 2.0);
         vec3 unnormalized = settings.camera_forward.xyz + settings.camera_right.xyz * (ndc.x * settings.projection_terms.x) + settings.camera_up.xyz * (ndc.y * settings.projection_terms.y);
         vec3 ray = normalize(unnormalized);
+        if (settings.flags.w > 0.5 && !IsBackground(depth)) {
+            scene = ApplyBlobShadows(scene, settings.camera_position_and_falloff.xyz + unnormalized * LinearDistance(depth));
+        }
         if (settings.flags.y > 0.5 && !IsBackground(depth)) {
             scene = ApplyHeightFog(scene, ray, LinearDistance(depth) * length(unnormalized));
         }

@@ -115,9 +115,26 @@ lantern:::gpu :: namespace {
         sunColor: lantern:::core:::Color = renderWorld->light.color;
         safeWidth: f32 = Math:::max(halfWidth, 0.0001f);
         safeHeight: f32 = Math:::max(halfHeight, 0.0001f);
+        blobCount~ usize = 0;
+        if renderWorld->post.blobShadowsEnabled && perspective {
+            blobCount = renderWorld->blobShadows.length();
+            if blobCount > lantern:::renderer:::MAX_BLOB_SHADOWS {
+                blobCount = lantern:::renderer:::MAX_BLOB_SHADOWS;
+            }
+        }
+        blobValues~ f32[64] = filled<f32, 64>(0.0f);
+        for blobIndex~ usize = 0; blobIndex < blobCount; blobIndex++ {
+            blob: lantern:::renderer:::BlobShadow = renderWorld->blobShadows[blobIndex];
+            blobValues[blobIndex * 8] = blob.center.x;
+            blobValues[blobIndex * 8 + 1] = blob.center.y;
+            blobValues[blobIndex * 8 + 2] = blob.center.z;
+            blobValues[blobIndex * 8 + 3] = blob.radius;
+            blobValues[blobIndex * 8 + 4] = Math:::clamp(blob.strength, 0.0f, 1.0f);
+            blobValues[blobIndex * 8 + 5] = blob.reach;
+        }
         return CompositeUniforms {
             exposureGlowToneMapEncode: toneSettings,
-            flags: [occlusionFlag, fogFlag, shaftFlag, 0.0f],
+            flags: [occlusionFlag, fogFlag, shaftFlag, f32(blobCount)],
             projectionTerms: [halfWidth, halfHeight, camera.nearPlane, depthRange],
             cameraRight: [sky.rightScaled[0] / safeWidth, sky.rightScaled[1] / safeWidth, sky.rightScaled[2] / safeWidth, 0.0f],
             cameraUp: [sky.upScaled[0] / safeHeight, sky.upScaled[1] / safeHeight, sky.upScaled[2] / safeHeight, 0.0f],
@@ -126,7 +143,8 @@ lantern:::gpu :: namespace {
             fogColorAndDensity: [atmosphere.fogColor.r, atmosphere.fogColor.g, atmosphere.fogColor.b, Math:::max(atmosphere.fogDensity, 0.0f)],
             sunDirectionAndScattering: [toSun.x, toSun.y, toSun.z, Math:::max(atmosphere.fogSunScattering, 0.0f)],
             sunColorAndShaftStrength: [sunColor.r, sunColor.g, sunColor.b, Math:::max(atmosphere.lightShaftStrength, 0.0f)],
-            fogBaseAndShaftDecay: [atmosphere.fogBaseHeight, Math:::clamp(atmosphere.lightShaftDecay, 0.0f, 0.999f), 0.0f, 0.0f]
+            fogBaseAndShaftDecay: [atmosphere.fogBaseHeight, Math:::clamp(atmosphere.lightShaftDecay, 0.0f, 0.999f), 0.0f, 0.0f],
+            blobs: blobValues
         };
     }
 }

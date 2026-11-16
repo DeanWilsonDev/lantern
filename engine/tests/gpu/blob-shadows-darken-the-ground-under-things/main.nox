@@ -1,0 +1,128 @@
+// A white floor lit by flat ambient light alone, with one blob shadow on it. Every floor pixel would be the same brightness,
+// so a darker one is the blob. The test checks that the pixel the blob's centre lands on is dark, that a far corner of the
+// floor is untouched, that a blob switched off draws nothing, and that a ninth blob is ignored rather than breaking the frame.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+DarkestRed :: (pixels: Array<u8>, width: u32) -> u8 {
+    darkest~ u8 = 255;
+    for y~ u32 = 30; y < 128; y++ {
+        for x~ u32 = 20; x < 108; x++ {
+            red: u8 = PixelAt(pixels, width, x, y)[0];
+            if red < darkest {
+                darkest = red;
+            }
+        }
+    }
+    return darkest;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(40.0f, 40.0f);
+            defer delete floorData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            world := new lantern:::renderer:::RenderWorld();
+            defer delete world;
+            world->sky.enabled = false;
+            world->atmosphere.heightFogEnabled = false;
+            world->atmosphere.lightShaftsEnabled = false;
+            world->post.bloomEnabled = false;
+            world->post.ambientOcclusionEnabled = false;
+            world->post.antiAliasingEnabled = false;
+            world->light = lantern:::renderer:::DirectionalLight {
+                direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+                color: lantern:::core:::Color:::Black(),
+                ambient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f),
+                groundAmbient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f)
+            };
+            world->clearColor = lantern:::core:::Color:::Black();
+            world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 4.0f, z: 7.0f }, Vec3 { x: 0.0f, y: 0.0f, z: 0.0f });
+            world->Draw(floor, null, Mat4 { }, lantern:::core:::Color:::White());
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+
+            plainDarkest~ u8 = 0;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    plainDarkest = DarkestRed(pixels, size);
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->AddBlobShadow(Vec3 { }, 1.5f, 0.8f);
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    darkest: u8 = DarkestRed(pixels, size);
+                    corner: u8 = PixelAt(pixels, size, 6, 124)[0];
+                    if !(u32(darkest) * 100 < u32(plainDarkest) * 50) {
+                        print(`darkest: without ${plainDarkest}, with ${darkest}; corner ${corner}`);
+                    }
+                    assert(u32(darkest) * 100 < u32(plainDarkest) * 50, "the floor under the blob is at least half as dark");
+                    assert(u32(corner) * 100 > u32(plainDarkest) * 95, "the floor far from the blob is untouched");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->post.blobShadowsEnabled = false;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(u32(DarkestRed(pixels, size)) * 100 > u32(plainDarkest) * 95, "with blob shadows switched off nothing is darkened");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->post.blobShadowsEnabled = true;
+            for extra~ i32 = 0; extra < 12; extra++ {
+                world->AddBlobShadow(Vec3 { x: f32(extra) * 3.0f + 20.0f, y: 0.0f, z: 0.0f }, 1.0f, 0.5f);
+            }
+            assert(world->blobShadows.length() == 8, "a ninth blob shadow is ignored");
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(u32(DarkestRed(pixels, size)) * 100 < u32(plainDarkest) * 50, "a full list still draws");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("blob shadows darken the ground under things");
+    return 0;
+}

@@ -290,6 +290,25 @@ lantern:::renderer :: namespace {
         lightingIntensity~ f32 = 0.6f;
     }
 
+    /** How many blob shadows a frame can hold. A ninth is ignored. */
+    MAX_BLOB_SHADOWS: usize : 8;
+
+    /**
+     * A soft dark ellipse on whatever surface is near a point: the cheap shadow that makes a character look planted. Like
+     * the frame's draws it lasts one frame, so the game adds it again every frame. The guide is
+     * `docs/blob-shadows.md`.
+     */
+    BlobShadow :: struct {
+        /** The point on the ground it sits on, in world space. */
+        center~ Vec3 = Vec3 { };
+        /** How far across the ground it reaches, in metres. */
+        radius~ f32 = 1.0f;
+        /** How dark it is at the centre, 0 to 1. */
+        strength~ f32 = 0.5f;
+        /** How far above and below `center` a surface can be and still darken, in metres. Keeps it off a character's body. */
+        reach~ f32 = 0.6f;
+    }
+
     /**
      * The air between the camera and what it looks at: fog that is thicker low down than high up, and shafts of sunlight
      * through it. The guide is `docs/fog-and-light-shafts.md`. The older `fogStart` and `fogEnd` on the world still fade
@@ -376,6 +395,8 @@ lantern:::renderer :: namespace {
         bloomStrength~ f32 = 0.1f;
         /** The brightness (in the scene's light units, 1 being a white wall in full sun) where glow starts. */
         bloomThreshold~ f32 = 1.5f;
+        /** Draw the frame's blob shadows. Cheap, so quality doesn't change it. */
+        blobShadowsEnabled~ bool = true;
         /** Smooth jagged edges with FXAA, one extra full-screen pass over the tone-mapped picture; see `docs/anti-aliasing.md`. */
         antiAliasingEnabled~ bool = true;
         /** Darken creases and contact points using the depth buffer; see `docs/ambient-occlusion.md`. Two extra passes. */
@@ -396,6 +417,7 @@ lantern:::renderer :: namespace {
             return PostSettings {
                 bloomEnabled: level != QualityLevel:::Low,
                 antiAliasingEnabled: level != QualityLevel:::Low,
+                blobShadowsEnabled: blobShadowsEnabled,
                 ambientOcclusionEnabled: level != QualityLevel:::Low,
                 ambientOcclusionRadius: ambientOcclusionRadius,
                 ambientOcclusionIntensity: ambientOcclusionIntensity,
@@ -524,6 +546,8 @@ lantern:::renderer :: namespace {
         fogEnd~ f32 = 160.0f;
         /** The meshes to draw this frame. */
         draws~ Array<DrawItem>! = [];
+        /** The blob shadows to draw this frame; see `BlobShadow`. */
+        blobShadows~ Array<BlobShadow>! = [];
         /** Debug line vertices this frame, two per line. */
         lines~ Array<LineVertex>! = [];
         /** The 2D overlay this frame. Owned. */
@@ -541,6 +565,7 @@ lantern:::renderer :: namespace {
         /** Frees the lists and the overlay. */
         !RenderWorld~: () {
             delete draws;
+            delete blobShadows;
             delete lines;
             delete lights;
             delete overlay;
@@ -587,8 +612,16 @@ lantern:::renderer :: namespace {
          */
         Clear~: () -> void {
             draws.clear();
+            blobShadows.clear();
             lines.clear();
             overlay->Clear();
+        }
+
+        /** Adds a blob shadow for this frame: soft darkness on the surface around `center`. Past `MAX_BLOB_SHADOWS` it is ignored. */
+        AddBlobShadow~: (center: Vec3, radius: f32, strength: f32) -> void {
+            if blobShadows.length() < MAX_BLOB_SHADOWS {
+                blobShadows.push(BlobShadow { center: center, radius: Math:::max(radius, 0.01f), strength: strength, reach: Math:::max(radius * 0.6f, 0.3f) });
+            }
         }
 
         /** Adds one mesh draw with the default matte material. */
