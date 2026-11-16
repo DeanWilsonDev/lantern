@@ -37,11 +37,11 @@ It also needs no mesh, so there is nothing to spawn or hide.
 Blob shadows last one frame, like draws, so a game adds them every frame in `OnRender`:
 
 ```nyx
-lantern::graphics::AddBlobShadow(feetOnGround, 0.6, 0.55);
+lantern:::graphics:::AddBlobShadow(feetOnGround, 0.6f, 0.55f);
 ```
 
 The arguments are the point on the ground, the radius in metres and the darkness from 0 to 1. A frame holds up to eight; a
-ninth is ignored. `lantern::graphics::SetBlobShadows(false)` switches them all off.
+ninth is ignored. `lantern:::graphics:::SetBlobShadows(false)` switches them all off.
 
 The platformer's player finds the floor with a downward ray each step, remembers the point, and shrinks the radius with
 height so a smaller shadow reads as higher up (`game-entities/player.nyx`); `OnRender` hands it to the engine.

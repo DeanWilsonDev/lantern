@@ -51,9 +51,9 @@ shafts. Only the depth buffer is read, so it needs no extra shadow work, and the
 ## Using it from Nyx
 
 ```nyx
-lantern::atmosphere::SetHeightFog(true, 0.008, 0.1, 0.0);
-lantern::atmosphere::SetFogColor("9EB8D9", 0.5);
-lantern::atmosphere::SetLightShafts(true, 0.35, 0.95);
+lantern:::atmosphere:::SetHeightFog(true, 0.008f, 0.1f, 0.0f);
+lantern:::atmosphere:::SetFogColor("9EB8D9", 0.5f);
+lantern:::atmosphere:::SetLightShafts(true, 0.35f, 0.95f);
 ```
 
 - `SetHeightFog(enabled, density, heightFalloff, baseHeight)`: density is the fraction of light lost per metre at the base

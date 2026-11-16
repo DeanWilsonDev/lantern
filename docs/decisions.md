@@ -710,8 +710,8 @@ Story: `engine-on-nox/l7-game-ui/port-chaos-ui-the-native-library-its-binding-no
 ## D-047 The Nox game host keeps the game's UI in a GameUiState the session owns
 
 The Rust host shares its Chaos UI, the game's application value and the navigation actions with the
-`lantern::ui` functions through an `Rc<RefCell<GameUiState>>`. Nox has no shared ownership, so the
-Nox `ScriptSession` owns one `GameUiState` and the `lantern::ui` functions reach it through a raw
+`lantern:::ui` functions through an `Rc<RefCell<GameUiState>>`. Nox has no shared ownership, so the
+Nox `ScriptSession` owns one `GameUiState` and the `lantern:::ui` functions reach it through a raw
 pointer captured when they're registered, the way the other APIs reach `EngineState`.
 
 - **Order.** The session deletes the `GameUiState` first (the Chaos UI, then the application value),
@@ -1005,7 +1005,7 @@ data in the `RenderWorld`, like everything else the renderer reads, and nothing 
   like the old matte surfaces, so existing games and tests don't change. The tint stays on the draw.
 - **Ambient is a sky and ground colour pair**, blended by the normal's height, instead of one colour times a fixed
   hemisphere factor. The old single `ambient` stays valid and is used for both.
-- **Nyx sees it as `lantern::lights`**, with handles for local lights, so game code sets the sun, adds, moves and
+- **Nyx sees it as `lantern:::lights`**, with handles for local lights, so game code sets the sun, adds, moves and
   removes lights and sets a material; the engine remains Nox.
 
 Card: `lighting-and-shadows/light-model-and-materials`.
@@ -1160,7 +1160,7 @@ Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
 - **The sky is drawn after the meshes** at the far depth with a less-or-equal test, so it only shades uncovered pixels.
   It is skipped for orthographic cameras.
 - **On at every quality level.** It is one fullscreen pass and arithmetic per lit pixel.
-- **`lantern::sky`** sets colours, the sun disc, the lighting strength and intensity, and turns the sky off.
+- **`lantern:::sky`** sets colours, the sun disc, the lighting strength and intensity, and turns the sky off.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
@@ -1205,7 +1205,7 @@ Card: `renderer-visuals/ambient-occlusion`.
   doesn't contain (so the sun behind the camera, or off one side, gives none).
 - **Quality:** Low turns shafts off; height fog stays (it is arithmetic only). Orthographic cameras skip both.
 - **Defaults are on, and subtle** (density 0.008, shaft strength 0.35), so the platformer gains some haze without nyx edits.
-  A game can set them with `lantern::atmosphere`; the Crimson and Thorn chapter looks can set their own.
+  A game can set them with `lantern:::atmosphere`; the Crimson and Thorn chapter looks can set their own.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.

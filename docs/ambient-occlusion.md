@@ -45,7 +45,7 @@ AO isn't used for an orthographic camera (the editor's straight-on views).
 ## Using it from Nyx
 
 ```nyx
-lantern::graphics::SetAmbientOcclusion(true, 0.6, 0.8);
+lantern:::graphics:::SetAmbientOcclusion(true, 0.6f, 0.8f);
 ```
 
 The arguments are on or off, the radius in metres (how far a blocker can be and still darken a point), and the intensity

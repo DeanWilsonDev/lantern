@@ -46,8 +46,8 @@ The debug lines and the overlay are drawn after FXAA on top of the screen image,
 ## Using it from Nyx
 
 ```nyx
-lantern::graphics::SetQuality("low");
-lantern::graphics::SetAntiAliasing(true);
+lantern:::graphics:::SetQuality("low");
+lantern:::graphics:::SetAntiAliasing(true);
 ```
 
 `SetQuality("low")` turns it off, `"medium"` and `"high"` turn it on, and `SetAntiAliasing(enabled)` overrides that for the
