@@ -25,9 +25,9 @@ the camera and the level layout explain a puzzle without text.
 | Companion behaviour: scripted, waits for the player, leaves ahead (Companion Behaviour) | Slice 1 | A list of stops from the world file; no pathfinding. |
 | Teaching structure: solo first, then cooperative (The Companion Teaching Structure) | Slice 1 | A "streets" level that has the crate route first and the companion route second. |
 | Puzzle communication without text (Puzzle Communication) | Slice 1 | Level layout and an authored camera glance at the ledge; no tutorial text. |
-| Ability 2, the Guide Light: her glow reveals hidden platforms; solo, a smaller, cooler lantern | Slice 2 | The gameplay is Nyx. Drawing the glow as a light depends on the renderer's point lights, which are being added separately. |
-| Chapter looks: palette, fog, tone from neutral to saturated to cold (Game Design, Narrative Structure) | Slice 2 | Clear colour, fog and gem tint are already game-settable; lighting colour follows the renderer work. |
-| Thorns from Chapter 3 | Slice 2 | A hazard that moves the player back, never one that ends the run. |
+| Ability 2, the Guide Light: her glow reveals hidden platforms; solo, a smaller, cooler lantern | Slice 2 | Done. The gameplay is Nyx; the glow is a real point light (`lantern:::lights`). |
+| Chapter looks: palette, fog, tone from neutral to saturated to cold (Game Design, Narrative Structure) | Slice 2 | Done: sky, fog and sun per chapter. |
+| Thorns from Chapter 3 | Slice 2 | Done: a hazard that moves the player back, never one that ends the run. |
 | Ability 3, the Anchor | Later | The 3D form is open in the design (physics rope, set arc or something else). Waiting on Dean (question on the card). |
 | Authored cameras: static shots, player-locked, player-controlled (Camera) | Later | The third-person camera is the only mode today. A shot system needs its own design. |
 | Chapters 1 to 5 as a whole, recurring and unique levels | Later | The slice builds one recurring level (the streets) in two chapter looks. More levels come after the mechanics feel right. |
@@ -85,9 +85,40 @@ street, boost, rooftop and checkpoint.
 
 ## Slice 2: light, thorns, chapters
 
-- The Guide Light and the lantern. Hidden `glow_platform` pieces become solid and visible while the companion's glow, or
-  the carried lantern's smaller one, reaches them.
-- Chapter looks and thorns, so one level reads differently in Chapter 1 and Chapter 3.
+Pick **The streets** to play the level with the Guide Light, or **The streets, later** for the same level in Chapter 3's
+look with thorns (`LANTERN_LEVEL=worlds/streets-later.world.json`). Both levels continue past the rooftop of slice 1: two
+gaps with no floor, a lantern between them and a second checkpoint at the end. `engine/tests/host/the-guide-light-shows-the-way`
+walks the whole way with the keyboard, and `thorns-nudge-the-player-back` walks into the thorns.
+
+| World kind | Properties | Meaning |
+|---|---|---|
+| `glow_platform` | none; a `block`-like piece with a `kinematic` collider | Hidden and not solid until a Guide Light reaches it, and for 4 s after the light leaves. |
+| `lantern` | none | A small box the player walks into. It disappears and the player carries a cooler, smaller Guide Light from then on. |
+| `thorns` | `half_extents` (vector), `min_chapter` (optional, 3) | A patch that appears from its chapter. Touching it sends the player back to the last place they stood on the ground away from thorns. Nothing is lost. |
+| `spawn` | `chapter` (optional, 0) | Which look the level wears (`settings/chapter-looks.nyx`). The course is chapter 0, the streets chapter 1, `streets-later` chapter 3. |
+
+How it plays, in order:
+
+1. The companion walks to the roof's edge and waits. Her warm light (reach 8 m) shows the first plates of the gap; the
+   rest appear as she walks on and the player follows. A plate stays for 4 s after her light leaves, so a player a few
+   metres behind her still has floor.
+2. On the far block she stops, and the lantern is there to pick up. Its light (reach 5 m, cooler) goes with the player.
+3. The second gap is beyond her last stop. Only the lantern's light shows its plates, which is the solo form of the same
+   puzzle.
+4. In the later level the rooftop and the far block have thorns beside a free lane. Stepping into them puts the player
+   back on the safe lane.
+
+| File | Job |
+|---|---|
+| `game-entities/guide-light.nyx` | one light that follows its carrier and has a reveal radius |
+| `game-entities/glow-platform.nyx`, `game-systems/glow-system.nyx` | a piece that hides itself, and the rule that lights it |
+| `game-entities/lantern-pickup.nyx`, `game-systems/lantern-system.nyx` | the lantern in the world and its pickup event |
+| `game-entities/thorns.nyx`, `game-systems/thorn-system.nyx` | the patches and the touch tests |
+| `settings/chapter-looks.nyx` | sky, fog and sun for a chapter |
+
+The glow platforms use the workaround the engine card `engine-follow-ups/game-controlled-collision-for-world-entities`
+names: a hidden piece is moved 1000 m down, and because a `static` collider doesn't move, these pieces are `kinematic` in
+the world file.
 
 ## How it fits the engine
 
@@ -97,12 +128,11 @@ offer, the gap is a card first and the workaround is named in the code:
 
 | Gap | Card |
 |---|---|
-| Switching a world piece's collision on and off | `engine-follow-ups/game-controlled-collision-for-world-entities` |
-| Point lights the game can place (the glow) | The renderer lighting work |
+| Switching a world piece's collision on and off (slice 2 moves hidden pieces away instead) | `engine-follow-ups/game-controlled-collision-for-world-entities` |
 | The Anchor's traversal form | `platformer-game/crimson-and-thorn-slice/the-anchor-in-3d` |
 
 ## Open questions
 
 - Boost jump height and trigger (a button press on the spot, or automatic when she crouches), to settle by playing it.
-- Guide Light radius against the lantern's, to settle once lights exist.
+- Guide Light radii (8 m and 5 m), how long a plate stays (4 s) and the glow's strength, to settle by playing it.
 - The Anchor's form in 3D, for Dean.
