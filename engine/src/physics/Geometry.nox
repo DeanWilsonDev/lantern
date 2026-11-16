@@ -1,6 +1,14 @@
 lantern:::physics :: namespace {
+    /**
+     * Below this a squared length or a determinant counts as zero: two segments are parallel, or a segment lies flat
+     * in a triangle's plane, and dividing by it would blow up.
+     */
     PARALLEL_EPSILON: f32 : 0.000000001f;
 
+    /**
+     * Three points. Colliders are made of triangles, and every test in this file is a point, a segment or a capsule
+     * (a segment with a radius) against one.
+     */
     Triangle :: struct {
         a~ Vec3 = Vec3 { };
         b~ Vec3 = Vec3 { };
@@ -47,6 +55,10 @@ lantern:::physics :: namespace {
         }
     }
 
+    /**
+     * A point on one shape and the nearest point on another. The distance between the shapes is the distance between
+     * the two points.
+     */
     ClosestPair :: struct {
         first~ Vec3 = Vec3 { };
         second~ Vec3 = Vec3 { };
@@ -56,10 +68,18 @@ lantern:::physics :: namespace {
         }
     }
 
+    /**
+     * Squared distance between two points. Comparing squared distances avoids a square root.
+     */
     DistanceSquared3 :: (first: Vec3, second: Vec3) -> f32 {
         return lantern:::core:::LengthSquared3(first - second);
     }
 
+    /**
+     * The point on the triangle (inside it or on an edge) nearest `point`. It decides which of the triangle's seven
+     * regions the point is over (inside, three edges, three corners) from the signs of a few dot products, then
+     * returns the matching point. This is the standard method from Ericson's *Real-Time Collision Detection*.
+     */
     ClosestPointOnTriangle :: (point: Vec3, triangle: Triangle) -> Vec3 {
         a: Vec3 = triangle.a;
         b: Vec3 = triangle.b;
@@ -100,6 +120,10 @@ lantern:::physics :: namespace {
         return a + ab * (vb * denominator) + ac * (vc * denominator);
     }
 
+    /**
+     * The nearest points between segment p1-q1 and segment p2-q2, with each parameter clamped to its segment. Parallel
+     * segments are handled separately, since the usual formula divides by zero there.
+     */
     ClosestPointsBetweenSegments :: (p1: Vec3, q1: Vec3, p2: Vec3, q2: Vec3) -> ClosestPair {
         d1: Vec3 = q1 - p1;
         d2: Vec3 = q2 - p2;
@@ -137,6 +161,10 @@ lantern:::physics :: namespace {
         return ClosestPair { first: p1 + d1 * s, second: p2 + d2 * t };
     }
 
+    /**
+     * Where segment start-end crosses the triangle, or null when it doesn't. A segment lying in the triangle's
+     * plane counts as not crossing. This is the Möller–Trumbore method.
+     */
     SegmentTriangleIntersection :: (start: Vec3, end: Vec3, triangle: Triangle) -> Vec3? {
         direction: Vec3 = end - start;
         edge1: Vec3 = triangle.b - triangle.a;
@@ -164,6 +192,12 @@ lantern:::physics :: namespace {
         return start + direction * t;
     }
 
+    /**
+     * The nearest points between a segment and a triangle. If the segment crosses the triangle the pair is the crossing
+     * point twice. Otherwise the nearest approach is at a segment end (measured against the triangle) or between the
+     * segment and one of the three edges, so the answer is the best of those candidates. The character capsule's
+     * axis is the segment.
+     */
     ClosestPointsSegmentTriangle :: (start: Vec3, end: Vec3, triangle: Triangle) -> ClosestPair {
         if crossing := SegmentTriangleIntersection(start, end, triangle) {
             return ClosestPair { first: crossing, second: crossing };

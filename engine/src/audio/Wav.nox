@@ -1,4 +1,8 @@
 lantern:::audio :: namespace {
+    /**
+     * A decoded sound: interleaved stereo samples from -1 to 1 at a sample rate. A mono file is stored as stereo
+     * (each sample twice) so the mixer only deals with one layout.
+     */
     SoundData :: class {
     public:
         sampleRate~ u32 = 0;
@@ -12,14 +16,23 @@ lantern:::audio :: namespace {
             delete samples;
         }
 
+        /**
+         * How many stereo frames the sound has (two samples each).
+         */
         FrameCount :: () -> usize {
             return samples.length() / 2;
         }
 
+        /**
+         * How long the sound lasts.
+         */
         DurationSeconds :: () -> f32 {
             return f32(FrameCount()) / f32(sampleRate);
         }
 
+        /**
+         * A new sound with the same samples.
+         */
         Copy :: () -> SoundData*! {
             copied := new SoundData(sampleRate);
             for sample in samples {
@@ -28,6 +41,10 @@ lantern:::audio :: namespace {
             return copied!;
         }
 
+        /**
+         * A copy at `targetRate`, made by linear interpolation between neighbouring frames. It is cheap and adequate for
+         * sound effects; it isn't a high-quality converter.
+         */
         Resampled :: (targetRate: u32) -> SoundData*! {
             if targetRate == sampleRate || FrameCount() == 0 {
                 copied := Copy();
@@ -56,6 +73,9 @@ lantern:::audio :: namespace {
         }
     }
 
+    /**
+     * Two bytes at `offset` as a little-endian number, or null when they run past the end.
+     */
     ReadU16 :: (bytes: Array<u8>, offset: usize) -> u32? {
         if offset + 2 > bytes.length() {
             return null;
@@ -63,6 +83,9 @@ lantern:::audio :: namespace {
         return u32(bytes[offset]) | (u32(bytes[offset + 1]) << 8);
     }
 
+    /**
+     * Four bytes at `offset` as a little-endian number, or null when they run past the end.
+     */
     ReadU32 :: (bytes: Array<u8>, offset: usize) -> u32? {
         if offset + 4 > bytes.length() {
             return null;
@@ -70,6 +93,9 @@ lantern:::audio :: namespace {
         return u32(bytes[offset]) | (u32(bytes[offset + 1]) << 8) | (u32(bytes[offset + 2]) << 16) | (u32(bytes[offset + 3]) << 24);
     }
 
+    /**
+     * True when the four bytes at `offset` spell `tag` ("RIFF", "fmt ", "data").
+     */
     HasTag :: (bytes: Array<u8>, offset: usize, tag: string) -> bool {
         if offset + 4 > bytes.length() {
             return false;
@@ -82,6 +108,9 @@ lantern:::audio :: namespace {
         return true;
     }
 
+    /**
+     * Two bytes as a signed 16-bit sample, scaled to -1 to 1.
+     */
     SignedSample :: (low: u8, high: u8) -> f32 {
         bits: i32 = i32(low) | (i32(high) << 8);
         signed~ i32 = bits;
@@ -91,6 +120,9 @@ lantern:::audio :: namespace {
         return f32(signed) / 32768.0f;
     }
 
+    /**
+     * The fields of a WAV file's `fmt ` chunk that the decoder checks.
+     */
     WavFormat :: struct {
         tag~ u32 = 0;
         channels~ u32 = 0;
@@ -98,10 +130,18 @@ lantern:::audio :: namespace {
         bits~ u32 = 0;
     }
 
+    /**
+     * An error result with a message, so the decoder's many failure exits stay one line each.
+     */
     WavFailure :: (message: string) -> Result<SoundData*!, string!> {
         return Result<SoundData*!, string!>:::Err(`${message}`);
     }
 
+    /**
+     * Reads a WAV file's bytes. A WAV is a RIFF container of chunks: the decoder walks them, reads `fmt ` for the
+     * layout and `data` for the samples. Only 16-bit PCM in mono or stereo is accepted; anything else is an error
+     * saying what was found.
+     */
     DecodeWav :: (bytes: Array<u8>) -> Result<SoundData*!, string!> {
         if !HasTag(bytes, 0, "RIFF") || !HasTag(bytes, 8, "WAVE") {
             return WavFailure("not a RIFF/WAVE file");
@@ -147,6 +187,9 @@ lantern:::audio :: namespace {
         return WavFailure("no data chunk");
     }
 
+    /**
+     * Reads a WAV file from disk and decodes it.
+     */
     LoadWav :: (path: string) -> Result<SoundData*!, string!> {
         text: string!? = tryReadTextFile(path);
         guard contents := text return Result<SoundData*!, string!>:::Err(`${path}: cannot be read`);
@@ -168,11 +211,17 @@ lantern:::audio :: namespace {
         }
     }
 
+    /**
+     * Appends a little-endian 16-bit number to a byte array.
+     */
     PushU16 :: (bytes: Array<u8>!~*, value: u32) -> void {
         bytes->push(u8(value & 255));
         bytes->push(u8((value >> 8) & 255));
     }
 
+    /**
+     * Appends a little-endian 32-bit number to a byte array.
+     */
     PushU32 :: (bytes: Array<u8>!~*, value: u32) -> void {
         bytes->push(u8(value & 255));
         bytes->push(u8((value >> 8) & 255));
@@ -180,12 +229,19 @@ lantern:::audio :: namespace {
         bytes->push(u8((value >> 24) & 255));
     }
 
+    /**
+     * Appends the characters of a tag to a byte array.
+     */
     PushTag :: (bytes: Array<u8>!~*, tag: string) -> void {
         for index~ usize = 0; index < tag.length(); index++ {
             bytes->push(tag.byteAt(index));
         }
     }
 
+    /**
+     * Writes samples (-1 to 1) as the bytes of a 16-bit mono WAV file. The tests use it to build small WAV files in
+     * memory and feed them to the decoder.
+     */
     EncodeWavMono :: (samples: Array<f32>, sampleRate: u32) -> Array<u8>! {
         dataSize: u32 = u32(samples.length() * 2);
         bytes~ Array<u8>! = [];

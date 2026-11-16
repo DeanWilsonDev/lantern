@@ -1,30 +1,54 @@
 lantern:::core :: namespace {
+    /**
+     * Positive infinity as a 32-bit float (1 divided by 0), which Nox has no literal for.
+     */
     INFINITY: f32 : 1.0f / 0.0f;
 
+    /**
+     * A vector with all three components equal to `value`.
+     */
     Splat3 :: (value: f32) -> Vec3 {
         return Vec3 { x: value, y: value, z: value };
     }
 
+    /**
+     * The vector of the smaller value on each axis. Used to grow a bounding box.
+     */
     ComponentMin3 :: (left: Vec3, right: Vec3) -> Vec3 {
         return Vec3 { x: Math:::min(left.x, right.x), y: Math:::min(left.y, right.y), z: Math:::min(left.z, right.z) };
     }
 
+    /**
+     * The vector of the larger value on each axis.
+     */
     ComponentMax3 :: (left: Vec3, right: Vec3) -> Vec3 {
         return Vec3 { x: Math:::max(left.x, right.x), y: Math:::max(left.y, right.y), z: Math:::max(left.z, right.z) };
     }
 
+    /**
+     * Each component made positive.
+     */
     Abs3 :: (vector: Vec3) -> Vec3 {
         return Vec3 { x: Math:::abs(vector.x), y: Math:::abs(vector.y), z: Math:::abs(vector.z) };
     }
 
+    /**
+     * The length of a 2D vector.
+     */
     Vec2Length :: (vector: Vec2) -> f32 {
         return Math:::sqrt(vector.x * vector.x + vector.y * vector.y);
     }
 
+    /**
+     * The 2D vector of the larger value on each axis.
+     */
     ComponentMax2 :: (left: Vec2, right: Vec2) -> Vec2 {
         return Vec2 { x: Math:::max(left.x, right.x), y: Math:::max(left.y, right.y) };
     }
 
+    /**
+     * The vector shortened to `maximumLength` if it is longer, with its direction kept.
+     */
     ClampLengthMax2 :: (vector: Vec2, maximumLength: f32) -> Vec2 {
         lengthSquared: f32 = vector.x * vector.x + vector.y * vector.y;
         if lengthSquared > maximumLength * maximumLength {
@@ -33,6 +57,9 @@ lantern:::core :: namespace {
         return vector;
     }
 
+    /**
+     * The vector at length 1, or zero when its length is zero.
+     */
     NormalizeOrZero2 :: (vector: Vec2) -> Vec2 {
         reciprocalLength: f32 = 1.0f / Vec2Length(vector);
         if reciprocalLength > 0.0f && reciprocalLength < INFINITY {
@@ -41,14 +68,23 @@ lantern:::core :: namespace {
         return Vec2 { };
     }
 
+    /**
+     * One divided by the length. A zero vector gives infinity, which NormalizeOr3 checks for.
+     */
     LengthReciprocal3 :: (vector: Vec3) -> f32 {
         return 1.0f / Math:::sqrt(vector.dot(vector));
     }
 
+    /**
+     * The vector at length 1. A zero vector gives not-a-number, so use NormalizeOr3 when that can happen.
+     */
     Normalize3 :: (vector: Vec3) -> Vec3 {
         return vector * LengthReciprocal3(vector);
     }
 
+    /**
+     * The vector at length 1, or `fallback` when it has no length.
+     */
     NormalizeOr3 :: (vector: Vec3, fallback: Vec3) -> Vec3 {
         reciprocal: f32 = LengthReciprocal3(vector);
         if reciprocal > 0.0f && reciprocal < INFINITY {
@@ -57,18 +93,30 @@ lantern:::core :: namespace {
         return fallback;
     }
 
+    /**
+     * The length squared. Cheaper than the length when you only compare distances.
+     */
     LengthSquared3 :: (vector: Vec3) -> f32 {
         return vector.dot(vector);
     }
 
+    /**
+     * True when no component is infinite or not-a-number.
+     */
     IsFinite3 :: (vector: Vec3) -> bool {
         return IsFinite(vector.x) && IsFinite(vector.y) && IsFinite(vector.z);
     }
 
+    /**
+     * True for a number that is neither infinite nor not-a-number (NaN is the only value that doesn't equal itself).
+     */
     IsFinite :: (value: f32) -> bool {
         return value == value && value < INFINITY && value > -INFINITY;
     }
 
+    /**
+     * -1 for a negative number or negative zero, 1 otherwise, and NaN for NaN.
+     */
     Signum :: (value: f32) -> f32 {
         if value != value {
             return value;
@@ -79,6 +127,10 @@ lantern:::core :: namespace {
         return 1.0f;
     }
 
+    /**
+     * Some unit vector at right angles to the given unit vector. It is how an arrow's head finds a direction to fan
+     * out in. This is the branch-free construction from Duff et al., "Building an Orthonormal Basis, Revisited".
+     */
     AnyOrthonormalVector3 :: (vector: Vec3) -> Vec3 {
         sign: f32 = Signum(vector.z);
         a: f32 = -1.0f / (sign + vector.z);
@@ -117,11 +169,17 @@ lantern:::core :: namespace {
             Vec4 { x: -(left + right) * reciprocalWidth, y: -(top + bottom) * reciprocalHeight, z: reciprocalDepth * nearPlane, w: 1.0f });
     }
 
+    /**
+     * A rotation by `radians` about the up axis, as a quaternion.
+     */
     QuaternionFromRotationY :: (radians: f32) -> Quaternion {
         half: f32 = radians * 0.5f;
         return Quaternion { x: 0.0f, y: Math:::sin(half), z: 0.0f, w: Math:::cos(half) };
     }
 
+    /**
+     * The vector turned by a (unit) quaternion, using the expanded form of q v q^-1 that needs no matrix.
+     */
     RotateVector :: (rotation: Quaternion, vector: Vec3) -> Vec3 {
         axis := Vec3 { x: rotation.x, y: rotation.y, z: rotation.z };
         axisLengthSquared: f32 = axis.dot(axis);
@@ -131,6 +189,10 @@ lantern:::core :: namespace {
         return scaledVector + scaledAxis + scaledCross;
     }
 
+    /**
+     * A matrix from four column vectors. Matrices are stored column by column, so the sixteen numbers are the
+     * first column, then the second, and so on; the last column is where translation lives.
+     */
     MatrixFromColumns :: (xAxis: Vec4, yAxis: Vec4, zAxis: Vec4, wAxis: Vec4) -> Mat4 {
         result~ Mat4 = Mat4 { };
         result.elements = [xAxis.x, xAxis.y, xAxis.z, xAxis.w, yAxis.x, yAxis.y, yAxis.z, yAxis.w,
@@ -138,6 +200,10 @@ lantern:::core :: namespace {
         return result;
     }
 
+    /**
+     * A transform that rotates and then moves. The nine terms are the standard expansion of a unit quaternion into the
+     * rotation's three columns.
+     */
     MatrixFromRotationTranslation :: (rotation: Quaternion, translation: Vec3) -> Mat4 {
         x2: f32 = rotation.x + rotation.x;
         y2: f32 = rotation.y + rotation.y;
@@ -158,6 +224,10 @@ lantern:::core :: namespace {
             Vec4 { x: translation.x, y: translation.y, z: translation.z, w: 1.0f });
     }
 
+    /**
+     * A rotation from three angles applied in yaw, then pitch, then roll order. It is the order a free camera wants:
+     * turning left or right keeps the horizon level.
+     */
     QuaternionFromEulerYxz :: (yawRadians: f32, pitchRadians: f32, rollRadians: f32) -> Quaternion {
         yawSine: f32 = Math:::sin(yawRadians * 0.5f);
         yawCosine: f32 = Math:::cos(yawRadians * 0.5f);
@@ -177,6 +247,9 @@ lantern:::core :: namespace {
         };
     }
 
+    /**
+     * A transform that scales, then rotates, then moves: the rotation's columns each multiplied by that axis's scale.
+     */
     MatrixFromScaleRotationTranslation :: (scale: Vec3, rotation: Quaternion, translation: Vec3) -> Mat4 {
         rotationOnly: Mat4 = MatrixFromQuaternion(rotation);
         e := rotationOnly.elements;
@@ -187,6 +260,9 @@ lantern:::core :: namespace {
             Vec4 { x: translation.x, y: translation.y, z: translation.z, w: 1.0f });
     }
 
+    /**
+     * A rotation matrix with no movement.
+     */
     MatrixFromQuaternion :: (rotation: Quaternion) -> Mat4 {
         return MatrixFromRotationTranslation(rotation, Vec3 { });
     }
@@ -235,10 +311,16 @@ lantern:::core :: namespace {
             return xAxis * normal.x + yAxis * normal.y + zAxis * normal.z;
         }
     }
+    /**
+     * The point `amount` of the way from `from` to `to` (0 gives `from`, 1 gives `to`).
+     */
     Lerp3 :: (from: Vec3, to: Vec3, amount: f32) -> Vec3 {
         return from * (1.0f - amount) + to * amount;
     }
 
+    /**
+     * A rotation of `radians` about a unit axis.
+     */
     QuaternionFromAxisAngle :: (unitAxis: Vec3, radians: f32) -> Quaternion {
         sine: f32 = Math:::sin(radians * 0.5f);
         cosine: f32 = Math:::cos(radians * 0.5f);
@@ -246,22 +328,38 @@ lantern:::core :: namespace {
         return Quaternion { x: scaledAxis.x, y: scaledAxis.y, z: scaledAxis.z, w: cosine };
     }
 
+    /**
+     * The dot product of two quaternions: 1 when they are the same rotation, 0 when a quarter turn apart.
+     */
     QuaternionDot :: (first: Quaternion, second: Quaternion) -> f32 {
         return first.x * second.x + first.y * second.y + first.z * second.z + first.w * second.w;
     }
 
+    /**
+     * All four components multiplied by `factor`.
+     */
     ScaleQuaternion :: (rotation: Quaternion, factor: f32) -> Quaternion {
         return Quaternion { x: rotation.x * factor, y: rotation.y * factor, z: rotation.z * factor, w: rotation.w * factor };
     }
 
+    /**
+     * The four components added.
+     */
     AddQuaternions :: (first: Quaternion, second: Quaternion) -> Quaternion {
         return Quaternion { x: first.x + second.x, y: first.y + second.y, z: first.z + second.z, w: first.w + second.w };
     }
 
+    /**
+     * The quaternion at length 1, which a rotation needs to be.
+     */
     NormalizeQuaternion :: (rotation: Quaternion) -> Quaternion {
         return ScaleQuaternion(rotation, 1.0f / Math:::sqrt(QuaternionDot(rotation, rotation)));
     }
 
+    /**
+     * The arc cosine from a seventh-degree polynomial (the Abramowitz and Stegun fit), accurate to about 0.00001.
+     * Spherical interpolation calls it often and doesn't need more.
+     */
     AcosApproximation :: (value: f32) -> f32 {
         nonNegative: bool = value >= 0.0f;
         magnitude: f32 = Math:::abs(value);
@@ -279,6 +377,11 @@ lantern:::core :: namespace {
         return Math:::PI - result;
     }
 
+    /**
+     * Spherical interpolation: the rotation `amount` of the way from `start` to `end` at constant angular speed,
+     * which blending the components doesn't give. It takes the shorter way round (flipping `end` when the dot is
+     * negative) and falls back to a normalised straight blend when the two are nearly the same.
+     */
     QuaternionSlerp :: (start: Quaternion, end: Quaternion, amount: f32) -> Quaternion {
         target~ Quaternion = end;
         dot~ f32 = QuaternionDot(start, end);
@@ -296,6 +399,9 @@ lantern:::core :: namespace {
         return ScaleQuaternion(AddQuaternions(ScaleQuaternion(start, startScale), ScaleQuaternion(target, endScale)), 1.0f / thetaSine);
     }
 
+    /**
+     * The determinant of the full 4x4 matrix, by cofactor expansion on its first row.
+     */
     Determinant4 :: (matrix: Mat4) -> f32 {
         m := matrix.elements;
         a2323: f32 = m[10] * m[15] - m[11] * m[14];
@@ -310,6 +416,10 @@ lantern:::core :: namespace {
             - m[3] * (m[4] * a1223 - m[5] * a0223 + m[6] * a0123);
     }
 
+    /**
+     * The quaternion for a rotation given as its three axes (a matrix's columns). It picks the largest of the four
+     * components to divide by, so it stays accurate whatever the rotation.
+     */
     QuaternionFromRotationAxes :: (xAxis: Vec3, yAxis: Vec3, zAxis: Vec3) -> Quaternion {
         if zAxis.z <= 0.0f {
             differenceYX: f32 = yAxis.y - xAxis.x;
@@ -335,18 +445,29 @@ lantern:::core :: namespace {
         return Quaternion { x: (yAxis.z - zAxis.y) * inverseFourW, y: (zAxis.x - xAxis.z) * inverseFourW, z: (xAxis.y - yAxis.x) * inverseFourW, w: fourWSquared * inverseFourW };
     }
 
+    /**
+     * A transform taken apart: scale, then rotation, then translation.
+     */
     MatrixParts :: struct {
         scale~ Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
         rotation~ Quaternion = Quaternion { };
         translation~ Vec3 = Vec3 { };
     }
 
+    /**
+     * The length of one column of a matrix, which for a transform is that axis's scale.
+     */
     ColumnLength4 :: (matrix: Mat4, column: usize) -> f32 {
         m := matrix.elements;
         start: usize = column * 4;
         return Math:::sqrt(m[start] * m[start] + m[start + 1] * m[start + 1] + m[start + 2] * m[start + 2] + m[start + 3] * m[start + 3]);
     }
 
+    /**
+     * Splits a transform into scale, rotation and translation. The scales are the column lengths, with the x scale
+     * made negative when the matrix mirrors (negative determinant); dividing them out leaves a pure rotation. It
+     * assumes there is no shear.
+     */
     DecomposeMatrix :: (matrix: Mat4) -> MatrixParts {
         determinant: f32 = Determinant4(matrix);
         scale: Vec3 = Vec3 { x: ColumnLength4(matrix, 0) * Signum(determinant), y: ColumnLength4(matrix, 1), z: ColumnLength4(matrix, 2) };
