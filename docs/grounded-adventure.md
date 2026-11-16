@@ -73,7 +73,7 @@ One wall, 6.5 m high, three ways up.
 | The ladder | The player | Its bottom rungs are missing: hop onto the crate, jump, and press F in the air |
 | The service stair | Both | A locked door at its foot; the lever works from the slot or from the roof |
 
-The slot (0.66 m wide, eight metres long) is too narrow for the player and hides the lever, so only she can open the door
+The slot (0.66 m wide, ten metres long) is too narrow for the player and hides the lever, so only she can open the door
 from below. If the player climbs first, a second lever on the roof opens the same door for her.
 
 ### 9 The word market
