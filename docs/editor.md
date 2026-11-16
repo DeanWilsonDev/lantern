@@ -4,7 +4,7 @@ The world editor opens a world file, shows it in a 3D viewport and lets you sele
 scale, add, duplicate, mirror, align, group, hide, lock, re-parent and delete entities, edit their
 fields, undo and redo, play the level in the real game and save. It is isolated from the game: it
 never links the game, and the game never links it. The two share only the world file format
-(`crates/world-format`) and the game's assets.
+(`engine/src/world/`) and the game's assets.
 
 ![The editor with the course open](editor-screenshot.png)
 
@@ -30,22 +30,22 @@ apps/world-editor                                     engine/ (Nox)
 └──────────────────────────────────────────┘
 ```
 
-- **`lantern-world-format`** is the seam. It defines the JSON world file (`WorldFile`,
+- **`lantern:::world`** (`engine/src/world/`) is the seam. It defines the JSON world file (`WorldFile`,
   `WorldEntity`, shapes, materials, tints, colliders and free-form properties) and turns a world
-  into meshes and collision triangles (`build_pieces`). The game host and the editor both use it.
-- **`lantern-editor-core`** is all the editor's logic, in plain Rust with no window or GPU:
+  into meshes and collision triangles (`BuildPieces`). The game host and the editor both use it.
+- **`lantern:::editor`** (`engine/src/editor/`) is all the editor's logic, in plain Nox with no window or GPU:
   the document and its labelled undo history, selection, the orbit camera with presets,
   bookmarks and orthographic views, picking and box selection, the move, rotate and scale gizmos
   with snapping, world or local space and primary or centre pivots, the inspector's fields, the
   outline, hiding and locking, the editing operations, preferences and the input state machine.
-  It is unit tested.
+  It is tested by the programs in `engine/tests/editor`.
 - **The editor backend** owns one `EditorSession` and an off-screen `GpuRenderer`. It
   draws the viewport, the template thumbnails and the turntable preview into memory, launches
   the game for play-in-editor, and exposes everything through a C API
   (`engine/editor-backend/include/lantern_editor.h`). It is written in Nox
   (`engine/src/editorbackend/` and `engine/editor-backend/`, `docs/decisions.md` D-051) and built
   as a static library linked against the system SDL3. The editor's Nox host imports its
-  `lantern:::editorapi` namespace directly. The Rust backend (`crates/editor-backend`) implements
+  `lantern:::editorapi` namespace directly. The Rust backend (`crates/editor-backend`, the reference the Nox one was ported from) implements
   the same header and is still there to compare with: link a C program against either library.
 - **`apps/world-editor`** is the front end. `nox/` is its host, a Nox program on Nox Penumbra:
   `main.nox` opens an SDL3 window, mounts the UI through penumbra-bridge's `BridgeHost`, registers
@@ -205,8 +205,8 @@ Stop ends the game. The game's own window opens; the editor stays usable.
 - Strings passed in are NUL-terminated UTF-8, borrowed for the call. Strings returned stay valid
   until the next string-returning call on the same handle, so copy them straight away.
 - Entity ids are the world file's ids as `int64_t`; 0 means none.
-- No Rust panic crosses the boundary. A panic is caught, logged and shown in the console,
-  and the function returns its default.
+- No failure crosses the boundary: a call that fails is logged, shown in the console where it can be,
+  and returns its default.
 - `lantern_editor_revision` changes whenever anything a panel shows changes (camera moves don't
   count), so the front end polls it once a frame instead of receiving callbacks.
 - Pixel buffers (`lantern_editor_pixels`, `lantern_editor_preview_pixels`,

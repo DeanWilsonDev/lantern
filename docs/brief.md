@@ -1,3 +1,7 @@
+> **This is the original brief, kept as history.** It asks for a Rust engine and Rust-side scripting hosting, and
+> `decisions.md` records where the build departed from it (the engine is now written in Nox, `engine-structure.md`).
+> Read `README.md` in this folder for the current documents.
+
 
 # Codex Brief: Lantern 3D Engine Prototype
 
