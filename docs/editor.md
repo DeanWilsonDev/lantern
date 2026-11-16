@@ -138,8 +138,16 @@ saves the rendered viewport.
   bookmarks), Editor (recent files, preferences file).
 - **Command palette** (Ctrl/Cmd + Shift + P): every command by name. Click the field, type,
   then Enter runs the first match.
-- **Status bar**: the last message, entity and selection counts, tool, space, snap, camera,
-  frames per second and draw count.
+- **Status bar**: the last message, entity and selection counts, tool, space, snap, camera, the editor's frame time
+  (average and worst over the last 120 frames, the frames per second that average gives, and whether vertical sync is
+  on) and what drawing the viewport cost (milliseconds and draw count).
+
+The frame time is measured from the start of one frame of the window's loop to the start of the next, so it includes any
+wait for the display. The editor redraws every frame (it never waits for a change), so with vertical sync on the frame
+rate sits at the display's refresh rate or a fraction of it and the average says little about how much headroom there is.
+For the real ceiling turn vertical sync off, either in Settings, Graphics, Frame rate, or by starting the editor with
+`LANTERN_VSYNC=0`. The viewport figure is the time the GPU renderer took to draw the picture, which does not include the
+UI or the wait for the display, so it shows how much of a frame the 3D view costs.
 
 The Graphics tab changes how the editor viewport is drawn, with the same levels and effects as
 `lantern:::graphics:::SetQuality` in a game (`docs/graphics-effects.md`). Choosing a quality level sets the four effect

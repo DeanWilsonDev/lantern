@@ -123,7 +123,7 @@ These environment variables are read by the engine and the game:
 | `LANTERN_AUTOPLAY=1` | The platformer plays itself (a scripted pilot), for smoke runs and screenshots. |
 | `LANTERN_DEBUG_HUD=1` | Start with the debug HUD showing. |
 | `LANTERN_COLLISION_VIEW=1` | Start with the platformer's collision overlay showing (nearby triangles, the player's capsule, ground normal, velocity and gem trigger spheres). F2 toggles it in game. |
-| `LANTERN_VSYNC=0` | Turn vertical sync off, to see raw frame time. |
+| `LANTERN_VSYNC=0` | Turn vertical sync off, to see raw frame time. The world editor honours it too: it starts with vertical sync off, and Settings, Graphics, Frame rate turns it on or off while it runs. |
 | `LANTERN_GPU_DRIVER` | Force an SDL GPU driver, such as `vulkan` or `metal`. |
 | `LANTERN_GPU_DEBUG=1` | SDL GPU's debug mode (validation layers where the driver has them). |
 | `LANTERN_MAX_FRAMES=N` | Stop after N frames, so a run ends on its own. |

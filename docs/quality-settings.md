@@ -69,7 +69,8 @@ lantern:::lights:::SetShadowQuality(true, 512, 256, 40.0f);
 ## Finding what to turn down
 
 Turn on the debug HUD (F1, or `LANTERN_DEBUG_HUD=1`) and turn off vertical sync (`LANTERN_VSYNC=0`) so the frame time isn't
-rounded to the display. `Frame/Average ms` and `Frame/Worst ms` are the numbers to watch; 60 fps is 16.7 ms. Then change one
+rounded to the display. In the world editor the status bar shows the same average and worst frame times, and its Graphics
+settings have a Vertical sync checkbox (the editor also starts with it off under `LANTERN_VSYNC=0`). `Frame/Average ms` and `Frame/Worst ms` are the numbers to watch; 60 fps is 16.7 ms. Then change one
 thing at a time in this order, which is roughly what each costs, highest first:
 
 1. **Ambient occlusion** off. Two full-screen passes with 12 and 16 depth reads per pixel.
