@@ -170,7 +170,8 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
    next larger. Every step is a full-screen pass: one oversized triangle drawn by `fullscreen.vert`, with no vertex
    buffer, so the fragment shader runs once per pixel of the target.
 9. **Composite pass** (`RecordComposite`): another full-screen pass that reads the scene, the glow and the depth buffer. It
-   multiplies in the ambient occlusion, adds height fog and light shafts (`fog-and-light-shafts.md`), adds the glow,
+   multiplies in the ambient occlusion, darkens under blob shadows (`blob-shadows.md`), adds height fog and light shafts
+   (`fog-and-light-shafts.md`), adds the glow,
    multiplies by the exposure, applies the tone-mapping curve and writes the swapchain image. When the target can't
    sRGB-encode, the shader does it here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
    texture of its own and **the FXAA pass** (`RecordAntiAlias`) smooths it onto the screen image; see `anti-aliasing.md`.

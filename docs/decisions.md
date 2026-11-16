@@ -1140,3 +1140,20 @@ Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/softer-shadows-and-stable-cascades`.
+
+## D-070: Blob shadows darken surfaces by distance to a point, in the composite pass
+
+- **A blob is a point, a radius and a darkness**, and the composite pass darkens each pixel by how near its world position
+  (rebuilt from the depth buffer) is to the point, as an ellipse that reaches only a short way above and below it. No mesh,
+  no decal projection, and it lies correctly over slopes, steps and walls.
+- **They last one frame**, like draws, so a game adds them every frame in `OnRender`. A frame holds eight; a ninth is ignored.
+- **The platformer's disc is gone.** Its player keeps the floor point and radius from the per-step raycast it already did and
+  hands them to the engine in `OnRender`; the disc entity, its lift off the floor and its hide-and-show are removed.
+  `unitSphereMesh` stays in the assets for other uses. The recorded traces in
+  `tests/host/the-platformer-matches-the-rust-trace` keep the draw count in their last column, which fell by one wherever the
+  disc used to draw, so those two files were re-recorded; every other column is unchanged, so the simulation still matches.
+- **Not decals.** Textured decals (scorch marks, paint) need a texture bound to the pass; blobs use none. Decals are left for
+  a card of their own.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
