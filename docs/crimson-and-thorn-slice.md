@@ -216,3 +216,10 @@ offer, the gap is a card first and the workaround is named in the code:
 - Boost jump height and trigger (a button press on the spot, or automatic when she crouches), to settle by playing it.
 - Guide Light radii (8 m and 5 m), how long a plate stays (4 s) and the glow's strength, to settle by playing it.
 - The Anchor's sag, duration and reach, and whether a swing should carry momentum out of the far post, to settle by playing it.
+
+## Night and photographs
+
+Dean's feedback after slice 5: play at night so the lights show what the mechanics do, and add a photograph collectable
+for variety. Both are in `night-look.md` and `photo-mode.md` (decisions D-079 and D-080). The streets, the rooftops and the
+streets, later each gained towers with lit windows, street lamps and photo sights; the towers sit outside the walls, so
+the routes are unchanged.

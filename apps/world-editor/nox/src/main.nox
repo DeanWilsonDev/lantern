@@ -27,10 +27,13 @@ WindowRequests :: import penumbra:::bridge:::WindowRequests;
 Runtime :: import lantern:::nyx:::Runtime;
 NyxError :: import lantern:::nyx:::NyxError;
 CallContext :: import lantern:::nyx:::CallContext;
+Sdl :: import Sdl;
 Api :: import lantern:::editorapi;
 Editor :: import lantern:::editorapi:::Editor;
 EditorFunctions :: import lantern:::worldeditor:::editorfunctions;
 HostFunctions :: import lantern:::worldeditor:::hostfunctions;
+FrameTimeFunctions :: import lantern:::worldeditor:::frametimes;
+FrameTimes :: import lantern:::worldeditor:::frametimes:::FrameTimes;
 Paths :: import lantern:::worldeditor:::paths;
 FileDialog :: import lantern:::worldeditor:::filedialogs:::FileDialog;
 LevelRenderer :: import lantern:::worldeditor:::viewports:::LevelRenderer;
@@ -138,14 +141,16 @@ lantern:::worldeditor :: namespace {
         return failure!;
     }
 
-    // Registers every function the editor's Nyx code can call: the editor's own (EditorFunctions) and the
-    // preview ones. Prints the reason and returns false if any registration fails.
-    RegisterHostFunctions :: (runtime: Runtime~*, editorInstance: raw Editor~*, renderers: EditorRenderers~*) -> bool {
+    // Registers every function the editor's Nyx code can call: the editor's own (EditorFunctions), the
+    // preview ones and the frame time ones (FrameTimeFunctions). Prints the reason and returns false if any
+    // registration fails.
+    RegisterHostFunctions :: (runtime: Runtime~*, editorInstance: raw Editor~*, renderers: EditorRenderers~*, frameTimes: raw FrameTimes~*) -> bool {
         failure~ NyxError*!? = EditorFunctions:::RegisterEditorFunctions(runtime, editorInstance);
         unsafe {
             previewPointer: raw PreviewRenderer~* = renderers->preview;
             failure = HostFunctions:::FirstFailure(failure!, RegisterPreviewFunctions(runtime, previewPointer));
         }
+        failure = HostFunctions:::FirstFailure(failure!, FrameTimeFunctions:::RegisterFrameTimeFunctions(runtime, frameTimes));
         if failure != null {
             print("registering the editor's host functions failed:");
             PrintFailure(failure!);
@@ -178,7 +183,13 @@ lantern:::worldeditor :: namespace {
         }
         renderers := new EditorRenderers(editorPointer);
         defer delete renderers;
-        guard RegisterHostFunctions(runtime, editorPointer, renderers) == true return 1;
+        frameTimes := new FrameTimes(true);
+        defer delete frameTimes;
+        frameTimesPointer~ raw FrameTimes~* = null;
+        unsafe {
+            frameTimesPointer = frameTimes;
+        }
+        guard RegisterHostFunctions(runtime, editorPointer, renderers, frameTimesPointer) == true return 1;
         fonts := new SdlFonts(Paths:::FONT_PATH);
         defer delete fonts;
         host := new BridgeHost(runtime->handle, Paths:::UI_DIRECTORY, fonts);
@@ -267,8 +278,14 @@ lantern:::worldeditor :: namespace {
         {
             renderers := new EditorRenderers(editorPointer);
             defer delete renderers;
-            guard RegisterHostFunctions(runtime, editorPointer, renderers) == true return 1;
-            status = RunWindow(runtime, renderers);
+            frameTimes := new FrameTimes(lantern:::gpu:::GpuOptions:::FromEnvironment().vsync);
+            defer delete frameTimes;
+            frameTimesPointer~ raw FrameTimes~* = null;
+            unsafe {
+                frameTimesPointer = frameTimes;
+            }
+            guard RegisterHostFunctions(runtime, editorPointer, renderers, frameTimesPointer) == true return 1;
+            status = RunWindow(runtime, renderers, frameTimes);
         }
         return status;
     }
@@ -277,11 +294,15 @@ lantern:::worldeditor :: namespace {
     // loader, starts the interface, and then each frame: pumps window events, finishes a file dialog,
     // carries out the interface's window requests, runs its update, measures and arranges the widgets,
     // lets them react to the mouse, draws them and presents. It stops when the window closes, the
-    // interface asks to quit, or LANTERN_MAX_FRAMES frames have run (for tests and benchmarks).
-    RunWindow :: (runtime: Runtime~*, renderers: EditorRenderers~*) -> i32 {
+    // interface asks to quit, or LANTERN_MAX_FRAMES frames have run (for tests and benchmarks). The editor
+    // redraws every frame, never only on a change, so the frame time is the cost of a whole redraw. Each
+    // frame it also times itself from the start of the last frame (see FrameTimes) and makes the window's
+    // vertical sync match what the interface asked for, which starts as LANTERN_VSYNC says.
+    RunWindow :: (runtime: Runtime~*, renderers: EditorRenderers~*, frameTimes: FrameTimes~*) -> i32 {
         window := new SdlWindow();
         defer delete window;
         guard window->Open("Lantern World Editor", WINDOW_LOGICAL_WIDTH, WINDOW_LOGICAL_HEIGHT) == true return 1;
+        ApplyVerticalSync(window, frameTimes);
         fonts := new SdlFonts(Paths:::FONT_PATH);
         defer delete fonts;
         unsafe {
@@ -343,7 +364,14 @@ lantern:::worldeditor :: namespace {
         frameLimit: u64 = FrameLimit();
         frameCount~ u64 = 0;
         rootConsumedInput~ bool = false;
+        frameStartNanoseconds~ u64 = NowNanoseconds();
         while !host->quitRequested {
+            nowNanoseconds: u64 = NowNanoseconds();
+            frameTimes->RecordFrame(f64(nowNanoseconds - frameStartNanoseconds) / 1000000000.0f);
+            frameStartNanoseconds = nowNanoseconds;
+            if frameTimes->verticalSyncWanted != frameTimes->verticalSyncActive {
+                ApplyVerticalSync(window, frameTimes);
+            }
             guard window->PumpEvents() == true break;
             dpiScaleFactor: f32 = window->DpiScaleFactor();
             viewport: Point = window->LogicalSize();
@@ -388,6 +416,24 @@ lantern:::worldeditor :: namespace {
         host->Shutdown();
         PrintMessages(host);
         return 0;
+    }
+
+    // The current time from SDL, in nanoseconds.
+    NowNanoseconds :: () -> u64 {
+        now~ u64 = 0;
+        unsafe {
+            now = Sdl:::SDL_GetTicksNS();
+        }
+        return now;
+    }
+
+    // Makes the window's vertical sync what was asked for, then records what the window says it has,
+    // which is what the status bar shows. A driver that refuses leaves it as it was; the request is then
+    // dropped, so the toggle in the settings shows the truth and the loop does not ask again every frame.
+    ApplyVerticalSync :: (window: SdlWindow~*, frameTimes: FrameTimes~*) -> void {
+        window->SetVerticalSync(frameTimes->verticalSyncWanted);
+        frameTimes->verticalSyncActive = window->VerticalSyncEnabled();
+        frameTimes->verticalSyncWanted = frameTimes->verticalSyncActive;
     }
 
     // The number of frames to run from LANTERN_MAX_FRAMES, or 0 for no limit.

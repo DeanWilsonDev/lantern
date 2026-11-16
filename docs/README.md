@@ -20,6 +20,8 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`game-api.md`](game-api.md) | Every host function and type a Nyx game can call with its signature, examples from the platformer, and the hooks the engine calls. |
 | [`adding-a-level-and-a-mechanic.md`](adding-a-level-and-a-mechanic.md) | A tutorial: make a level, put it on the menu, then add a mechanic through an entity, a system, an event and a rule, and test it. |
 | [`crimson-and-thorn-slice.md`](crimson-and-thorn-slice.md) | Which design mechanics the platformer takes on, in what order, and where each lives in `games/platformer/`. |
+| [`night-look.md`](night-look.md) | Why the platformer is played at night, the moon, sky and lamps that make it readable, and the day look. |
+| [`photo-mode.md`](photo-mode.md) | The photo collectable: raising the camera, what counts as a photo, and how sights are authored. |
 
 ## The renderer's effects
 

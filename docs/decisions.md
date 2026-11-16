@@ -1369,3 +1369,81 @@ The chapter progression had one real level played twice. A second level makes it
   `FindByKind`; the test relies on that order.
 
 Cards: `platformer-game/crimson-and-thorn-slice` (the rooftops complete).
+
+## D-078: The editor measures its own frames and honours LANTERN_VSYNC
+
+The editor's status bar read a constant 60 fps on a 120 Hz display with `LANTERN_VSYNC=0`, while the game's HUD read
+185 to 234. Two things caused it. The editor window's SDL renderer was always opened with vertical sync on
+(`SdlWindow.Open`), and `LANTERN_VSYNC` only reached the off-screen GPU renderer that draws the viewport, which has no
+swapchain to sync. And the figure was the time between viewport renders, which in a loop that waits for the display is
+the display's rate whatever the work costs.
+
+- The window's loop times itself, from the start of one frame to the start of the next (wait for the display
+  included), into the same `FrameStats` ring the game's debug HUD uses, and the status bar shows its average and worst
+  milliseconds over 120 frames, the rate the average gives, and whether the window really has vertical sync on. The
+  viewport's own render time and draw count sit in a second chip.
+- `SdlWindow.SetVerticalSync` and `VerticalSyncEnabled` (penumbra-ui-engine) let the editor set vertical sync at
+  start from `LANTERN_VSYNC` and change it from a Vertical sync checkbox in the Graphics tab. The interface asks through
+  `editorSetVerticalSync`; the loop makes the window match once a frame and reports what the window says it has, so a
+  driver that refuses shows as still on.
+- The editor already redraws every frame, so there is no idle mode and no separate redraw toggle: vertical sync is the
+  only pacing. If it becomes event-driven later, the status bar should say "idle" between redraws.
+- The setting is not saved with the preferences. It is a measuring switch, and starting a benchmark with it left off
+  from a previous session would be a surprise. Provisional (2026-11-16): not reviewed by Dean.
+
+Cards: `world-editor/settings-status-bar-and-visual-polish/editor-reports-real-frame-times-and-has-a-vsync-toggle`.
+## D-079: The platformer is played at night, and small lights carry the mechanics
+
+Dean's feedback (2026-11-16): with everything fully lit, the companion's glow and the lantern did nothing you could see.
+See `night-look.md`.
+
+- **Night is the default look, day is an option.** `ChapterLooks.Apply` reads `LANTERN_LOOK`; `day` gives the old
+  daytime table, anything else the night. The day look is a table of a few numbers, so keeping it is cheap, and it
+  checks that a level's geometry reads without its lights.
+- **The moon is the sun.** The engine has one directional light, so the moon is that light, with a cool dim colour, a
+  lower direction (`LightingSettings.MoonDirection`) and a pale, bigger sun disc. Sun shadows stay on, so the moon casts
+  the long shadows. No second engine light was added.
+- **Ambient comes from the sky.** The sky colours also light the scene (`sky-and-image-based-lighting.md`), so the
+  night's sky colours are chosen as a light source, not only as a backdrop: a night too dark to read platform edges is
+  fixed by lifting the horizon and zenith, not by adding a flat fill light.
+- **Small lights belong to the game, by state.** `NightLights` adds a point light for each street lamp, checkpoint
+  post, goal and lantern pickup, and `Update` recolours them from the objects' own state each step, so a restart or a
+  respawn needs no extra code. They cast no shadows: a shadowed point light costs six extra shadow renders, and the
+  engine has twelve local shadow tiles in all (`ShadowPlan`).
+- **Street lamps and lit windows are new world kinds.** They are authored in the editor like any entity (palette
+  entries `street_lamp`, `lit_window`), and the game gives them their meshes, so a world file stays a list of
+  positions. The towers beside the street are plain `block` entities.
+- **Bloom is retuned for night.** Threshold 1.0 and strength 0.35, instead of 1.5 and 0.1, so lamps and windows glow.
+  Quality `low` still turns bloom off.
+- **Not measured on a real GPU here.** The cloud session renders with a software Vulkan driver, so frame times in
+  `night-look.md` are lavapipe's, not a GPU's. Dean's Mac numbers (185 to 234 fps) are the check that matters.
+
+Cards: `platformer-game/night-and-photo-mode` (`night-chapter-looks`).
+
+## D-080: Photo mode is a collectable built from the camera, a raycast and a counter
+
+Dean's feedback (2026-11-16): a photo-taking collectable, of sights together, for more variety in what the character does.
+See `photo-mode.md`.
+
+- **Game code only.** The engine already offers the camera, raycasts, the screen size and world properties, so photo mode
+  is Nyx in `games/platformer/`. No host function was added.
+- **A counted photo, not a file.** A photo counts a sight and the album names it. Saving the picture needs one new engine
+  function (a screen capture the game can call); the engine already writes a PNG at the end of a run, so the work is small
+  but it is an engine change, left as a follow-up card.
+- **First person, body hidden.** The lens is at the player's eyes. Visibility belongs to a mesh in this engine, so
+  `Player.SetBodyVisible` hides the body and visor while the camera is up.
+- **The framing test is maths in the game.** A pinhole projection of the sight's position decides "in frame", so a sight
+  needs a position and nothing else, and no engine support for picking is needed. The field of view (60 degrees) is
+  duplicated from the renderer's `Camera`, because the game can't read it back.
+- **"Together" means the companion is in the shot and near the sight.** Her chest has to be in the frame and in the
+  clear, and within 7 m of the sight, so a photo of her anywhere else doesn't count. A level with no companion ignores the
+  property.
+- **Optional by construction.** The world keeps running, no door waits on a photo, the shutter always flashes, and a
+  photo that doesn't count says why on the line under the frame.
+- **The shutter shares Space with the jump.** With the camera raised the player stands still (`Simulate` zeroes the
+  move and jump input), so the key is free.
+- **Sights hang a marker in the world.** A small glowing diamond shows where a sight is while the camera is down, so
+  players find them by looking around; a hidden one is a later option (`photo_sight` with `hidden`).
+
+Cards: `platformer-game/night-and-photo-mode` (`photo-sights-in-world-files`, `photo-mode-camera-and-framing`,
+`photo-viewfinder-hud-and-album`).

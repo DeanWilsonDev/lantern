@@ -1,0 +1,91 @@
+Runtime :: import lantern:::nyx:::Runtime;
+CallContext :: import lantern:::nyx:::CallContext;
+NyxError :: import lantern:::nyx:::NyxError;
+FrameStats :: import lantern:::core:::FrameStats;
+FixedStepPlan :: import lantern:::core:::FixedStepPlan;
+HostFunctions :: import lantern:::worldeditor:::hostfunctions;
+
+lantern:::worldeditor:::frametimes :: namespace {
+    // The editor's own frame clock. The status bar used to show how often the viewport's picture was drawn,
+    // which is not the same as how long the editor's frames take: the window's loop waits for the display
+    // when vertical sync is on, so a loop that could run at 200 frames a second reads as a steady 60 or
+    // 120. FrameTimes measures what the window's loop really does, from the start of one frame to the
+    // start of the next (the wait for vsync is included, on purpose), and keeps the last 120 frames in the
+    // same FrameStats the game's debug HUD uses, so the two programs report in the same way.
+    //
+    // It also holds the vertical sync switch. The interface cannot touch the window, so it asks here
+    // (`editorSetVerticalSync`) and the window's loop makes the window match once a frame.
+    FrameTimes :: class {
+    public:
+        verticalSyncWanted~ bool = true;
+        verticalSyncActive~ bool = true;
+
+        FrameTimes~: (verticalSync: bool) : verticalSyncWanted(verticalSync), verticalSyncActive(verticalSync) {
+        }
+
+        // Notes one finished frame that took this many seconds from start to start.
+        RecordFrame~: (frameSeconds: f64) -> void {
+            this->stats.Record(frameSeconds, FixedStepPlan { });
+        }
+
+        // A reading by name, as text: `average_ms` and `worst_ms` over the last 120 frames, `fps` from the
+        // average, and `vsync` ("on" or "off", whether the window is really waiting for the display).
+        // Anything else is null.
+        Get :: (name: string) -> string!? {
+            if name == "average_ms" {
+                return lantern:::core:::FixedDecimals(this->stats.AverageFrameMilliseconds(), 1, 0);
+            }
+            if name == "worst_ms" {
+                return lantern:::core:::FixedDecimals(this->stats.WorstFrameMilliseconds(), 1, 0);
+            }
+            if name == "fps" {
+                return lantern:::core:::FixedDecimals(this->stats.FramesPerSecond(), 0, 0);
+            }
+            if name == "vsync" {
+                if this->verticalSyncActive {
+                    return "on".copy();
+                }
+                return "off".copy();
+            }
+            return null;
+        }
+
+    private:
+        stats~ FrameStats = FrameStats { };
+    }
+
+    // Registers the three host functions the interface uses for frame times: `editorFrameStat(name)` for a
+    // reading from FrameTimes.Get (an empty string for an unknown name), `editorVerticalSync()` for the
+    // switch as the window has it, and `editorSetVerticalSync(enabled)` to ask for it to change.
+    RegisterFrameTimeFunctions :: (runtime: Runtime~*, frameTimes: raw FrameTimes~*) -> NyxError*!? {
+        failure~ NyxError*!? = runtime->RegisterFunction("editorFrameStat", "(name: string) -> string", new (context: CallContext~*) -> void [frameTimes] {
+            name: string! = context->Text(0);
+            unsafe {
+                clock: FrameTimes~* = frameTimes;
+                reading: string!? = clock->Get(name);
+                if text := reading {
+                    context->ReturnText(text);
+                } else {
+                    context->ReturnText("");
+                }
+                delete reading;
+            }
+            delete name;
+        });
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorVerticalSync", "() -> bool", new (context: CallContext~*) -> void [frameTimes] {
+            unsafe {
+                clock: FrameTimes~* = frameTimes;
+                context->ReturnBool(clock->verticalSyncActive);
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorSetVerticalSync", "(enabled: bool) -> void", new (context: CallContext~*) -> void [frameTimes] {
+            enabled: bool = context->Bool(0);
+            unsafe {
+                clock: FrameTimes~* = frameTimes;
+                clock->verticalSyncWanted = enabled;
+            }
+            context->ReturnNull();
+        }));
+        return failure!;
+    }
+}
