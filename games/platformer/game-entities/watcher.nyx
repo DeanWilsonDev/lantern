@@ -1,0 +1,124 @@
+Math :: import standard:::Math;
+PartnerTuning :: import PartnerTuning;
+
+// A sweeping light that sends the player back when it catches them: a world-file entity of kind
+// "watcher". The lamp is a real spot light that swings across the room, and "caught" is a real
+// test too: the player is inside the beam's cone and a ray from the lamp reaches them without
+// meeting a wall or pillar. So a pillar's shadow is genuine cover, and the picture on screen is
+// the rule.
+//
+// She can be a lure: a partner standing at a "lure" point in the lamp's sight draws the beam to
+// herself for WATCHER_LURE_SECONDS, which leaves the player free to cross.
+//
+// Properties:
+// - `facing_degrees` (number): the middle of the sweep, 0 is toward -Z, 180 toward +Z.
+// - `sweep_degrees` (number, optional): how far either side of the middle the beam swings; 30.
+// - `period_seconds` (number, optional): one full swing out and back; 8.
+// - `pitch_degrees` (number, optional): how far the beam points down; 10.
+// - `range` (number, optional): metres the beam reaches; 40.
+// - `cone_degrees` (number, optional): half the beam's width, for the catching test; 9.
+Watcher :: class {
+public:
+    entity: i64;
+    lamp: lantern:::math:::Vec3;
+    facingDegrees: f32;
+    sweepDegrees: f32;
+    periodSeconds: f32;
+    pitchDegrees: f32;
+    range: f32;
+    coneDegrees: f32;
+    beamDirection~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    isLured~ bool = false;
+    lureSecondsLeft~ f32 = 0.0f;
+    forgiveSecondsLeft~ f32 = 0.0f;
+
+    Watcher~: (entity: i64) : entity(entity), lamp(lantern:::world:::Position(entity)),
+        facingDegrees(lantern:::world:::NumberProperty(entity, "facing_degrees")),
+        sweepDegrees(Number(entity, "sweep_degrees", 30.0f)),
+        periodSeconds(Number(entity, "period_seconds", 8.0f)),
+        pitchDegrees(Number(entity, "pitch_degrees", 10.0f)),
+        range(Number(entity, "range", 40.0f)),
+        coneDegrees(Number(entity, "cone_degrees", 9.0f)) { }
+
+    // Turns the lamp on. The target is only where it starts aiming; Update moves it every step.
+    TurnOn~: () -> void {
+        beamDirection = SweepDirection(0.0f);
+        light = lantern:::lights:::AddSpot(lamp, lamp + beamDirection * 10.0f, "FFF0C0", 40.0f, range, 8.0f, 14.0f);
+        lantern:::lights:::SetShadows(light, true);
+        isOn = true;
+    }
+
+    TurnOff~: () -> void {
+        guard isOn;
+        lantern:::lights:::Remove(light);
+        isOn = false;
+    }
+
+    // One step. `time` is the simulation clock, so the sweep is the same every run. `lureAt` is
+    // where a luring partner stands, `isLuring` whether she is. Returns true when the beam has the
+    // player: inside the cone, in sight, and not forgiven just now.
+    Update~: (time: f32, playerCenter: lantern:::math:::Vec3, lureAt: lantern:::math:::Vec3, isLuring: bool, dt: f32) -> bool {
+        guard isOn return false;
+        if forgiveSecondsLeft > 0.0f {
+            forgiveSecondsLeft -= dt;
+        }
+        if isLuring && CanSee(lureAt) {
+            lureSecondsLeft = PartnerTuning:::WATCHER_LURE_SECONDS;
+        } else if lureSecondsLeft > 0.0f {
+            lureSecondsLeft -= dt;
+        }
+        isLured = lureSecondsLeft > 0.0f;
+        if isLured {
+            beamDirection = (lureAt - lamp).Normalized();
+        } else {
+            beamDirection = SweepDirection(time);
+        }
+        lantern:::lights:::Aim(light, lamp + beamDirection * 10.0f);
+        guard forgiveSecondsLeft <= 0.0f return false;
+        if IsInBeam(playerCenter) && CanSee(playerCenter) {
+            forgiveSecondsLeft = PartnerTuning:::WATCHER_FORGIVE_SECONDS;
+            return true;
+        }
+        return false;
+    }
+
+private:
+    isOn~ bool = false;
+    light~ i64 = 0;
+
+    Number :: (entity: i64, key: string, fallback: f32) -> f32 {
+        return lantern:::world:::HasProperty(entity, key) ? lantern:::world:::NumberProperty(entity, key) : fallback;
+    }
+
+    // The beam's direction at `time`: the middle yaw plus a swing, tipped down by the pitch. The
+    // swing is a sine, so the beam lingers at each end and moves fastest across the middle.
+    SweepDirection :: (time: f32) -> lantern:::math:::Vec3 {
+        swing := sweepDegrees * Math:::sin(time / periodSeconds * Math:::TAU);
+        yaw := (facingDegrees + swing) * Math:::TAU / 360.0f;
+        pitch := pitchDegrees * Math:::TAU / 360.0f;
+        flat := lantern:::math:::Vec3:::FromYaw(yaw);
+        down: lantern:::math:::Vec3 = { y: -Math:::sin(pitch) };
+        return flat * Math:::cos(pitch) + down;
+    }
+
+    // Inside the cone: the angle between the beam and the direction to the target is under
+    // `coneDegrees`, tested as a cosine so no inverse trig is needed.
+    IsInBeam :: (target: lantern:::math:::Vec3) -> bool {
+        toTarget := target - lamp;
+        guard toTarget.Length() < range return false;
+        guard toTarget.Length() > 0.01f return false;
+        cosine := toTarget.Normalized().Dot(beamDirection);
+        return cosine > Math:::cos(coneDegrees * Math:::TAU / 360.0f);
+    }
+
+    // A ray from the lamp to the target meets nothing first.
+    CanSee :: (target: lantern:::math:::Vec3) -> bool {
+        toTarget := target - lamp;
+        distance := toTarget.Length();
+        guard distance > 0.01f return false;
+        return when lantern:::physics:::Raycast(lamp, toTarget.Normalized(), distance) {
+            hit: lantern:::physics:::RayHit -> hit.Distance() > distance - 0.5f,
+            null -> true
+        };
+    }
+}

@@ -1,0 +1,265 @@
+CommandPoint :: import CommandPoint;
+PartnerTuning :: import PartnerTuning;
+Math :: import standard:::Math;
+
+// What she is doing right now.
+// - Following: walking to the player and standing about FOLLOW_DISTANCE away.
+// - Waiting: standing exactly where she is, until called.
+// - Walking: on her way to a command point (through its `via` first, if it has one).
+// - Acting: arrived at a command point and doing its action.
+PartnerMode :: enum {
+    Following,
+    Waiting,
+    Walking,
+    Acting
+}
+
+// The partner: the companion you command. Unlike the scripted route the Companion walks (game-entities/
+// companion.nyx), she is a character with her own physics body who obeys three requests: come to me
+// (Call), stay there (Wait) and go there and do it (Send). The puzzles in the prototype rooms are
+// built so that she makes each one easier or shorter, and the player can always solve it alone.
+//
+// She has no path finding. She walks in a straight line to where she is going and gives up when
+// that line is blocked; a level steers her with the command point's `via`. That keeps her
+// predictable, which matters when a puzzle depends on where she is.
+Partner :: class {
+public:
+    root~ i64 = 0;
+    isPresent~ bool = false;
+    position~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    mode~ PartnerMode = PartnerMode:::Waiting;
+    action~ string = "";
+    // Set when she gives up a walk or can't do what was asked; the game shows it once and clears it.
+    note~ string = "";
+    controller~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, lantern:::math:::Vec3:::Zero());
+
+    // Makes her at `start`. A level with no partner marker has no partner at all.
+    Spawn~: (start: lantern:::math:::Vec3, bodyMesh: i64, bodyTexture: i64) -> void {
+        isPresent = true;
+        trail = [];
+        trailIndex = 0;
+        position = start;
+        mode = PartnerMode:::Waiting;
+        action = "";
+        note = "";
+        controller = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, start);
+        controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED);
+        root = lantern:::world:::Spawn("partner", start);
+        body = lantern:::world:::Spawn("partner_body", { y: PartnerTuning:::HEIGHT * 0.5f });
+        lantern:::world:::SetTexturedMesh(body, bodyMesh, bodyTexture, "E8506A");
+        // The player's capsule mesh is 1.7 m tall and 0.7 m wide; she is 1.5 by 0.48.
+        lantern:::world:::SetScale(body, { x: 0.7f, y: 0.88f, z: 0.7f });
+        lantern:::world:::SetParent(body, root);
+        bodyCenter = PartnerTuning:::HEIGHT * 0.5f;
+    }
+
+    // Back at `start`, waiting: the level was restarted.
+    Reset~: (start: lantern:::math:::Vec3) -> void {
+        guard isPresent;
+        controller.Teleport(start);
+        position = start;
+        mode = PartnerMode:::Waiting;
+        action = "";
+        note = "";
+        hasPending = false;
+        trail = [];
+        trailIndex = 0;
+        lantern:::world:::Teleport(root, start);
+    }
+
+    // Call: come to me and follow.
+    Call~: () -> void {
+        guard isPresent;
+        mode = PartnerMode:::Following;
+        trailIndex = NearestTrailIndex();
+        action = "";
+        hasPending = false;
+    }
+
+    // Wait: stay exactly here until called.
+    Wait~: () -> void {
+        guard isPresent;
+        mode = PartnerMode:::Waiting;
+        action = "";
+        hasPending = false;
+    }
+
+    // Send: go to the point and do its action.
+    Send~: (point: CommandPoint) -> void {
+        guard isPresent;
+        action = point.action;
+        destination = point.position;
+        route = point.route;
+        routeIndex = 0;
+        hasPending = false;
+        stuckSeconds = 0.0f;
+        mode = PartnerMode:::Walking;
+    }
+
+    // The player has jumped off her back: she stands up and waits.
+    BoostUsed~: () -> void {
+        guard isPresent;
+        action = "";
+        mode = PartnerMode:::Waiting;
+    }
+
+    // For the debug HUD and the tests.
+    ModeName :: () -> string {
+        return when mode <PartnerMode> {
+            Following -> "following",
+            Waiting -> "waiting",
+            Walking -> "walking",
+            Acting -> "acting " + action
+        };
+    }
+
+    IsOfferingBoost :: () -> bool {
+        return isPresent && mode == PartnerMode:::Acting && action == "crouch";
+    }
+
+    IsLuring :: () -> bool {
+        return isPresent && mode == PartnerMode:::Acting && action == "lure";
+    }
+
+    // True once, on the step she arrives at a "pull" point.
+    TakePullRequest~: () -> bool {
+        guard hasPending return false;
+        hasPending = false;
+        return true;
+    }
+
+    // The note she wants shown, and forget it.
+    TakeNote~: () -> string {
+        said := note;
+        note = "";
+        return said;
+    }
+
+    // The player's route, remembered as breadcrumbs: a point every TRAIL_SPACING metres of ground
+    // walked. Following her means walking the breadcrumbs in order, so she goes through the doorway,
+    // slot or stair the player went through instead of straight at them through a wall.
+    RememberTrail~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool) -> void {
+        guard isPlayerGrounded;
+        if trail.length() > 0 && trail[trail.length() - 1].DistanceTo(playerFeet) < PartnerTuning:::TRAIL_SPACING {
+            return;
+        }
+        trail.add(playerFeet);
+        if trail.length() > PartnerTuning:::TRAIL_MAX_POINTS {
+            for dropped~ i32 = 0; dropped < PartnerTuning:::TRAIL_DROP_POINTS; dropped++ {
+                trail.removeAt(0);
+            }
+            trailIndex = Math:::max(trailIndex - PartnerTuning:::TRAIL_DROP_POINTS, 0);
+        }
+    }
+
+    // One fixed step.
+    Update~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+        guard isPresent;
+        goal~ lantern:::math:::Vec3 = position;
+        isMoving~ bool = false;
+        when mode <PartnerMode> {
+            Following -> {
+                gap := (playerFeet - position).Horizontal().Length();
+                if gap > PartnerTuning:::CATCH_UP_DISTANCE {
+                    controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * 1.5f);
+                } else if gap > PartnerTuning:::FOLLOW_DISTANCE {
+                    goal = NextTrailPoint(playerFeet);
+                    isMoving = true;
+                }
+            },
+            Walking -> {
+                goal = routeIndex < route.length() ? route[routeIndex] : destination;
+                isMoving = true;
+            },
+            (Waiting || Acting)
+        }
+        direction~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+        if isMoving {
+            toGoal := (goal - position).Horizontal();
+            if toGoal.Length() < PartnerTuning:::ARRIVE_DISTANCE && mode == PartnerMode:::Walking {
+                Arrive();
+            } else if toGoal.Length() > 0.05f {
+                direction = toGoal.Normalized();
+                facingYaw = direction.Yaw();
+            }
+        }
+        controller.Step(direction, false, false, dt);
+        before := position;
+        position = controller.FeetPosition();
+        if mode == PartnerMode:::Walking || (mode == PartnerMode:::Following && isMoving) {
+            speed := (position - before).Horizontal().Length() / dt;
+            if speed < PartnerTuning:::STUCK_SPEED {
+                stuckSeconds += dt;
+            } else {
+                stuckSeconds = 0.0f;
+            }
+            if stuckSeconds > PartnerTuning:::STUCK_SECONDS {
+                stuckSeconds = 0.0f;
+                if mode == PartnerMode:::Following {
+                    controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * -1.5f);
+                } else {
+                    note = "She can't get there";
+                    mode = PartnerMode:::Waiting;
+                    action = "";
+                }
+            }
+        }
+        lantern:::world:::SetPosition(root, position);
+        lantern:::world:::SetYaw(root, facingYaw);
+        ShowCrouch();
+    }
+
+private:
+    body~ i64 = 0;
+    bodyCenter~ f32 = 0.0f;
+    destination~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    route~ Array<lantern:::math:::Vec3> = [];
+    routeIndex~ i32 = 0;
+    facingYaw~ f32 = 0.0f;
+    trail~ Array<lantern:::math:::Vec3> = [];
+    trailIndex~ i32 = 0;
+    stuckSeconds~ f32 = 0.0f;
+    hasPending~ bool = false;
+
+    // The breadcrumb she is walking to: she skips the ones she is already at, and when she has
+    // used them all she walks straight at the player.
+    NextTrailPoint~: (playerFeet: lantern:::math:::Vec3) -> lantern:::math:::Vec3 {
+        while trailIndex < trail.length() - 1 && (trail[trailIndex] - position).Horizontal().Length() < PartnerTuning:::TRAIL_REACHED_DISTANCE {
+            trailIndex++;
+        }
+        return trailIndex < trail.length() ? trail[trailIndex] : playerFeet;
+    }
+
+    // Where she rejoins the trail when called: the breadcrumb closest to her.
+    NearestTrailIndex :: () -> i32 {
+        best~ i32 = 0;
+        bestDistance~ f32 = 1000000.0f;
+        for index~ i32 = 0; index < trail.length(); index++ {
+            distance := trail[index].DistanceTo(position);
+            if distance < bestDistance {
+                best = index;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    // Reaching the via moves her on to the point itself; reaching the point starts the action.
+    Arrive~: () -> void {
+        stuckSeconds = 0.0f;
+        if routeIndex < route.length() {
+            routeIndex++;
+        } else {
+            mode = PartnerMode:::Acting;
+            hasPending = action == "pull";
+        }
+    }
+
+    // Crouching is her body squashed to CROUCH_SCALE of its height, lowered so her feet stay on the ground.
+    ShowCrouch~: () -> void {
+        crouched := mode == PartnerMode:::Acting && action == "crouch";
+        scale := crouched ? PartnerTuning:::CROUCH_SCALE : 1.0f;
+        lantern:::world:::SetScale(body, { x: 0.7f, y: 0.88f * scale, z: 0.7f });
+        lantern:::world:::SetPosition(body, { y: bodyCenter * scale });
+    }
+}
