@@ -13,7 +13,6 @@ CollisionView :: import CollisionView;
 ChapterLooks :: import ChapterLooks;
 Dust :: import Dust;
 Math :: import standard:::Math;
-CommandPoint :: import CommandPoint;
 Companion :: import Companion;
 GameAssets :: import GameAssets;
 GameEvent :: import GameEvent;
@@ -187,6 +186,7 @@ private:
     static COMPLETE_SECONDS :: 4.0f;     // how long the completion message shows before the next level loads
     static PROTOTYPE_HOLD_THE_DOOR_PATH :: "worlds/prototypes/hold-the-door.world.json";
     static PROTOTYPE_NARROW_WAY_PATH :: "worlds/prototypes/the-narrow-way.world.json";
+    static GOAL_HINT_DISTANCE :: 4.0f;      // metres: how near a goal the player must be to be told what is missing
     static PROTOTYPE_LIGHT_GATE_PATH :: "worlds/prototypes/light-gate.world.json";
     static PROTOTYPE_HAND_OFF_PATH :: "worlds/prototypes/hand-off.world.json";
     static PROTOTYPE_WATCHER_PATH :: "worlds/prototypes/the-watcher.world.json";
@@ -233,7 +233,7 @@ private:
     lanternGlow~ GuideLight = new GuideLight();
     checkpointSystem~ CheckpointSystem = new CheckpointSystem();
     companion~ Companion = new Companion();
-    // The companion you command (game-entities/partner.nyx), in the prototype rooms. A level has
+    // The companion who works beside you (game-entities/partner.nyx), in the prototype rooms. A level has
     // either her or the route-following companion above, depending on its markers.
     partner~ Partner = new Partner();
     switchSystem~ SwitchSystem = new SwitchSystem();
@@ -282,7 +282,7 @@ private:
         minigames.Start(level.wordTokens, level.foodStalls);
         companion.Spawn(level.companionStops, level.anchors, assets.playerMesh, assets.playerTexture);
         if level.hasPartner {
-            partner.Spawn(level.partnerStart, assets.playerMesh, assets.playerTexture);
+            partner.Spawn(level.partnerStart, assets.playerMesh, assets.playerTexture, level.teamBeats);
         } else {
             partner.isPresent = false;
         }
@@ -403,7 +403,7 @@ private:
         UpdateAdventure(stick, dt);
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
-        goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), IsTeamTogether(), events);
         lanternSystem.DetectTaken(level.lanterns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         thornSystem.DetectTouches(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         if controller.IsGrounded() && !anchorSystem.isSwinging && !glowSystem.IsStandingOnAny(level.glowPlatforms, player.FeetPosition()) && !thornSystem.IsNearAny(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), SAFE_SPOT_MARGIN) && !trainSystem.IsOnTrack(level.trains, player.FeetPosition()) && !climbSystem.isClimbing {
@@ -490,9 +490,6 @@ private:
         if step.Jumped() {
             Dust:::Puff(player.FeetPosition(), 6, 1.2f, 0.0f);
             events.Push(boostReady ? GameEvent:::PlayerBoosted : GameEvent:::PlayerJumped);
-            if partnerBoost {
-                partner.BoostUsed();
-            }
         }
         if step.Landed() {
             Dust:::Puff(player.FeetPosition(), 10, Math:::min(step.LandingSpeed() * 0.2f, 3.0f) + 0.8f, 0.3f);
@@ -500,15 +497,16 @@ private:
         }
     }
 
-    // The prototype rooms' step: the partner's commands and walking, then plates, levers, crystals and
-    // gates, then the watchers. Everything here needs the player to have moved already.
+    // The prototype rooms' step: the player's own use key, the partner's beats and walking, then plates, levers,
+    // crystals and gates, then the watchers. Everything here needs the player to have moved already.
     UpdatePuzzle~: (dt: f32) -> void {
         if !isAutoplay {
-            HandlePartnerCommands();
+            HandleUse();
         }
+        activeChannels := ActiveChannels();
         if partner.isPresent {
             partner.RememberTrail(player.FeetPosition(), player.controller.IsGrounded());
-            partner.Update(player.FeetPosition(), dt);
+            partner.Update(player.FeetPosition(), player.controller.IsGrounded(), activeChannels, dt);
             if partner.TakePullRequest() {
                 switchSystem.TryPull(level.switches, partner.position, PartnerTuning:::PARTNER_LEVER_REACH);
             }
@@ -539,51 +537,54 @@ private:
         }
     }
 
-    // Q calls her, E tells her to wait, F pulls a lever you stand beside or else sends her to the
-    // command point you are facing.
-    HandlePartnerCommands~: () -> void {
-        if lantern:::input:::IsPressed(InputSettings:::CALL_PARTNER) {
-            partner.Call();
+    // The switch channels that are on right now: some of her beats wait for one, as when you pull a lever for her.
+    ActiveChannels :: () -> Array<i32> {
+        channels~ Array<i32> = [];
+        for each in level.switches {
+            if each.isOn {
+                channels.add(each.channel);
+            }
         }
-        if lantern:::input:::IsPressed(InputSettings:::WAIT_PARTNER) {
-            partner.Wait();
-        }
+        return channels;
+    }
+
+    // F is the player's own use key: it pulls a lever you stand beside. She has no key, because she is not told what to do.
+    HandleUse~: () -> void {
         guard lantern:::input:::IsPressed(InputSettings:::USE);
         if switchSystem.TryPull(level.switches, player.FeetPosition(), PartnerTuning:::LEVER_REACH) {
             lantern:::audio:::Play("pickup", 0.6f);
-            return;
         }
-        guard partner.isPresent;
-        chosen := ChooseCommandPoint();
-        if chosen < 0 {
-            rules.Announce("Nothing to ask her to do over there", 2.0f);
-            return;
-        }
-        partner.Send(level.commandPoints[chosen]);
     }
 
-    // The nearest command point in front of the camera and within SEND_RANGE, or -1. "In front"
-    // is the dot product of the direction to the point with the camera's flat forward: 1 straight
-    // ahead, 0 square to the side.
-    ChooseCommandPoint :: () -> i32 {
+    // A level only completes with her beside the player, so the goal asks this. A level with no companion at all has no one to wait for.
+    IsTeamTogether :: () -> bool {
         feet := player.FeetPosition();
-        forward := camera.Forward().Horizontal().Normalized();
-        best~ i32 = -1;
-        bestDistance~ f32 = PartnerTuning:::SEND_RANGE;
-        index~ i32 = 0;
-        for point: CommandPoint in level.commandPoints {
-            toPoint := (point.position - feet).Horizontal();
-            distance := toPoint.Length();
-            if distance > 0.5f && distance < bestDistance && toPoint.Normalized().Dot(forward) > PartnerTuning:::SEND_FACING_DOT {
-                best = index;
-                bestDistance = distance;
-            }
-            index++;
+        if partner.isPresent {
+            return IsBeside(partner.position, feet);
         }
-        return best;
+        if level.companionStops.length() > 0 {
+            return IsBeside(companion.position, feet);
+        }
+        return true;
     }
 
-    // The line under the status: the nearest sign, else what F would do right now.
+    // Close along the ground, and on much the same level.
+    IsBeside :: (teammate: lantern:::math:::Vec3, feet: lantern:::math:::Vec3) -> bool {
+        along := (teammate - feet).Horizontal().Length();
+        return along < PartnerTuning:::TOGETHER_DISTANCE && teammate.y - feet.y < PartnerTuning:::TOGETHER_HEIGHT && feet.y - teammate.y < PartnerTuning:::TOGETHER_HEIGHT;
+    }
+
+    // The player is at a goal, close enough that it would count if she were here.
+    IsPlayerAtAGoal :: () -> bool {
+        for goal in level.goals {
+            if !goal.isReached && (lantern:::world:::Position(goal.entity) - player.FeetPosition()).Horizontal().Length() < GOAL_HINT_DISTANCE {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The line under the status: the nearest sign, else what F would do right now, else what is missing at the goal.
     HintText :: () -> string {
         guard state == GameState:::Playing return "";
         feet := player.FeetPosition();
@@ -599,6 +600,12 @@ private:
         }
         if climbSystem.NearestGrabbable(level.climbSurfaces, feet) >= 0 {
             return "F: climb";
+        }
+        if IsPlayerAtAGoal() && !IsTeamTogether() {
+            if partner.isPresent && partner.IsWorkingOnABeat() {
+                return "The way is not finished: she is waiting for you";
+            }
+            return "Wait for her. The level counts when you finish it together";
         }
         return minigames.HintFor(level.foodStalls, feet);
     }
@@ -772,6 +779,8 @@ private:
         lantern:::debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
         if partner.isPresent {
             lantern:::debug:::SetValue("Partner/Mode", partner.ModeName());
+            lantern:::debug:::SetValue("Partner/Beat", `${partner.beatIndex:d}`);
+            lantern:::debug:::SetValue("Team/Together", IsTeamTogether() ? "yes" : "no");
             lantern:::debug:::SetValue("Partner/Position", `${partner.position.x:.2f}, ${partner.position.y:.2f}, ${partner.position.z:.2f}`);
         }
         lantern:::debug:::SetValue("Glow/Companion light", companionGlow.isOn ? `${companionGlow.position.x:.1f}, ${companionGlow.position.y:.1f}, ${companionGlow.position.z:.1f}` : "off");

@@ -4,7 +4,6 @@ FoodStall :: import FoodStall;
 WordToken :: import WordToken;
 Anchor :: import Anchor;
 BouncePad :: import BouncePad;
-CommandPoint :: import CommandPoint;
 CrumblePlatform :: import CrumblePlatform;
 CompanionStop :: import CompanionStop;
 Gate :: import Gate;
@@ -17,6 +16,7 @@ GlowPlatform :: import GlowPlatform;
 LanternPickup :: import LanternPickup;
 LightingSettings :: import LightingSettings;
 MovingPlatform :: import MovingPlatform;
+TeamBeat :: import TeamBeat;
 Thorns :: import Thorns;
 
 // The level: a world file made in the editor, plus what the game reads from it. Entities are
@@ -42,11 +42,12 @@ public:
     goals~ Array<Goal> = [];
     lanterns~ Array<LanternPickup> = [];
     thorns~ Array<Thorns> = [];
-    // The prototype rooms' pieces (docs/gameplay-prototypes.md): the partner you command and the
-    // places you can send her, plates, levers and crystals, the gates they open, and signs.
+    // The prototype rooms' pieces (docs/gameplay-prototypes.md): the partner who works beside you and her
+    // beats, plates, levers and crystals, the gates they open, and signs.
     hasPartner~ bool = false;
     partnerStart~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
-    commandPoints~ Array<CommandPoint> = [];
+    // The partner's route, sorted by each beat's `order`. Empty when the level has none.
+    teamBeats~ Array<TeamBeat> = [];
     switches~ Array<Switch> = [];
     gates~ Array<Gate> = [];
     signs~ Array<Sign> = [];
@@ -135,10 +136,10 @@ public:
             hasPartner = true;
             partnerStart = lantern:::world:::Position(entity);
         }
-        for entity: i64 in lantern:::world:::FindByKind("command_point") {
-            point~ CommandPoint = new CommandPoint(entity);
-            point.Place(cubeMesh);
-            commandPoints.add(point);
+        for entity: i64 in lantern:::world:::FindByKind("team_beat") {
+            beat~ TeamBeat = new TeamBeat(entity);
+            beat.Place(cubeMesh);
+            teamBeats.add(beat);
         }
         for kind: string in ["plate", "lever", "crystal"] {
             for entity: i64 in lantern:::world:::FindByKind(kind) {
@@ -186,6 +187,7 @@ public:
         }
         // The file lists the stops in any order; the route follows their `order` property.
         companionStops = companionStops.sort((first, second) -> first.order < second.order);
+        teamBeats = teamBeats.sort((first, second) -> first.order < second.order);
         lantern:::engine:::Log(`level ${path}: ${gems.length():d} gems, ${platforms.length():d} moving platforms`);
         return loaded;
     }
@@ -202,7 +204,7 @@ public:
         lanterns = [];
         thorns = [];
         hasPartner = false;
-        commandPoints = [];
+        teamBeats = [];
         switches = [];
         gates = [];
         signs = [];

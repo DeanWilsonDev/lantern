@@ -1,27 +1,33 @@
-CommandPoint :: import CommandPoint;
+TeamBeat :: import TeamBeat;
 PartnerTuning :: import PartnerTuning;
 Math :: import standard:::Math;
 
 // What she is doing right now.
-// - Following: walking to the player and standing about FOLLOW_DISTANCE away.
-// - Waiting: standing exactly where she is, until called.
-// - Walking: on her way to a command point (through its `via` first, if it has one).
-// - Acting: arrived at a command point and doing its action.
+// - Waiting: standing where she last finished, deciding whether to set off for the next beat.
+// - Leading: walking to the next beat, through its `via` places first.
+// - Acting: at a beat, doing what it says until its release rule is met.
+// - Following: every beat is done; she tags along behind the player.
 PartnerMode :: enum {
-    Following,
     Waiting,
-    Walking,
-    Acting
+    Leading,
+    Acting,
+    Following
 }
 
-// The partner: the companion you command. Unlike the scripted route the Companion walks (game-entities/
-// companion.nyx), she is a character with her own physics body who obeys three requests: come to me
-// (Call), stay there (Wait) and go there and do it (Send). The puzzles in the prototype rooms are
-// built so that she makes each one easier or shorter, and the player can always solve it alone.
+// The partner: the companion who works beside you. The player and she are equals, so nobody gives
+// orders. The level lists her beats (game-entities/team-beat.nyx) in order, and she works through
+// them on her own: she goes first, waits for you at each one, does her part (holds a plate, kneels
+// for a boost, pulls a lever, draws a light) and goes on when you have done yours. She is a
+// character with her own physics body, the same pieces as the player.
 //
-// She has no path finding. She walks in a straight line to where she is going and gives up when
-// that line is blocked; a level steers her with the command point's `via`. That keeps her
-// predictable, which matters when a puzzle depends on where she is.
+// She has no path finding. She walks in a straight line to where she is going and a beat's `via`
+// places steer her round corners, so she is predictable, which matters when a puzzle depends on
+// where she is. What keeps her from being lost is a set of safety nets:
+// - she looks for ground ahead of every step and stops at an edge instead of walking off it;
+// - when she makes no progress she goes back to the beat she last stood at and tries again, and on
+//   the third try goes straight to the beat she was heading for, so a level can never lock;
+// - when she falls she is put back on the beat she last stood at;
+// - when you run ahead she hurries, and when you fall behind she waits, faces you and hops.
 Partner :: class {
 public:
     root~ i64 = 0;
@@ -29,19 +35,16 @@ public:
     position~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     mode~ PartnerMode = PartnerMode:::Waiting;
     action~ string = "";
-    // Set when she gives up a walk or can't do what was asked; the game shows it once and clears it.
+    // The beat she is walking to, or working at. Equal to the number of beats once she has finished them all.
+    beatIndex~ i32 = 0;
+    // Set when she can't do what she meant to; the game shows it once and clears it.
     note~ string = "";
     controller~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, lantern:::math:::Vec3:::Zero());
 
-    // Makes her at `start`. A level with no partner marker has no partner at all.
-    Spawn~: (start: lantern:::math:::Vec3, bodyMesh: i64, bodyTexture: i64) -> void {
+    // Makes her at `start`, with the level's beats in order. A level with no partner marker has no partner at all.
+    Spawn~: (start: lantern:::math:::Vec3, bodyMesh: i64, bodyTexture: i64, beatsInOrder~ Array<TeamBeat>) -> void {
         isPresent = true;
-        trail = [];
-        trailIndex = 0;
-        position = start;
-        mode = PartnerMode:::Waiting;
-        action = "";
-        note = "";
+        beats = beatsInOrder;
         controller = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, start);
         controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED);
         root = lantern:::world:::Spawn("partner", start);
@@ -51,65 +54,24 @@ public:
         lantern:::world:::SetScale(body, { x: 0.7f, y: 0.88f, z: 0.7f });
         lantern:::world:::SetParent(body, root);
         bodyCenter = PartnerTuning:::HEIGHT * 0.5f;
+        BeginAgain(start);
     }
 
-    // Back at `start`, waiting: the level was restarted.
+    // Back at `start`, starting her beats again: the level was restarted.
     Reset~: (start: lantern:::math:::Vec3) -> void {
         guard isPresent;
         controller.Teleport(start);
-        position = start;
-        mode = PartnerMode:::Waiting;
-        action = "";
-        note = "";
-        hasPending = false;
-        trail = [];
-        trailIndex = 0;
+        BeginAgain(start);
         lantern:::world:::Teleport(root, start);
-    }
-
-    // Call: come to me and follow.
-    Call~: () -> void {
-        guard isPresent;
-        mode = PartnerMode:::Following;
-        trailIndex = NearestTrailIndex();
-        action = "";
-        hasPending = false;
-    }
-
-    // Wait: stay exactly here until called.
-    Wait~: () -> void {
-        guard isPresent;
-        mode = PartnerMode:::Waiting;
-        action = "";
-        hasPending = false;
-    }
-
-    // Send: go to the point and do its action.
-    Send~: (point: CommandPoint) -> void {
-        guard isPresent;
-        action = point.action;
-        destination = point.position;
-        route = point.route;
-        routeIndex = 0;
-        hasPending = false;
-        stuckSeconds = 0.0f;
-        mode = PartnerMode:::Walking;
-    }
-
-    // The player has jumped off her back: she stands up and waits.
-    BoostUsed~: () -> void {
-        guard isPresent;
-        action = "";
-        mode = PartnerMode:::Waiting;
     }
 
     // For the debug HUD and the tests.
     ModeName :: () -> string {
         return when mode <PartnerMode> {
-            Following -> "following",
             Waiting -> "waiting",
-            Walking -> "walking",
-            Acting -> "acting " + action
+            Leading -> isPaused ? "paused" : "leading",
+            Acting -> "acting " + action,
+            Following -> "following"
         };
     }
 
@@ -121,7 +83,13 @@ public:
         return isPresent && mode == PartnerMode:::Acting && action == "lure";
     }
 
-    // True once, on the step she arrives at a "pull" point.
+    // True while she is at a beat doing her part, or waiting for the player to come near enough to set off: the
+    // player has something still to do for her, or with her.
+    IsWorkingOnABeat :: () -> bool {
+        return isPresent && beatIndex < beats.length() && mode != PartnerMode:::Leading;
+    }
+
+    // True once, on the step she arrives at a "pull" beat.
     TakePullRequest~: () -> bool {
         guard hasPending return false;
         hasPending = false;
@@ -136,7 +104,7 @@ public:
     }
 
     // The player's route, remembered as breadcrumbs: a point every TRAIL_SPACING metres of ground
-    // walked. Following her means walking the breadcrumbs in order, so she goes through the doorway,
+    // walked. Once her beats are done she follows the breadcrumbs in order, so she goes through the doorway,
     // slot or stair the player went through instead of straight at them through a wall.
     RememberTrail~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool) -> void {
         guard isPlayerGrounded;
@@ -152,74 +120,289 @@ public:
         }
     }
 
-    // One fixed step.
-    Update~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+    // One fixed step. `activeChannels` are the switch channels that are on now, which some beats wait for.
+    Update~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, activeChannels: Array<i32>, dt: f32) -> void {
         guard isPresent;
-        goal~ lantern:::math:::Vec3 = position;
-        isMoving~ bool = false;
+        hopSeconds += dt;
+        wantsToMove = false;
+        speedScale = 1.0f;
+        moveTarget = position;
         when mode <PartnerMode> {
-            Following -> {
-                gap := (playerFeet - position).Horizontal().Length();
-                if gap > PartnerTuning:::CATCH_UP_DISTANCE {
-                    controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * 1.5f);
-                } else if gap > PartnerTuning:::FOLLOW_DISTANCE {
-                    goal = NextTrailPoint(playerFeet);
-                    isMoving = true;
-                }
-            },
-            Walking -> {
-                goal = routeIndex < route.length() ? route[routeIndex] : destination;
-                isMoving = true;
-            },
-            (Waiting || Acting)
+            Waiting -> { DecideWaiting(playerFeet, dt); },
+            Leading -> { DecideLeading(playerFeet, dt); },
+            Acting -> { DecideActing(playerFeet, isPlayerGrounded, activeChannels, dt); },
+            Following -> { DecideFollowing(playerFeet); }
         }
-        direction~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
-        if isMoving {
-            toGoal := (goal - position).Horizontal();
-            if toGoal.Length() < PartnerTuning:::ARRIVE_DISTANCE && mode == PartnerMode:::Walking {
-                Arrive();
-            } else if toGoal.Length() > 0.05f {
-                direction = toGoal.Normalized();
-                facingYaw = direction.Yaw();
-            }
-        }
-        controller.Step(direction, false, false, dt);
-        before := position;
-        position = controller.FeetPosition();
-        if mode == PartnerMode:::Walking || (mode == PartnerMode:::Following && isMoving) {
-            speed := (position - before).Horizontal().Length() / dt;
-            if speed < PartnerTuning:::STUCK_SPEED {
-                stuckSeconds += dt;
-            } else {
-                stuckSeconds = 0.0f;
-            }
-            if stuckSeconds > PartnerTuning:::STUCK_SECONDS {
-                stuckSeconds = 0.0f;
-                if mode == PartnerMode:::Following {
-                    controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * -1.5f);
-                } else {
-                    note = "She can't get there";
-                    mode = PartnerMode:::Waiting;
-                    action = "";
-                }
-            }
-        }
+        MoveAndWatch(playerFeet, dt);
         lantern:::world:::SetPosition(root, position);
         lantern:::world:::SetYaw(root, facingYaw);
-        ShowCrouch();
+        ShowBody();
     }
 
 private:
+    beats~ Array<TeamBeat> = [];
     body~ i64 = 0;
     bodyCenter~ f32 = 0.0f;
-    destination~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    // The walk to the current beat: the places to pass first, and which of them is next.
     route~ Array<lantern:::math:::Vec3> = [];
     routeIndex~ i32 = 0;
     facingYaw~ f32 = 0.0f;
     trail~ Array<lantern:::math:::Vec3> = [];
     trailIndex~ i32 = 0;
+    // The last place she stood at a beat, where she comes back to after falling or getting stuck.
+    lastSafe~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     stuckSeconds~ f32 = 0.0f;
+    retries~ i32 = 0;
+    actingSeconds~ f32 = 0.0f;
+    isPaused~ bool = false;
+    nudgeSeconds~ f32 = 0.0f;
+    hopSeconds~ f32 = 1000.0f;
     hasPending~ bool = false;
+    // What this step decided: whether she walks, to where, and how fast.
+    wantsToMove~ bool = false;
+    moveTarget~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    speedScale~ f32 = 1.0f;
+
+    BeginAgain~: (start: lantern:::math:::Vec3) -> void {
+        position = start;
+        lastSafe = start;
+        mode = PartnerMode:::Waiting;
+        action = "";
+        note = "";
+        beatIndex = 0;
+        route = [];
+        routeIndex = 0;
+        trail = [];
+        trailIndex = 0;
+        stuckSeconds = 0.0f;
+        retries = 0;
+        actingSeconds = 0.0f;
+        isPaused = false;
+        nudgeSeconds = 0.0f;
+        hasPending = false;
+    }
+
+    // Waiting between beats: she sets off when the player is near, or has run past her toward the beat. A player who
+    // is far behind gets her face and a hop every few seconds instead.
+    DecideWaiting~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+        if beatIndex >= beats.length() {
+            mode = PartnerMode:::Following;
+            trailIndex = NearestTrailIndex();
+            return;
+        }
+        FacePlayer(playerFeet);
+        nextBeat := beats[beatIndex];
+        leadRange := nextBeat.hasLeadRange ? nextBeat.leadRange : PartnerTuning:::LEAD_RANGE;
+        gap := (playerFeet - position).Horizontal().Length();
+        isAhead := IsPlayerAhead(playerFeet, nextBeat.position);
+        if gap < leadRange || (isAhead && gap < PartnerTuning:::HURRY_LIMIT) {
+            StartLeg();
+        } else {
+            Nudge(dt);
+        }
+    }
+
+    StartLeg~: () -> void {
+        route = beats[beatIndex].route;
+        routeIndex = 0;
+        stuckSeconds = 0.0f;
+        isPaused = false;
+        nudgeSeconds = 0.0f;
+        mode = PartnerMode:::Leading;
+    }
+
+    // Walking to the beat. She hurries when the player has run past her, and stops to wait, hopping, when they fall
+    // too far behind. Stopping starts at PAUSE_DISTANCE and walking resumes at RESUME_DISTANCE, so she doesn't flicker
+    // between the two at the edge.
+    DecideLeading~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+        beat := beats[beatIndex];
+        gap := (playerFeet - position).Horizontal().Length();
+        isAhead := IsPlayerAhead(playerFeet, beat.position);
+        if isPaused {
+            if gap < PartnerTuning:::RESUME_DISTANCE || isAhead {
+                isPaused = false;
+            }
+        } else if gap > PartnerTuning:::PAUSE_DISTANCE && !isAhead {
+            isPaused = true;
+            nudgeSeconds = PartnerTuning:::NUDGE_INTERVAL_SECONDS;
+        }
+        if isPaused {
+            FacePlayer(playerFeet);
+            Nudge(dt);
+            return;
+        }
+        moveTarget = routeIndex < route.length() ? route[routeIndex] : beat.position;
+        wantsToMove = true;
+        speedScale = isAhead && gap < PartnerTuning:::HURRY_LIMIT ? PartnerTuning:::HURRY_SPEED_SCALE : 1.0f;
+    }
+
+    // At a beat. A crouch ends when the player is standing on a ledge she could not have boosted them onto by
+    // jumping alone, which is also how a player who took the long way ends it. Every other beat ends by its release rule.
+    DecideActing~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, activeChannels: Array<i32>, dt: f32) -> void {
+        beat := beats[beatIndex];
+        actingSeconds += dt;
+        if beat.action != "lure" {
+            FacePlayer(playerFeet);
+        }
+        if beat.action == "crouch" {
+            if isPlayerGrounded && playerFeet.y > position.y + PartnerTuning:::LEDGE_MIN_HEIGHT {
+                FinishBeat();
+            }
+            return;
+        }
+        if IsReleased(beat, playerFeet, activeChannels) {
+            FinishBeat();
+        }
+    }
+
+    // After her last beat: walk the player's trail to them, or arrive beside them when far behind.
+    DecideFollowing~: (playerFeet: lantern:::math:::Vec3) -> void {
+        gap := (playerFeet - position).Horizontal().Length();
+        if gap > PartnerTuning:::CATCH_UP_DISTANCE {
+            controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * 1.5f);
+        } else if gap > PartnerTuning:::FOLLOW_DISTANCE {
+            moveTarget = NextTrailPoint(playerFeet);
+            wantsToMove = true;
+        }
+    }
+
+    // The step itself: face where she is going, stop at an edge, let the controller move her, notice arriving, and
+    // notice being stuck or fallen.
+    MoveAndWatch~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+        direction~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+        if wantsToMove {
+            toTarget := (moveTarget - position).Horizontal();
+            if toTarget.Length() > 0.05f {
+                direction = toTarget.Normalized();
+                facingYaw = direction.Yaw();
+                if !HasGroundAhead(direction) {
+                    direction = lantern:::math:::Vec3:::Zero();
+                }
+            }
+        }
+        controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED * speedScale);
+        controller.Step(direction, false, false, dt);
+        before := position;
+        position = controller.FeetPosition();
+        if mode == PartnerMode:::Leading && wantsToMove && (moveTarget - position).Horizontal().Length() < PartnerTuning:::ARRIVE_DISTANCE {
+            Arrive();
+        }
+        WatchForTrouble(playerFeet, before, dt);
+    }
+
+    // Reaching a place on the route moves her on to the next; reaching the beat starts its action.
+    Arrive~: () -> void {
+        stuckSeconds = 0.0f;
+        if routeIndex < route.length() {
+            routeIndex++;
+            return;
+        }
+        beat := beats[beatIndex];
+        lastSafe = position;
+        action = beat.action;
+        actingSeconds = 0.0f;
+        hasPending = beat.action == "pull";
+        mode = PartnerMode:::Acting;
+    }
+
+    FinishBeat~: () -> void {
+        hasPending = false;
+        action = "";
+        beatIndex++;
+        retries = 0;
+        lastSafe = position;
+        nudgeSeconds = 0.0f;
+        mode = PartnerMode:::Waiting;
+    }
+
+    // Has the rule that lets her go on from `beat` been met?
+    IsReleased :: (beat: TeamBeat, playerFeet: lantern:::math:::Vec3, activeChannels: Array<i32>) -> bool {
+        if beat.release == "none" {
+            return true;
+        } else if beat.release == "seconds" {
+            return actingSeconds >= beat.seconds;
+        } else if beat.release == "channel" {
+            for channel: i32 in activeChannels {
+                if channel == beat.channel {
+                    return true;
+                }
+            }
+            return false;
+        } else if beat.release == "at" {
+            return IsWithin(playerFeet, beat.releasePoint, beat.meetDistance);
+        }
+        return IsWithin(playerFeet, position, beat.meetDistance);
+    }
+
+    // Within `meet` metres along the ground of `spot`, and on much the same level.
+    IsWithin :: (feet: lantern:::math:::Vec3, spot: lantern:::math:::Vec3, meet: f32) -> bool {
+        along := (feet - spot).Horizontal().Length();
+        return along < meet && feet.y - spot.y < 2.5f && spot.y - feet.y < 2.5f;
+    }
+
+    // True when the player is clearly nearer `target` than she is: they ran past her.
+    IsPlayerAhead :: (playerFeet: lantern:::math:::Vec3, target: lantern:::math:::Vec3) -> bool {
+        herDistance := (target - position).Horizontal().Length();
+        playerDistance := (target - playerFeet).Horizontal().Length();
+        return playerDistance + PartnerTuning:::AHEAD_MARGIN < herDistance;
+    }
+
+    // Is there ground a step ahead of her, no further down than EDGE_DROP_LIMIT? The ray starts a metre up, so a stair
+    // riser or a ledge she can step onto doesn't start it inside the ground.
+    HasGroundAhead :: (direction: lantern:::math:::Vec3) -> bool {
+        lift: lantern:::math:::Vec3 = { y: 1.0f };
+        down: lantern:::math:::Vec3 = { y: -1.0f };
+        probe := position + direction * PartnerTuning:::EDGE_PROBE_DISTANCE + lift;
+        return when lantern:::physics:::Raycast(probe, down, 1.0f + PartnerTuning:::EDGE_DROP_LIMIT) {
+            hit: lantern:::physics:::RayHit -> hit.Distance() > 0.0f,
+            null -> false
+        };
+    }
+
+    // Falling a long way, or walking without getting anywhere, sends her back to try again.
+    WatchForTrouble~: (playerFeet: lantern:::math:::Vec3, before: lantern:::math:::Vec3, dt: f32) -> void {
+        if position.y < lastSafe.y - PartnerTuning:::FALL_RESET_DEPTH {
+            Recover(playerFeet, true);
+            return;
+        }
+        guard wantsToMove && (mode == PartnerMode:::Leading || mode == PartnerMode:::Following);
+        speed := (position - before).Horizontal().Length() / dt;
+        if speed < PartnerTuning:::STUCK_SPEED {
+            stuckSeconds += dt;
+        } else {
+            stuckSeconds = 0.0f;
+        }
+        guard stuckSeconds > PartnerTuning:::STUCK_SECONDS;
+        stuckSeconds = 0.0f;
+        Recover(playerFeet, false);
+    }
+
+    // Putting her right. Following, she arrives behind the player. Leading, a fall or the first two times she is stuck
+    // put her back on the beat she last stood at to walk the leg again, and the third time she goes straight to the
+    // beat she was heading for, so a level can never lock.
+    Recover~: (playerFeet: lantern:::math:::Vec3, hasFallen: bool) -> void {
+        if mode == PartnerMode:::Following {
+            controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * -1.5f);
+            position = controller.FeetPosition();
+            return;
+        }
+        retries++;
+        if hasFallen || retries <= PartnerTuning:::RETRIES_BEFORE_SKIP || mode != PartnerMode:::Leading {
+            controller.Teleport(lastSafe);
+            position = lastSafe;
+            routeIndex = 0;
+            if mode == PartnerMode:::Acting {
+                action = "";
+                hasPending = false;
+                mode = PartnerMode:::Waiting;
+            }
+            return;
+        }
+        arrival := beats[beatIndex].position;
+        controller.Teleport(arrival);
+        position = arrival;
+        routeIndex = route.length();
+    }
 
     // The breadcrumb she is walking to: she skips the ones she is already at, and when she has
     // used them all she walks straight at the player.
@@ -230,7 +413,7 @@ private:
         return trailIndex < trail.length() ? trail[trailIndex] : playerFeet;
     }
 
-    // Where she rejoins the trail when called: the breadcrumb closest to her.
+    // Where she joins the trail when her beats are done: the breadcrumb closest to her.
     NearestTrailIndex :: () -> i32 {
         best~ i32 = 0;
         bestDistance~ f32 = 1000000.0f;
@@ -244,22 +427,29 @@ private:
         return best;
     }
 
-    // Reaching the via moves her on to the point itself; reaching the point starts the action.
-    Arrive~: () -> void {
-        stuckSeconds = 0.0f;
-        if routeIndex < route.length() {
-            routeIndex++;
-        } else {
-            mode = PartnerMode:::Acting;
-            hasPending = action == "pull";
+    FacePlayer~: (playerFeet: lantern:::math:::Vec3) -> void {
+        toPlayer := (playerFeet - position).Horizontal();
+        if toPlayer.LengthSquared() > 0.01f {
+            facingYaw = toPlayer.Yaw();
         }
     }
 
-    // Crouching is her body squashed to CROUCH_SCALE of its height, lowered so her feet stay on the ground.
-    ShowCrouch~: () -> void {
-        crouched := mode == PartnerMode:::Acting && action == "crouch";
-        scale := crouched ? PartnerTuning:::CROUCH_SCALE : 1.0f;
+    // The player is far off: every NUDGE_INTERVAL_SECONDS she hops, a wave that says "this way".
+    Nudge~: (dt: f32) -> void {
+        nudgeSeconds += dt;
+        if nudgeSeconds >= PartnerTuning:::NUDGE_INTERVAL_SECONDS {
+            nudgeSeconds = 0.0f;
+            hopSeconds = 0.0f;
+        }
+    }
+
+    // Crouching is her body squashed to CROUCH_SCALE of its height, lowered so her feet stay on the ground; a hop lifts
+    // it.
+    ShowBody~: () -> void {
+        isCrouched := mode == PartnerMode:::Acting && action == "crouch";
+        scale := isCrouched ? PartnerTuning:::CROUCH_SCALE : 1.0f;
+        hop := hopSeconds < PartnerTuning:::HOP_SECONDS ? Math:::sin(hopSeconds / PartnerTuning:::HOP_SECONDS * 3.14159265f) * PartnerTuning:::HOP_HEIGHT : 0.0f;
         lantern:::world:::SetScale(body, { x: 0.7f, y: 0.88f * scale, z: 0.7f });
-        lantern:::world:::SetPosition(body, { y: bodyCenter * scale });
+        lantern:::world:::SetPosition(body, { y: bodyCenter * scale + hop });
     }
 }

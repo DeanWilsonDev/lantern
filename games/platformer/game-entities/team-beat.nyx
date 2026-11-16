@@ -1,0 +1,111 @@
+// One beat of the team's route through a level: a world-file entity of kind "team_beat". The
+// companion and the player are partners, so nobody gives orders. Instead the level lists, in
+// `order`, the places where she has something to do or somewhere to wait, and she works through
+// them on her own: she walks to the next beat when the player is near (or already ahead), does what
+// the beat says, and goes on when its release rule is met.
+//
+// Properties set on the entity in the world editor:
+// - `order` (number): the beat's place in the route, 0 first.
+// - `action` (text, optional): what she does on arrival.
+//     "walk"   nothing: the beat is only somewhere she goes (the default);
+//     "stand"  stands there, which holds a plate down or shines her light from that spot;
+//     "crouch" crouches so the player can jump off her back (the Boost) and goes on once they have landed above her;
+//     "pull"   pulls the lever beside the beat, once;
+//     "lure"   stands in the open and is seen, so a watcher looks at her instead of the player.
+// - `via`, `via2`, `via3` (vectors, optional): places to walk through first, in that order. She has no
+//   path finding, so a beat behind a corner, a narrow slot or up a stair names the doorways to aim for.
+// - `release` (text, optional): when she goes on from the beat.
+//     "none"    at once: the beat is only a place she passes (the default for "walk");
+//     "near"    the player is within `meet` metres of her (the default for "stand", "crouch" and "lure");
+//     "at"      the player is within `meet` metres of `release_at`, a spot of the level, which is how the
+//               player lets her through: she holds a plate until they stand on the plate beyond the door;
+//     "channel" the world's `channel` is on, which is how a lever or plate the player works releases her;
+//     "seconds" `seconds` have passed (the default for "pull", after one second).
+//   A "crouch" beat ignores this: she gets up once the player has landed on a ledge above her.
+// - `meet` (number, optional): metres for "near" and "at"; 4 when missing.
+// - `release_at` (vector, optional): the spot for "at".
+// - `channel` (number, optional) and `seconds` (number, optional): the values for those two rules.
+// - `lead` (number, optional): how near the player must be before she sets off for this beat, in
+//   metres; her usual lead range (10) when missing.
+//
+// The game draws a faint disc at every beat with an action, so the places where she will help are
+// visible before she gets there.
+TeamBeat :: class {
+public:
+    entity: i64;
+    position: lantern:::math:::Vec3;
+    order: i32;
+    action: string;
+    // The places to walk through before the beat itself.
+    route: Array<lantern:::math:::Vec3>;
+    release: string;
+    meetDistance: f32;
+    releasePoint: lantern:::math:::Vec3;
+    channel: i32;
+    seconds: f32;
+    hasLeadRange: bool;
+    leadRange: f32;
+
+    TeamBeat~: (entity: i64) : entity(entity), position(lantern:::world:::Position(entity)),
+        order(i32(Number(entity, "order", 0.0f))),
+        action(Text(entity, "action", "walk")),
+        route(RouteOf(entity)),
+        release(Text(entity, "release", DefaultRelease(Text(entity, "action", "walk")))),
+        meetDistance(Number(entity, "meet", 4.0f)),
+        releasePoint(lantern:::world:::HasProperty(entity, "release_at") ? lantern:::world:::VectorProperty(entity, "release_at") : lantern:::world:::Position(entity)),
+        channel(i32(Number(entity, "channel", 0.0f))),
+        seconds(Number(entity, "seconds", 1.0f)),
+        hasLeadRange(lantern:::world:::HasProperty(entity, "lead")),
+        leadRange(Number(entity, "lead", 0.0f)) { }
+
+    // The disc: a cube squashed flat, glowing. Each action has its own colour, so a player can tell
+    // "she holds this" from "she kneels here" at a glance. A beat that is only a place to walk to has no disc.
+    Place~: (cubeMesh: i64) -> void {
+        guard action != "walk";
+        disc := lantern:::world:::Spawn("beat_disc", { y: 0.03f });
+        lantern:::world:::SetMesh(disc, cubeMesh, ColorFor(action));
+        lantern:::world:::SetScale(disc, { x: 1.1f, y: 0.05f, z: 1.1f });
+        lantern:::world:::SetGlow(disc, ColorFor(action), 1.0f);
+        lantern:::world:::SetCastsShadows(disc, false);
+        lantern:::world:::SetParent(disc, entity);
+    }
+
+private:
+    Number :: (entity: i64, key: string, fallback: f32) -> f32 {
+        return lantern:::world:::HasProperty(entity, key) ? lantern:::world:::NumberProperty(entity, key) : fallback;
+    }
+
+    Text :: (entity: i64, key: string, fallback: string) -> string {
+        return lantern:::world:::HasProperty(entity, key) ? lantern:::world:::TextProperty(entity, key) : fallback;
+    }
+
+    RouteOf :: (entity: i64) -> Array<lantern:::math:::Vec3> {
+        found~ Array<lantern:::math:::Vec3> = [];
+        for key: string in ["via", "via2", "via3"] {
+            if lantern:::world:::HasProperty(entity, key) {
+                found.add(lantern:::world:::VectorProperty(entity, key));
+            }
+        }
+        return found;
+    }
+
+    DefaultRelease :: (action: string) -> string {
+        if action == "walk" {
+            return "none";
+        } else if action == "pull" {
+            return "seconds";
+        }
+        return "near";
+    }
+
+    ColorFor :: (action: string) -> string {
+        if action == "crouch" {
+            return "FFB05A";
+        } else if action == "pull" {
+            return "7AE0FF";
+        } else if action == "lure" {
+            return "FF6A8A";
+        }
+        return "FFE08A";
+    }
+}
