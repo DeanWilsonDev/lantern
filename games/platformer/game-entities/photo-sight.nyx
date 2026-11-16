@@ -1,0 +1,69 @@
+Math :: import standard:::Math;
+
+// A sight worth a photograph: a world-file entity of kind "photo_sight". Its position is the
+// point the photo has to be aimed at (a window, a skyline, the companion at a vista).
+//
+// Properties set on the entity in the world editor:
+// - `title` (text, optional): what the album calls it; "A sight" when missing.
+// - `together` (number, optional): 1 when the companion has to be in the shot too, so it is a
+//   photo of the two of you. 0 or missing means the sight alone is enough.
+// - `max_distance` (number, optional): how close the camera has to be, in metres; 30 when missing.
+//
+// Whether a photo counts is decided by PhotoMode, which reads these fields. A sight is a
+// collectable like a gem: optional, and once photographed it stays photographed until the level
+// restarts.
+//
+// A floating glowing diamond marks where a sight is, so a player who looks around finds them. It
+// is hidden while the camera is raised, so it is never in the photo.
+PhotoSight :: class {
+public:
+    entity: i64;
+    title: string;
+    position: lantern:::math:::Vec3;
+    isTogether: bool;
+    maxDistance: f32;
+    isTaken~ bool = false;
+    marker~ i64 = 0;
+
+    PhotoSight~: (entity: i64) : entity(entity), position(lantern:::world:::WorldPosition(entity)),
+        title(lantern:::world:::HasProperty(entity, "title") ? lantern:::world:::TextProperty(entity, "title") : "A sight"),
+        isTogether(lantern:::world:::HasProperty(entity, "together") && lantern:::world:::NumberProperty(entity, "together") > 0.5f),
+        maxDistance(lantern:::world:::HasProperty(entity, "max_distance") ? lantern:::world:::NumberProperty(entity, "max_distance") : DEFAULT_MAX_DISTANCE) { }
+
+    // Builds the marker: a small cube turned onto its corner, glowing pale blue. A child of the
+    // sight entity, so it sits where the editor put the sight.
+    Place~: (cubeMesh: i64) -> void {
+        marker = lantern:::world:::Spawn("photo_sight_marker", lantern:::math:::Vec3:::Zero());
+        lantern:::world:::SetMesh(marker, cubeMesh, MARKER_COLOR);
+        lantern:::world:::SetScale(marker, { x: MARKER_SIZE, y: MARKER_SIZE, z: MARKER_SIZE });
+        lantern:::world:::SetGlow(marker, MARKER_COLOR, MARKER_GLOW);
+        lantern:::world:::SetCastsShadows(marker, false);
+        lantern:::world:::SetParent(marker, entity);
+    }
+
+    Take~: () -> void {
+        isTaken = true;
+        ShowMarker(false);
+    }
+
+    // The marker is shown while the sight is untaken and the camera is down.
+    ShowMarker :: (isShown: bool) -> void {
+        guard marker != 0;
+        lantern:::world:::SetVisible(marker, isShown && !isTaken);
+    }
+
+    // Turns and bobs the marker. `time` is a clock in seconds.
+    Animate :: (time: f32) -> void {
+        guard marker != 0;
+        lantern:::world:::SetYaw(marker, time * MARKER_SPIN);
+        bob: lantern:::math:::Vec3 = { y: Math:::sin(time * 2.0f) * 0.1f };
+        lantern:::world:::SetPosition(marker, bob);
+    }
+
+private:
+    static DEFAULT_MAX_DISTANCE :: 30.0f;
+    static MARKER_COLOR :: "9FE3FF";
+    static MARKER_GLOW :: 2.5f;
+    static MARKER_SIZE :: 0.32f;
+    static MARKER_SPIN :: 1.2f;
+}

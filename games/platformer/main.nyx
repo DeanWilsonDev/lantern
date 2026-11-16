@@ -23,6 +23,8 @@ LevelLighting :: import LevelLighting;
 LevelScene :: import LevelScene;
 MenuChoice :: import MenuChoice;
 MovingPlatform :: import MovingPlatform;
+NightLights :: import NightLights;
+PhotoMode :: import PhotoMode;
 Player :: import Player;
 PlayerTuning :: import PlayerTuning;
 StreetsAutopilot :: import StreetsAutopilot;
@@ -116,7 +118,9 @@ public:
         }
         // What the HUD shows. The model only passes on real changes, so this doesn't re-render
         // the HUD every frame.
-        ui.SetStatus(state == GameState:::MainMenu ? "" : rules.statusText);
+        ui.SetStatus(state == GameState:::MainMenu ? "" : `${rules.statusText}${photoMode.StatusSuffix()}`);
+        ui.SetAlbum(rules.isLevelComplete ? photoMode.AlbumText() : "");
+        photoMode.Publish(ui);
         ui.SetMessage(rules.IsShowingMessage() ? rules.message : "");
         ui.SetDebugHudOn(lantern:::debug:::IsHudVisible());
         PublishDebugValues();
@@ -129,7 +133,12 @@ public:
     // step's position to the current one, and the camera has to follow that same blended
     // position, or the player would jitter against the background.
     OnRender~: (alpha: f32, frameSeconds: f32) -> void {
-        camera.Follow(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds);
+        // With the camera raised for a photo, the lens is at the player's eyes instead of behind them.
+        if photoMode.isActive {
+            photoMode.PlaceCamera(lantern:::world:::InterpolatedPosition(player.root, alpha), companion.position, companion.stops.length() > 0);
+        } else {
+            camera.Follow(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds);
+        }
         // The drawn lights follow their carriers' blended positions, like the camera does. The
         // reveal rule keeps reading the fixed-step positions (UpdateGlows).
         if companionGlow.isOn {
@@ -194,6 +203,9 @@ private:
     glowSystem~ GlowSystem = new GlowSystem();
     lanternSystem~ LanternSystem = new LanternSystem();
     thornSystem~ ThornSystem = new ThornSystem();
+    // Night: the small lights on lamps, posts and the goal. Photo mode: the second collectable.
+    nightLights~ NightLights = new NightLights();
+    photoMode~ PhotoMode = new PhotoMode();
     companionGlow~ GuideLight = new GuideLight();
     lanternGlow~ GuideLight = new GuideLight();
     checkpointSystem~ CheckpointSystem = new CheckpointSystem();
@@ -220,6 +232,8 @@ private:
         guard loaded throw;
         // The level says which chapter it is, and the chapter sets the sky, fog and sun.
         ChapterLooks:::Apply(level.chapter);
+        nightLights.Apply(level, assets.unitCubeMesh);
+        photoMode.Start(assets.unitCubeMesh);
         player.Spawn(assets, level.spawnPosition);
         companion.Spawn(level.companionStops, assets.playerMesh, assets.playerTexture);
         gemSystem.Clear();
@@ -283,6 +297,13 @@ private:
             jumpPressed = Autopilot:::JumpPressed(simulationSeconds);
             jumpHeld = Autopilot:::JumpHeld(simulationSeconds);
         }
+        // With the camera raised the player stands still: photo mode leaves the world running, but the
+        // keys that move and jump mean nothing until it is lowered.
+        if photoMode.isActive {
+            stick = lantern:::math:::Vec2:::Zero();
+            jumpPressed = false;
+            jumpHeld = false;
+        }
         // The Anchor (game-systems/anchor-system.nyx): a jump beside a start post swings the player
         // along its arc, and while it does the controller isn't asked to move them at all.
         // The caps on the start posts glow when a jump here would swing.
@@ -324,6 +345,7 @@ private:
             rules.Handle(event, level, player, camera, companion);
         }
         UpdateGlows(dt);
+        nightLights.Update(level);
         for goal in level.goals {
             goal.Animate(simulationSeconds);
         }
@@ -374,7 +396,9 @@ private:
 
     UpdatePlaying~: (frameSeconds: f32) -> void {
         rules.Tick(frameSeconds);
+        photoMode.HandleInput(frameSeconds, camera, player);
         if lantern:::input:::IsPressed(InputSettings:::PAUSE) {
+            photoMode.Leave(camera, player);
             SetState(GameState:::Paused);
             return;
         }
@@ -390,7 +414,9 @@ private:
         //   radians per second a full push is.
         // Once both are "radians this frame" they can simply be added.
         stickLook := lantern:::input:::Vector(InputSettings:::LOOK_STICK) * (frameSeconds * PlayerTuning:::LOOK_STICK_SPEED);
-        camera.Look(lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
+        if !photoMode.isActive {
+            camera.Look(lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
+        }
     }
 
     // The goal's level is done: play the level it names, or go back to the main menu when it names
@@ -476,5 +502,8 @@ private:
         lantern:::debug:::SetValue("Glow/Platforms shown", `${shownPlatforms:d}`);
         lantern:::debug:::SetValue("Glow/Carrying lantern", rules.isCarryingLantern ? "yes" : "no");
         lantern:::debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
+        lantern:::debug:::SetValue("Photo/Camera raised", photoMode.isActive ? "yes" : "no");
+        lantern:::debug:::SetValue("Photo/Verdict", photoMode.VerdictName());
+        lantern:::debug:::SetValue("Photo/Photos", `${photoMode.takenCount:d} / ${photoMode.sights.length():d}`);
     }
 }
