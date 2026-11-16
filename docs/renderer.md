@@ -154,7 +154,7 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
 5. **Make sure the post targets match** the frame's size (`EnsurePostTargets`): the high dynamic range scene texture
    and the bloom chain.
 6. **Scene pass.** One render pass with the scene texture cleared to the world's clear colour and depth cleared to
-   1.0, the far plane. The scene texture is 16-bit float per channel, so light brighter than 1 is kept as it is and
+   1.0, the far plane. The scene texture is 16-bit float per channel (RGBA16F, which the GPU must be able to render to; see `graphics-effects.md`), so light brighter than 1 is kept as it is and
    not cut off. Then **draw the meshes** (`DrawMeshes`). Push the per-frame uniforms once: the view-projection
    matrix and camera position for the vertex shader, and the sun, the ambient light, fog and the chosen local lights
    for the fragment shader. Then for each draw, bind its mesh's buffers and its texture only if they differ from the
@@ -175,6 +175,7 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
    multiplies by the exposure, applies the tone-mapping curve and writes the swapchain image. When the target can't
    applies the colour grade (`colour-grade.md`), and, when the target can't sRGB-encode, does that here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
    texture of its own and **the FXAA pass** (`RecordAntiAlias`) smooths it onto the screen image; see `anti-aliasing.md`.
+    A draw's normal map (`normal-maps.md`) is bound beside its texture and bends the normal in the lit shader.
     Particles (`particles.md`) are added as lines each frame before this pass.
 10. **Overlay pass**, only if there are lines or overlay quads: it loads the swapchain image and the scene's depth,
    then **draws the lines** (`DrawLines`), depth-tested against the meshes but not writing depth, and **the overlay**

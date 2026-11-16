@@ -97,6 +97,7 @@ Keys are `A`..`Z`, `Digit0`..`Digit9`, `Up`, `Down`, `Left`, `Right`, `Space`, `
 | `lantern:::world:::SetMaterial(material, texture: i64)` | the texture world-file pieces with that material use (set before `Load`) |
 | `lantern:::world:::SetMesh(entity, mesh, tint)`, `SetTexturedMesh(entity, mesh, texture, tint)` | |
 | `lantern:::world:::SetTint(entity, tint)`, `SetVisible(entity, visible)`, `IsVisible(entity) -> bool` | |
+| `lantern:::world:::SetNormalMap(entity, texture, strength)` | fine surface bumps from a normal map, strength 0 to 4; see `normal-maps.md` |
 | `lantern:::world:::SetSurface(entity, metallic, roughness, emissive)` | the entity's material: 0 to 1 metallic and roughness, an "RRGGBB" emissive glow; see `lighting-and-shadows.md` |
 | `lantern:::world:::SetGlow(entity, color, strength)` | the entity's emissive light as `color` times `strength`; a strength above 1 is brighter than white, so it blooms. Keeps metallic and roughness |
 | `lantern:::world:::SetCastsShadows(entity, castsShadows)` | whether the entity blocks light |
@@ -117,6 +118,7 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::textures:::Load(path) -> i64` | a PNG; throws `NotFound` |
 | `lantern:::textures:::Checker(size, cells, first, second) -> i64`, `lantern:::textures:::Solid(color) -> i64` | generated |
+| `lantern:::textures:::Bumps(size, cells, steepness) -> i64` | a generated normal map of round bumps; see `normal-maps.md` |
 | `lantern:::meshes:::Load(path) -> i64` | a glTF/GLB mesh; throws `NotFound` |
 | `lantern:::meshes:::Capsule(radius, halfHeight, segments, rings)`, `Sphere(radius, segments, rings)`, `Cube(size)`, `Gem(radius, height)` | generated, `-> i64` |
 

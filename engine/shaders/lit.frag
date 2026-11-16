@@ -52,6 +52,9 @@ layout(set = 2, binding = 0) uniform sampler2D albedo_texture;
 layout(set = 2, binding = 1) uniform sampler2DShadow sun_shadow_map;
 // The local lights' shadow map: tiles in a grid, one per spot light and six per point light.
 layout(set = 2, binding = 2) uniform sampler2DShadow local_shadow_map;
+// The draw's normal map: tangent-space normals stored as colours (0.5, 0.5, 1 is flat). Bound for every draw; the white
+// texture stands in when there is none, and material.surface.z (the strength) is 0 so it is never read.
+layout(set = 2, binding = 3) uniform sampler2D normal_texture;
 
 // Slot 0, pushed once per frame: LightUniforms in GpuUniforms.nox (176 bytes).
 layout(set = 3, binding = 0) uniform LightUniforms {
@@ -78,7 +81,7 @@ layout(set = 3, binding = 0) uniform LightUniforms {
 // Slot 1, pushed once per draw: the draw's tint and material (MaterialUniforms in GpuUniforms.nox, 48 bytes).
 layout(set = 3, binding = 1) uniform MaterialUniforms {
     vec4 color;
-    // x: metallic, y: roughness.
+    // x: metallic, y: roughness, z: normal map strength (0 when the draw has no normal map).
     vec4 surface;
     // Light the surface gives off.
     vec4 emissive;
@@ -307,10 +310,38 @@ vec3 EnvironmentBrdf(vec3 specular_color, float roughness, float normal_dot_view
     return specular_color * scale_and_bias.x + scale_and_bias.y;
 }
 
+// A texture holds its normals as plain bytes, but the albedo-style upload decodes them as sRGB. Encoding again returns the
+// bytes the file held.
+vec3 LinearToSrgbExact(vec3 linear) {
+    vec3 low = linear * 12.92;
+    vec3 high = 1.055 * pow(max(linear, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+    return mix(high, low, lessThanEqual(linear, vec3(0.0031308)));
+}
+
+// Bends the surface normal by a tangent-space normal from a map. The mesh has no tangents, so the tangent frame comes from
+// how position and uv change from pixel to pixel (a "cotangent frame"). The map's green channel points up the image.
+vec3 PerturbNormal(vec3 surface_normal, vec3 position, vec2 uv, vec3 tangent_space, float strength) {
+    vec3 position_dx = dFdx(position);
+    vec3 position_dy = dFdy(position);
+    vec2 uv_dx = dFdx(uv);
+    vec2 uv_dy = dFdy(uv);
+    vec3 perpendicular_y = cross(position_dy, surface_normal);
+    vec3 perpendicular_x = cross(surface_normal, position_dx);
+    vec3 tangent = perpendicular_y * uv_dx.x + perpendicular_x * uv_dy.x;
+    vec3 bitangent = -(perpendicular_y * uv_dx.y + perpendicular_x * uv_dy.y);
+    float scale = inversesqrt(max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-12));
+    vec3 bent = normalize(vec3(tangent_space.xy * strength, tangent_space.z));
+    return normalize(tangent * scale * bent.x + bitangent * scale * bent.y + surface_normal * bent.z);
+}
+
 void main() {
     vec4 albedo = texture(albedo_texture, surface_uv) * surface_color * material.color;
     // Interpolating unit normals across a triangle shortens them, so normalise again per pixel.
     vec3 normal = normalize(world_normal);
+    if (material.surface.z > 0.0) {
+        vec3 stored = LinearToSrgbExact(texture(normal_texture, surface_uv).rgb) * 2.0 - 1.0;
+        normal = PerturbNormal(normal, world_position, surface_uv, stored, material.surface.z);
+    }
     vec3 view = normalize(light.camera_position.xyz - world_position);
 
     float metallic = clamp(material.surface.x, 0.0, 1.0);

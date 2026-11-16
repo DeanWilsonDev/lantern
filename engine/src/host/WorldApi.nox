@@ -348,6 +348,22 @@ lantern:::host :: namespace {
                 record->meshRenderer = lantern:::engine:::MeshRenderer:::Create(HandleFromScript<lantern:::renderer:::MeshTag>(mesh), HandleFromScript<lantern:::renderer:::TextureTag>(texture), tint);
             }
         });
+        worldNamespace->Function("SetNormalMap", "(entity: i64, texture: i64, strength: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            texture: i64 = context->I64(1);
+            strength: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
+                guard current := record->meshRenderer return;
+                updated~ lantern:::engine:::MeshRenderer = current;
+                updated.normalTexture = HandleFromScript<lantern:::renderer:::TextureTag>(texture);
+                updated.material.normalStrength = Math:::clamp(strength, 0.0f, 4.0f);
+                record->meshRenderer = updated;
+            }
+        });
         worldNamespace->Function("SetTint", "(entity: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             tint: lantern:::core:::Color = ColorArgument(context, 1);
@@ -374,7 +390,7 @@ lantern:::host :: namespace {
                 guard record ~= state->entityWorld->BorrowMutable(entity) return;
                 guard current := record->meshRenderer return;
                 updated~ lantern:::engine:::MeshRenderer = current;
-                updated.material = lantern:::renderer:::Material { metallic: metallic, roughness: roughness, emissive: emissive };
+                updated.material = lantern:::renderer:::Material { metallic: metallic, roughness: roughness, emissive: emissive, normalStrength: current.material.normalStrength };
                 record->meshRenderer = updated;
             }
         });

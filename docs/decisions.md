@@ -1191,3 +1191,26 @@ Date: 2026-11-16.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
+
+## D-073: Normal maps use a cotangent frame from screen-space derivatives
+
+Date: 2026-11-16.
+
+- **No tangent vertex attribute.** The mesh vertex stays 48 bytes with no tangent; the lit shader derives the tangent frame
+  from the change of world position and uv between pixels. This works on every existing mesh, including glTF ones, and
+  needs no change to the vertex layout, shadow pipeline or tests. The cost is a frame that is constant per triangle and a
+  faint seam where uvs jump; stored tangents are the later step if a game needs perfect maps.
+- **A fourth sampler on the lit pipeline** (set 2, binding 3), bound for every draw (the white texture when there is no map),
+  with the strength in `material.surface.z`: 0 means "never read it", so a draw without a map pays nothing.
+- **One strength control, 0 to 4,** instead of separate scale per axis. 1 is as authored.
+- **OpenGL convention** (green up the image), since that is what the generated maps and most authoring tools produce.
+- **sRGB re-encode.** Textures upload as sRGB, so the shader encodes the sample back to its stored bytes. A second linear
+  texture format would avoid the maths but needs a second texture path; not worth it yet.
+- **Normal-mapped draws bind their own sampler** per draw, which the sort by texture doesn't group; fine for the handful of
+  detailed surfaces a scene has.
+- **Decals are not built.** A projected decal needs the depth buffer read in the lit pass or a separate pass; a flat quad
+  drawn just above the surface covers the platformer's ground cases. Contact shadows are the blob shadows of D-070.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
+
