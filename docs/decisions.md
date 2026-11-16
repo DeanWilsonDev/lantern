@@ -1082,7 +1082,7 @@ Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
 
 Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
 
-## D-065: FXAA, not MSAA or TAA
+## D-066: FXAA, not MSAA or TAA
 
 - **FXAA runs on the tone-mapped picture** as one extra full-screen pass (`fxaa.frag`). The composite writes a texture of
   the screen's size and format and FXAA reads it into the screen image.
