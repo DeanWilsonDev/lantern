@@ -218,6 +218,8 @@ private:
     switchSystem~ SwitchSystem = new SwitchSystem();
     // The rules' restart count the last time the partner was put back, so a restart (R) can bring her too.
     seenRestartCount~ i32 = 0;
+    // True from a bounce pad launch until the next landing, so the jump is held through the whole rise.
+    isLaunchAirborne~ bool = false;
     rules~ GameRules = new GameRules();
     events~ GameEvents = new GameEvents();
     state~ GameState = GameState:::MainMenu;
@@ -388,7 +390,12 @@ private:
         bounceHeight := BounceHeightUnderPlayer();
         launchHeight := boostReady ? PlayerTuning:::BOOST_JUMP_HEIGHT : bounceHeight;
         isLaunching := bounceHeight > 0.0f && !boostReady;
-        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed || isLaunching, jumpHeld || isLaunching, launchHeight, dt);
+        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed || isLaunching, jumpHeld || isLaunching || isLaunchAirborne, launchHeight, dt);
+        if isLaunching {
+            isLaunchAirborne = true;
+        } else if step.Landed() {
+            isLaunchAirborne = false;
+        }
         companion.Update(player.FeetPosition(), player.controller.IsGrounded(), dt);
         // A boosted jump is its own event with its own sound, so it isn't also a plain jump.
         if step.Jumped() {
@@ -678,6 +685,11 @@ private:
         for piece in level.switches {
             lantern:::debug:::SetValue(`Switch/${switchNumber:d}`, `${piece.kind} ${piece.isOn ? "on" : "off"} ${piece.remainingSeconds:.1f}`);
             switchNumber++;
+        }
+        crumbleNumber~ i32 = 0;
+        for slab in level.crumbles {
+            lantern:::debug:::SetValue(`Crumble/${crumbleNumber:d}`, slab.phase == 0 ? "solid" : (slab.phase == 1 ? "shivering" : "gone"));
+            crumbleNumber++;
         }
         for channel~ i32 = 1; channel <= 4; channel++ {
             lantern:::debug:::SetValue(`Channel/${channel:d}`, switchSystem.IsChannelOn(level.switches, channel) ? "on" : "off");
