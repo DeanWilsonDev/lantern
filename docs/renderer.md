@@ -175,6 +175,7 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
    multiplies by the exposure, applies the tone-mapping curve and writes the swapchain image. When the target can't
    applies the colour grade (`colour-grade.md`), and, when the target can't sRGB-encode, does that here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
    texture of its own and **the FXAA pass** (`RecordAntiAlias`) smooths it onto the screen image; see `anti-aliasing.md`.
+    A draw's normal map (`normal-maps.md`) is bound beside its texture and bends the normal in the lit shader.
     Particles (`particles.md`) are added as lines each frame before this pass.
 10. **Overlay pass**, only if there are lines or overlay quads: it loads the swapchain image and the scene's depth,
    then **draws the lines** (`DrawLines`), depth-tested against the meshes but not writing depth, and **the overlay**

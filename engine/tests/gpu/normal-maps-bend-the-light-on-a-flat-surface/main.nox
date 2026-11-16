@@ -1,0 +1,141 @@
+// A flat floor lit by a low sun, drawn once smooth and once with a normal map of round bumps. Flat, the lit floor is one
+// brightness everywhere; with the map the bumps catch the light on one side and fall dark on the other, so brightness
+// varies a lot across the same patch of pixels.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+BrightnessRange :: (pixels: Array<u8>, width: u32) -> u32 {
+    lowest~ u32 = 255;
+    highest~ u32 = 0;
+    for y~ u32 = 32; y < 96; y++ {
+        for x~ u32 = 32; x < 96; x++ {
+            value: u32 = u32(PixelAt(pixels, width, x, y)[0]);
+            if value < lowest {
+                lowest = value;
+            }
+            if value > highest {
+                highest = value;
+            }
+        }
+    }
+    return highest - lowest;
+}
+
+BumpWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->post.ambientOcclusionEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->shadows.enabled = false;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: lantern:::core:::Normalize3(Vec3 { x: 1.0f, y: -0.6f, z: 0.0f }),
+        color: lantern:::core:::Color:::White(),
+        ambient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 4.0f, z: 0.01f }, Vec3 { });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(8.0f, 8.0f);
+            defer delete floorData;
+            bumpData := lantern:::renderer:::TextureData:::Bumps(128, 4, 0.9f);
+            defer delete bumpData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            bumps~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->CreateTexture(bumpData) {
+                Result:::Ok(handle) -> {
+                    bumps = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+            white := lantern:::core:::Color:::White();
+
+            smooth := BumpWorld();
+            defer delete smooth;
+            smooth->Draw(floor, null, Mat4 { }, white);
+            when renderer->RenderOffscreen(smooth, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    range: u32 = BrightnessRange(pixels, size);
+                    assert(range < 6, "a smooth floor lit from one side is one brightness");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            bumpy := BumpWorld();
+            defer delete bumpy;
+            bumpy->draws.push(lantern:::renderer:::DrawItem { mesh: floor, texture: null, normalTexture: bumps, transform: Mat4 { }, color: white, material: lantern:::renderer:::Material { normalStrength: 1.0f } });
+            when renderer->Capture(bumpy, 512, 512) {
+                Result:::Ok(image) -> {
+                    capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+                    if path := capturePath {
+                        bytes: Array<u8>! = image->ToPngBytes();
+                        assert(lantern:::core:::WriteBytes(path, bytes), "the capture is written");
+                        delete bytes;
+                    }
+                    delete capturePath;
+                    delete image;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->RenderOffscreen(bumpy, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    range: u32 = BrightnessRange(pixels, size);
+                    if range < 40 {
+                        print(`bump brightness range: ${range}`);
+                    }
+                    assert(range >= 40, "a normal map makes the lit floor vary across its bumps");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("normal maps bend the light on a flat surface");
+    return 0;
+}
