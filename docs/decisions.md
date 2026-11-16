@@ -1126,3 +1126,17 @@ Card: `renderer-visuals/ambient-occlusion`.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
+
+## D-069: A spiral shadow filter and cascade blending, not contact-hardening shadows
+
+- **The 3x3 filter becomes a spiral of 4, 12 or 20 lookups** over a disc of `softness` texels (default 2), turned by a
+  different angle per pixel, so the edge is softer and the banding becomes fine noise. Quality sets the count.
+- **Cascades fade into each other** over the last 12% of each one, and the last fades to "no shadow", so the seams between
+  cascades and the hard cut at the shadow distance are gone. Snapping the cascades to whole texels was already there.
+- **Not done: a penumbra that widens with distance from the caster.** That needs a blocker search over raw depths, and the
+  renderer reads its shadow maps through a comparison sampler. It would need a second, plain sampler on the same texture
+  and a blocker-search loop; left for a card of its own.
+- **The effect is modest.** Edges are softer and smoother, which is clearest on long shadows; contact points stay tight.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/softer-shadows-and-stable-cascades`.

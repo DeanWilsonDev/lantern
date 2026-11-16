@@ -104,7 +104,7 @@ layout(set = 3, binding = 2) uniform LocalLightUniforms {
     LocalLight lights[MAX_LOCAL_LIGHTS];
 } locals;
 
-// Slot 3, pushed once per frame: where the shadow maps came from (ShadowUniforms in GpuShadows.nox, 1008 bytes).
+// Slot 3, pushed once per frame: where the shadow maps came from (ShadowUniforms in GpuShadows.nox, 1024 bytes).
 layout(set = 3, binding = 3) uniform ShadowUniforms {
     // The light view-projection matrix of each tile of the local shadow map.
     mat4 local_tile_matrices[12];
@@ -116,6 +116,9 @@ layout(set = 3, binding = 3) uniform ShadowUniforms {
     vec4 cascade_texels;
     // xyz: the way the camera looks. w: the depth bias, in the light's depth units.
     vec4 camera_forward_and_bias;
+    // x: the filter's radius in texels, y: how many lookups it makes, z: the fraction of a cascade, from its end, over which it
+    // blends into the next (0 for a hard switch).
+    vec4 filter_radius_samples_blend;
 } shadows;
 
 // Interpolated from lit.vert's outputs.
@@ -181,24 +184,52 @@ const float SUN_CASCADE_COUNT = 3.0;
 const float LOCAL_COLUMNS = 6.0;
 const float LOCAL_ROWS = 2.0;
 
-// Reads a shadow map around `uv` with a 3x3 filter: nine lookups, each already smoothed over four texels by the shadow
-// sampler, so an edge fades over about three texels. `tile_minimum` and `tile_maximum` fence the lookups inside the
-// pixel's own tile, so they never read a neighbouring tile's depths.
-float FilteredShadow(sampler2DShadow shadow_map, vec2 uv, float reference_depth, vec2 texel, vec2 tile_minimum, vec2 tile_maximum) {
-    float lit_amount = 0.0;
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            vec2 sample_uv = clamp(uv + vec2(float(x), float(y)) * texel, tile_minimum + texel * 0.5, tile_maximum - texel * 0.5);
-            lit_amount += texture(shadow_map, vec3(sample_uv, reference_depth));
-        }
-    }
-    return lit_amount / 9.0;
+// Reads a shadow map around `uv` with a soft filter. The shadow sampler already smooths a lookup over four texels, so one
+// lookup is a little soft. This takes many, spread over a disc `filter_radius` texels wide, and averages them: the edge of
+// a shadow fades across the disc, which is what a penumbra is. The lookups are placed on a sunflower spiral (each one
+// turned by the golden angle from the last, so they cover the disc evenly), and the whole spiral is turned by a different
+// angle in every pixel. That trades the regular banding a fixed pattern leaves for a fine noise the eye ignores.
+// `tile_minimum` and `tile_maximum` fence the lookups inside the pixel's own tile, so they never read a neighbouring
+// tile's depths.
+float InterleavedGradientNoise(vec2 pixel) {
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
 }
 
-// How much of the sun reaches this pixel: 1 fully lit, 0 fully shadowed. Picks the cascade by how far the pixel is from
-// the camera, and moves the pixel a little way along its normal first. Without that push a surface can shadow itself,
-// speckling it with "acne", because the map's texels are coarser than the surface. Past the last cascade there is
-// no shadow.
+float FilteredShadow(sampler2DShadow shadow_map, vec2 uv, float reference_depth, vec2 texel, vec2 tile_minimum, vec2 tile_maximum) {
+    float radius = shadows.filter_radius_samples_blend.x;
+    int sample_count = int(shadows.filter_radius_samples_blend.y);
+    float turn = InterleavedGradientNoise(gl_FragCoord.xy) * 6.2831853;
+    float lit_amount = 0.0;
+    for (int sample_index = 0; sample_index < sample_count; sample_index++) {
+        float ring = sqrt((float(sample_index) + 0.5) / float(sample_count)) * radius;
+        float angle = float(sample_index) * 2.3999632 + turn;
+        vec2 sample_uv = clamp(uv + vec2(cos(angle), sin(angle)) * ring * texel, tile_minimum + texel * 0.5, tile_maximum - texel * 0.5);
+        lit_amount += texture(shadow_map, vec3(sample_uv, reference_depth));
+    }
+    return lit_amount / float(sample_count);
+}
+
+// How much of the sun reaches this pixel through one cascade: 1 fully lit, 0 fully shadowed. The pixel is moved a little way
+// along its normal first. Without that push a surface can shadow itself, speckling it with "acne", because the map's
+// texels are coarser than the surface. A pixel outside the cascade's picture is lit.
+float CascadeShadow(int cascade, vec3 position, vec3 normal) {
+    vec3 pushed = position + normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w);
+    vec4 clip = shadows.cascade_matrices[cascade] * vec4(pushed, 1.0);
+    // Clip space has +y up and texture space has +y down.
+    vec2 tile_uv = vec2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    if (clip.z > 1.0 || tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0) {
+        return 1.0;
+    }
+    vec2 atlas_uv = vec2((float(cascade) + tile_uv.x) / SUN_CASCADE_COUNT, tile_uv.y);
+    vec2 texel = 1.0 / vec2(textureSize(sun_shadow_map, 0));
+    vec2 tile_minimum = vec2(float(cascade) / SUN_CASCADE_COUNT, 0.0);
+    vec2 tile_maximum = vec2(float(cascade + 1) / SUN_CASCADE_COUNT, 1.0);
+    return FilteredShadow(sun_shadow_map, atlas_uv, clip.z - shadows.camera_forward_and_bias.w, texel, tile_minimum, tile_maximum);
+}
+
+// How much of the sun reaches this pixel: 1 fully lit, 0 fully shadowed. Picks the cascade by how far the pixel is from the
+// camera. Near the end of a cascade it also looks the pixel up in the next one and blends the two, so the switch isn't a
+// visible line; the last cascade fades out to "no shadow" the same way instead of stopping at its edge.
 float SunShadow(vec3 position, vec3 normal) {
     if (shadows.cascade_ends.w < 0.5) {
         return 1.0;
@@ -215,18 +246,17 @@ float SunShadow(vec3 position, vec3 normal) {
     if (cascade > 2) {
         return 1.0;
     }
-    vec3 pushed = position + normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w);
-    vec4 clip = shadows.cascade_matrices[cascade] * vec4(pushed, 1.0);
-    // Clip space has +y up and texture space has +y down.
-    vec2 tile_uv = vec2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
-    if (clip.z > 1.0 || tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0) {
-        return 1.0;
+    float shadow = CascadeShadow(cascade, position, normal);
+    float blend_fraction = shadows.filter_radius_samples_blend.z;
+    if (blend_fraction > 0.0) {
+        float cascade_end = shadows.cascade_ends[cascade];
+        float blend = smoothstep(cascade_end * (1.0 - blend_fraction), cascade_end, view_depth);
+        if (blend > 0.0) {
+            float neighbour = cascade < 2 ? CascadeShadow(cascade + 1, position, normal) : 1.0;
+            shadow = mix(shadow, neighbour, blend);
+        }
     }
-    vec2 atlas_uv = vec2((float(cascade) + tile_uv.x) / SUN_CASCADE_COUNT, tile_uv.y);
-    vec2 texel = 1.0 / vec2(textureSize(sun_shadow_map, 0));
-    vec2 tile_minimum = vec2(float(cascade) / SUN_CASCADE_COUNT, 0.0);
-    vec2 tile_maximum = vec2(float(cascade + 1) / SUN_CASCADE_COUNT, 1.0);
-    return FilteredShadow(sun_shadow_map, atlas_uv, clip.z - shadows.camera_forward_and_bias.w, texel, tile_minimum, tile_maximum);
+    return shadow;
 }
 
 // How much of a local light reaches this pixel. A spot light has one tile. A point light has six, one per face of a cube
