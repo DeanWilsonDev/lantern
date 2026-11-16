@@ -1,0 +1,136 @@
+Sdl :: import Sdl;
+
+lantern:::sdl :: namespace {
+    /** Clamps an SDL size (a signed int) to an unsigned one; a negative size would mean SDL failed. */
+    NonNegative :: (value: i32) -> u32 {
+        if value < 0 {
+            return 0;
+        }
+        return u32(value);
+    }
+
+    /**
+     * One OS window, owned. The renderer draws to it through a swapchain it claims from it, so the renderer must be
+     * deleted before the window.
+     *
+     * A window has two sizes. Its logical size is in points, the unit the OS lays windows out in; its pixel size is
+     * what the GPU draws. On a Retina or high-DPI display one point is two (or more) pixels, so the renderer always
+     * sizes its targets from the pixel size and the UI scales by the pixel density.
+     */
+    SdlWindow :: class {
+    public:
+        /** The SDL window handle. Null only if construction went wrong; owned, destroyed with this object. */
+        raw_~ raw Sdl:::SDL_Window~* = null;
+
+        /** Takes ownership of a window SDL already created. Use `Create`. */
+        SdlWindow~: (window: raw Sdl:::SDL_Window~*) {
+            raw_ = window;
+        }
+
+        /** Destroys the OS window. Any swapchain claimed for it must already be released. */
+        !SdlWindow~: () {
+            unsafe {
+                Sdl:::SDL_DestroyWindow(raw_);
+            }
+        }
+
+        /**
+         * Opens a window with high pixel density enabled (so a Retina display gets full-resolution pixels rather than a
+         * blurry upscale) and, if the config says so, resizable. Null, with the error logged, when SDL can't open one.
+         */
+        static Create :: (context: SdlContext*, config: lantern:::platform:::WindowConfig) -> SdlWindow*!? {
+            flags~ u64 = Sdl:::SDL_WINDOW_HIGH_PIXEL_DENSITY;
+            if config.resizable {
+                flags = flags | Sdl:::SDL_WINDOW_RESIZABLE;
+            }
+            window~ raw Sdl:::SDL_Window~* = null;
+            unsafe {
+                window = Sdl:::SDL_CreateWindow(config.title, i32(config.width), i32(config.height), flags);
+            }
+            if window == null {
+                described := LastSdlError("SDL_CreateWindow");
+                lantern:::core:::LogError("platform", described);
+                delete described;
+                return null;
+            }
+            created := new SdlWindow(window);
+            metrics := created->Metrics();
+            message: string! = `window ${metrics.logicalWidth}x${metrics.logicalHeight} points, ${metrics.pixelWidth}x${metrics.pixelHeight} pixels, density ${metrics.pixelDensity:.2f}`;
+            lantern:::core:::LogInfo("platform", message);
+            delete message;
+            return created!;
+        }
+
+        /**
+         * The SDL handle, for the GPU device to claim the window and for mouse capture. Lent; the window keeps
+         * ownership.
+         */
+        Raw :: () -> raw Sdl:::SDL_Window~* {
+            return raw_;
+        }
+
+        /**
+         * The window's size in points and pixels, the pixel density (pixels per point, at least 1) and whether it is
+         * minimised, read from SDL now.
+         */
+        Metrics :: () -> lantern:::platform:::WindowMetrics {
+            logicalWidth~ i32 = 0;
+            logicalHeight~ i32 = 0;
+            pixelWidth~ i32 = 0;
+            pixelHeight~ i32 = 0;
+            density~ f32 = 0.0f;
+            flags~ u64 = 0;
+            unsafe {
+                Sdl:::SDL_GetWindowSize(raw_, logicalWidth, logicalHeight);
+                Sdl:::SDL_GetWindowSizeInPixels(raw_, pixelWidth, pixelHeight);
+                density = Sdl:::SDL_GetWindowPixelDensity(raw_);
+                flags = Sdl:::SDL_GetWindowFlags(raw_);
+            }
+            return lantern:::platform:::WindowMetrics {
+                logicalWidth: NonNegative(logicalWidth),
+                logicalHeight: NonNegative(logicalHeight),
+                pixelWidth: NonNegative(pixelWidth),
+                pixelHeight: NonNegative(pixelHeight),
+                pixelDensity: when (density > 0.0f) { true -> density, false -> 1.0f },
+                minimized: (flags & Sdl:::SDL_WINDOW_MINIMIZED) == Sdl:::SDL_WINDOW_MINIMIZED
+            };
+        }
+
+        /**
+         * Asks the OS to resize the window, in points. The new pixel size arrives later as a `WindowResized` event; the
+         * renderer picks it up on its next frame.
+         */
+        Resize :: (width: i32, height: i32) -> bool {
+            resized~ bool = false;
+            unsafe {
+                resized = Sdl:::SDL_SetWindowSize(raw_, width, height);
+            }
+            return resized;
+        }
+
+        /** Minimises the window; the game loop then stops rendering until it's restored. */
+        Minimize :: () -> bool {
+            minimized~ bool = false;
+            unsafe {
+                minimized = Sdl:::SDL_MinimizeWindow(raw_);
+            }
+            return minimized;
+        }
+
+        /** Restores a minimised window. */
+        Restore :: () -> bool {
+            restored~ bool = false;
+            unsafe {
+                restored = Sdl:::SDL_RestoreWindow(raw_);
+            }
+            return restored;
+        }
+
+        /** Sets the window's title bar text. */
+        SetTitle :: (title: string) -> void {
+            unsafe {
+                Sdl:::SDL_SetWindowTitle(raw_, title);
+            }
+        }
+    }
+}

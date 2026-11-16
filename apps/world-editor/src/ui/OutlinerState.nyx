@@ -1,16 +1,43 @@
 EditorModel :: import EditorModel;
+OutlineRowItem :: import OutlineRowItem;
 
+// The outliner's own state: the filter text, which parents are collapsed, the drag and drop in progress
+// and the rows to show. The rows are rebuilt only when the level changes (SyncRows) or the filter or
+// the collapsing changes, since building them asks the editor for every entity.
 OutlinerState :: class {
 public:
     @signal filter~ string = "";
     @signal collapsed~ Dictionary<i64, bool> = {};
     @signal dragging~ bool = false;
     @signal dropTarget~ string = "";
+    @signal rows~ Array<OutlineRowItem> = [];
 
-    SetFilter~: (text: string) -> void {
-        this.filter = text;
+    syncedRevision~ i64 = -1;
+
+    // Rebuilds the rows when the editor's revision differs from the one last seen.
+    SyncRows~: (revision: i64) -> void {
+        if revision != this.syncedRevision {
+            this.syncedRevision = revision;
+            this.RefillRows();
+        }
     }
 
+    // Builds the rows and replaces the signal only when they differ, so an unchanged tree does not redraw.
+    RefillRows~: () -> void {
+        nextRows := EditorModel:::OutlineRows(this.filter, this.collapsed);
+        if nextRows != this.rows {
+            this.rows = nextRows;
+        }
+    }
+
+    // Sets the filter text and rebuilds the rows.
+    SetFilter~: (text: string) -> void {
+        this.filter = text;
+        this.RefillRows();
+    }
+
+    // Expands or collapses an entity's children. The set of collapsed entities is a new copy each time
+    // so the signal sees the change.
     ToggleExpanded~: (id: i64) -> void {
         next~ Dictionary<i64, bool> = this.collapsed;
         if next.containsKey(id) {
@@ -19,39 +46,48 @@ public:
             next[id] = true;
         }
         this.collapsed = next;
+        this.RefillRows();
     }
 
+    // A drag of an outliner row began (to show where it can be dropped).
     BeginDrag~: () -> void {
         this.dragging = true;
     }
 
+    // The drag ended.
     EndDrag~: () -> void {
         this.dragging = false;
         this.dropTarget = "";
     }
 
+    // The drag is over a target (an entity row, or the gap before one).
     EnterDropTarget~: (target: string) -> void {
         this.dropTarget = target;
     }
 
+    // The drag left a target, unless it has already entered another.
     LeaveDropTarget~: (target: string) -> void {
         if this.dropTarget == target {
             this.dropTarget = "";
         }
     }
 
+    // A row was dropped onto an entity, which makes it that entity's child. It does nothing for a payload
+    // that is not an entity or for a drop on itself.
     DropOnEntity:: (payload: string, parent: i64) -> void {
         child := DraggedEntity(payload);
         guard child != 0 && child != parent return;
         editorSetParent(child, parent);
     }
 
+    // A row was dropped on the gap before an entity, which moves it to that place in the list.
     DropBeforeEntity:: (payload: string, sibling: i64) -> void {
         child := DraggedEntity(payload);
         guard child != 0 && child != sibling return;
         editorMoveBefore(child, sibling);
     }
 
+    // The entity number in a payload "entity:NUMBER", or 0 if it is not one.
     DraggedEntity :: (payload: string) -> i64 {
         guard payload.startsWith("entity:") return 0;
         text := payload.substring(7, payload.length() - 7);

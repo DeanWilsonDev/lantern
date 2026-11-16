@@ -1,0 +1,77 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(40.0f, 40.0f);
+            defer delete floorData;
+            sphereData := lantern:::renderer:::Sphere(0.8f, 32, 16);
+            defer delete sphereData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            sphere~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->CreateMesh(sphereData) {
+                Result:::Ok(handle) -> {
+                    sphere = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            world := new lantern:::renderer:::RenderWorld();
+            defer delete world;
+            world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 4.5f, z: 9.0f }, Vec3 { x: 0.0f, y: 0.5f, z: 0.0f });
+            world->light.direction = lantern:::core:::Normalize3(Vec3 { x: -0.5f, y: -0.6f, z: -0.35f });
+            world->light.color = lantern:::core:::Color:::Rgb(0.9f, 0.82f, 0.68f);
+            world->Draw(floor, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.58f));
+            world->AddLight(lantern:::renderer:::Light:::Point(Vec3 { x: -4.0f, y: 2.0f, z: 2.0f }, lantern:::core:::Color:::Rgb(8.0f, 3.0f, 1.5f), 9.0f));
+            world->AddLight(lantern:::renderer:::Light:::Spot(Vec3 { x: 4.0f, y: 5.0f, z: 3.0f }, Vec3 { x: 1.5f, y: 0.0f, z: 0.0f }, lantern:::core:::Color:::Rgb(25.0f, 25.0f, 40.0f), 14.0f, 0.2f, 0.4f));
+            world->lights[0].castsShadows = true;
+            world->lights[1].castsShadows = true;
+            for column~ u32 = 0; column < 5; column++ {
+                roughness: f32 = 0.1f + f32(column) * 0.225f;
+                x: f32 = (f32(column) - 2.0f) * 2.0f;
+                world->DrawWithMaterial(sphere, null, Mat4:::translation(Vec3 { x: x, y: 0.8f, z: 1.5f }), lantern:::core:::Color:::Rgb(0.9f, 0.2f, 0.15f), lantern:::renderer:::Material { metallic: 0.0f, roughness: roughness });
+                world->DrawWithMaterial(sphere, null, Mat4:::translation(Vec3 { x: x, y: 0.8f, z: -1.0f }), lantern:::core:::Color:::Rgb(0.95f, 0.8f, 0.4f), lantern:::renderer:::Material { metallic: 1.0f, roughness: roughness });
+            }
+            world->DrawWithMaterial(sphere, null, Mat4:::translation(Vec3 { x: 0.0f, y: 0.8f, z: -3.5f }), lantern:::core:::Color:::White(), lantern:::renderer:::Material:::Glowing(lantern:::core:::Color:::Rgb(0.8f, 4.0f, 2.0f)));
+            when renderer->Capture(world, 960, 540) {
+                Result:::Ok(image) -> {
+                    capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+                    if path := capturePath {
+                        bytes: Array<u8>! = image->ToPngBytes();
+                        assert(lantern:::core:::WriteBytes(path, bytes), "the capture is written");
+                        delete bytes;
+                    }
+                    delete capturePath;
+                    glow: u8[4] = lantern:::gputest:::Pixel(image, 480, 150);
+                    assert(glow[1] > 150, "the emissive sphere shows its glow");
+                    delete image;
+                },
+                Result:::Err(message) -> {
+                    lantern:::gputest:::Skip(message);
+                    delete message;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("a lighting showcase renders");
+    return 0;
+}

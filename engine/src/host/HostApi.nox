@@ -1,9 +1,28 @@
 NyxC :: import NyxC;
 
 lantern:::host :: namespace {
+    /**
+     * A copy of a string the caller can own.
+     */
+    OwnedText :: (text: string) -> string! {
+        return `${text}`;
+    }
+
+    /**
+     * The Nyx error variant a host function throws when something the script named doesn't exist. A script can `when` over
+     * it.
+     */
     NOT_FOUND_VARIANT: string : "Error::NotFound";
+    /**
+     * The Nyx error variant for a bad argument or a failed operation.
+     */
     INVALID_VARIANT: string : "Error::Unknown";
 
+    /**
+     * Registers host functions under one Nyx namespace. The host surface names are written with two colons (`lantern::world`);
+     * Nyx code writes the same names with three (`lantern:::world:::Load`). It remembers the first registration error, so a
+     * long list of `Function` calls can be checked once, by Finish, at the end.
+     */
     HostNamespace :: class {
     public:
         runtime~ raw lantern:::nyx:::Runtime~* = null;
@@ -22,6 +41,10 @@ lantern:::host :: namespace {
             delete failure;
         }
 
+        /**
+         * Registers one function. `signature` is its Nyx type (`(path: string) -> i64`), which Nyx's checker uses on game code,
+         * and `body` is the Nox code that runs when the script calls it.
+         */
         Function~: (name: string, signature: string, body: ((context: lantern:::nyx:::CallContext~*) -> void)!) -> void {
             qualified: string! = `${path}::${name}`;
             failed~ lantern:::nyx:::NyxError*!? = null;
@@ -36,6 +59,9 @@ lantern:::host :: namespace {
             delete failed;
         }
 
+        /**
+         * Returns the first error any `Function` call hit (null when all succeeded) and clears it.
+         */
         Finish~: () -> lantern:::nyx:::NyxError*!? {
             taken: lantern:::nyx:::NyxError*!? = failure!;
             failure = null;
@@ -43,6 +69,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * The first of two registration errors, deleting the second. It lets RegisterEngineApis chain every API's result.
+     */
     FirstFailure :: (first: lantern:::nyx:::NyxError*!?, next: lantern:::nyx:::NyxError*!?) -> lantern:::nyx:::NyxError*!? {
         if first == null {
             return next!;
@@ -51,11 +80,18 @@ lantern:::host :: namespace {
         return first!;
     }
 
+    /**
+     * The two host value types, `Vec2` and `Vec3`, once they are registered. The API files take it to read and return
+     * vectors.
+     */
     MathTypes :: struct {
         vec2~ raw lantern:::nyx:::HostType~* = null;
         vec3~ raw lantern:::nyx:::HostType~* = null;
     }
 
+    /**
+     * A pointer to a Vec3 as raw bytes, which is how a value type crosses the C API.
+     */
     Vec3Bytes :: (vector: raw Vec3~*) -> raw u8~* {
         unsafe {
             viewed := reinterpret<raw u8~*>(vector);
@@ -63,6 +99,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * The same for a Vec2.
+     */
     Vec2Bytes :: (vector: raw Vec2~*) -> raw u8~* {
         unsafe {
             viewed := reinterpret<raw u8~*>(vector);
@@ -70,6 +109,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * The Vec3 stored at raw bytes (a zero vector for null).
+     */
     Vec3At :: (bytes: raw u8~*) -> Vec3 {
         if bytes == null {
             return Vec3 { };
@@ -81,6 +123,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * The Vec2 stored at raw bytes (a zero vector for null).
+     */
     Vec2At :: (bytes: raw u8~*) -> Vec2 {
         if bytes == null {
             return Vec2 { };
@@ -92,18 +137,27 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Argument `index` of a call as a Vec3. The call is refused if it isn't one.
+     */
     Vec3Argument :: (context: lantern:::nyx:::CallContext~*, index: usize, math: MathTypes) -> Vec3 {
         unsafe {
             return Vec3At(context->HostBytes(index, math.vec3));
         }
     }
 
+    /**
+     * Argument `index` of a call as a Vec2.
+     */
     Vec2Argument :: (context: lantern:::nyx:::CallContext~*, index: usize, math: MathTypes) -> Vec2 {
         unsafe {
             return Vec2At(context->HostBytes(index, math.vec2));
         }
     }
 
+    /**
+     * Returns a Vec3 to the script.
+     */
     ReturnVec3 :: (context: lantern:::nyx:::CallContext~*, math: MathTypes, vector: Vec3) -> void {
         unsafe {
             returned~ Vec3 = vector;
@@ -112,6 +166,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Returns a Vec2 to the script.
+     */
     ReturnVec2 :: (context: lantern:::nyx:::CallContext~*, math: MathTypes, vector: Vec2) -> void {
         unsafe {
             returned~ Vec2 = vector;
@@ -120,14 +177,24 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * The Vec3 a method was called on.
+     */
     ReceiverVec3 :: (context: lantern:::nyx:::CallContext~*) -> Vec3 {
         return Vec3At(context->ReceiverBytes());
     }
 
+    /**
+     * The Vec2 a method was called on.
+     */
     ReceiverVec2 :: (context: lantern:::nyx:::CallContext~*) -> Vec2 {
         return Vec2At(context->ReceiverBytes());
     }
 
+    /**
+     * Argument `index` read as a colour written `"RRGGBB"` or `"RRGGBBAA"`. A bad string fails the call with a message
+     * saying how to write one.
+     */
     ColorArgument :: (context: lantern:::nyx:::CallContext~*, index: usize) -> lantern:::core:::Color {
         text: string! = context->Text(index);
         defer delete text;
@@ -143,10 +210,17 @@ lantern:::host :: namespace {
         return lantern:::core:::Color:::White();
     }
 
+    /**
+     * True once a call has failed or been refused. Functions check it after reading their arguments, so they don't act on
+     * half-read ones.
+     */
     Stopped :: (context: lantern:::nyx:::CallContext~*) -> bool {
         return context->Refused() || context->outcome == lantern:::nyx:::CallOutcome:::Failed;
     }
 
+    /**
+     * Fails the call with the not-found variant, unless it has already stopped.
+     */
     NotFound :: (context: lantern:::nyx:::CallContext~*, message: string) -> void {
         if Stopped(context) {
             return;
@@ -154,6 +228,9 @@ lantern:::host :: namespace {
         context->Fail(NOT_FOUND_VARIANT, message);
     }
 
+    /**
+     * Fails the call with the invalid variant, unless it has already stopped.
+     */
     Invalid :: (context: lantern:::nyx:::CallContext~*, message: string) -> void {
         if Stopped(context) {
             return;
@@ -161,9 +238,19 @@ lantern:::host :: namespace {
         context->Fail(INVALID_VARIANT, message);
     }
 
+    /**
+     * The top bit of a 64-bit number.
+     */
     SIGN_BIT: u64 : 9223372036854775808;
+    /**
+     * The largest signed 64-bit number.
+     */
     LARGEST_I64: i64 : 9223372036854775807;
 
+    /**
+     * Reinterprets 64 bits as the signed `i64` a script sees. Handles are 64 bits (a slot and a generation) but Nyx has
+     * no unsigned 64-bit type, so a script holds them as `i64` and the engine converts at the boundary.
+     */
     BitsToScript :: (bits: u64) -> i64 {
         if bits < SIGN_BIT {
             return i64(bits);
@@ -171,6 +258,9 @@ lantern:::host :: namespace {
         return i64(bits - SIGN_BIT) - LARGEST_I64 - 1;
     }
 
+    /**
+     * The reverse of BitsToScript.
+     */
     BitsFromScript :: (id: i64) -> u64 {
         if id >= 0 {
             return u64(id);
@@ -178,18 +268,31 @@ lantern:::host :: namespace {
         return u64(id + LARGEST_I64 + 1) + SIGN_BIT;
     }
 
+    /**
+     * An entity handle as the `i64` a script holds. A stale id (its entity was despawned) is detected by the handle's
+     * generation when it is used again.
+     */
     EntityToScript :: (entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> i64 {
         return BitsToScript(entity.ToBits());
     }
 
+    /**
+     * The entity handle for a script's `i64`.
+     */
     EntityFromScript :: (id: i64) -> lantern:::core:::Handle<lantern:::engine:::EntityTag> {
         return lantern:::core:::HandleFromBits<lantern:::engine:::EntityTag>(BitsFromScript(id));
     }
 
+    /**
+     * Any handle (a mesh, a texture, a light) as an `i64` for a script.
+     */
     HandleToScript<T> :: (handle: lantern:::core:::Handle<T>) -> i64 {
         return BitsToScript(handle.ToBits());
     }
 
+    /**
+     * The handle for a script's `i64`.
+     */
     HandleFromScript<T> :: (id: i64) -> lantern:::core:::Handle<T> {
         return lantern:::core:::HandleFromBits<T>(BitsFromScript(id));
     }

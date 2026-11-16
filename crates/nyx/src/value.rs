@@ -150,6 +150,67 @@ impl Value {
         (0..self.array_length()?).map(|index| self.array_get(index)).collect()
     }
 
+    pub fn call(&self, args: &[Value]) -> Result<Option<Value>> {
+        let runtime = self.runtime();
+        let raw_args = runtime.raw_arguments(args)?;
+        let mut result = ptr::null_mut();
+        let status = unsafe { sys::nyx_value_call(self.raw(), raw_args.as_ptr(), raw_args.len(), &mut result) };
+        crate::program::finish_call(&runtime, status, result)
+    }
+
+    pub fn dictionary_length(&self) -> Result<usize> {
+        self.read(sys::nyx_value_dictionary_length)
+    }
+
+    pub fn dictionary_get(&self, key: &str) -> Result<Value> {
+        let mut element = ptr::null_mut();
+        self.runtime
+            .check(unsafe { sys::nyx_value_dictionary_get(self.raw(), crate::raw::nyx_str(key), &mut element) })?;
+        Value::from_owned(self.runtime.clone(), element)
+            .ok_or_else(|| Error::new(Status::Internal, "nyx-capi returned no dictionary element"))
+    }
+
+    pub fn dictionary_entry(&self, index: usize) -> Result<(Value, Value)> {
+        let mut key = ptr::null_mut();
+        let mut element = ptr::null_mut();
+        self.runtime.check(unsafe { sys::nyx_value_dictionary_entry(self.raw(), index, &mut key, &mut element) })?;
+        let key = Value::from_owned(self.runtime.clone(), key)
+            .ok_or_else(|| Error::new(Status::Internal, "nyx-capi returned no dictionary key"))?;
+        let element = Value::from_owned(self.runtime.clone(), element)
+            .ok_or_else(|| Error::new(Status::Internal, "nyx-capi returned no dictionary element"))?;
+        Ok((key, element))
+    }
+
+    pub fn dictionary_entries(&self) -> Result<Vec<(Value, Value)>> {
+        (0..self.dictionary_length()?).map(|index| self.dictionary_entry(index)).collect()
+    }
+
+    pub fn object_type_name(&self) -> Result<&str> {
+        self.read_text(sys::nyx_value_object_type_name)
+    }
+
+    pub fn object_field(&self, name: &str) -> Result<Value> {
+        let mut field = ptr::null_mut();
+        self.runtime
+            .check(unsafe { sys::nyx_value_object_get_field(self.raw(), crate::raw::nyx_str(name), &mut field) })?;
+        Value::from_owned(self.runtime.clone(), field)
+            .ok_or_else(|| Error::new(Status::Internal, "nyx-capi returned no object field"))
+    }
+
+    pub fn error_suppressed(&self) -> Result<Vec<Value>> {
+        let count = self.read(sys::nyx_value_error_suppressed_count)?;
+        let mut suppressed = Vec::with_capacity(count);
+        for index in 0..count {
+            let mut raw = ptr::null_mut();
+            self.runtime.check(unsafe { sys::nyx_value_error_suppressed(self.raw(), index, &mut raw) })?;
+            suppressed.push(
+                Value::from_owned(self.runtime.clone(), raw)
+                    .ok_or_else(|| Error::new(Status::Internal, "nyx-capi returned no suppressed failure"))?,
+            );
+        }
+        Ok(suppressed)
+    }
+
     pub fn error_variant(&self) -> Result<&str> {
         self.read_text(sys::nyx_value_error_variant)
     }

@@ -1,4 +1,7 @@
 lantern:::editor :: namespace {
+    // The inspector is the panel of editable fields for the selected entity. Each field has a kind that
+    // decides the widget the UI shows: a text box, a number box, a tick box, a colour, a three number
+    // vector, a drop down of choices, or plain read-only text.
     FieldKind :: enum {
         Text,
         Number,
@@ -9,6 +12,7 @@ lantern:::editor :: namespace {
         ReadOnly
     }
 
+    // A kind's name, as the UI is told it.
     FieldKindName :: (kind: FieldKind) -> string {
         return when kind {
             FieldKind:::Text -> "text",
@@ -21,6 +25,10 @@ lantern:::editor :: namespace {
         };
     }
 
+    // One row of the inspector: the key that names it when it is edited, the label shown, the group it
+    // sits under (Entity, Transform, Shape, Look, Collision, Properties), its value as text, its kind and,
+    // for a choice, the choices. `mixed` is set when several entities are selected and they do not
+    // all have the same value.
     InspectorField :: class {
     public:
         key~ string!;
@@ -47,10 +55,13 @@ lantern:::editor :: namespace {
             choices.freeAll();
         }
 
+        // Adds a choice to the list.
         AddChoice~: (choice: string) -> void {
             choices.push(`${choice}`);
         }
 
+        // Adds a choice unless it is empty or already there. It is used for the current value, so an
+        // entity with a kind or material the palette does not list still shows it.
         AddChoiceUnlessPresent~: (choice: string) -> void {
             if choice.length() == 0 {
                 return;
@@ -64,10 +75,12 @@ lantern:::editor :: namespace {
         }
     }
 
-    FieldsForSelection :: (primary: lantern:::world:::WorldEntity*, others: Array<lantern:::world:::WorldEntity*>, world: lantern:::world:::WorldFile*, palette: Palette*) -> Array<InspectorField*!>! {
-        fields~ Array<InspectorField*!>! = FieldsFor(primary, world, palette);
+    // The fields to show for a selection: those of the primary entity, with `mixed` set on any field
+    // whose value differs in another selected entity.
+    FieldsForSelection :: (primary: lantern:::world:::WorldEntity*, others: Array<lantern:::world:::WorldEntity*>, worldFile: lantern:::world:::WorldFile*, palette: Palette*) -> Array<InspectorField*!>! {
+        fields~ Array<InspectorField*!>! = FieldsFor(primary, worldFile, palette);
         for other in others {
-            otherFields~ Array<InspectorField*!>! = FieldsFor(other, world, palette);
+            otherFields~ Array<InspectorField*!>! = FieldsFor(other, worldFile, palette);
             for field in fields {
                 agrees~ bool = false;
                 for candidate in otherFields {
@@ -84,6 +97,8 @@ lantern:::editor :: namespace {
         return fields!;
     }
 
+    // A number as short text: rounded to four decimal places, whole numbers without a point, and no
+    // exponent form for ordinary sizes.
     FormatNumber :: (value: f32) -> string! {
         rounded: f32 = Math:::round(value * 10000.0f) / 10000.0f;
         if rounded == 0.0f {
@@ -95,6 +110,7 @@ lantern:::editor :: namespace {
         return lantern:::json:::PlainDecimal(`${rounded}`);
     }
 
+    // A vector as "x, y, z".
     FormatVector :: (value: Vec3) -> string! {
         x: string! = FormatNumber(value.x);
         y: string! = FormatNumber(value.y);
@@ -106,6 +122,7 @@ lantern:::editor :: namespace {
         return joined!;
     }
 
+    // A property's value as text, by its type.
     FormatProperty :: (entity: lantern:::world:::WorldEntity*, index: usize) -> string! {
         value: lantern:::world:::PropertyValue = entity->propertyValues[index];
         return when value.kind {
@@ -116,10 +133,13 @@ lantern:::editor :: namespace {
         };
     }
 
+    // True for the characters 0 to 9.
     IsAsciiDigit :: (byte: u8) -> bool {
         return byte >= u8(48) && byte <= u8(57);
     }
 
+    // True for inf, infinity or nan in any case. LooksLikeNumber accepts them as numbers, so the later
+    // finite check can name them in its message.
     IsNonFiniteWord :: (word: string) -> bool {
         lowered: string! = word.toLower();
         nonFinite: bool = lowered == "inf" || lowered == "infinity" || lowered == "nan";
@@ -127,6 +147,9 @@ lantern:::editor :: namespace {
         return nonFinite;
     }
 
+    // Checks that text is a whole number in the form strtod reads: an optional sign, digits with an
+    // optional point, and an optional exponent. It exists because strtod stops quietly at the first bad
+    // character, which would let "12abc" through as 12.
     LooksLikeNumber :: (text: string) -> bool {
         index~ usize = 0;
         if text.length() > 0 && (text.byteAt(0) == u8(43) || text.byteAt(0) == u8(45)) {
@@ -167,6 +190,7 @@ lantern:::editor :: namespace {
         return index == text.length();
     }
 
+    // The number in the text, or null when it is not one.
     ParsedNumber :: (text: string) -> f32? {
         if !LooksLikeNumber(text) {
             return null;
@@ -180,6 +204,7 @@ lantern:::editor :: namespace {
         return f32(value);
     }
 
+    // Like ParsedNumber but gives an error message, and also refuses infinity and not-a-number.
     ParseNumber :: (text: string) -> Result<f32, string!> {
         trimmed: string = text.trim();
         parsed: f32? = ParsedNumber(trimmed);
@@ -190,6 +215,7 @@ lantern:::editor :: namespace {
         return Result<f32, string!>:::Ok(value);
     }
 
+    // The number in the text, or null when it is not a number or is not finite.
     FiniteNumber :: (text: string) -> f32? {
         parsed: f32? = ParsedNumber(text);
         guard value := parsed return null;
@@ -199,11 +225,15 @@ lantern:::editor :: namespace {
         return value;
     }
 
+    // What text typed into a property box means: the value, and whether it is text (which is kept as
+    // typed).
     ParsedProperty :: struct {
         value~ lantern:::world:::PropertyValue = lantern:::world:::PropertyValue { };
         isText~ bool = false;
     }
 
+    // Works out what a property's text is: true or false, a finite number, three numbers in brackets or
+    // separated by commas (a vector), or else plain text.
     ParseProperty :: (text: string) -> ParsedProperty {
         trimmed: string = text.trim();
         if trimmed == "true" {
@@ -244,6 +274,7 @@ lantern:::editor :: namespace {
         return ParsedProperty { value: lantern:::world:::PropertyValue:::Text(), isText: true };
     }
 
+    // "none", "box" or "ramp".
     ShapeName :: (shape: lantern:::world:::Shape?) -> string {
         guard present := shape return "none";
         if present.kind == lantern:::world:::ShapeKind:::Box {
@@ -252,11 +283,13 @@ lantern:::editor :: namespace {
         return "ramp";
     }
 
+    // "none", "static" or "kinematic".
     ColliderName :: (collider: lantern:::world:::ColliderKind?) -> string {
         guard present := collider return "none";
         return lantern:::world:::ColliderText(present);
     }
 
+    // One component of a vector by number (0 x, 1 y, 2 z).
     AxisComponent :: (vector: Vec3, index: usize) -> f32 {
         if index == 0 {
             return vector.x;
@@ -267,6 +300,7 @@ lantern:::editor :: namespace {
         return vector.z;
     }
 
+    // A copy of the vector with one component replaced.
     WithComponent :: (vector: Vec3, index: usize, value: f32) -> Vec3 {
         changed~ Vec3 = vector;
         if index == 0 {
@@ -279,6 +313,7 @@ lantern:::editor :: namespace {
         return changed;
     }
 
+    // The component number for "x", "y" or "z".
     AxisSuffixIndex :: (suffix: string) -> usize? {
         if suffix == "x" {
             return 0;
@@ -292,6 +327,7 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // The letter for a component number.
     AxisSuffix :: (index: usize) -> string {
         if index == 0 {
             return "x";
@@ -302,6 +338,7 @@ lantern:::editor :: namespace {
         return "z";
     }
 
+    // A number field, with the number formatted.
     NumberField :: (key: string, label: string, group: string, value: f32) -> InspectorField*! {
         text: string! = FormatNumber(value);
         field := new InspectorField(key, label, group, text, FieldKind:::Number);
@@ -309,7 +346,11 @@ lantern:::editor :: namespace {
         return field!;
     }
 
-    FieldsFor :: (entity: lantern:::world:::WorldEntity*, world: lantern:::world:::WorldFile*, palette: Palette*) -> Array<InspectorField*!>! {
+    // The fields of one entity, in the order the panel shows them: name, kind, parent and id; position,
+    // rotation and scale; the shape and its size; for an entity with a shape also its material, tint
+    // and collider; then its properties. Field keys are the names ApplyField reads back, such as
+    // `position.x`, `size.y` or `property:speed`.
+    FieldsFor :: (entity: lantern:::world:::WorldEntity*, worldFile: lantern:::world:::WorldFile*, palette: Palette*) -> Array<InspectorField*!>! {
         fields~ Array<InspectorField*!>! = [];
         fields.push(new InspectorField("name", "Name", "Entity", entity->name, FieldKind:::Text));
         kindField := new InspectorField("kind", "Kind", "Entity", entity->kind, FieldKind:::Choice);
@@ -322,9 +363,9 @@ lantern:::editor :: namespace {
         fields.push(kindField!);
         parentName~ string! = "none".copy();
         if parent := entity->parent {
-            if parentIndex := world->IndexOf(parent) {
+            if parentIndex := worldFile->IndexOf(parent) {
                 delete parentName;
-                parentName = `${world->entities[parentIndex]->name}`;
+                parentName = `${worldFile->entities[parentIndex]->name}`;
             }
         }
         fields.push(new InspectorField("parent", "Parent", "Entity", parentName, FieldKind:::ReadOnly));
@@ -415,11 +456,17 @@ lantern:::editor :: namespace {
         return fields!;
     }
 
+    // Frees the half edited copy and returns an error, so ApplyField can refuse in one line.
     Refused :: (edited: lantern:::world:::WorldEntity*!, message: string!) -> Result<lantern:::world:::WorldEntity*!, string!> {
         delete edited;
         return Result<lantern:::world:::WorldEntity*!, string!>:::Err(message!);
     }
 
+    // Applies one edited field to a copy of the entity and returns the copy, or an error message that
+    // the UI shows beside the field. Nothing in the level changes here; the caller turns the copy into an
+    // edit. It refuses empty names and kinds, a scale of zero, a size that is not positive, a width or
+    // height on a box, a colour that is not `#RRGGBB`, and fields that cannot be edited here. Changing a
+    // shape to none clears the material, tint and collider; giving a marker a shape gives it a static collider.
     ApplyField :: (entity: lantern:::world:::WorldEntity*, field: string, text: string) -> Result<lantern:::world:::WorldEntity*!, string!> {
         edited := entity->Copy();
         trimmed: string = text.trim();

@@ -1,0 +1,159 @@
+Sdl :: import Sdl;
+
+lantern:::sdl :: namespace {
+    /**
+     * The engine's `PlatformBackend` over SDL: the window, event pumping, the clock, the gamepad and mouse capture. The
+     * game loop sees only the interface, so tests can drive it with a scripted platform.
+     */
+    SdlPlatform :: class {
+        implements:
+            lantern:::platform:::PlatformBackend;
+    public:
+        /** The window. Owned; deleted with the platform, after the renderer that drew to it. */
+        window~ SdlWindow*!;
+        /** The open gamepad, or null. Only one is used at a time: the first connected. */
+        gamepad~ raw Sdl:::SDL_Gamepad~* = null;
+        /** SDL's id for the open gamepad, so removing a different one is ignored. */
+        gamepadId~ u32 = 0;
+        /**
+         * Whether relative mouse mode is on: the cursor hidden and every movement reported as a delta, for mouse look.
+         */
+        mouseCaptured~ bool = false;
+
+        /** Takes ownership of the window. */
+        SdlPlatform~: (ownedWindow: SdlWindow*!) {
+            window = ownedWindow!;
+        }
+
+        /** Closes the gamepad and deletes the window. */
+        !SdlPlatform~: () {
+            if gamepad != null {
+                unsafe {
+                    Sdl:::SDL_CloseGamepad(gamepad);
+                }
+            }
+            delete window;
+        }
+
+        /** The window, lent, for the renderer to claim and for window scripts to resize. */
+        Window :: () -> SdlWindow* {
+            return window;
+        }
+
+        /** Whether a gamepad is open. */
+        HasGamepad :: () -> bool {
+            return gamepad != null;
+        }
+
+        /** Opens a newly connected gamepad if none is open yet. */
+        OpenGamepad~: (id: u32) -> void {
+            if gamepad != null {
+                return;
+            }
+            opened~ raw Sdl:::SDL_Gamepad~* = null;
+            unsafe {
+                opened = Sdl:::SDL_OpenGamepad(id);
+            }
+            if opened == null {
+                LogSdlError("input", "SDL_OpenGamepad");
+                return;
+            }
+            lantern:::core:::LogInfo("input", "gamepad connected");
+            gamepad = opened;
+            gamepadId = id;
+        }
+
+        /** Closes the gamepad if `id` is the open one; true when it was. */
+        CloseGamepad~: (id: u32) -> bool {
+            if gamepad == null || gamepadId != id {
+                return false;
+            }
+            unsafe {
+                Sdl:::SDL_CloseGamepad(gamepad);
+            }
+            gamepad = null;
+            lantern:::core:::LogInfo("input", "gamepad disconnected");
+            return true;
+        }
+
+        /**
+         * Drains SDL's event queue and returns this frame's events translated to the engine's `PlatformEvent`s, in the
+         * order they happened. Gamepad connections are handled here. Called once at the start of every frame; the
+         * caller owns the array.
+         */
+        PumpEvents~: () -> Array<lantern:::platform:::PlatformEvent>! {
+            events~ Array<lantern:::platform:::PlatformEvent>! = [];
+            event~ Sdl:::SDL_Event = Sdl:::SDL_Event { };
+            polled~ bool = true;
+            while polled {
+                unsafe {
+                    polled = Sdl:::SDL_PollEvent(event);
+                }
+                if !polled {
+                    break;
+                }
+                translated := Translate(event);
+                when translated <TranslatedEvent> {
+                    Event(platformEvent) -> {
+                        events.push(platformEvent);
+                    },
+                    GamepadAdded(id) -> {
+                        OpenGamepad(id);
+                        events.push(lantern:::platform:::PlatformEvent:::GamepadConnected);
+                    },
+                    GamepadRemoved(id) -> {
+                        if CloseGamepad(id) {
+                            events.push(lantern:::platform:::PlatformEvent:::GamepadDisconnected);
+                        }
+                    },
+                    Ignored -> {},
+                }
+            }
+            return events!;
+        }
+
+        /** Pushes a quit event, so the loop finishes its current frame and stops as if the window were closed. */
+        RequestQuit :: () -> bool {
+            quitEvent~ Sdl:::SDL_Event = Sdl:::SDL_Event { };
+            pushed~ bool = false;
+            unsafe {
+                reinterpret<Sdl:::SDL_CommonEvent>(quitEvent)->type = Sdl:::SDL_EVENT_QUIT;
+                pushed = Sdl:::SDL_PushEvent(quitEvent);
+            }
+            return pushed;
+        }
+
+        /**
+         * A monotonic clock in seconds since SDL started, from its nanosecond counter. The game loop measures frame
+         * time with it.
+         */
+        SecondsSinceStart :: () -> f64 {
+            ticks~ u64 = 0;
+            unsafe {
+                ticks = Sdl:::SDL_GetTicksNS();
+            }
+            return f64(ticks) / 1000000000.0f;
+        }
+
+        /** The window's sizes and state now. */
+        CurrentWindowMetrics :: () -> lantern:::platform:::WindowMetrics {
+            return window->Metrics();
+        }
+
+        /** Turns relative mouse mode on or off. */
+        SetMouseCaptured~: (captured: bool) -> void {
+            if captured == mouseCaptured {
+                return;
+            }
+            changed~ bool = false;
+            unsafe {
+                changed = Sdl:::SDL_SetWindowRelativeMouseMode(window->Raw(), captured);
+            }
+            if changed {
+                mouseCaptured = captured;
+            } else {
+                LogSdlError("input", "SDL_SetWindowRelativeMouseMode");
+            }
+        }
+    }
+}

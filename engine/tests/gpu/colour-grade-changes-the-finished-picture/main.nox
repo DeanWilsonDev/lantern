@@ -1,0 +1,121 @@
+// A red floor filling the view under flat ambient light, rendered four times with different colour grades. The grade works on
+// the finished picture, so a single pixel tells each part: saturation 0 makes red grey, a green tint removes red, and a
+// vignette darkens the corner but not the middle.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(400.0f, 400.0f);
+            defer delete floorData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            world := new lantern:::renderer:::RenderWorld();
+            defer delete world;
+            world->sky.enabled = false;
+            world->atmosphere.heightFogEnabled = false;
+            world->atmosphere.lightShaftsEnabled = false;
+            world->post.bloomEnabled = false;
+            world->post.ambientOcclusionEnabled = false;
+            world->post.antiAliasingEnabled = false;
+            world->light = lantern:::renderer:::DirectionalLight {
+                direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+                color: lantern:::core:::Color:::Black(),
+                ambient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f),
+                groundAmbient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f)
+            };
+            world->clearColor = lantern:::core:::Color:::Black();
+            world->fogStart = 10000.0f;
+            world->fogEnd = 20000.0f;
+            world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 6.0f, z: 0.0f }, Vec3 { x: 0.0f, y: 0.0f, z: -0.001f });
+            world->Draw(floor, null, Mat4 { }, lantern:::core:::Color:::Rgb(1.0f, 0.1f, 0.1f));
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 64;
+
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    plain: u8[4] = PixelAt(pixels, size, 32, 32);
+                    assert(i32(plain[0]) > i32(plain[1]) + 60, "the floor starts out red");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->post.grade.saturation = 0.0f;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    grey: u8[4] = PixelAt(pixels, size, 32, 32);
+                    difference: i32 = i32(grey[0]) - i32(grey[1]);
+                    if !(difference > -12 && difference < 12 && grey[0] > 20) {
+                        print(`saturation 0: ${grey[0]} ${grey[1]} ${grey[2]}`);
+                    }
+                    assert(difference > -12 && difference < 12 && grey[0] > 20, "saturation 0 turns red to grey");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->post.grade.saturation = 1.0f;
+            world->post.grade.tint = lantern:::core:::Color:::Rgb(0.0f, 1.0f, 0.0f);
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    tinted: u8[4] = PixelAt(pixels, size, 32, 32);
+                    assert(tinted[0] < 8, "a green tint removes the red");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->post.grade.tint = lantern:::core:::Color:::White();
+            world->post.grade.vignette = 1.0f;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    middle: u8[4] = PixelAt(pixels, size, 32, 32);
+                    corner: u8[4] = PixelAt(pixels, size, 1, 1);
+                    if !(u32(corner[0]) * 100 < u32(middle[0]) * 50) {
+                        print(`vignette: middle ${middle[0]}, corner ${corner[0]}`);
+                    }
+                    assert(u32(corner[0]) * 100 < u32(middle[0]) * 50, "a vignette darkens the corner more than the middle");
+                    assert(middle[0] > 100, "and leaves the middle bright");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("colour grade changes the finished picture");
+    return 0;
+}

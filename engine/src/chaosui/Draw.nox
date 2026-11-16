@@ -1,8 +1,21 @@
 lantern:::chaosui :: namespace {
+    /**
+     * How many straight pieces approximate each rounded corner.
+     */
     CORNER_SEGMENTS: usize : 6;
+    /**
+     * How many rings make up a box shadow's fade.
+     */
     SHADOW_LAYERS: usize : 6;
+    /**
+     * A quarter turn in radians.
+     */
     HALF_PI: f32 : 1.5707964f;
 
+    /**
+     * The corner points of a rounded rectangle, going round it: a quarter circle of CORNER_SEGMENTS pieces at each
+     * corner. The radius is limited to half the shorter side.
+     */
     RoundedOutline :: (rect: Rect, radius: f32) -> Array<Vec2>! {
         size: Vec2 = rect.Size();
         clampedRadius: f32 = Math:::max(Math:::min(Math:::min(radius, size.x / 2.0f), size.y / 2.0f), 0.0f);
@@ -23,6 +36,9 @@ lantern:::chaosui :: namespace {
         return points!;
     }
 
+    /**
+     * The colour at height `y` of a rectangle that fades from `top` at its top to `bottom` at its bottom.
+     */
     Shade :: (rect: Rect, top: lantern:::core:::Color, bottom: lantern:::core:::Color, y: f32) -> lantern:::core:::Color {
         height: f32 = rect.Size().y;
         t~ f32 = 0.0f;
@@ -32,6 +48,10 @@ lantern:::chaosui :: namespace {
         return top.Lerp(bottom, t);
     }
 
+    /**
+     * Fills a rounded rectangle as a fan of triangles from its centre, each corner point coloured by its height so a
+     * gradient needs no texture. A square, one-colour box is a single rectangle.
+     */
     FillRounded :: (overlay: lantern:::renderer:::Overlay~*, rect: Rect, radius: f32, top: lantern:::core:::Color, bottom: lantern:::core:::Color) -> void {
         if rect.Size().x <= 0.0f || rect.Size().y <= 0.0f {
             return;
@@ -51,6 +71,10 @@ lantern:::chaosui :: namespace {
         delete outline;
     }
 
+    /**
+     * Fills the band between two outlines with triangles, fading from `outerColor` at the outer edge to `innerColor` at
+     * the inner one. Borders and shadows are rings.
+     */
     FillRing :: (overlay: lantern:::renderer:::Overlay~*, outer: Array<Vec2>, inner: Array<Vec2>, outerColor: lantern:::core:::Color, innerColor: lantern:::core:::Color) -> void {
         for index~ usize = 0; index < outer.length(); index++ {
             next: usize = (index + 1) % outer.length();
@@ -59,10 +83,17 @@ lantern:::chaosui :: namespace {
         }
     }
 
+    /**
+     * The colour with its opacity multiplied by `opacity`.
+     */
     Faded :: (color: lantern:::core:::Color, opacity: f32) -> lantern:::core:::Color {
         return color.WithAlpha(color.a * opacity);
     }
 
+    /**
+     * A soft shadow: the box's shape, dropped a little, with SHADOW_LAYERS rings around it that fade out with a
+     * squared falloff so the edge looks soft and not stepped.
+     */
     DrawShadow :: (overlay: lantern:::renderer:::Overlay~*, rect: Rect, radius: f32, color: lantern:::core:::Color, blur: f32) -> void {
         drop: Vec2 = Vec2 { x: 0.0f, y: blur * 0.25f };
         base: Rect = Rect { min: rect.min + drop, max: rect.max + drop };
@@ -81,6 +112,9 @@ lantern:::chaosui :: namespace {
         delete innerOutline;
     }
 
+    /**
+     * Draws a box's shadow, then its fill (a gradient or a flat colour, inside the border) and then its border ring.
+     */
     DrawBox :: (overlay: lantern:::renderer:::Overlay~*, rect: Rect, style: Style, scale: f32, opacity: f32) -> void {
         radius: f32 = style.borderRadius * scale;
         if shadow := style.shadow {
@@ -114,6 +148,11 @@ lantern:::chaosui :: namespace {
         }
     }
 
+    /**
+     * Draws a whole UI. A node's opacity is its own times its parent's, and its layer (`z-index`) is its own or its
+     * parent's. Nodes are then drawn in increasing layer, with the tree order breaking ties, which puts a popup above
+     * the page. Each node draws its box, and a text node its text inside the padding.
+     */
     DrawNodes :: (nodes: Array<UiNode>, styles: Array<Style>, rects: Array<Rect>, overlay: lantern:::renderer:::Overlay~*, scale: f32) -> void {
         opacity~ Array<f32>! = [];
         defer delete opacity;

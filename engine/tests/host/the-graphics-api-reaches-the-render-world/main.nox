@@ -1,0 +1,90 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Low :: () -> void { lantern:::graphics:::SetQuality(\"low\"); }\nHigh :: () -> void { lantern:::graphics:::SetQuality(\"high\"); }\nOcclusion :: () -> void { lantern:::graphics:::SetAmbientOcclusion(false, 0.9f, 0.5f); }\nAir :: () -> void { lantern:::atmosphere:::SetHeightFog(false, 0.02f, 0.2f, 3.0f); lantern:::atmosphere:::SetLightShafts(false, 0.5f, 0.9f); }\nSoftness :: () -> void { lantern:::lights:::SetShadowSoftness(3.0f, 16, false); }\nGrade :: () -> void { lantern:::graphics:::SetColorGrade(0.5f, 1.25f, \"FF8000\", 0.3f); }\nSmoothing :: () -> void { lantern:::graphics:::SetAntiAliasing(false); }\nBloom :: () -> void { lantern:::graphics:::SetBloom(true, 0.3f, 2.0f); }\nLook :: () -> void { lantern:::graphics:::SetExposure(1.5f); lantern:::graphics:::SetToneMapper(\"aces\"); }\nBadQuality :: () -> string { caught~ string = \"no failure\"; when lantern:::graphics:::SetQuality(\"ultra\") { Error:::Unknown(message) -> { caught = `Unknown: ${message}`; }, override -> { caught = \"another failure\"; } } return caught; }";
+
+BoolResult :: (program: lantern:::nyx:::Program*, name: string) -> bool {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: bool = lantern:::testing:::BoolOrFail(value->Bool());
+    delete value;
+    return result;
+}
+
+TextResult :: (program: lantern:::nyx:::Program*, name: string) -> string! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: string! = lantern:::testing:::TextOrFail(value->Text());
+    delete value;
+    return result!;
+}
+
+ExpectFailure :: (program: lantern:::nyx:::Program*, name: string, expected: string) -> void {
+    failure: string! = TextResult(program, name);
+    if failure != expected {
+        print(`${name} failed with '${failure}'`);
+    }
+    assert(failure == expected, "the call fails with the engine's message");
+    delete failure;
+}
+
+
+IntegerResult :: (program: lantern:::nyx:::Program*, name: string) -> i64 {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: i64 = lantern:::testing:::I64OrFail(value->I64());
+    delete value;
+    return result;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    gameUi := lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    assert(state->renderWorld->post.bloomEnabled, "bloom starts on");
+    assert(state->renderWorld->post.toneMapper == lantern:::renderer:::ToneMapper:::Neutral, "the neutral curve is the default");
+    lantern:::testing:::CallOrFail(program, "Low");
+    assert(!state->renderWorld->post.bloomEnabled, "the low quality level turns bloom off");
+    assert(!state->renderWorld->post.antiAliasingEnabled, "the low quality level turns anti-aliasing off");
+    assert(!state->renderWorld->post.ambientOcclusionEnabled, "the low quality level turns ambient occlusion off");
+    lantern:::testing:::CallOrFail(program, "High");
+    assert(state->renderWorld->post.bloomEnabled, "a higher level turns it on again");
+    assert(state->renderWorld->post.antiAliasingEnabled, "a higher level turns anti-aliasing on again");
+    assert(state->renderWorld->post.ambientOcclusionEnabled, "a higher level turns ambient occlusion on again");
+    lantern:::testing:::CallOrFail(program, "Occlusion");
+    assert(!state->renderWorld->post.ambientOcclusionEnabled && state->renderWorld->post.ambientOcclusionRadius == 0.9f && state->renderWorld->post.ambientOcclusionIntensity == 0.5f, "SetAmbientOcclusion sets all three");
+    lantern:::testing:::CallOrFail(program, "Air");
+    atmosphere: lantern:::renderer:::AtmosphereSettings = state->renderWorld->atmosphere;
+    assert(!atmosphere.heightFogEnabled && atmosphere.fogDensity == 0.02f && atmosphere.fogBaseHeight == 3.0f, "SetHeightFog sets the fog");
+    assert(!atmosphere.lightShaftsEnabled && atmosphere.lightShaftStrength == 0.5f, "SetLightShafts sets the shafts");
+    lantern:::testing:::CallOrFail(program, "Low");
+    assert(!state->renderWorld->atmosphere.lightShaftsEnabled, "the low quality level turns light shafts off");
+    lantern:::testing:::CallOrFail(program, "Softness");
+    assert(state->renderWorld->shadows.softness == 3.0f && state->renderWorld->shadows.filterSamples == 16 && !state->renderWorld->shadows.blendCascades, "SetShadowSoftness sets the filter");
+    lantern:::testing:::CallOrFail(program, "Low");
+    assert(state->renderWorld->shadows.filterSamples == 4 && state->renderWorld->shadows.softness == 3.0f, "the low quality level lowers the sample count and keeps the softness");
+    lantern:::testing:::CallOrFail(program, "Grade");
+    grade: lantern:::renderer:::ColorGrade = state->renderWorld->post.grade;
+    assert(grade.saturation == 0.5f && grade.contrast == 1.25f && grade.vignette == 0.3f && grade.tint.g > 0.2f && grade.tint.b < 0.01f, "SetColorGrade sets the grade");
+    lantern:::testing:::CallOrFail(program, "Low");
+    assert(state->renderWorld->post.grade.saturation == 0.5f, "a quality level leaves the grade alone");
+    lantern:::testing:::CallOrFail(program, "Smoothing");
+    assert(!state->renderWorld->post.antiAliasingEnabled, "SetAntiAliasing(false) turns it off");
+    lantern:::testing:::CallOrFail(program, "Bloom");
+    assert(state->renderWorld->post.bloomStrength == 0.3f && state->renderWorld->post.bloomThreshold == 2.0f, "the bloom strength and threshold are set");
+    lantern:::testing:::CallOrFail(program, "Look");
+    assert(state->renderWorld->post.exposure == 1.5f, "the exposure is set");
+    assert(state->renderWorld->post.toneMapper == lantern:::renderer:::ToneMapper:::Aces, "the tone mapper is chosen by name");
+    ExpectFailure(program, "BadQuality", "Unknown: 'ultra' is not a quality level; write \"low\", \"medium\" or \"high\"");
+    delete program;
+    delete runtime;
+    delete gameUi;
+    delete state;
+    print("the graphics API reaches the render world");
+    return 0;
+}

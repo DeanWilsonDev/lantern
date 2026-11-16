@@ -15,7 +15,8 @@ mist run editor
 
 `mist install` fetches and builds what the root `mist.json` names (see `engine/README.md`), and `mist run editor` runs
 `nox run --release --project apps/world-editor/nox` with Mist's library directories on the search paths. Arguments after
-`editor` go to the editor. It opens `assets/worlds/course.world.json` unless given another world.
+`editor` go to the editor. It builds the game (`engine/build/lantern`) first, since that's what the editor's Play button
+runs; when the game is up to date that step does nothing. It opens `assets/worlds/course.world.json` unless given another world.
 
 - `nox.json` takes Penumbra's Nox sources from `@penumbra-ui-engine` (on `nox-proto`) and penumbra-bridge's Nox side
   from `@penumbra-bridge` (on `main`). `foreignLibraries` links lantern-native wherever penumbra-bridge's foreign blocks

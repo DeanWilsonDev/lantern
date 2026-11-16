@@ -1,4 +1,10 @@
 lantern:::stub :: namespace {
+    /**
+     * The smallest possible `Game`: it draws the LitScene and counts what it is given. It exists to test the engine's
+     * plumbing (the window, the fixed-step loop, input and the renderer) without any script. It counts frames, fixed
+     * steps, renders, and resize, minimise and restore events, and quits on Escape or after a frame limit. `mist run game`
+     * with no game folder runs it.
+     */
     StubGame :: class {
         implements:
             lantern:::engine:::Game;
@@ -26,11 +32,14 @@ lantern:::stub :: namespace {
             delete scene;
         }
 
-        HandleEvent~: (event: lantern:::platform:::PlatformEvent, platform: lantern:::platform:::PlatformBackend~*) -> void {
+        /**
+         * Counts the window events and logs them.
+         */
+        HandleEvent~: (event: lantern:::platform:::PlatformEvent, platformBackend: lantern:::platform:::PlatformBackend~*) -> void {
             when event <lantern:::platform:::PlatformEvent> {
                 WindowResized -> {
                     resizeEvents += 1;
-                    ReportWindow("resized", platform->CurrentWindowMetrics());
+                    ReportWindow("resized", platformBackend->CurrentWindowMetrics());
                 },
                 WindowMinimized -> {
                     minimizeEvents += 1;
@@ -49,6 +58,9 @@ lantern:::stub :: namespace {
             }
         }
 
+        /**
+         * Counts fixed steps, and notes when the quit action was pressed.
+         */
         FixedUpdate~: (step: lantern:::engine:::FixedStepContext) -> void {
             steps += 1;
             if step.input->Pressed(quit) {
@@ -56,10 +68,16 @@ lantern:::stub :: namespace {
             }
         }
 
-        FrameUpdate~: (frame: lantern:::engine:::FrameContext, platform: lantern:::platform:::PlatformBackend~*) -> void {
+        /**
+         * Counts frames.
+         */
+        FrameUpdate~: (frame: lantern:::engine:::FrameContext, platformBackend: lantern:::platform:::PlatformBackend~*) -> void {
             frames += 1;
         }
 
+        /**
+         * Draws the scene, and counts renders (and those made while the window was minimised, which should still happen).
+         */
         Render~: (frame: lantern:::engine:::FrameContext) -> void {
             if litScene ~= scene {
                 litScene->Draw(frame);
@@ -70,10 +88,16 @@ lantern:::stub :: namespace {
             }
         }
 
+        /**
+         * True after Escape, or once the frame limit (if there is one) is reached.
+         */
         WantsToQuit :: () -> bool {
             return quitPressed || (maximumFrames > 0 && frames >= maximumFrames);
         }
 
+        /**
+         * Sets up the one action the stub needs, `quit` on Escape, the first time it is asked.
+         */
         UpdateInputConfiguration~: (input: lantern:::engine:::InputRouter~*) -> void {
             if configured {
                 return;
@@ -86,6 +110,9 @@ lantern:::stub :: namespace {
             input->Reconfigure(actions!, bindings!);
         }
 
+        /**
+         * Saves the scene as a PNG, for a screenshot test.
+         */
         CaptureLastFrame~: (path: string, width: u32, height: u32) -> bool {
             if litScene ~= scene {
                 return litScene->Capture(path, width, height);
@@ -93,12 +120,18 @@ lantern:::stub :: namespace {
             return false;
         }
 
+        /**
+         * One line of the counts, printed when the run ends.
+         */
         Summary :: () -> string! {
             summary: string! = `${frames} frames, ${steps} fixed steps, ${renders} renders (${rendersWhileMinimized} while minimised), ${resizeEvents} resizes, ${minimizeEvents} minimises, ${restoreEvents} restores`;
             return summary!;
         }
     }
 
+    /**
+     * Logs a window's size in points and in pixels (they differ on a high-density display).
+     */
     ReportWindow :: (what: string, metrics: lantern:::platform:::WindowMetrics) -> void {
         message: string! = `${what}: ${metrics.logicalWidth}x${metrics.logicalHeight} points, ${metrics.pixelWidth}x${metrics.pixelHeight} pixels`;
         lantern:::core:::LogInfo("stub", message);

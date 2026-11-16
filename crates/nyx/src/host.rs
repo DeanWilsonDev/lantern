@@ -148,20 +148,104 @@ unsafe extern "C" fn function_trampoline(
     run_callback(&slot.runtime, call, args, count, out_result, |context, arguments| (slot.function)(context, arguments))
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Documentation {
+    pub summary: String,
+    pub parameters: Vec<(String, String)>,
+    pub returns: String,
+    pub failures: Vec<(String, String)>,
+    pub example: String,
+}
+
+impl Documentation {
+    pub fn new(summary: &str) -> Self {
+        Documentation { summary: summary.to_owned(), ..Documentation::default() }
+    }
+
+    pub fn parameter(mut self, name: &str, description: &str) -> Self {
+        self.parameters.push((name.to_owned(), description.to_owned()));
+        self
+    }
+
+    pub fn returns(mut self, description: &str) -> Self {
+        self.returns = description.to_owned();
+        self
+    }
+
+    pub fn failure(mut self, variant: &str, condition: &str) -> Self {
+        self.failures.push((variant.to_owned(), condition.to_owned()));
+        self
+    }
+
+    pub fn example(mut self, example: &str) -> Self {
+        self.example = example.to_owned();
+        self
+    }
+}
+
 pub(crate) fn register_function<F>(runtime: &Runtime, name: &str, signature: &str, function: F) -> Result<()>
 where
     F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
 {
+    register_documented_function(runtime, name, signature, None, function)
+}
+
+pub(crate) fn register_documented_function<F>(
+    runtime: &Runtime,
+    name: &str,
+    signature: &str,
+    documentation: Option<&Documentation>,
+    function: F,
+) -> Result<()>
+where
+    F: Fn(&CallContext, &[Value]) -> CallbackResult + 'static,
+{
+    let parameters: Vec<sys::nyx_documented_parameter> = documentation
+        .map(|record| {
+            record
+                .parameters
+                .iter()
+                .map(|(parameter_name, description)| sys::nyx_documented_parameter {
+                    name: nyx_str(parameter_name),
+                    description: nyx_str(description),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let failures: Vec<sys::nyx_documented_failure> = documentation
+        .map(|record| {
+            record
+                .failures
+                .iter()
+                .map(|(variant, condition)| sys::nyx_documented_failure {
+                    variant: nyx_str(variant),
+                    condition: nyx_str(condition),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let raw_documentation = documentation.map(|record| sys::nyx_documentation {
+        summary: nyx_str(&record.summary),
+        parameters: parameters.as_ptr(),
+        parameter_count: parameters.len(),
+        returns: nyx_str(&record.returns),
+        failures: failures.as_ptr(),
+        failure_count: failures.len(),
+        example: nyx_str(&record.example),
+    });
+    let documentation_pointer =
+        raw_documentation.as_ref().map_or(std::ptr::null(), |record| record as *const sys::nyx_documentation);
     let slot =
         Box::into_raw(Box::new(FunctionSlot { runtime: Rc::downgrade(&runtime.inner), function: Box::new(function) }));
     let status = unsafe {
-        sys::nyx_runtime_register_function(
+        sys::nyx_runtime_register_function_documented(
             runtime.raw(),
             nyx_str(name),
             nyx_str(signature),
             Some(function_trampoline),
             slot.cast(),
             Some(free_boxed::<FunctionSlot>),
+            documentation_pointer,
         )
     };
     if status != sys::NYX_OK {
@@ -198,6 +282,17 @@ struct OperatorSlot<T> {
     symbol: String,
     signature: String,
     function: Box<OperatorBody<T>>,
+}
+
+type GetterBody<T> = dyn Fn(&CallContext, &T) -> std::result::Result<Value, CallbackError>;
+type SetterBody<T> = dyn Fn(&CallContext, &T, &Value) -> std::result::Result<(), CallbackError>;
+
+struct PropertySlot<T> {
+    runtime: Weak<RuntimeInner>,
+    name: String,
+    type_name: String,
+    getter: Box<GetterBody<T>>,
+    setter: Option<Box<SetterBody<T>>>,
 }
 
 struct ConstructorSlot<T> {
@@ -245,6 +340,7 @@ struct TypeSlots<T> {
     methods: Vec<MethodSlot<T>>,
     static_methods: Vec<StaticSlot<T>>,
     operators: Vec<OperatorSlot<T>>,
+    properties: Vec<PropertySlot<T>>,
     constructor: Option<Box<ConstructorSlot<T>>>,
 }
 
@@ -273,6 +369,34 @@ unsafe extern "C" fn method_trampoline<T: 'static>(
         };
         let instance = instance_of::<T>(call, receiver)?;
         (slot.function)(context, instance, rest)
+    })
+}
+
+unsafe extern "C" fn getter_trampoline<T: 'static>(
+    call: *mut sys::nyx_call,
+    instance: *mut c_void,
+    out_value: *mut *mut sys::nyx_value,
+    userdata: *mut c_void,
+) -> sys::nyx_status {
+    let slot = &*userdata.cast::<PropertySlot<T>>();
+    run_callback(&slot.runtime, call, ptr::null(), 0, out_value, |context, _arguments| {
+        (slot.getter)(context, &*instance.cast::<T>()).map(Some)
+    })
+}
+
+unsafe extern "C" fn setter_trampoline<T: 'static>(
+    call: *mut sys::nyx_call,
+    instance: *mut c_void,
+    value: *mut sys::nyx_value,
+    userdata: *mut c_void,
+) -> sys::nyx_status {
+    let slot = &*userdata.cast::<PropertySlot<T>>();
+    let Some(setter) = slot.setter.as_ref() else {
+        return sys::NYX_ERROR_INVALID_STATE;
+    };
+    run_callback(&slot.runtime, call, &raw const value, 1, ptr::null_mut(), |context, arguments| {
+        setter(context, &*instance.cast::<T>(), &arguments[0])?;
+        Ok(None)
     })
 }
 
@@ -378,6 +502,7 @@ impl<T: 'static> HostTypeBuilder<T> {
                 methods: Vec::new(),
                 static_methods: Vec::new(),
                 operators: Vec::new(),
+                properties: Vec::new(),
                 constructor: None,
             },
             value_layout: None,
@@ -445,6 +570,38 @@ impl<T: 'static> HostTypeBuilder<T> {
             symbol: symbol.to_string(),
             signature: signature.to_string(),
             function: Box::new(function),
+        });
+        self
+    }
+
+    /// A read-only field scripts can read as `instance.name`. `type_name` is Nyx type text, such as `i32`.
+    pub fn property<G>(mut self, name: &str, type_name: &str, getter: G) -> Self
+    where
+        G: Fn(&CallContext, &T) -> std::result::Result<Value, CallbackError> + 'static,
+    {
+        self.slots.properties.push(PropertySlot {
+            runtime: Rc::downgrade(&self.runtime.inner),
+            name: name.to_string(),
+            type_name: type_name.to_string(),
+            getter: Box::new(getter),
+            setter: None,
+        });
+        self
+    }
+
+    /// A field scripts can read and assign. The setter gets `&T`, like a method, so a type that changes
+    /// through a property needs interior mutability such as `Cell` or `RefCell`.
+    pub fn writable_property<G, S>(mut self, name: &str, type_name: &str, getter: G, setter: S) -> Self
+    where
+        G: Fn(&CallContext, &T) -> std::result::Result<Value, CallbackError> + 'static,
+        S: Fn(&CallContext, &T, &Value) -> std::result::Result<(), CallbackError> + 'static,
+    {
+        self.slots.properties.push(PropertySlot {
+            runtime: Rc::downgrade(&self.runtime.inner),
+            name: name.to_string(),
+            type_name: type_name.to_string(),
+            getter: Box::new(getter),
+            setter: Some(Box::new(setter)),
         });
         self
     }
@@ -521,6 +678,17 @@ impl<T: 'static> HostTypeBuilder<T> {
                 userdata: ptr::from_ref::<OperatorSlot<T>>(slot).cast_mut().cast(),
             })
             .collect();
+        let properties: Vec<sys::nyx_host_property> = slots
+            .properties
+            .iter()
+            .map(|slot| sys::nyx_host_property {
+                name: nyx_str(&slot.name),
+                type_: nyx_str(&slot.type_name),
+                getter: Some(getter_trampoline::<T>),
+                setter: slot.setter.as_ref().map(|_| setter_trampoline::<T> as _),
+                userdata: ptr::from_ref::<PropertySlot<T>>(slot).cast_mut().cast(),
+            })
+            .collect();
         let constructor = slots.constructor.as_ref().map(|slot| sys::nyx_host_constructor {
             signature: nyx_str(&slot.signature),
             function: Some(constructor_trampoline::<T>),
@@ -536,6 +704,8 @@ impl<T: 'static> HostTypeBuilder<T> {
             value_layout: raw_layout.as_ref().map_or(ptr::null(), ptr::from_ref),
             operators: if operators.is_empty() { ptr::null() } else { operators.as_ptr() },
             operator_count: operators.len(),
+            properties: if properties.is_empty() { ptr::null() } else { properties.as_ptr() },
+            property_count: properties.len(),
         };
         let userdata = Box::into_raw(slots);
         let mut raw_type = ptr::null_mut();

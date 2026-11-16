@@ -3,47 +3,52 @@ Sdl :: import Sdl;
 lantern:::stub :: namespace {
     Sdl :: import Sdl;
 
+    /**
+     * The stub's scene: a ground plane, a spinning gem, a cube with a yellow bounding box and a cyan circle, and a title and
+     * status text. It uses the renderer directly, with none of the engine's entity or script layers, so it is the shortest
+     * example of what drawing a frame takes: make meshes and textures, fill a RenderWorld, ask the renderer to draw it.
+     */
     LitScene :: class {
     public:
-        renderer~ lantern:::gpu:::GpuRenderer*!;
-        world~ lantern:::renderer:::RenderWorld*!? = null;
+        gpuRenderer~ lantern:::gpu:::GpuRenderer*!;
+        renderWorld~ lantern:::renderer:::RenderWorld*!? = null;
         ground~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
         gem~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
         cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
         groundTexture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
         atlas~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
         frames~ u64 = 0;
-        lastReport~ lantern:::gpu:::FrameReport = lantern:::gpu:::FrameReport { };
+        lastReport~ lantern:::renderer:::RenderReport = lantern:::renderer:::RenderReport { };
 
         LitScene~: (newRenderer: lantern:::gpu:::GpuRenderer*!) {
-            renderer = newRenderer!;
-            world = new lantern:::renderer:::RenderWorld();
+            gpuRenderer = newRenderer!;
+            renderWorld = new lantern:::renderer:::RenderWorld();
         }
 
         !LitScene~: () {
-            delete world;
-            delete renderer;
+            delete renderWorld;
+            delete gpuRenderer;
         }
 
-        static Create :: (window: raw Sdl:::SDL_Window~*) -> Result<LitScene*!, string!> {
-            when lantern:::gpu:::GpuRenderer:::Create(window, lantern:::gpu:::GpuOptions:::FromEnvironment()) {
-                Result:::Ok(renderer) -> {
-                    scene := new LitScene(renderer!);
-                    problem: string!? = scene->Load();
-                    if text := problem {
-                        failure: string! = `${text}`;
-                        delete problem;
-                        delete scene;
-                        return Result<LitScene*!, string!>:::Err(failure!);
-                    }
-                    return Result<LitScene*!, string!>:::Ok(scene!);
-                },
-                Result:::Err(message) -> {
-                    return Result<LitScene*!, string!>:::Err(message!);
-                }
+        /**
+         * Makes a scene and loads its meshes and textures. An error message says what failed to load.
+         */
+        static Create :: (gpuRenderer: lantern:::gpu:::GpuRenderer*!) -> Result<LitScene*!, string!> {
+            scene := new LitScene(gpuRenderer!);
+            problem: string!? = scene->Load();
+            if text := problem {
+                failure: string! = `${text}`;
+                delete problem;
+                delete scene;
+                return Result<LitScene*!, string!>:::Err(failure!);
             }
+            return Result<LitScene*!, string!>:::Ok(scene!);
         }
 
+        /**
+         * Uploads the ground and cube meshes, the gem model, the ground texture and the font atlas to the renderer. Returns
+         * null on success or the first error.
+         */
         Load~: () -> string!? {
             groundMesh := lantern:::renderer:::Plane(24.0f, 24.0f);
             defer delete groundMesh;
@@ -51,7 +56,7 @@ lantern:::stub :: namespace {
             defer delete cubeMesh;
             atlasData := lantern:::renderer:::FontAtlas();
             defer delete atlasData;
-            when renderer->CreateMesh(groundMesh) {
+            when gpuRenderer->CreateMesh(groundMesh) {
                 Result:::Ok(handle) -> {
                     ground = handle;
                 },
@@ -59,7 +64,7 @@ lantern:::stub :: namespace {
                     return message!;
                 }
             }
-            when renderer->CreateMesh(cubeMesh) {
+            when gpuRenderer->CreateMesh(cubeMesh) {
                 Result:::Ok(handle) -> {
                     cube = handle;
                 },
@@ -69,7 +74,7 @@ lantern:::stub :: namespace {
             }
             when lantern:::renderer:::LoadGltfMesh("../assets/models/gem.glb") {
                 Result:::Ok(gemMesh) -> {
-                    when renderer->CreateMesh(gemMesh) {
+                    when gpuRenderer->CreateMesh(gemMesh) {
                         Result:::Ok(handle) -> {
                             gem = handle;
                         },
@@ -86,7 +91,7 @@ lantern:::stub :: namespace {
             }
             when lantern:::renderer:::TextureData:::LoadPng("../assets/textures/ground.png") {
                 Result:::Ok(texture) -> {
-                    when renderer->CreateTexture(texture) {
+                    when gpuRenderer->CreateTexture(texture) {
                         Result:::Ok(handle) -> {
                             groundTexture = handle;
                         },
@@ -101,7 +106,7 @@ lantern:::stub :: namespace {
                     return message!;
                 }
             }
-            when renderer->CreateTexture(atlasData) {
+            when gpuRenderer->CreateTexture(atlasData) {
                 Result:::Ok(handle) -> {
                     atlas = handle;
                 },
@@ -112,35 +117,42 @@ lantern:::stub :: namespace {
             return null;
         }
 
-        BuildWorld~: (world: lantern:::renderer:::RenderWorld~*, window: lantern:::platform:::WindowMetrics) -> void {
-            world->Clear();
+        /**
+         * Fills the render world for one frame: the camera, the three meshes (the gem turns with the frame count), the debug
+         * lines and the text. `window.pixelDensity` scales the text on high-density displays.
+         */
+        BuildWorld~: (renderWorld: lantern:::renderer:::RenderWorld~*, window: lantern:::platform:::WindowMetrics) -> void {
+            renderWorld->Clear();
             seconds: f32 = f32(frames) / 60.0f;
-            world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 3.0f, z: 7.0f }, Vec3 { x: 0.0f, y: 0.6f, z: 0.0f });
-            world->overlayTexture = atlas;
-            world->Draw(ground, groundTexture, Mat4 { }, lantern:::core:::Color:::White());
+            renderWorld->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 3.0f, z: 7.0f }, Vec3 { x: 0.0f, y: 0.6f, z: 0.0f });
+            renderWorld->overlayTexture = atlas;
+            renderWorld->Draw(ground, groundTexture, Mat4 { }, lantern:::core:::Color:::White());
             gemTransform: Mat4 = Mat4:::translation(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }) * Mat4:::rotationY(seconds);
-            world->Draw(gem, null, gemTransform, lantern:::core:::Color:::White());
+            renderWorld->Draw(gem, null, gemTransform, lantern:::core:::Color:::White());
             cubeTransform: Mat4 = Mat4:::translation(Vec3 { x: 2.5f, y: 0.5f, z: -0.5f });
-            world->Draw(cube, null, cubeTransform, lantern:::core:::Color:::Rgb(1.0f, 0.55f, 0.2f));
+            renderWorld->Draw(cube, null, cubeTransform, lantern:::core:::Color:::Rgb(1.0f, 0.55f, 0.2f));
             cubeBounds := lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { x: 2.5f, y: 0.5f, z: -0.5f }, lantern:::core:::Splat3(0.55f));
-            world->AabbLines(cubeBounds, lantern:::core:::Color:::Yellow());
-            world->CircleLines(Vec3 { x: 0.0f, y: 0.02f, z: 0.0f }, lantern:::core:::WorldUp(), 1.5f, 32, lantern:::core:::Color:::Cyan());
+            renderWorld->AabbLines(cubeBounds, lantern:::core:::Color:::Yellow());
+            renderWorld->CircleLines(Vec3 { x: 0.0f, y: 0.02f, z: 0.0f }, lantern:::core:::WorldUp(), 1.5f, 32, lantern:::core:::Color:::Cyan());
             density: f32 = window.pixelDensity;
             titleScale: f32 = lantern:::renderer:::ScaleForDensity(2, density);
             statusScale: f32 = lantern:::renderer:::ScaleForDensity(1, density);
-            world->overlay->Text("Lantern on Nox", Vec2 { x: 12.0f * density, y: 12.0f * density }, titleScale, lantern:::core:::Color:::White());
-            status: string! = `${renderer->DriverName()}: ${lastReport.drawsSubmitted} draws, ${lastReport.drawsCulled} culled, ${lastReport.triangles} triangles`;
-            world->overlay->Text(status, Vec2 { x: 12.0f * density, y: 34.0f * density }, statusScale, lantern:::core:::Color:::White());
+            renderWorld->overlay->Text("Lantern on Nox", Vec2 { x: 12.0f * density, y: 12.0f * density }, titleScale, lantern:::core:::Color:::White());
+            status: string! = `${gpuRenderer->DriverName()}: ${lastReport.drawsSubmitted} draws, ${lastReport.drawsCulled} culled, ${lastReport.triangles} triangles`;
+            renderWorld->overlay->Text(status, Vec2 { x: 12.0f * density, y: 34.0f * density }, statusScale, lantern:::core:::Color:::White());
             delete status;
         }
 
+        /**
+         * Builds and draws one frame, and keeps the renderer's report (draw and triangle counts) for the status text.
+         */
         Draw~: (frame: lantern:::engine:::FrameContext) -> void {
             frames += 1;
-            drawnWorld := world!;
-            world = null;
+            drawnWorld := renderWorld!;
+            renderWorld = null;
             guard drawnWorld return;
             BuildWorld(drawnWorld, frame.window);
-            when renderer->Render(drawnWorld) {
+            when gpuRenderer->Render(drawnWorld) {
                 Result:::Ok(report) -> {
                     lastReport = report;
                 },
@@ -149,15 +161,18 @@ lantern:::stub :: namespace {
                     delete message;
                 }
             }
-            world = drawnWorld!;
+            renderWorld = drawnWorld!;
         }
 
+        /**
+         * Draws the scene and saves it as a PNG of the given size. Returns false if that failed.
+         */
         Capture~: (path: string, width: u32, height: u32) -> bool {
-            capturedWorld := world!;
-            world = null;
+            capturedWorld := renderWorld!;
+            renderWorld = null;
             guard capturedWorld return false;
             written~ bool = false;
-            when renderer->Capture(capturedWorld, width, height) {
+            when gpuRenderer->Capture(capturedWorld, width, height) {
                 Result:::Ok(image) -> {
                     bytes: Array<u8>! = image->ToPngBytes();
                     written = lantern:::core:::WriteBytes(path, bytes);
@@ -169,7 +184,7 @@ lantern:::stub :: namespace {
                     delete message;
                 }
             }
-            world = capturedWorld!;
+            renderWorld = capturedWorld!;
             return written;
         }
     }

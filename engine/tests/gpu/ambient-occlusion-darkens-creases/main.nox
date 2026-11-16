@@ -1,0 +1,121 @@
+// A white cube on a white floor lit by flat ambient light alone. With nothing to tell the surfaces apart, every pixel is the
+// same brightness, so any darker pixel is ambient occlusion: the crease where the cube meets the floor. The test finds the
+// darkest pixel in the picture with occlusion off and on, and checks that a far corner of the floor is untouched.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+DarkestRed :: (pixels: Array<u8>, width: u32) -> u8 {
+    darkest~ u8 = 255;
+    for y~ u32 = 40; y < 128; y++ {
+        for x~ u32 = 20; x < 108; x++ {
+            red: u8 = PixelAt(pixels, width, x, y)[0];
+            if red < darkest {
+                darkest = red;
+            }
+        }
+    }
+    return darkest;
+}
+
+AmbientWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+        color: lantern:::core:::Color:::Black(),
+        ambient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 4.0f, z: 7.0f }, Vec3 { x: 0.0f, y: 0.5f, z: 0.0f });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(40.0f, 40.0f);
+            defer delete floorData;
+            cubeData := lantern:::renderer:::Cube(2.0f);
+            defer delete cubeData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->CreateMesh(cubeData) {
+                Result:::Ok(handle) -> {
+                    cube = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            world := AmbientWorld();
+            defer delete world;
+            world->Draw(floor, null, Mat4 { }, lantern:::core:::Color:::White());
+            world->Draw(cube, null, Mat4:::translation(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }), lantern:::core:::Color:::White());
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+
+            world->post.ambientOcclusionEnabled = false;
+            darkestWithout~ u8 = 0;
+            cornerWithout~ u8 = 0;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    darkestWithout = DarkestRed(pixels, size);
+                    cornerWithout = PixelAt(pixels, size, 6, 124)[0];
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->post.ambientOcclusionEnabled = true;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    darkestWith: u8 = DarkestRed(pixels, size);
+                    cornerWith: u8 = PixelAt(pixels, size, 6, 124)[0];
+                    if !(u32(darkestWith) * 100 < u32(darkestWithout) * 90) {
+                        print(`darkest: without ${darkestWithout}, with ${darkestWith}; corner: without ${cornerWithout}, with ${cornerWith}`);
+                    }
+                    assert(u32(darkestWith) * 100 < u32(darkestWithout) * 85, "the crease where the cube meets the floor is darker with occlusion on");
+                    assert(u32(cornerWith) * 100 > u32(cornerWithout) * 95, "open floor far from the cube is not darkened");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("ambient occlusion darkens creases");
+    return 0;
+}

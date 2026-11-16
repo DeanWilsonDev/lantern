@@ -3,10 +3,11 @@ GameAssets :: import GameAssets;
 Math :: import standard:::Math;
 
 // The player: an engine character controller, the entities that show it (a capsule body with
-// a visor, parented to a root at the feet) and a blob shadow on the ground below.
+// a visor, parented to a root at the feet) and a blob shadow on the ground below, which the engine
+// draws as soft darkness on whatever surface is under the player (see OnRender in main.nyx).
 //
 // Two halves that the game keeps in step:
-// - The lantern:::physics:::CharacterController (Rust, crates/physics/src/controller.rs) is the physics. It is not
+// - The lantern:::physics:::CharacterController (engine/src/physics/Controller.nox) is the physics. It is not
 //   an entity and draws nothing: it is a capsule shape that it moves through the collision world
 //   each fixed step, deciding velocity from input, gravity and jumping and sliding along walls.
 // - The entities are what you see. After each step Move() copies the controller's feet position
@@ -14,7 +15,8 @@ Math :: import standard:::Math;
 Player :: class {
 public:
     root~ i64 = 0;
-    shadow~ i64 = 0;
+    blobCenter~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    blobRadius~ f32 = 0.0f;       // 0 when there is no floor below to put a shadow on
     spawn~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     facingYaw~ f32 = 0.0f;           // radians about +Y; 0 faces -Z
     controller~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(PlayerTuning:::RADIUS, PlayerTuning:::HEIGHT, lantern:::math:::Vec3:::Zero());
@@ -45,25 +47,34 @@ public:
         lantern:::world:::SetMesh(visor, assets.unitCubeMesh, "203040");
         lantern:::world:::SetScale(visor, { x: 0.4f, y: 0.14f, z: 0.16f });
         lantern:::world:::SetParent(visor, body);
-        // The shadow is not parented: it follows the ground, not the player (PlaceShadow).
-        shadow = lantern:::world:::Spawn("player_shadow", spawnPosition);
-        lantern:::world:::SetMesh(shadow, assets.unitSphereMesh, "0D120D");
     }
 
-    // Back to the spawn point, at rest, facing forward.
+    // Back at `position` (a checkpoint, or the level's spawn point), at rest, facing forward.
     // Teleport rather than SetPosition: SetPosition would make the renderer blend from the old
     // place to the new one over a step (see OnRender's alpha), and the player would visibly
     // streak across the level.
-    Reset~: () -> void {
-        controller.Teleport(spawn);
+    RespawnAt~: (position: lantern:::math:::Vec3) -> void {
+        controller.Teleport(position);
         facingYaw = 0.0f;
-        lantern:::world:::Teleport(root, spawn);
+        lantern:::world:::Teleport(root, position);
         lantern:::world:::SetYaw(root, facingYaw);
     }
 
+    // Puts the player's feet where a swing says they are. The Anchor moves the player along its arc
+    // instead of the character controller, which is told where they are so it carries on from there.
+    SwingTo~: (feet: lantern:::math:::Vec3, yaw: f32) -> void {
+        controller.Teleport(feet);
+        facingYaw = yaw;
+        lantern:::world:::SetPosition(root, feet);
+        lantern:::world:::SetYaw(root, facingYaw);
+        PlaceShadow();
+    }
+
     // One fixed step. `stick` is the movement input (x right, y forward), turned into a world
-    // direction with the camera's horizontal `forward` and `right`.
-    Move~: (stick: lantern:::math:::Vec2, forward: lantern:::math:::Vec3, right: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> :lantern:::physics:::ControllerStep {
+    // direction with the camera's horizontal `forward` and `right`. `boostReady` says the
+    // companion is crouched under the player (BoostSystem): a jump started on this step is the
+    // taller boost jump.
+    Move~: (stick: lantern:::math:::Vec2, forward: lantern:::math:::Vec3, right: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, boostReady: bool, dt: f32) -> :lantern:::physics:::ControllerStep {
         // From stick space to world space. The stick says "this much forward, this much
         // right"; forward and right are those two directions in the world, so the world
         // direction is the sum of each axis scaled by its amount (a change of basis).
@@ -74,7 +85,17 @@ public:
         // The controller turns the direction into velocity: it accelerates toward
         // direction x walk speed (quickly on the ground, more slowly in the air), applies
         // gravity, jumps if asked, then moves and slides the capsule.
+        // The boost is only the take-off speed: the controller works the speed out from the jump
+        // height at the moment the jump starts, so raising the height for this one step and
+        // putting it back gives a taller jump now and a normal one next time. It is set whenever the
+        // player may boost, not only on the press, because the controller can start a jump from a
+        // press it remembered a moment earlier (the jump buffer). Gravity and the
+        // variable-height rule are unchanged, so letting go of jump early still cuts the boost short.
+        if boostReady {
+            controller.SetJumpHeight(PlayerTuning:::BOOST_JUMP_HEIGHT);
+        }
         step := controller.Step(moveDirection, jumpPressed, jumpHeld, dt);
+        controller.SetJumpHeight(PlayerTuning:::JUMP_HEIGHT);
         // Turn the body to face where it is going, at a limited speed so it swings round
         // instead of snapping. LengthSquared() > 0.01 means length > 0.1 (squared to skip a
         // square root): below that the stick is near its centre, its direction is mostly noise,
@@ -100,36 +121,44 @@ public:
         return controller.FeetPosition();
     }
 
+    // Asks the engine to darken the floor under the player this frame. Blob shadows last one
+    // frame, like draws, so this is called from OnRender every frame.
+    DrawBlobShadow :: () -> void {
+        if blobRadius > 0.0f {
+            lantern:::graphics:::AddBlobShadow(blobCenter, blobRadius, 0.55f);
+        }
+    }
+
 private:
-    // Drops the shadow onto the surface below the player; it shrinks with height.
+    // Finds the surface below the player and remembers where the shadow goes and how big it is;
+    // DrawBlobShadow hands that to the engine every drawn frame.
     // A blob shadow is a cheap stand-in for real shadows, and in a platformer its main job is
     // gameplay: it shows exactly where you will land.
-    PlaceShadow :: () -> void {
+    PlaceShadow~: () -> void {
         feet := controller.FeetPosition();
         // Cast down from the capsule's centre rather than the feet. When standing, the feet are
         // on (or a skin's width above) the floor, and a ray starting there could start at or
         // below the surface and miss it. 30 m is far enough to find any floor the course has.
         when lantern:::physics:::Raycast(controller.CapsuleCenter(), lantern:::math:::Vec3:::Down(), 30.0f) {
             hit: lantern:::physics:::RayHit -> PlaceShadowOn(hit, feet),
-            null -> lantern:::world:::SetVisible(shadow, false)
+            null -> ClearShadow()
         }
     }
 
-    PlaceShadowOn :: (hit: lantern:::physics:::RayHit, feet: lantern:::math:::Vec3) -> void {
-        lantern:::world:::SetVisible(shadow, true);
+    // No floor within 30 m below: there is nothing to put the shadow on.
+    ClearShadow~: () -> void {
+        blobRadius = 0.0f;
+    }
+
+    PlaceShadowOn~: (hit: lantern:::physics:::RayHit, feet: lantern:::math:::Vec3) -> void {
         // Height of the feet above the floor. Max(…, 0) guards against a tiny negative from
         // float rounding when standing.
         height := Math:::max(feet.y - hit.Point().y, 0.0f);
-        // On the ground the shadow is 2.2 x the radius across, a little wider than the body.
-        // As the player rises it shrinks linearly, 1 - height / 10: 10% smaller per metre,
+        // On the ground the shadow is 1.1 x the radius across each way, a little wider than the
+        // body. As the player rises it shrinks linearly, 1 - height / 10: 10% smaller per metre,
         // down to 40% of its size (reached at 6 m, where 1 - 6/10 = 0.4) so it never vanishes.
         // A smaller shadow reads as "higher up", which helps judge a jump.
-        diameter := PlayerTuning:::RADIUS * 2.2f * Math:::clamp(1.0f - height / 10.0f, 0.4f, 1.0f);
-        // Lift it 1 cm off the floor. Two surfaces at exactly the same depth flicker as the
-        // GPU can't decide which is in front (z-fighting).
-        shadowLift: lantern:::math:::Vec3 = { y: 0.01f };
-        lantern:::world:::SetPosition(shadow, hit.Point() + shadowLift);
-        // The sphere is squashed to 1 cm tall, which turns it into a flat round disc.
-        lantern:::world:::SetScale(shadow, { x: diameter, y: 0.01f, z: diameter });
+        blobCenter = hit.Point();
+        blobRadius = PlayerTuning:::RADIUS * 1.1f * Math:::clamp(1.0f - height / 10.0f, 0.4f, 1.0f);
     }
 }

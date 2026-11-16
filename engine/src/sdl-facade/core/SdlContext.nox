@@ -1,0 +1,116 @@
+Sdl :: import Sdl;
+
+lantern:::sdl :: namespace {
+    /**
+     * SDL's description of its most recent failure, prefixed with `context` (usually the function that failed). SDL
+     * keeps one error string per thread, so read it straight after the failing call. The caller owns the result.
+     */
+    LastSdlError :: (context: string) -> string! {
+        message~ string! = "" + "";
+        unsafe {
+            delete message;
+            message = copyCString(Sdl:::SDL_GetError());
+        }
+        described: string! = `${context}: ${message}`;
+        delete message;
+        return described!;
+    }
+
+    /** Logs `LastSdlError(context)` as a warning under `target`, for failures the engine can carry on after. */
+    LogSdlError :: (target: string, context: string) -> void {
+        described := LastSdlError(context);
+        lantern:::core:::LogWarn(target, described);
+        delete described;
+    }
+
+    /** The linked SDL library's version as `major.minor.patch`, for the start-up log line. */
+    SdlVersionText :: () -> string! {
+        version~ i32 = 0;
+        unsafe {
+            version = Sdl:::SDL_GetVersion();
+        }
+        text: string! = `${version / 1000000}.${(version / 1000) % 1000}.${version % 1000}`;
+        return text!;
+    }
+
+    /**
+     * The video driver SDL chose (`cocoa`, `wayland`, `x11`, `windows`, or `offscreen` in headless tests), or `none`.
+     */
+    CurrentVideoDriver :: () -> string! {
+        driver~ string! = "none" + "";
+        unsafe {
+            name := Sdl:::SDL_GetCurrentVideoDriver();
+            if name != null {
+                delete driver;
+                driver = copyCString(name);
+            }
+        }
+        return driver!;
+    }
+
+    /**
+     * SDL itself, initialised. Exactly one exists while the engine runs; creating it starts SDL's video, event and
+     * gamepad subsystems, and deleting it calls `SDL_Quit`, which frees everything SDL made. So it must be the last SDL
+     * object deleted: the application deletes it after the window, the renderer and the audio stream are gone.
+     */
+    SdlContext :: class {
+    public:
+        /**
+         * Whether the audio subsystem has started. Audio starts lazily, only when a program asks for an output, so
+         * tools and tests without sound never open an audio device.
+         */
+        audioInitialised~ bool = false;
+
+        /** Use `Init`, which starts SDL first and reports failure. */
+        SdlContext~: () { }
+
+        /** Shuts SDL down (`SDL_Quit`). Every window, GPU device and audio stream must already be destroyed. */
+        !SdlContext~: () {
+            lantern:::core:::LogInfo("platform", "shutting SDL down");
+            unsafe {
+                Sdl:::SDL_Quit();
+            }
+        }
+
+        /**
+         * Starts SDL's video, event and gamepad subsystems and logs the version and video driver. Null, with the error
+         * logged, when SDL can't start (no display, for example).
+         */
+        static Init :: () -> SdlContext*!? {
+            initialised~ bool = false;
+            unsafe {
+                Sdl:::SDL_SetHint(Sdl:::SDL_HINT_APP_NAME, "Lantern");
+                initialised = Sdl:::SDL_Init(Sdl:::SDL_INIT_VIDEO | Sdl:::SDL_INIT_EVENTS | Sdl:::SDL_INIT_GAMEPAD);
+            }
+            if !initialised {
+                described := LastSdlError("SDL_Init");
+                lantern:::core:::LogError("platform", described);
+                delete described;
+                return null;
+            }
+            version := SdlVersionText();
+            driver := CurrentVideoDriver();
+            message: string! = `SDL ${version} initialised, video driver: ${driver}`;
+            lantern:::core:::LogInfo("platform", message);
+            delete message;
+            delete version;
+            delete driver;
+            context := new SdlContext();
+            return context!;
+        }
+
+        /** Starts the audio subsystem the first time it's asked for; true once it's running. */
+        InitAudio~: () -> bool {
+            if audioInitialised {
+                return true;
+            }
+            unsafe {
+                audioInitialised = Sdl:::SDL_InitSubSystem(Sdl:::SDL_INIT_AUDIO);
+            }
+            if !audioInitialised {
+                LogSdlError("audio", "SDL_InitSubSystem(AUDIO)");
+            }
+            return audioInitialised;
+        }
+    }
+}

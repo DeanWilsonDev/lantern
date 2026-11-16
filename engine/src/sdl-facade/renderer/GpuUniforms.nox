@@ -1,0 +1,233 @@
+// Uniforms: the small blocks of constants a shader reads, pushed from the CPU before each draw.
+//
+// Each struct here is laid out byte for byte like a uniform block in engine/shaders/*.glsl, so it can be copied to
+// the GPU as it is. Every field is a whole number of 16-byte vec4s, because std140 layout pads smaller fields to that.
+//
+// SDL GPU numbers uniform buffers per stage: the vertex shader's slot 0 and 1, the fragment shader's slot 0 and 1.
+// The lit shader uses them as:
+//
+//   vertex 0    MatrixAndVectorUniforms   once per frame: view-projection matrix and the camera position
+//   vertex 1    ObjectUniforms            once per draw: the model matrix and its normal matrix
+//   fragment 0  LightUniforms             once per frame: the sun, ambient light and fog
+//   fragment 1  VectorUniforms            once per draw: the draw's tint colour
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    /**
+     * A matrix and a vector: 80 bytes. The lit vertex shader's per-frame block (view-projection matrix, camera
+     * position); the lines shader's block (view-projection matrix, with the sRGB flag in the vector's w).
+     */
+    MatrixAndVectorUniforms :: struct {
+        /** A 4x4 matrix in column-major order, as GLSL's `mat4` expects. */
+        matrix~ f32[16] = filled<f32, 16>(0.0f);
+        /** One vec4. */
+        vector~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    /** The lit fragment shader's per-frame block: the sun, ambient light, fog and the sky's colours. 176 bytes. (SDL GPU allows four uniform blocks per stage, so the sky shares this one.) */
+    LightUniforms :: struct {
+        /**
+         * The unit direction from a surface towards the light. `DirectionalLight` stores the direction light travels,
+         * so the renderer negates it.
+         */
+        directionToLight~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sun's colour times its intensity, in linear RGB. */
+        lightColor~ f32[4] = filled<f32, 4>(0.0f);
+        /**
+         * Sky light for surfaces facing up. Ambient light reaches every surface regardless of the sun, standing in for
+         * light bounced around the scene, so shadowed sides aren't black.
+         */
+        ambientColor~ f32[4] = filled<f32, 4>(0.0f);
+        /** The ambient light for surfaces facing down; sloping surfaces blend between this and `ambientColor`. */
+        groundAmbientColor~ f32[4] = filled<f32, 4>(0.0f);
+        /**
+         * The colour distant surfaces fade to: the clear colour, so the far plane cutting the world off isn't visible.
+         */
+        fogColor~ f32[4] = filled<f32, 4>(0.0f);
+        /**
+         * x: the distance fog starts, y: the distance it is total, w: 1 when the shader must sRGB-encode its output.
+         */
+        fogAndOutput~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sky's colour straight up, as in `SkyLightUniforms`. */
+        skyZenith~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sky's colour at the horizon. */
+        skyHorizon~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sky's colour straight down. */
+        skyGround~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: how much ambient comes from the sky (0 to 1), y: how bright it is. */
+        skyStrengthAndIntensity~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's world position, to measure each fragment's distance for fog. */
+        cameraPosition~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    /** The lit vertex shader's per-draw block: 128 bytes. */
+    ObjectUniforms :: struct {
+        /** The draw's model (world) matrix: object space to world space. */
+        model~ f32[16] = filled<f32, 16>(0.0f);
+        /** The matrix that moves the draw's normals to world space; see `NormalMatrix4`. */
+        normalMatrix~ f32[16] = filled<f32, 16>(0.0f);
+    }
+
+    /**
+     * The lit fragment shader's per-draw block, 48 bytes: the tint, then the material (x: metallic, y: roughness), then
+     * the emissive colour.
+     */
+    MaterialUniforms :: struct {
+        /** The draw's tint, linear RGBA. */
+        tint~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: metallic, y: roughness, z: normal map strength (0 for none). */
+        surface~ f32[4] = filled<f32, 4>(0.0f);
+        /** Light the surface gives off, linear RGB. */
+        emissive~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    /** Floats in one local light's entry in `LocalLightUniforms`: four vec4s. */
+    LOCAL_LIGHT_FLOATS: usize : 16;
+
+    /**
+     * The lit fragment shader's local lights, 528 bytes: one vec4 header (x: how many lights are used), then room for
+     * `MAX_LOCAL_LIGHTS` lights of four vec4s each, as `LocalLight` in lit.frag lays them out. It is a flat list of
+     * floats so one struct covers any count; `PackLocalLights` fills it.
+     */
+    LocalLightUniforms :: struct {
+        /** The header and then each light's sixteen floats. */
+        values~ f32[132] = filled<f32, 132>(0.0f);
+    }
+
+    /**
+     * Packs `lights` (the indices `SelectLocalLights` chose) into the block the shader reads. Each light becomes four
+     * vec4s: position and range, colour and kind, direction and the outer cone's cosine, then the inner cone's cosine, the index of its first shadow tile (-1 for none)
+     * and the size of a texel of its shadow map.
+     * The shader compares cosines of the angles, so they are worked out here once, not per pixel.
+     */
+    PackLocalLights :: (lights: Array<lantern:::renderer:::Light>, chosen: Array<u32>, plan: lantern:::renderer:::ShadowPlan*) -> LocalLightUniforms {
+        packed~ LocalLightUniforms = LocalLightUniforms { };
+        count: usize = chosen.length();
+        packed.values[0] = f32(count);
+        for slot~ usize = 0; slot < count; slot++ {
+            light: lantern:::renderer:::Light = lights[usize(chosen[slot])];
+            base: usize = 4 + slot * LOCAL_LIGHT_FLOATS;
+            packed.values[base] = light.position.x;
+            packed.values[base + 1] = light.position.y;
+            packed.values[base + 2] = light.position.z;
+            packed.values[base + 3] = light.range;
+            packed.values[base + 4] = light.color.r;
+            packed.values[base + 5] = light.color.g;
+            packed.values[base + 6] = light.color.b;
+            if light.kind == lantern:::renderer:::LightKind:::Spot {
+                packed.values[base + 7] = 1.0f;
+            }
+            packed.values[base + 8] = light.direction.x;
+            packed.values[base + 9] = light.direction.y;
+            packed.values[base + 10] = light.direction.z;
+            packed.values[base + 11] = Math:::cos(light.outerConeRadians);
+            packed.values[base + 12] = Math:::cos(light.innerConeRadians);
+            packed.values[base + 13] = f32(plan->localFirstTile[slot]);
+            packed.values[base + 14] = plan->localTexelAngle[slot];
+        }
+        return packed;
+    }
+
+    /** A single vec4: the overlay's target size, or the lines' sRGB flag. */
+    VectorUniforms :: struct {
+        /** The four floats. */
+        values~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    /**
+     * Normals can't be moved by the model matrix itself: a non-uniform scale would tilt them off their surface. The
+     * inverse transpose of the model matrix's 3x3 part keeps them perpendicular, and drops translation, which a
+     * direction must ignore. It's padded to a 4x4 for std140.
+     */
+    NormalMatrix4 :: (transform: Mat4) -> f32[16] {
+        normal: lantern:::core:::NormalMatrix = lantern:::core:::NormalMatrix:::FromTransform(transform);
+        return [
+            normal.xAxis.x, normal.xAxis.y, normal.xAxis.z, 0.0f,
+            normal.yAxis.x, normal.yAxis.y, normal.yAxis.z, 0.0f,
+            normal.zAxis.x, normal.zAxis.y, normal.zAxis.z, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        ];
+    }
+
+    /**
+     * The standard sRGB transfer function for one channel (linear to encoded), used for the clear colour when the
+     * swapchain can't encode in hardware.
+     */
+    EncodeSrgbChannel :: (linear: f32) -> f32 {
+        clamped: f32 = Math:::clamp(linear, 0.0f, 1.0f);
+        if clamped <= 0.0031308f {
+            return clamped * 12.92f;
+        }
+        return 1.055f * Math:::pow(clamped, 1.0f / 2.4f) - 0.055f;
+    }
+
+    /** A linear colour sRGB-encoded channel by channel; alpha is left linear, as sRGB defines. */
+    EncodeSrgb :: (color: lantern:::core:::Color) -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgba(EncodeSrgbChannel(color.r), EncodeSrgbChannel(color.g), EncodeSrgbChannel(color.b), color.a);
+    }
+
+    /**
+     * Copies a uniform block into the vertex shader's uniform slot `slot` for the draws that follow. SDL copies the
+     * bytes into a per-command-buffer ring at once, so the struct can be a local; the value stays bound until the next
+     * push to the same slot.
+     */
+    PushVertexUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
+        unsafe {
+            Sdl:::SDL_PushGPUVertexUniformData(commandBuffer, slot, bytes, byteCount);
+        }
+    }
+
+    /** The same as `PushVertexUniforms` for the fragment shader's slots. */
+    PushFragmentUniforms :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, slot: u32, bytes: u8*, byteCount: u32) -> void {
+        unsafe {
+            Sdl:::SDL_PushGPUFragmentUniformData(commandBuffer, slot, bytes, byteCount);
+        }
+    }
+
+    /**
+     * The composite shader's block, 464 bytes, as `CompositeUniforms` in composite.frag lays it out: its settings, flags for
+     * the optional effects, and what height fog and light shafts need to rebuild each pixel's ray.
+     */
+    CompositeUniforms :: struct {
+        /** x: exposure, y: bloom strength (0 when bloom is off), z: the tone mapper, w: 1 to sRGB-encode. */
+        exposureGlowToneMapEncode~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: 1 when the ambient-occlusion picture is drawn, y: 1 for height fog, z: 1 for light shafts, w: how many blob shadows. */
+        flags~ f32[4] = filled<f32, 4>(0.0f);
+        /** tan(half the horizontal field of view), tan(half the vertical), the near plane, the projection's depth range. */
+        projectionTerms~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's unit right vector. */
+        cameraRight~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's unit up vector. */
+        cameraUp~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's unit forward vector. */
+        cameraForward~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's position, and how fast fog thins with height. */
+        cameraPositionAndFalloff~ f32[4] = filled<f32, 4>(0.0f);
+        /** The fog's colour and its density at the base height. */
+        fogColorAndDensity~ f32[4] = filled<f32, 4>(0.0f);
+        /** The unit direction towards the sun, and how much it brightens fog looked at towards it. */
+        sunDirectionAndScattering~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sun's colour, and the light shafts' strength. */
+        sunColorAndShaftStrength~ f32[4] = filled<f32, 4>(0.0f);
+        /** The height where fog is fullest, and how much light survives each step of a shaft. */
+        fogBaseAndShaftDecay~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: saturation, y: contrast, z: vignette strength. */
+        gradeSaturationContrastVignette~ f32[4] = filled<f32, 4>(0.0f);
+        /** The colour the picture is multiplied by after grading. */
+        gradeTint~ f32[4] = filled<f32, 4>(0.0f);
+        /** Up to eight blob shadows, two vec4s each: where and how big, then how dark and how far up and down it reaches. */
+        blobs~ f32[64] = filled<f32, 64>(0.0f);
+    }
+
+    /** The ambient-occlusion shaders' block, 48 bytes, as `AmbientOcclusionUniforms` in ao-common.glsl lays it out. */
+    OcclusionUniforms :: struct {
+        /** tan(half the horizontal field of view), tan(half the vertical), the near plane, and the projection's depth range. */
+        projectionTerms~ f32[4] = filled<f32, 4>(0.0f);
+        /** Sampling radius in metres, how dark full occlusion gets, and the bias in metres. */
+        look~ f32[4] = filled<f32, 4>(0.0f);
+        /** The size of one pixel in uv units. */
+        texel~ f32[4] = filled<f32, 4>(0.0f);
+    }
+}

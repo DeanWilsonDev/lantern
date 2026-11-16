@@ -1,0 +1,299 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct CompositeUniforms
+{
+    float4 exposure_bloom_tonemap_encode;
+    float4 flags;
+    float4 projection_terms;
+    float4 camera_right;
+    float4 camera_up;
+    float4 camera_forward;
+    float4 camera_position_and_falloff;
+    float4 fog_color_and_density;
+    float4 sun_direction_and_scattering;
+    float4 sun_color_and_shaft_strength;
+    float4 fog_base_and_shaft_decay;
+    float4 grade_saturation_contrast_vignette;
+    float4 grade_tint;
+    float4 blobs[16];
+};
+
+struct main0_out
+{
+    float4 output_color [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 source_uv [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+bool IsBackground(thread const float& depth)
+{
+    return depth > 0.999989986419677734375;
+}
+
+static inline __attribute__((always_inline))
+float LinearDistance(thread const float& depth, constant CompositeUniforms& settings)
+{
+    float depth_range = settings.projection_terms.w;
+    return (depth_range * settings.projection_terms.z) / (depth + depth_range);
+}
+
+static inline __attribute__((always_inline))
+float3 ApplyBlobShadows(thread const float3& scene, thread const float3& world_position, constant CompositeUniforms& settings)
+{
+    int count = int(settings.flags.w);
+    float darkness = 0.0;
+    for (int blob_index = 0; blob_index < 8; blob_index++)
+    {
+        if (blob_index >= count)
+        {
+            break;
+        }
+        float4 where_and_radius = settings.blobs[blob_index * 2];
+        float4 strength_and_reach = settings.blobs[(blob_index * 2) + 1];
+        float3 offset = world_position - where_and_radius.xyz;
+        float across = length(offset.xz) / fast::max(where_and_radius.w, 0.001000000047497451305389404296875);
+        float vertical = abs(offset.y) / fast::max(strength_and_reach.y, 0.001000000047497451305389404296875);
+        float edge = fast::clamp(sqrt((across * across) + (vertical * vertical)), 0.0, 1.0);
+        float falloff = 1.0 - edge;
+        darkness = fast::max(darkness, ((strength_and_reach.x * falloff) * falloff) * (3.0 - (2.0 * falloff)));
+    }
+    return scene * (1.0 - darkness);
+}
+
+static inline __attribute__((always_inline))
+float3 ApplyHeightFog(thread const float3& scene, thread const float3& ray, thread const float& ray_length, constant CompositeUniforms& settings)
+{
+    float falloff = settings.camera_position_and_falloff.w;
+    float base_density = settings.fog_color_and_density.w;
+    float height_above_base = settings.camera_position_and_falloff.y - settings.fog_base_and_shaft_decay.x;
+    float slope = falloff * ray.y;
+    float exponent = fast::clamp((-slope) * ray_length, -30.0, 30.0);
+    float _281;
+    if (abs(slope) > 9.9999997473787516355514526367188e-05)
+    {
+        _281 = (1.0 - exp(exponent)) / slope;
+    }
+    else
+    {
+        _281 = ray_length;
+    }
+    float length_term = _281;
+    float optical = (base_density * exp(fast::clamp((-falloff) * height_above_base, -30.0, 30.0))) * length_term;
+    float fog = 1.0 - exp(-fast::max(optical, 0.0));
+    float toward_sun = pow(fast::max(dot(ray, settings.sun_direction_and_scattering.xyz), 0.0), 6.0);
+    float3 fog_color = settings.fog_color_and_density.xyz + (settings.sun_color_and_shaft_strength.xyz * (settings.sun_direction_and_scattering.w * toward_sun));
+    return mix(scene, fog_color, float3(fast::clamp(fog, 0.0, 1.0)));
+}
+
+static inline __attribute__((always_inline))
+float3 LightShafts(thread const float2& uv, thread const float3& ray, constant CompositeUniforms& settings, texture2d<float> depth_image, sampler depth_imageSmplr)
+{
+    float3 sun = settings.sun_direction_and_scattering.xyz;
+    float facing = dot(sun, settings.camera_forward.xyz);
+    if (facing <= 0.0500000007450580596923828125)
+    {
+        return float3(0.0);
+    }
+    float2 sun_ndc = float2(dot(sun, settings.camera_right.xyz) / (facing * settings.projection_terms.x), dot(sun, settings.camera_up.xyz) / (facing * settings.projection_terms.y));
+    float2 sun_uv = float2((sun_ndc.x * 0.5) + 0.5, 0.5 - (sun_ndc.y * 0.5));
+    float2 step_vector = (sun_uv - uv) / float2(24.0);
+    float decay = settings.fog_base_and_shaft_decay.y;
+    float weight = 1.0;
+    float total = 0.0;
+    float total_weight = 0.0;
+    float2 position = uv;
+    for (int step_index = 0; step_index < 24; step_index++)
+    {
+        position += step_vector;
+        float param = depth_image.sample(depth_imageSmplr, fast::clamp(position, float2(0.0), float2(1.0))).x;
+        float sky = float(IsBackground(param));
+        total += (sky * weight);
+        total_weight += weight;
+        weight *= decay;
+    }
+    float toward_sun = pow(fast::max(dot(ray, sun), 0.0), 3.0);
+    float fade_in = smoothstep(0.0500000007450580596923828125, 0.4000000059604644775390625, facing);
+    return settings.sun_color_and_shaft_strength.xyz * ((((settings.sun_color_and_shaft_strength.w * toward_sun) * fade_in) * total) / total_weight);
+}
+
+static inline __attribute__((always_inline))
+float3 AcesFilmic(thread const float3& x)
+{
+    return fast::clamp((x * ((x * 2.5099999904632568359375) + float3(0.02999999932944774627685546875))) / ((x * ((x * 2.4300000667572021484375) + float3(0.589999973773956298828125))) + float3(0.14000000059604644775390625)), float3(0.0), float3(1.0));
+}
+
+static inline __attribute__((always_inline))
+float3 PbrNeutral(thread float3& color)
+{
+    float lowest = fast::min(color.x, fast::min(color.y, color.z));
+    float _125;
+    if (lowest < 0.07999999821186065673828125)
+    {
+        _125 = lowest - ((6.25 * lowest) * lowest);
+    }
+    else
+    {
+        _125 = 0.039999999105930328369140625;
+    }
+    float offset = _125;
+    color -= float3(offset);
+    float peak = fast::max(color.x, fast::max(color.y, color.z));
+    if (peak < 0.7599999904632568359375)
+    {
+        return color;
+    }
+    float room = 0.23999999463558197021484375;
+    float new_peak = 1.0 - ((room * room) / ((peak + room) - 0.7599999904632568359375));
+    color *= (new_peak / peak);
+    float blend_to_white = 1.0 - (1.0 / ((0.1500000059604644775390625 * (peak - new_peak)) + 1.0));
+    return mix(color, float3(1.0) * new_peak, float3(blend_to_white));
+}
+
+static inline __attribute__((always_inline))
+float3 ToneMap(thread const float3& exposed, thread const float& mapper)
+{
+    if (mapper > 1.5)
+    {
+        float3 param = exposed;
+        return AcesFilmic(param);
+    }
+    if (mapper > 0.5)
+    {
+        float3 param_1 = exposed;
+        float3 _209 = PbrNeutral(param_1);
+        return fast::clamp(_209, float3(0.0), float3(1.0));
+    }
+    return fast::clamp(exposed, float3(0.0), float3(1.0));
+}
+
+static inline __attribute__((always_inline))
+float3 ColorGrade(thread float3& color, thread const float2& uv, constant CompositeUniforms& settings)
+{
+    float saturation = settings.grade_saturation_contrast_vignette.x;
+    float contrast = settings.grade_saturation_contrast_vignette.y;
+    float vignette = settings.grade_saturation_contrast_vignette.z;
+    float luma = dot(color, float3(0.2125999927520751953125, 0.715200006961822509765625, 0.072200000286102294921875));
+    color = mix(float3(luma), color, float3(saturation));
+    color = ((color - float3(0.5)) * contrast) + float3(0.5);
+    color *= settings.grade_tint.xyz;
+    float corner_distance = length(uv - float2(0.5)) * 1.41421353816986083984375;
+    color *= (1.0 - (vignette * smoothstep(0.3499999940395355224609375, 1.0, corner_distance)));
+    return fast::clamp(color, float3(0.0), float3(1.0));
+}
+
+static inline __attribute__((always_inline))
+float3 EncodeSrgb(thread const float3& linear_color)
+{
+    float3 low = linear_color * 12.9200000762939453125;
+    float3 high = (pow(linear_color, float3(0.4166666567325592041015625)) * 1.05499994754791259765625) - float3(0.054999999701976776123046875);
+    return select(high, low, linear_color <= float3(0.003130800090730190277099609375));
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& settings [[buffer(0)]], texture2d<float> scene_image [[texture(0)]], texture2d<float> bloom_image [[texture(1)]], texture2d<float> occlusion_image [[texture(2)]], texture2d<float> depth_image [[texture(3)]], sampler scene_imageSmplr [[sampler(0)]], sampler bloom_imageSmplr [[sampler(1)]], sampler occlusion_imageSmplr [[sampler(2)]], sampler depth_imageSmplr [[sampler(3)]])
+{
+    main0_out out = {};
+    float3 scene = scene_image.sample(scene_imageSmplr, in.source_uv).xyz;
+    if (settings.flags.x > 0.5)
+    {
+        scene *= occlusion_image.sample(occlusion_imageSmplr, in.source_uv).x;
+    }
+    bool _646 = settings.flags.y > 0.5;
+    bool _653;
+    if (!_646)
+    {
+        _653 = settings.flags.z > 0.5;
+    }
+    else
+    {
+        _653 = _646;
+    }
+    bool _660;
+    if (!_653)
+    {
+        _660 = settings.flags.w > 0.5;
+    }
+    else
+    {
+        _660 = _653;
+    }
+    if (_660)
+    {
+        float depth = depth_image.sample(depth_imageSmplr, in.source_uv).x;
+        float2 ndc = float2((in.source_uv.x * 2.0) - 1.0, 1.0 - (in.source_uv.y * 2.0));
+        float3 unnormalized = (settings.camera_forward.xyz + (settings.camera_right.xyz * (ndc.x * settings.projection_terms.x))) + (settings.camera_up.xyz * (ndc.y * settings.projection_terms.y));
+        float3 ray = fast::normalize(unnormalized);
+        bool _708 = settings.flags.w > 0.5;
+        bool _715;
+        if (_708)
+        {
+            float param = depth;
+            _715 = !IsBackground(param);
+        }
+        else
+        {
+            _715 = _708;
+        }
+        if (_715)
+        {
+            float param_1 = depth;
+            float3 param_2 = scene;
+            float3 param_3 = settings.camera_position_and_falloff.xyz + (unnormalized * LinearDistance(param_1, settings));
+            scene = ApplyBlobShadows(param_2, param_3, settings);
+        }
+        bool _733 = settings.flags.y > 0.5;
+        bool _740;
+        if (_733)
+        {
+            float param_4 = depth;
+            _740 = !IsBackground(param_4);
+        }
+        else
+        {
+            _740 = _733;
+        }
+        if (_740)
+        {
+            float param_5 = depth;
+            float3 param_6 = scene;
+            float3 param_7 = ray;
+            float param_8 = LinearDistance(param_5, settings) * length(unnormalized);
+            scene = ApplyHeightFog(param_6, param_7, param_8, settings);
+        }
+        if (settings.flags.z > 0.5)
+        {
+            float2 param_9 = in.source_uv;
+            float3 param_10 = ray;
+            scene += LightShafts(param_9, param_10, settings, depth_image, depth_imageSmplr);
+        }
+    }
+    float bloom_strength = settings.exposure_bloom_tonemap_encode.y;
+    if (bloom_strength > 0.0)
+    {
+        scene += (bloom_image.sample(bloom_imageSmplr, in.source_uv).xyz * bloom_strength);
+    }
+    float3 exposed = scene * settings.exposure_bloom_tonemap_encode.x;
+    float3 param_11 = exposed;
+    float param_12 = settings.exposure_bloom_tonemap_encode.z;
+    float3 display = ToneMap(param_11, param_12);
+    float3 param_13 = display;
+    float2 param_14 = in.source_uv;
+    float3 _799 = ColorGrade(param_13, param_14, settings);
+    display = _799;
+    if (settings.exposure_bloom_tonemap_encode.w > 0.5)
+    {
+        float3 param_15 = display;
+        display = EncodeSrgb(param_15);
+    }
+    out.output_color = float4(display, 1.0);
+    return out;
+}
+

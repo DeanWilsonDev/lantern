@@ -1,6 +1,10 @@
 ChaosUiC :: import ChaosUiC;
 
 lantern:::chaosui :: namespace {
+    /**
+     * The units a Cosmos length can be written in: pixels (`16px`), a percentage of the parent (`50%`), or a percentage
+     * of the screen's width or height (`vw`, `vh`).
+     */
     LengthUnit :: enum {
         Px,
         Percent,
@@ -8,6 +12,10 @@ lantern:::chaosui :: namespace {
         Vh
     }
 
+    /**
+     * A number and a unit. Resolve turns it into pixels: pixels are multiplied by the UI scale, a percentage needs the
+     * parent's size (null when that isn't known yet), and vw and vh use the screen.
+     */
     Length :: struct {
         value~ f32 = 0.0f;
         unit~ LengthUnit = LengthUnit:::Px;
@@ -22,6 +30,9 @@ lantern:::chaosui :: namespace {
         }
     }
 
+    /**
+     * A percentage of a container's size, or null when the container's size isn't known.
+     */
     PercentOf :: (container: f32?, percent: f32) -> f32? {
         if side := container {
             return side * percent / 100.0f;
@@ -29,6 +40,9 @@ lantern:::chaosui :: namespace {
         return null;
     }
 
+    /**
+     * Four distances, one for each side of a box. Padding and margin are insets.
+     */
     Insets :: struct {
         left~ f32 = 0.0f;
         top~ f32 = 0.0f;
@@ -48,16 +62,26 @@ lantern:::chaosui :: namespace {
         }
     }
 
+    /**
+     * Cosmos's `display`. It only matters when `direction` isn't set: a Stack lays children out in a row, and Inline (or
+     * no display) in a column. Neither flows text around boxes.
+     */
     Display :: enum {
         Stack,
         Inline
     }
 
+    /**
+     * Which way a box's children are laid out: Row (left to right) or Column (top to bottom).
+     */
     Direction :: enum {
         Row,
         Column
     }
 
+    /**
+     * How children line up across the layout direction: at the start, centred, at the end, or stretched to fill.
+     */
     Align :: enum {
         Start,
         Center,
@@ -65,6 +89,10 @@ lantern:::chaosui :: namespace {
         Stretch
     }
 
+    /**
+     * How children are spread along the layout direction: from the start, centred, from the end, or with equal space
+     * between.
+     */
     Justify :: enum {
         Start,
         Center,
@@ -72,6 +100,11 @@ lantern:::chaosui :: namespace {
         SpaceBetween
     }
 
+    /**
+     * How a box is placed: normally (Static); nudged from its normal place (Relative, Sticky); or taken out of the line
+     * and put by its top, left, right and bottom against its nearest placed ancestor (Absolute) or the screen (Fixed).
+     * Sticky is treated like Relative.
+     */
     Position :: enum {
         Static,
         Relative,
@@ -80,16 +113,26 @@ lantern:::chaosui :: namespace {
         Sticky
     }
 
+    /**
+     * A fill that fades from one colour at the top to another at the bottom.
+     */
     Gradient :: struct {
         top~ lantern:::core:::Color = lantern:::core:::Color { };
         bottom~ lantern:::core:::Color = lantern:::core:::Color { };
     }
 
+    /**
+     * A soft dark halo under a box: its colour and how far it spreads.
+     */
     Shadow :: struct {
         color~ lantern:::core:::Color = lantern:::core:::Color { };
         blur~ f32 = 0.0f;
     }
 
+    /**
+     * Every Cosmos property the engine draws and lays out with. A value that is null was not set, so the default
+     * rules apply. It is the engine's copy of the style that Cosmos resolved, built by StyleFromRaw.
+     */
     Style :: struct {
         background~ lantern:::core:::Color? = null;
         gradient~ Gradient? = null;
@@ -119,6 +162,9 @@ lantern:::chaosui :: namespace {
         zIndex~ i32? = null;
         shadow~ Shadow? = null;
 
+        /**
+         * The direction children run: the `direction` if set; otherwise Row for a Stack display and Column if neither is set.
+         */
         StackDirection :: () -> Direction {
             if chosen := direction {
                 return chosen;
@@ -131,15 +177,24 @@ lantern:::chaosui :: namespace {
             return Direction:::Column;
         }
 
+        /**
+         * True for Absolute and Fixed boxes, which take no room among their siblings.
+         */
         IsOutOfFlow :: () -> bool {
             return position == Position:::Absolute || position == Position:::Fixed;
         }
     }
 
+    /**
+     * Chaos's colour record as an engine colour.
+     */
     ColorFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_color) -> lantern:::core:::Color {
         return lantern:::core:::Color:::Rgba(f32(raw.r) / 255.0f, f32(raw.g) / 255.0f, f32(raw.b) / 255.0f, f32(raw.a) / 255.0f);
     }
 
+    /**
+     * Chaos's length record as a Length, or null for "auto".
+     */
     LengthFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_length) -> Length? {
         return when raw.unit {
             0 -> Length { value: raw.value, unit: LengthUnit:::Px },
@@ -150,14 +205,24 @@ lantern:::chaosui :: namespace {
         };
     }
 
+    /**
+     * Four numbers (left, top, right, bottom) as Insets.
+     */
     InsetsFromRaw :: (raw: f32[4]) -> Insets {
         return Insets { left: raw[0], top: raw[1], right: raw[2], bottom: raw[3] };
     }
 
+    /**
+     * True when the style's "was set" bit field has this property's bit. Chaos reports which properties a rule set, so
+     * unset ones keep their defaults.
+     */
     StyleHas :: (raw: ChaosUiC:::lantern_chaos_ui_style, bit: u32) -> bool {
         return (raw.set & u64(bit)) != 0;
     }
 
+    /**
+     * The length for a property, or null when the rule didn't set it.
+     */
     LengthWhenSet :: (raw: ChaosUiC:::lantern_chaos_ui_style, bit: u32, length: ChaosUiC:::lantern_chaos_ui_length) -> Length? {
         if StyleHas(raw, bit) {
             return LengthFromRaw(length);
@@ -165,6 +230,9 @@ lantern:::chaosui :: namespace {
         return null;
     }
 
+    /**
+     * Chaos's align number as an Align.
+     */
     AlignFromRaw :: (value: i32) -> Align {
         return when value {
             1 -> Align:::Center,
@@ -174,6 +242,9 @@ lantern:::chaosui :: namespace {
         };
     }
 
+    /**
+     * Chaos's justify number as a Justify.
+     */
     JustifyFromRaw :: (value: i32) -> Justify {
         return when value {
             1 -> Justify:::Center,
@@ -183,6 +254,9 @@ lantern:::chaosui :: namespace {
         };
     }
 
+    /**
+     * Chaos's position number as a Position.
+     */
     PositionFromRaw :: (value: i32) -> Position {
         return when value {
             1 -> Position:::Relative,
@@ -193,6 +267,9 @@ lantern:::chaosui :: namespace {
         };
     }
 
+    /**
+     * Builds a Style from Chaos's C record, reading each property only if its bit is set.
+     */
     StyleFromRaw :: (raw: ChaosUiC:::lantern_chaos_ui_style) -> Style {
         style~ Style = Style { };
         if StyleHas(raw, ChaosUiC:::LANTERN_CHAOS_UI_SET_BACKGROUND) {

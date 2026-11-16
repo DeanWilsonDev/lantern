@@ -1,0 +1,154 @@
+lantern:::application :: namespace {
+    /**
+     * `lantern <game-directory>`: a Nyx game. Its game.json names the title, scripts and assets; the game host runs the
+     * scripts against the engine API. Returns the process exit status.
+     */
+    RunGame :: (gameDirectory: string) -> i32 {
+        loaded := lantern:::host:::GameManifest:::Load(gameDirectory);
+        when loaded! {
+            Result:::Ok(manifest) -> {
+                status: i32 = RunManifest(gameDirectory, manifest);
+                delete manifest;
+                return status;
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("game", message);
+                delete message;
+                return 1;
+            }
+        }
+    }
+
+    /**
+     * Creates the application for a loaded manifest, runs the game and deletes the application last. 1 when the window
+     * or SDL can't start.
+     */
+    RunManifest :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*) -> i32 {
+        applicationInstance := Application:::Create(ApplicationConfig:::FromEnvironment(manifest->title));
+        guard applicationInstance return 1;
+        status: i32 = RunGameHost(gameDirectory, manifest, applicationInstance);
+        delete applicationInstance;
+        return status;
+    }
+
+    /**
+     * The middle of a game's life, between creating the application and deleting it: make the renderer, the audio
+     * system and the engine state, build the `GameHost` around them, run the loop, then shut the host down and delete
+     * it. Deleting the host deletes the engine state, which deletes the renderer, all before the caller deletes the
+     * application.
+     */
+    RunGameHost :: (gameDirectory: string, manifest: lantern:::host:::GameManifest*, applicationClassName: Application~*) -> i32 {
+        when applicationClassName->CreateRenderer() {
+            Result:::Ok(gpuRenderer) -> {
+                assets: string!? = manifest->AssetsDirectory(gameDirectory);
+                defer delete assets;
+                assetsView~ string? = null;
+                if path := assets {
+                    assetsView = path;
+                }
+                audioSystem := new lantern:::engine:::AudioSystem(applicationClassName->OpenAudioOutput());
+                started := lantern:::host:::EngineState:::Create(gpuRenderer!, audioSystem!, assetsView);
+                when started! {
+                    Result:::Ok(state) -> {
+                        gameHost := new lantern:::host:::GameHost(state!, manifest->ScriptSourceFor(gameDirectory));
+                        ConfigureHost(gameHost, applicationClassName->config);
+                        applicationClassName->Run(gameHost);
+                        gameHost->Shutdown();
+                        delete gameHost;
+                        return 0;
+                    },
+                    Result:::Err(message) -> {
+                        lantern:::core:::LogError("game", message);
+                        delete message;
+                        return 1;
+                    }
+                }
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("renderer", message);
+                delete message;
+                return 1;
+            }
+        }
+    }
+
+    /**
+     * Passes the environment switches the host needs on to it: the frame limit, the capture path and whether the debug
+     * HUD starts visible.
+     */
+    ConfigureHost :: (gameHost: lantern:::host:::GameHost~*, config: ApplicationConfig) -> void {
+        if config.frameLimit > 0 {
+            gameHost->maxFrames = config.frameLimit;
+        }
+        delete gameHost->capturePath;
+        gameHost->capturePath = CapturePath();
+        gameHost->state->debugHud->visible = config.showDebugHud;
+    }
+
+    /**
+     * `lantern --stub`: the stub game, a lit scene with no scripts, for checking the window, the loop and
+     * the renderer on their own.
+     */
+    RunStubGame :: () -> i32 {
+        applicationInstance := Application:::Create(ApplicationConfig:::FromEnvironment("Lantern"));
+        guard applicationInstance return 1;
+        status: i32 = RunStubScene(applicationInstance);
+        delete applicationInstance;
+        return status;
+    }
+
+    /**
+     * Builds the renderer and the stub's lit scene, runs it frame by frame under the window script, then finishes and
+     * deletes the game before the caller deletes the application.
+     */
+    RunStubScene :: (applicationInstance: Application~*) -> i32 {
+        when applicationInstance->CreateRenderer() {
+            Result:::Ok(gpuRenderer) -> {
+                when lantern:::stub:::LitScene:::Create(gpuRenderer!) {
+                    Result:::Ok(scene) -> {
+                        game := new lantern:::stub:::StubGame(applicationInstance->config.frameLimit, scene!);
+                        script := new lantern:::stub:::WindowScript(applicationInstance->config.windowScript);
+                        applicationInstance->RunObserved(game, script);
+                        delete script;
+                        status: i32 = FinishStub(applicationInstance, game);
+                        delete game;
+                        return status;
+                    },
+                    Result:::Err(message) -> {
+                        lantern:::core:::LogError("renderer", message);
+                        delete message;
+                        return 1;
+                    }
+                }
+            },
+            Result:::Err(message) -> {
+                lantern:::core:::LogError("renderer", message);
+                delete message;
+                return 1;
+            }
+        }
+    }
+
+    /**
+     * After the stub's last frame: captures it to LANTERN_CAPTURE_PATH if set, and logs and prints the run's summary.
+     */
+    FinishStub :: (applicationInstance: Application*, game: lantern:::stub:::StubGame~*) -> i32 {
+        capturePath: string!? = CapturePath();
+        defer delete capturePath;
+        if path := capturePath {
+            metrics: lantern:::platform:::WindowMetrics = applicationInstance->WindowMetrics();
+            if game->CaptureLastFrame(path, metrics.pixelWidth, metrics.pixelHeight) {
+                message: string! = `captured the last frame to ${path}`;
+                lantern:::core:::LogInfo("renderer", message);
+                delete message;
+            } else {
+                lantern:::core:::LogError("renderer", "could not capture the last frame");
+            }
+        }
+        summary := game->Summary();
+        lantern:::core:::LogInfo("engine", summary);
+        print(summary);
+        delete summary;
+        return 0;
+    }
+}

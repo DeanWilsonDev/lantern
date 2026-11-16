@@ -39,7 +39,7 @@ file(GLOB_RECURSE LANTERN_EDITOR_NOX_SOURCES CONFIGURE_DEPENDS
     "${LANTERN_ENGINE_DIRECTORY}/src/core/*.nox"
     "${LANTERN_ENGINE_DIRECTORY}/src/editor/*.nox"
     "${LANTERN_ENGINE_DIRECTORY}/src/editorbackend/*.nox"
-    "${LANTERN_ENGINE_DIRECTORY}/src/gpu/*.nox"
+    "${LANTERN_ENGINE_DIRECTORY}/src/sdl-facade/renderer/*.nox"
     "${LANTERN_ENGINE_DIRECTORY}/src/physics/*.nox"
     "${LANTERN_ENGINE_DIRECTORY}/src/platform/*.nox"
     "${LANTERN_ENGINE_DIRECTORY}/src/renderer/*.nox"

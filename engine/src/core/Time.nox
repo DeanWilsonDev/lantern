@@ -1,36 +1,94 @@
 lantern:::core :: namespace {
+    /**
+     * The length of one simulation step: 1/60 s. Physics and gameplay always advance by exactly this, whatever the
+     * display's refresh rate.
+     */
     FIXED_STEP_SECONDS: f32 : 1.0f / 60.0f;
+    /**
+     * The most fixed steps one frame may run. Without a cap, a frame that took too long would owe many steps, running
+     * them would make the next frame slower still, and the game would never catch up (the "spiral of death"). Time
+     * beyond the cap is dropped instead, so the game slows down rather than freezing.
+     */
     MAX_STEPS_PER_FRAME: u32 : 8;
+    /**
+     * The longest frame time the clock accepts (a quarter of a second). A longer gap, such as a breakpoint or the
+     * window being dragged, counts as this much.
+     */
     MAX_FRAME_SECONDS: f64 : 0.25f;
+    /**
+     * How close (0.2 ms) a measured frame must be to exactly one step to be treated as one step. A 60 Hz display
+     * measures frames of 16.6 or 16.7 ms because of timer jitter; without snapping, the accumulator would sometimes
+     * reach two steps in one frame and none in the next, which shows as stutter.
+     */
     SNAP_THRESHOLD_SECONDS: f64 : 0.0002f;
+    /** How many recent frame times `FrameStats` keeps for its averages: two seconds at 60 fps. */
     FRAME_HISTORY_LENGTH: usize : 120;
 
+    /**
+     * What `FixedStepClock.Advance` decided for one frame: how many steps to run now and where real time sits between
+     * steps.
+     */
     FixedStepPlan :: struct {
+        /**
+         * How many fixed steps the loop should run this frame. Often 1; 0 when the display is faster than 60 Hz; more
+         * after a slow frame.
+         */
         stepCount~ u32 = 0;
+        /**
+         * The time left in the accumulator after those steps, as a fraction of one step (0 to 1). Rendering
+         * interpolates by it.
+         */
         alpha~ f32 = 0.0f;
+        /**
+         * Time thrown away this frame because the step cap was reached. Non-zero means the game ran slower than real
+         * time.
+         */
         droppedSeconds~ f64 = 0.0f;
     }
 
+    /**
+     * Turns irregular frame times into a whole number of fixed steps (the "fix your timestep" accumulator).
+     *
+     * Each frame adds the measured time to an accumulator and takes out one step at a time while a whole step is there.
+     * What is left over (less than a step) carries into the next frame, so no time is lost and the simulation stays in
+     * step with real time on average.
+     */
     FixedStepClock :: struct {
+        /** The fixed step, in seconds. Kept as f64 so adding it up over hours doesn't drift. */
         stepSeconds~ f64 = f64(FIXED_STEP_SECONDS);
+        /** The cap on steps per frame; see `MAX_STEPS_PER_FRAME`. */
         maxStepsPerFrame~ u32 = MAX_STEPS_PER_FRAME;
+        /** Real time measured but not yet simulated. Always less than one step after `Advance` returns. */
         accumulatorSeconds~ f64 = 0.0f;
+        /** Every step handed out since the clock started; the source of `FixedStepContext.stepIndex`. */
         totalSteps~ u64 = 0;
 
+        /** A clock with a different step or cap, for tests. The engine uses the defaults (1/60 s, 8 steps). */
         static Create :: (stepSeconds: f64, maxStepsPerFrame: u32) -> FixedStepClock {
             assert(stepSeconds > 0.0f, "the fixed step must be positive");
             assert(maxStepsPerFrame > 0, "a frame must be allowed at least one step");
             return FixedStepClock { stepSeconds: stepSeconds, maxStepsPerFrame: maxStepsPerFrame };
         }
 
+        /** The fixed step as the f32 the game sees in `FixedStepContext.stepSeconds`. */
         StepSeconds :: () -> f32 {
             return f32(stepSeconds);
         }
 
+        /** Steps handed out since the clock started. */
         TotalSteps :: () -> u64 {
             return totalSteps;
         }
 
+        /**
+         * Adds one frame's measured time and says how many steps are now due.
+         *
+         * 1. Clamp the time to between 0 and `MAX_FRAME_SECONDS`.
+         * 2. Snap it to exactly one step when it's within `SNAP_THRESHOLD_SECONDS` of one.
+         * 3. Add it to the accumulator and take out whole steps, up to the cap.
+         * 4. If whole steps are still owed after the cap, drop them and report the dropped time.
+         * 5. `alpha` is what remains divided by the step.
+         */
         Advance ~: (measuredFrameSeconds: f64) -> FixedStepPlan {
             frameSeconds~ f64 = measuredFrameSeconds;
             if frameSeconds < 0.0f {
@@ -69,14 +127,25 @@ lantern:::core :: namespace {
         }
     }
 
+    /** A ring buffer of recent frame times plus running totals, read by the debug HUD and the end-of-run log line. */
     FrameStats :: struct {
+        /** The last `FRAME_HISTORY_LENGTH` frame times, in seconds, written round in a circle. */
         frameSeconds~ f64[120] = filled<f64, 120>(0.0f);
+        /** Where the next frame time goes in `frameSeconds`. */
         next~ usize = 0;
+        /**
+         * How many entries of `frameSeconds` hold a real measurement (fewer than the length during the first two
+         * seconds).
+         */
         filledCount~ usize = 0;
+        /** How many fixed steps the most recent frame ran. */
         lastStepCount~ u32 = 0;
+        /** Frames recorded since the loop started. */
         frames~ u64 = 0;
+        /** All the time dropped by the step cap so far. Growing means the machine can't keep up with the simulation. */
         droppedSecondsTotal~ f64 = 0.0f;
 
+        /** Records one frame's measured time and the clock's plan for it. Called by the game loop once per frame. */
         Record ~: (measuredFrameSeconds: f64, plan: FixedStepPlan) -> void {
             frameSeconds[next] = measuredFrameSeconds;
             next = (next + 1) % FRAME_HISTORY_LENGTH;
@@ -88,6 +157,7 @@ lantern:::core :: namespace {
             frames += 1;
         }
 
+        /** The mean frame time over the history, in milliseconds. */
         AverageFrameMilliseconds :: () -> f64 {
             if filledCount == 0 {
                 return 0.0f;
@@ -99,6 +169,10 @@ lantern:::core :: namespace {
             return sum / f64(filledCount) * 1000.0f;
         }
 
+        /**
+         * The longest frame in the history, in milliseconds. A spike here with a good average means a hitch, not a slow
+         * game.
+         */
         WorstFrameMilliseconds :: () -> f64 {
             worst~ f64 = 0.0f;
             for index~ usize = 0; index < filledCount; index++ {
@@ -109,6 +183,7 @@ lantern:::core :: namespace {
             return worst * 1000.0f;
         }
 
+        /** Frames per second from the average frame time; 0 before any frame has been recorded. */
         FramesPerSecond :: () -> f64 {
             average: f64 = AverageFrameMilliseconds();
             if average <= 0.0f {

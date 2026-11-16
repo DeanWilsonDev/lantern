@@ -1,5 +1,9 @@
+// The menus and dialogs that float over the interface: which menu is open and where, the right click
+// menu, the command palette, the settings, the help page and the "save first?" question. They are signals,
+// so App.chaos shows each when its value is set.
 EditorOverlays :: class {
 public:
+    // How far left of the mouse a menu opens, so it sits under the menu bar button.
     static MENU_OFFSET :: 16.0f;
 
     @signal openMenu~ string = "";
@@ -13,6 +17,7 @@ public:
     @signal helpPage~ string = "";
     @signal confirmCommand~ string = "";
 
+    // Opens a menu from the menu bar, or closes it if it was open.
     ToggleMenu~: (name: string) -> void {
         this.CloseAll();
         if this.openMenu == name {
@@ -23,6 +28,7 @@ public:
         this.menuX = penumbra:::mouseX() - MENU_OFFSET;
     }
 
+    // While one menu is open, moving over another menu bar button opens that one.
     HoverMenu~: (name: string) -> void {
         if this.openMenu != "" && this.openMenu != name {
             this.openMenu = name;
@@ -30,8 +36,10 @@ public:
         }
     }
 
+    // Closes the menu.
     CloseMenu~: () -> void { this.openMenu = ""; }
 
+    // Opens the right click menu at the mouse for an entity.
     OpenContextMenu~: (entity: i64) -> void {
         this.contextEntity = entity;
         this.contextX = penumbra:::mouseX();
@@ -40,22 +48,27 @@ public:
         this.openMenu = "";
     }
 
+    // Closes it.
     CloseContextMenu~: () -> void { this.contextOpen = false; }
 
+    // Opens the command palette.
     OpenPalette~: () -> void { this.paletteOpen = true; }
     OpenSettings~: () -> void { this.settingsOpen = true; }
     ShowHelp~: (page: string) -> void { this.helpPage = page; }
     AskToSave~: (command: string) -> void { this.confirmCommand = command; }
 
+    // Closes the settings and saves the preferences, since changes in it are made on the spot.
     CloseSettings~: () -> void {
         this.settingsOpen = false;
         editorSavePreferences();
     }
 
+    // Dismisses the "save first?" question.
     ClearConfirmCommand~: () -> void {
         this.confirmCommand = "";
     }
 
+    // Closes every popup (but not the settings dialog or the save question).
     CloseAll~: () -> void {
         this.openMenu = "";
         this.contextOpen = false;
@@ -63,14 +76,18 @@ public:
         this.helpPage = "";
     }
 
+    // True when a menu, the right click menu, the palette or a help page is open.
     AnyPopupOpen:: () -> bool {
         return this.openMenu != "" || this.contextOpen || this.paletteOpen || this.helpPage != "";
     }
 
+    // True when a dialog is open that should get the keyboard instead of the viewport.
     BlocksViewportKeys:: () -> bool {
         return this.paletteOpen || this.settingsOpen || this.confirmCommand != "";
     }
 
+    // Closes the topmost thing that is open: popups, then the save question, then settings. Returns false
+    // when there was nothing to close.
     Escape~: () -> bool {
         if this.AnyPopupOpen() {
             this.CloseAll();

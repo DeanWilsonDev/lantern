@@ -1,23 +1,42 @@
 lantern:::renderer :: namespace {
+    /** Each glyph is 8x8 font pixels. */
     GLYPH_SIZE: u32 : 8;
+    /** Glyph cells per atlas row. */
     ATLAS_COLUMNS: u32 : 16;
+    /** Rows of glyph cells: 16 x 6 = 96 cells, 95 printable ASCII characters plus one solid white cell. */
     ATLAS_ROWS: u32 : 6;
+    /** The atlas's width in pixels: 16 cells of 8. */
     ATLAS_WIDTH: u32 : 128;
+    /** The atlas's height in pixels: 6 cells of 8. */
     ATLAS_HEIGHT: u32 : 48;
+    /**
+     * The last cell, filled solid white. Solid overlay shapes sample its middle, so text and boxes share one texture
+     * and one draw call.
+     */
     WHITE_CELL: u32 : 95;
+    /** Distance between lines of text, in font pixels: the 8-pixel glyph plus 2 of spacing. */
     LINE_HEIGHT_IN_GLYPH_PIXELS: f32 : 10.0f;
+    /** `?`, drawn for any character the font doesn't have. */
     REPLACEMENT_GLYPH: u8 : 63;
+    /** The byte that starts a new line. */
     NEWLINE: u8 : 10;
+    /** A space advances the pen without drawing a quad. */
     SPACE: u8 : 32;
 
+    /** The pixel column where a cell starts in the atlas. */
     CellOriginX :: (cell: u32) -> u32 {
         return (cell % ATLAS_COLUMNS) * GLYPH_SIZE;
     }
 
+    /** The pixel row where a cell starts in the atlas. */
     CellOriginY :: (cell: u32) -> u32 {
         return (cell / ATLAS_COLUMNS) * GLYPH_SIZE;
     }
 
+    /**
+     * Sets one atlas pixel to white with the given alpha. Glyphs are white shapes in the alpha channel, so a vertex
+     * colour tints them any colour.
+     */
     SetAtlasPixel :: (atlas: TextureData~*, x: u32, y: u32, alpha: u8) -> void {
         offset: usize = atlas->PixelOffset(x, y);
         atlas->rgba8[offset] = 255;
@@ -26,6 +45,11 @@ lantern:::renderer :: namespace {
         atlas->rgba8[offset + 3] = alpha;
     }
 
+    /**
+     * Bakes the built-in 8x8 font into a 128x48 texture (a texture atlas: many small images in one texture, so all text
+     * needs one texture binding). Nearest filtering and clamping keep the pixels crisp. Uploaded once at start-up and
+     * set as `RenderWorld.overlayTexture`.
+     */
     FontAtlas :: () -> TextureData*! {
         atlas := new TextureData(ATLAS_WIDTH, ATLAS_HEIGHT, TextureFilter:::Nearest, TextureWrap:::Clamp);
         for byteIndex~ u32 = 0; byteIndex < ATLAS_WIDTH * ATLAS_HEIGHT * 4; byteIndex += 1 {
@@ -55,6 +79,9 @@ lantern:::renderer :: namespace {
         return atlas!;
     }
 
+    /**
+     * The uv of the middle of the white cell. Sampling there gives white, so a quad shows its vertex colour unchanged.
+     */
     WhiteTexelUv :: () -> Vec2 {
         return Vec2 {
             x: (f32(CellOriginX(WHITE_CELL)) + 4.0f) / f32(ATLAS_WIDTH),
@@ -62,6 +89,7 @@ lantern:::renderer :: namespace {
         };
     }
 
+    /** The atlas cell for an ASCII byte, or the `?` cell for anything else. */
     GlyphCell :: (character: u8) -> u32 {
         glyph~ u8 = REPLACEMENT_GLYPH;
         if character >= FIRST_GLYPH && usize(character - FIRST_GLYPH) < GLYPH_COUNT {
@@ -70,10 +98,12 @@ lantern:::renderer :: namespace {
         return u32(glyph - FIRST_GLYPH);
     }
 
+    /** Whether a byte continues a multi-byte UTF-8 character. Those are skipped, so each character takes one cell. */
     IsUtf8Continuation :: (byte: u8) -> bool {
         return (byte & 192) == 128;
     }
 
+    /** The size in pixels `PushText` would cover with this text at this scale, for centring and backgrounds. */
     MeasureText :: (text: string, scale: f32) -> Vec2 {
         glyph: f32 = f32(GLYPH_SIZE) * scale;
         widest~ usize = 0;
@@ -98,6 +128,10 @@ lantern:::renderer :: namespace {
         return Vec2 { x: f32(widest) * glyph, y: height };
     }
 
+    /**
+     * Lays text out as one quad per glyph, left to right from `topLeft`, in screen pixels. `scale` is screen pixels per
+     * font pixel. Glyph corners are rounded to whole pixels so the font stays sharp. Non-ASCII characters show as `?`.
+     */
     PushText :: (overlay: Overlay~*, text: string, topLeft: Vec2, scale: f32, color: lantern:::core:::Color) -> void {
         glyph: f32 = f32(GLYPH_SIZE) * scale;
         glyphUvSize: Vec2 = Vec2 { x: f32(GLYPH_SIZE) / f32(ATLAS_WIDTH), y: f32(GLYPH_SIZE) / f32(ATLAS_HEIGHT) };
@@ -121,6 +155,10 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /**
+     * A whole-number text scale for a display's pixel density, so text is the same physical size on a Retina display
+     * and font pixels stay square.
+     */
     ScaleForDensity :: (baseScale: u32, pixelDensity: f32) -> f32 {
         return Math:::max(Math:::round(f32(baseScale) * pixelDensity), 1.0f);
     }

@@ -1,27 +1,49 @@
+Checkpoint :: import Checkpoint;
+Anchor :: import Anchor;
+CompanionStop :: import CompanionStop;
 Gem :: import Gem;
+Goal :: import Goal;
+GlowPlatform :: import GlowPlatform;
+LanternPickup :: import LanternPickup;
+LightingSettings :: import LightingSettings;
 MovingPlatform :: import MovingPlatform;
+Thorns :: import Thorns;
 
 // The level: a world file made in the editor, plus what the game reads from it. Entities are
 // found by kind, so the file decides how many gems and platforms there are.
 //
 // The split of work: lantern:::world:::Load (engine) builds everything in the file, meshes and collision
 // included. The game then asks for the kinds it gives meaning to ("spawn", "kill_plane", "gem",
-// "moving_platform") and wraps them in its own classes.
+// "moving_platform", "checkpoint", "companion_stop") and wraps them in its own classes.
 LevelScene :: class {
 public:
     spawnPosition~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     killHeight~ f32 = -10.0f;
     gems~ Array<Gem> = [];
     platforms~ Array<MovingPlatform> = [];
+    checkpoints~ Array<Checkpoint> = [];
+    // The companion's route, sorted by each stop's `order`. Empty when the level has none.
+    companionStops~ Array<CompanionStop> = [];
+    // Slice 2: pieces that only exist while a light reaches them, lanterns to pick up, and thorns.
+    glowPlatforms~ Array<GlowPlatform> = [];
+    // Slice 3: swing arcs between two posts.
+    anchors~ Array<Anchor> = [];
+    // Slice 4: where the level ends, and what comes next.
+    goals~ Array<Goal> = [];
+    lanterns~ Array<LanternPickup> = [];
+    thorns~ Array<Thorns> = [];
+    // Which chapter's look the level wears (ChapterLooks): the spawn's `chapter` property, 0 if none.
+    chapter~ i32 = 0;
 
     // Returns the number of entities the file made.
-    Load~: (path: string, gemMesh: i64) -> i32 {
+    Load~: (path: string, gemMesh: i64, cubeMesh: i64) -> i32 {
         Unload();
         loaded := lantern:::world:::Load(path);
         guard loaded throw;
         // One of each is expected; if the file has more, the last one wins.
         for spawn: i64 in lantern:::world:::FindByKind("spawn") {
             spawnPosition = lantern:::world:::Position(spawn);
+            chapter = lantern:::world:::HasProperty(spawn, "chapter") ? i32(lantern:::world:::NumberProperty(spawn, "chapter")) : 0;
         }
         // Only the kill plane's height matters: falling below it anywhere counts.
         for killPlane: i64 in lantern:::world:::FindByKind("kill_plane") {
@@ -31,12 +53,52 @@ public:
         index~ i32 = 0;
         for entity: i64 in lantern:::world:::FindByKind("gem") {
             lantern:::world:::SetMesh(entity, gemMesh, "FFFFFF");
-            gems.add(new Gem(entity, index));
+            gem~ Gem = new Gem(entity, index);
+            gem.Glow(LightingSettings:::GEM_GLOW);
+            gems.add(gem);
             index++;
         }
         for entity: i64 in lantern:::world:::FindByKind("moving_platform") {
             platforms.add(new MovingPlatform(entity));
         }
+        for entity: i64 in lantern:::world:::FindByKind("checkpoint") {
+            checkpoint~ Checkpoint = new Checkpoint(entity);
+            checkpoint.Place(cubeMesh);
+            checkpoints.add(checkpoint);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("companion_stop") {
+            companionStops.add(new CompanionStop(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("goal") {
+            goal~ Goal = new Goal(entity);
+            goal.Place(cubeMesh);
+            goals.add(goal);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("swing_arc") {
+            anchor~ Anchor = new Anchor(entity);
+            if !anchor.isValid {
+                lantern:::engine:::Log(`swing_arc (entity ${entity:d}) needs an "end" property at least half a metre from its start along the ground: skipped`);
+                continue;
+            }
+            anchor.Place(cubeMesh);
+            anchors.add(anchor);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("glow_platform") {
+            glowPlatform~ GlowPlatform = new GlowPlatform(entity);
+            glowPlatform.Hide();
+            glowPlatforms.add(glowPlatform);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("lantern") {
+            lantern:::world:::SetTint(entity, LANTERN_TINT);
+            lanterns.add(new LanternPickup(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("thorns") {
+            patch~ Thorns = new Thorns(entity);
+            patch.Grow(chapter);
+            thorns.add(patch);
+        }
+        // The file lists the stops in any order; the route follows their `order` property.
+        companionStops = companionStops.sort((first, second) -> first.order < second.order);
         lantern:::engine:::Log(`level ${path}: ${gems.length():d} gems, ${platforms.length():d} moving platforms`);
         return loaded;
     }
@@ -45,5 +107,16 @@ public:
         lantern:::world:::Clear();
         gems = [];
         platforms = [];
+        checkpoints = [];
+        companionStops = [];
+        glowPlatforms = [];
+        anchors = [];
+        goals = [];
+        lanterns = [];
+        thorns = [];
+        chapter = 0;
     }
+
+private:
+    static LANTERN_TINT :: "FFD27A";
 }

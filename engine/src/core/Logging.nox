@@ -1,14 +1,21 @@
+// The logger's one piece of global state: whether it has been set up, when it started (so lines show time since
+// start) and the lowest-priority level it still prints, as a rank from FilterRank.
 LoggerState :: struct {
     installed~ bool = false;
     startNanoseconds~ u64 = 0;
     maximumLevel~ i32 = 3;
 }
 
+// The single logger. Nox has no lazily-built globals, so it is a plain struct that InitLogging fills in.
 lanternLogger~ LoggerState = LoggerState { };
 
 lantern:::core :: namespace {
     STANDARD_ERROR: i32 : 2;
 
+    /**
+     * How important a message is, most important first. A message is printed when its level is at or above the
+     * filter's.
+     */
     LogLevel :: enum {
         Error,
         Warn,
@@ -17,6 +24,9 @@ lantern:::core :: namespace {
         Trace
     }
 
+    /**
+     * The setting `LANTERN_LOG` chooses: the lowest-priority level to print, or Off to print nothing.
+     */
     LogLevelFilter :: enum {
         Off,
         Error,
@@ -26,6 +36,9 @@ lantern:::core :: namespace {
         Trace
     }
 
+    /**
+     * A level as a number, 1 (Error) to 5 (Trace), so levels can be compared.
+     */
     LevelRank :: (level: LogLevel) -> i32 {
         return when level {
             LogLevel:::Error -> 1,
@@ -36,6 +49,9 @@ lantern:::core :: namespace {
         };
     }
 
+    /**
+     * A filter as a number, 0 (Off) to 5 (Trace). A message is printed when its LevelRank is at most this.
+     */
     FilterRank :: (filter: LogLevelFilter) -> i32 {
         return when filter {
             LogLevelFilter:::Off -> 0,
@@ -47,6 +63,9 @@ lantern:::core :: namespace {
         };
     }
 
+    /**
+     * The word printed in a log line for a level.
+     */
     LevelName :: (level: LogLevel) -> string {
         return when level {
             LogLevel:::Error -> "ERROR",
@@ -57,6 +76,9 @@ lantern:::core :: namespace {
         };
     }
 
+    /**
+     * Reads "off", "error", "warn", "info", "debug" or "trace" in any case. Returns null for anything else.
+     */
     ParseLogLevelFilter :: (text: string) -> LogLevelFilter? {
         lowered: string! = text.toLower();
         defer delete lowered;
@@ -81,6 +103,10 @@ lantern:::core :: namespace {
         return null;
     }
 
+    /**
+     * Starts the logger. The level comes from `LANTERN_LOG` when that is set to a valid name, else `defaultLevel`.
+     * Calling it again does nothing, so the first caller wins.
+     */
     InitLogging :: (defaultLevel: LogLevelFilter) -> void {
         level~ LogLevelFilter = defaultLevel;
         requestedLevel: string!? = environmentVariable("LANTERN_LOG");
@@ -100,12 +126,18 @@ lantern:::core :: namespace {
         }
     }
 
+    /**
+     * True when a message at this level would be printed. Check it before building an expensive message.
+     */
     LogEnabled :: (level: LogLevel) -> bool {
         unsafe {
             return lanternLogger.installed && LevelRank(level) <= lanternLogger.maximumLevel;
         }
     }
 
+    /**
+     * One log line without its newline: `[  12.345s] INFO  [target] message`.
+     */
     FormatLogLine :: (seconds: f64, level: LogLevel, target: string, message: string) -> string! {
         time: string! = FixedDecimals(seconds, 3, 8);
         defer delete time;
@@ -114,6 +146,10 @@ lantern:::core :: namespace {
         return `[${time}s] ${name} [${target}] ${message}`;
     }
 
+    /**
+     * Prints a message to standard error when its level passes the filter. `target` names the part of the engine
+     * it came from ("renderer", "audio").
+     */
     Log :: (level: LogLevel, target: string, message: string) -> void {
         if !LogEnabled(level) {
             return;
@@ -130,6 +166,9 @@ lantern:::core :: namespace {
         }
     }
 
+    /**
+     * Shorthand for Log at the Error level. The next four do the same for their levels.
+     */
     LogError :: (target: string, message: string) -> void {
         Log(LogLevel:::Error, target, message);
     }

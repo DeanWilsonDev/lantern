@@ -1,17 +1,25 @@
 lantern:::editorbackend :: namespace {
+    // The editor's GPU side cache. Making a mesh or texture is slow, so each is made once and reused.
+    // A shape's mesh that goes 600 frames (about ten seconds) without being drawn is released, so
+    // resizing a box in the inspector does not leave a mesh behind for every size it passed through.
     UNUSED_FRAMES_BEFORE_RELEASE: u64 : 600;
 
+    // A shape's mesh and the last frame it was used on. A shape is its size, so two entities with the
+    // same shape share one mesh.
     CachedShapeMesh :: struct {
         shape~ lantern:::world:::Shape = lantern:::world:::Shape { };
         mesh~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
         lastUsedFrame~ u64 = 0;
     }
 
+    // The mesh of one marker kind (spawn, pickup and so on). There are few, so they are kept for good.
     CachedMarkerMesh :: struct {
         marker~ lantern:::editor:::MarkerMesh = lantern:::editor:::MarkerMesh:::Cube;
         mesh~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
     }
 
+    // A material name and its texture, or null when the texture could not be made. The failure is
+    // kept too, so a missing file is reported once and not on every frame.
     CachedMaterial :: class {
     public:
         name~ string!;
@@ -27,6 +35,8 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // Compares floats by what they are, not by `==`: two not-a-numbers match, and 0 and -0 do not.
+    // A cache must treat shapes as the same only when they would build the same mesh.
     SameFloatBits :: (left: f32, right: f32) -> bool {
         if left != right {
             return left != left && right != right;
@@ -37,6 +47,7 @@ lantern:::editorbackend :: namespace {
         return true;
     }
 
+    // True when two shapes would build the same mesh: the same kind and the same size numbers.
     SameShape :: (left: lantern:::world:::Shape, right: lantern:::world:::Shape) -> bool {
         if left.kind != right.kind {
             return false;
@@ -47,8 +58,10 @@ lantern:::editorbackend :: namespace {
         return SameFloatBits(left.width, right.width) && SameFloatBits(left.height, right.height) && SameFloatBits(left.length, right.length);
     }
 
-    UploadMesh :: (renderer: lantern:::gpu:::GpuRenderer~*, mesh: lantern:::renderer:::MeshData*, what: string) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
-        when renderer->CreateMesh(mesh) {
+    // Sends a mesh to the GPU. On failure it logs what was being uploaded and returns null, so one bad
+    // mesh costs a missing object and not a crashed editor.
+    UploadMesh :: (gpuRenderer: lantern:::gpu:::GpuRenderer~*, mesh: lantern:::renderer:::MeshData*, what: string) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+        when gpuRenderer->CreateMesh(mesh) {
             Result:::Ok(handle) -> {
                 return handle;
             },
@@ -62,11 +75,14 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // The viewport's resources on a real GPU renderer: it implements the ViewportResources interface
+    // the editor draws through, so the editor code never names the GPU. It holds the renderer, the
+    // assets folder and the caches above, and the font atlas for text in the viewport.
     GpuViewportResources :: class {
         implements:
             lantern:::editor:::ViewportResources;
     public:
-        renderer~ lantern:::gpu:::GpuRenderer*!;
+        viewportRenderer~ lantern:::gpu:::GpuRenderer*!;
         assetsDirectory~ string!;
         shapes~ Array<CachedShapeMesh>! = [];
         markers~ Array<CachedMarkerMesh>! = [];
@@ -76,7 +92,7 @@ lantern:::editorbackend :: namespace {
         fontAtlasFailed~ bool = false;
 
         GpuViewportResources~: (gpuRenderer: lantern:::gpu:::GpuRenderer*!, assets: string) {
-            renderer = gpuRenderer!;
+            viewportRenderer = gpuRenderer!;
             assetsDirectory = `${assets}`;
         }
 
@@ -85,9 +101,10 @@ lantern:::editorbackend :: namespace {
             delete markers;
             materials.freeAll();
             delete assetsDirectory;
-            delete renderer;
+            delete viewportRenderer;
         }
 
+        // Called once per frame: counts the frame and releases shape meshes unused for a long time.
         Prepare~: () -> void {
             frame += 1;
             kept~ Array<CachedShapeMesh>! = [];
@@ -95,13 +112,14 @@ lantern:::editorbackend :: namespace {
                 if frame - cached.lastUsedFrame < UNUSED_FRAMES_BEFORE_RELEASE {
                     kept.push(cached);
                 } else {
-                    renderer->RemoveMesh(cached.mesh);
+                    viewportRenderer->RemoveMesh(cached.mesh);
                 }
             }
             delete shapes;
             shapes = kept!;
         }
 
+        // The mesh for a shape, making and caching it on first use. Null if the upload failed.
         ShapeMesh~: (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
             for index~ usize = 0; index < shapes.length(); index++ {
                 if SameShape(shapes[index].shape, shape) {
@@ -110,20 +128,22 @@ lantern:::editorbackend :: namespace {
                 }
             }
             data := lantern:::world:::ShapeMesh(shape);
-            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(renderer, data, "shape");
+            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(viewportRenderer, data, "shape");
             delete data;
             guard mesh := uploaded return null;
             shapes.push(CachedShapeMesh { shape: shape, mesh: mesh, lastUsedFrame: frame });
             return mesh;
         }
 
+        // The texture of the built-in font, for the viewport's overlay text (the view cube). It is made on
+        // first use; if that fails it is logged once and the text is skipped from then on.
         FontTexture~: () -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
             if fontAtlas != null || fontAtlasFailed {
                 return fontAtlas;
             }
             atlas := lantern:::renderer:::FontAtlas();
             defer delete atlas;
-            when renderer->CreateTexture(atlas) {
+            when viewportRenderer->CreateTexture(atlas) {
                 Result:::Ok(texture) -> {
                     fontAtlas = texture;
                 },
@@ -136,6 +156,9 @@ lantern:::editorbackend :: namespace {
             return fontAtlas;
         }
 
+        // The texture for a material name, loaded from `textures/NAME.png` in the assets folder. A missing
+        // or unreadable file falls back to a grey checker with a warning, so the entity is still visible. No
+        // material gives null (untextured).
         MaterialTexture~: (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
             guard name := material return null;
             for cached in materials {
@@ -160,7 +183,7 @@ lantern:::editorbackend :: namespace {
             delete path;
             texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
             if loadedData := data {
-                when renderer->CreateTexture(loadedData) {
+                when viewportRenderer->CreateTexture(loadedData) {
                     Result:::Ok(handle) -> {
                         texture = handle;
                     },
@@ -177,6 +200,7 @@ lantern:::editorbackend :: namespace {
             return texture;
         }
 
+        // The mesh for a marker kind, made on first use. A plane marker has no mesh (it is drawn as lines).
         MarkerMeshHandle~: (marker: lantern:::editor:::MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
             if marker == lantern:::editor:::MarkerMesh:::Plane {
                 return null;
@@ -187,13 +211,15 @@ lantern:::editorbackend :: namespace {
                 }
             }
             data := MarkerMeshData(marker);
-            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(renderer, data, "marker");
+            uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(viewportRenderer, data, "marker");
             delete data;
             guard mesh := uploaded return null;
             markers.push(CachedMarkerMesh { marker: marker, mesh: mesh });
             return mesh;
         }
 
+        // Builds a marker kind's mesh data: a sphere, a capsule the height of a character, the gem model
+        // (or a generated gem when `models/gem.glb` cannot be loaded), otherwise a small cube.
         MarkerMeshData :: (marker: lantern:::editor:::MarkerMesh) -> lantern:::renderer:::MeshData*! {
             if marker == lantern:::editor:::MarkerMesh:::Sphere {
                 return lantern:::renderer:::Sphere(0.3f, 16, 8);

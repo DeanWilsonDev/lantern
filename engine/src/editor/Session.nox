@@ -1,4 +1,12 @@
 lantern:::editor :: namespace {
+    // The editor's whole state and everything the person can do, with no knowledge of windows or the GPU. The
+    // app feeds it pointer, key and menu events; it keeps the open document, the selection, the camera and
+    // gizmo, the drag in progress, the console and the status line, and it answers questions the UI draws
+    // from (the outliner rows, the inspector fields). Because it has no window, tests drive it directly.
+    //
+    // Two counters tell the UI when to redraw: the document's `revision` (the level changed) and
+    // `localRevision` (something outside the level, such as the selection, the tool or the status, changed);
+    // UiRevision adds them. `hidden` and `locked` are view states kept here and not saved in the level.
     EditorSession :: class {
     public:
         document~ EditorDocument*!;
@@ -35,11 +43,13 @@ lantern:::editor :: namespace {
         paletteRevision~ u64 = 0;
         localRevision~ u64 = 0;
 
+        // Builds the session for a document and palette, makes the pick geometry and the camera bookmark slots,
+        // and frames the whole level.
         EditorSession~: (sessionDocument: EditorDocument*!, sessionPalette: Palette*!) {
             document = sessionDocument!;
             palette = sessionPalette!;
             status = "".copy();
-            geometry = SceneGeometry:::Build(document->world, document->Revision());
+            geometry = SceneGeometry:::Build(document->documentWorldFile, document->Revision());
             for slot~ usize = 0; slot < BOOKMARK_COUNT; slot++ {
                 bookmarkSet.push(false);
                 bookmarkCameras.push(OrbitCamera { });
@@ -65,14 +75,17 @@ lantern:::editor :: namespace {
             recentFiles.freeAll();
         }
 
-        static Create :: (world: lantern:::world:::WorldFile*!, path: string?, sessionPalette: Palette*!) -> EditorSession*! {
+        // A session for a level that is already in memory, with an optional path to save it to.
+        static Create :: (worldFile: lantern:::world:::WorldFile*!, path: string?, sessionPalette: Palette*!) -> EditorSession*! {
             ownedPath~ string!? = null;
             if given := path {
                 ownedPath = `${given}`;
             }
-            return new EditorSession(new EditorDocument(world!, ownedPath!), sessionPalette!);
+            return new EditorSession(new EditorDocument(worldFile!, ownedPath!), sessionPalette!);
         }
 
+        // A session for a level file. Adds it to the recent files and says so in the status line. Returns the
+        // loader's error message when the file cannot be read.
         static Open :: (path: string, sessionPalette: Palette*!) -> Result<EditorSession*!, string!> {
             when EditorDocument:::Open(path) {
                 Result:::Ok(opened) -> {
@@ -90,6 +103,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Remembers the palette file's path, so the palette can be saved back to it.
         SetPalettePath~: (path: string?) -> void {
             delete palettePath;
             palettePath = null;
@@ -98,21 +112,25 @@ lantern:::editor :: namespace {
             }
         }
 
+        // The level being edited.
         World :: () -> lantern:::world:::WorldFile* {
-            return document->world;
+            return document->documentWorldFile;
         }
 
+        // The number the UI watches: it changes whenever the level or the editor's own state changes.
         UiRevision :: () -> u64 {
             return document->Revision() + localRevision;
         }
 
+        // Rebuilds the pick geometry when the level has changed since it was last built.
         RefreshGeometry~: () -> void {
             if geometry->revision != document->Revision() {
                 delete geometry;
-                geometry = SceneGeometry:::Build(document->world, document->Revision());
+                geometry = SceneGeometry:::Build(document->documentWorldFile, document->Revision());
             }
         }
 
+        // The entity the inspector and gizmo work on: the one most recently added to the selection.
         PrimarySelection :: () -> u64? {
             if selection.length() == 0 {
                 return null;
@@ -120,22 +138,27 @@ lantern:::editor :: namespace {
             return selection[selection.length() - 1];
         }
 
+        // True when the entity is selected.
         IsSelected :: (key: u64) -> bool {
             return ContainsKeyIn(selection, key);
         }
 
+        // True when the entity is hidden in the viewport.
         IsHidden :: (key: u64) -> bool {
             return ContainsKeyIn(hidden, key);
         }
 
+        // True when the entity is locked: it can be selected but not moved.
         IsLocked :: (key: u64) -> bool {
             return ContainsKeyIn(locked, key);
         }
 
+        // True when a camera bookmark slot has been set.
         HasBookmark :: (slot: usize) -> bool {
             return slot < bookmarkSet.length() && bookmarkSet[slot];
         }
 
+        // The gizmo handle to highlight: the one being dragged, else the one under the mouse.
         HoveredHandle :: () -> Handle? {
             if current := drag {
                 if current->kind == DragKind:::Gizmo {
@@ -145,6 +168,7 @@ lantern:::editor :: namespace {
             return hoveredHandle;
         }
 
+        // True while a selection rectangle is being dragged.
         IsRubberBanding :: () -> bool {
             if current := drag {
                 return current->kind == DragKind:::RubberBand;
@@ -152,6 +176,7 @@ lantern:::editor :: namespace {
             return false;
         }
 
+        // The corner where the selection rectangle began.
         RubberBandStart :: () -> Vec2 {
             if current := drag {
                 return current->press;
@@ -159,10 +184,12 @@ lantern:::editor :: namespace {
             return pointer;
         }
 
+        // The camera and viewport size together, for turning pixels into rays and points into pixels.
         Projection :: () -> ViewportProjection {
             return ViewportProjection:::Create(camera.RenderCamera(), viewportSize);
         }
 
+        // The window title: the file name (or "untitled"), with a star when there are unsaved changes.
         Title :: () -> string! {
             name~ string! = "untitled".copy();
             if own := document->path {
@@ -175,6 +202,7 @@ lantern:::editor :: namespace {
             return name!;
         }
 
+        // The camera's mode, position and angles as a line of text for the status bar.
         CameraDescription :: () -> string! {
             position: Vec3 = camera.Position();
             mode: string = when camera.orthographic { true -> "ortho", false -> "persp" };
@@ -192,35 +220,41 @@ lantern:::editor :: namespace {
             return description!;
         }
 
+        // An entity's parent, or null when it has none or the parent is missing, so an orphan shows at the top
+        // level of the outliner and not nowhere.
         ShownParent :: (entity: lantern:::world:::WorldEntity*) -> u64? {
             guard parent := entity->parent return null;
-            if document->world->IndexOf(parent) == null {
+            if document->documentWorldFile->IndexOf(parent) == null {
                 return null;
             }
             return parent;
         }
 
+        // The rows of the outliner: the entities as a tree, parents before children, in file order, each with
+        // its depth and its selected, hidden and locked state. It walks with a stack of keys and depths and not
+        // by calling itself, and stops if it ever yields more rows than there are entities (which only a
+        // parent cycle could cause).
         Outline :: () -> Array<OutlineRow*!>! {
-            world: lantern:::world:::WorldFile* = document->world;
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
             rows~ Array<OutlineRow*!>! = [];
             stackKeys~ Array<u64>! = [];
             stackDepths~ Array<u32>! = [];
-            index~ usize = world->entities.length();
+            index~ usize = worldFile->entities.length();
             while index > 0 {
                 index -= 1;
-                if ShownParent(world->entities[index]) == null {
-                    stackKeys.push(world->entities[index]->id);
+                if ShownParent(worldFile->entities[index]) == null {
+                    stackKeys.push(worldFile->entities[index]->id);
                     stackDepths.push(0);
                 }
             }
             while stackKeys.length() > 0 {
                 key: u64 = stackKeys.remove(stackKeys.length() - 1);
                 depth: u32 = stackDepths.remove(stackDepths.length() - 1);
-                found: usize? = world->IndexOf(key);
+                found: usize? = worldFile->IndexOf(key);
                 guard entityIndex := found continue;
-                entity: lantern:::world:::WorldEntity* = world->entities[entityIndex];
+                entity: lantern:::world:::WorldEntity* = worldFile->entities[entityIndex];
                 children~ Array<u64>! = [];
-                for child in world->entities {
+                for child in worldFile->entities {
                     if SameOptionalU64(ShownParent(child), key) {
                         children.push(child->id);
                     }
@@ -233,7 +267,7 @@ lantern:::editor :: namespace {
                 row->locked = IsLocked(key);
                 row->hasChildren = children.length() > 0;
                 rows.push(row!);
-                if rows.length() > world->entities.length() {
+                if rows.length() > worldFile->entities.length() {
                     delete children;
                     break;
                 }
@@ -250,25 +284,28 @@ lantern:::editor :: namespace {
             return rows!;
         }
 
+        // The inspector's fields for the current selection, with a mixed flag on those that differ between
+        // the selected entities. Empty when nothing is selected.
         Inspector :: () -> Array<InspectorField*!>! {
             primaryFound: u64? = PrimarySelection();
             guard key := primaryFound return [];
-            world: lantern:::world:::WorldFile* = document->world;
-            found: usize? = world->IndexOf(key);
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
+            found: usize? = worldFile->IndexOf(key);
             guard primaryIndex := found return [];
             others~ Array<lantern:::world:::WorldEntity*>! = [];
             for other in selection {
                 if other != key {
-                    if otherIndex := world->IndexOf(other) {
-                        others.push(world->entities[otherIndex]);
+                    if otherIndex := worldFile->IndexOf(other) {
+                        others.push(worldFile->entities[otherIndex]);
                     }
                 }
             }
-            fields: Array<InspectorField*!>! = FieldsForSelection(world->entities[primaryIndex], others, world, palette);
+            fields: Array<InspectorField*!>! = FieldsForSelection(worldFile->entities[primaryIndex], others, worldFile, palette);
             delete others;
             return fields!;
         }
 
+        // Shows a message in the status line and adds it to the console as information.
         SetStatus~: (text: string!) -> void {
             delete status;
             status = `${text}`;
@@ -277,6 +314,7 @@ lantern:::editor :: namespace {
             localRevision += 1;
         }
 
+        // Adds a line to the console, dropping the oldest once there are more than LOG_LIMIT. Empty text is ignored.
         LogLine~: (level: LogLevel, text: string) -> void {
             if text.length() == 0 {
                 return;
@@ -288,6 +326,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Records a message. Warnings and errors also go to the status line; information goes to the console only.
         Note~: (level: LogLevel, text: string) -> void {
             if level != LogLevel:::Info {
                 delete status;
@@ -297,12 +336,16 @@ lantern:::editor :: namespace {
             localRevision += 1;
         }
 
+        // Empties the console.
         ClearLog~: () -> void {
             log.freeAll();
             log = [];
             localRevision += 1;
         }
 
+        // Takes the result of an operation that may have failed (an error message, or null for success). On
+        // a failure it logs it, shows it in the status line and returns false; otherwise returns true. Most
+        // menu actions end with it.
         Report~: (failure: string!?) -> bool {
             guard message := failure return true;
             lantern:::core:::LogWarn("editor", message);
@@ -314,10 +357,12 @@ lantern:::editor :: namespace {
             return false;
         }
 
+        // Reports a refusal (an action the editor will not do) and returns false.
         Refuse~: (message: string!) -> bool {
             return Report(message!);
         }
 
+        // Saves the level to its own path.
         Save~: () -> bool {
             when document->Save(null) {
                 Result:::Ok(savedPath) -> {
@@ -329,6 +374,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Saves the level to a new path, which becomes its path.
         SaveAs~: (path: string) -> bool {
             when document->Save(path) {
                 Result:::Ok(savedPath) -> {
@@ -340,6 +386,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // The part of saving that follows success: remember the file and say so.
         FinishSave~: (path: string!) -> bool {
             RememberRecentFile(path);
             name: string! = DisplayName(path);
@@ -349,6 +396,7 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Opens another level file in place of the current one.
         Load~: (path: string) -> bool {
             when EditorDocument:::Open(path) {
                 Result:::Ok(opened) -> {
@@ -365,11 +413,14 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Starts an empty level with a name and no path.
         NewWorld~: (name: string) -> void {
             ReplaceDocument(new EditorDocument(new lantern:::world:::WorldFile(name), null));
             SetStatus(`New world '${name}'`);
         }
 
+        // Swaps in a different document and resets what belonged to the old one: selection, hidden and locked
+        // sets, any drag and the pick geometry. The counter is carried forward so the UI sees a change.
         ReplaceDocument~: (replacement: EditorDocument*!) -> void {
             carriedRevision: u64 = UiRevision() + 1;
             delete document;
@@ -381,10 +432,12 @@ lantern:::editor :: namespace {
             delete drag;
             drag = null;
             delete geometry;
-            geometry = SceneGeometry:::Build(document->world, document->Revision());
+            geometry = SceneGeometry:::Build(document->documentWorldFile, document->Revision());
             FrameAll();
         }
 
+        // Puts a path at the top of the recent files list (removing an earlier entry for it) and keeps at
+        // most RECENT_FILE_LIMIT.
         RememberRecentFile~: (path: string) -> void {
             index~ usize = 0;
             while index < recentFiles.length() {
@@ -402,6 +455,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Replaces the recent files list, for loading it from the preferences.
         SetRecentFiles~: (paths: Array<string!>) -> void {
             recentFiles.freeAll();
             recentFiles = [];
@@ -413,34 +467,40 @@ lantern:::editor :: namespace {
             localRevision += 1;
         }
 
+        // Called after any change of selection. It ends the current undo merge, so edits made before and after
+        // the selection changed are separate undo steps, and tells the UI.
         SelectionChanged~: () -> void {
             document->SealHistory();
             localRevision += 1;
         }
 
+        // Replaces the selection with these entities.
         SetSelection~: (keys: Array<u64>!) -> void {
             delete selection;
             selection = keys!;
             SelectionChanged();
         }
 
+        // Selects just this entity, if it exists.
         SelectOnly~: (key: u64) -> void {
-            if document->world->IndexOf(key) != null {
+            if document->documentWorldFile->IndexOf(key) != null {
                 only~ Array<u64>! = [];
                 only.push(key);
                 SetSelection(only!);
             }
         }
 
+        // Adds the entity to the selection, or removes it if it is already in (shift click).
         ToggleSelected~: (key: u64) -> void {
             if position := KeyPosition(selection, key) {
                 selection.remove(position);
-            } else if document->world->IndexOf(key) != null {
+            } else if document->documentWorldFile->IndexOf(key) != null {
                 selection.push(key);
             }
             SelectionChanged();
         }
 
+        // Selects nothing.
         ClearSelection~: () -> void {
             if selection.length() > 0 {
                 selection.clear();
@@ -448,17 +508,19 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Selects every entity.
         SelectAll~: () -> void {
             keys~ Array<u64>! = [];
-            for entity in document->world->entities {
+            for entity in document->documentWorldFile->entities {
                 keys.push(entity->id);
             }
             SetSelection(keys!);
         }
 
+        // Selects what is not selected and deselects what is.
         InvertSelection~: () -> void {
             keys~ Array<u64>! = [];
-            for entity in document->world->entities {
+            for entity in document->documentWorldFile->entities {
                 if !IsSelected(entity->id) {
                     keys.push(entity->id);
                 }
@@ -466,9 +528,10 @@ lantern:::editor :: namespace {
             SetSelection(keys!);
         }
 
+        // Selects every entity of a kind.
         SelectKind~: (kind: string) -> void {
             keys~ Array<u64>! = [];
-            for entity in document->world->entities {
+            for entity in document->documentWorldFile->entities {
                 if entity->kind == kind {
                     keys.push(entity->id);
                 }
@@ -476,12 +539,13 @@ lantern:::editor :: namespace {
             SetSelection(keys!);
         }
 
+        // The given entities and all their children, grandchildren and so on, each listed once.
         Descendants :: (roots: Array<u64>) -> Array<u64>! {
             keys~ Array<u64>! = CopyKeys(roots);
             index~ usize = 0;
             while index < keys.length() {
                 parent: u64 = keys[index];
-                for entity in document->world->entities {
+                for entity in document->documentWorldFile->entities {
                     if SameOptionalU64(entity->parent, parent) && !ContainsKeyIn(keys, entity->id) {
                         keys.push(entity->id);
                     }
@@ -491,14 +555,17 @@ lantern:::editor :: namespace {
             return keys!;
         }
 
+        // Adds the descendants of the selection to it.
         SelectChildren~: () -> void {
             SetSelection(Descendants(selection));
         }
 
+        // True when an entity with this key is in the level.
         Exists :: (key: u64) -> bool {
-            return document->world->IndexOf(key) != null;
+            return document->documentWorldFile->IndexOf(key) != null;
         }
 
+        // The keys that still name an entity.
         Pruned :: (keys: Array<u64>) -> Array<u64>! {
             kept~ Array<u64>! = [];
             for key in keys {
@@ -509,6 +576,8 @@ lantern:::editor :: namespace {
             return kept!;
         }
 
+        // Drops keys of deleted entities from the selection and the hidden and locked sets. Undo and redo call
+        // it, since they can remove entities.
         PruneSelection~: () -> void {
             before: usize = selection.length();
             prunedSelection: Array<u64>! = Pruned(selection);
@@ -525,6 +594,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // The selected entities that are not locked.
         MovableSelection :: () -> Array<u64>! {
             keys~ Array<u64>! = [];
             for key in selection {
@@ -535,6 +605,7 @@ lantern:::editor :: namespace {
             return keys!;
         }
 
+        // Hides or shows an entity in the viewport.
         SetHidden~: (key: u64, shouldHide: bool) -> void {
             position: usize? = KeyPosition(hidden, key);
             if shouldHide && position == null {
@@ -548,6 +619,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Locks or unlocks an entity.
         SetLocked~: (key: u64, shouldLock: bool) -> void {
             position: usize? = KeyPosition(locked, key);
             if shouldLock && position == null {
@@ -561,6 +633,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Hides the selected entities.
         HideSelection~: () -> void {
             keys: Array<u64>! = CopyKeys(selection);
             for key in keys {
@@ -574,6 +647,7 @@ lantern:::editor :: namespace {
             delete count;
         }
 
+        // Shows every hidden entity.
         UnhideAll~: () -> void {
             count: string! = CountEntities(hidden.length());
             hidden.clear();
@@ -581,6 +655,7 @@ lantern:::editor :: namespace {
             delete count;
         }
 
+        // Locks or unlocks the selected entities.
         LockSelection~: (shouldLock: bool) -> void {
             keys: Array<u64>! = CopyKeys(selection);
             for key in keys {
@@ -593,6 +668,8 @@ lantern:::editor :: namespace {
             delete count;
         }
 
+        // Chooses move, rotate or scale. The set functions below change the UI counter only when the value
+        // really changes, so setting the same value again costs nothing.
         SetTool~: (newTool: GizmoTool) -> void {
             if tool != newTool {
                 tool = newTool;
@@ -600,6 +677,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Chooses world or local handles.
         SetSpace~: (newSpace: GizmoSpace) -> void {
             if space != newSpace {
                 space = newSpace;
@@ -607,6 +685,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Chooses where the gizmo sits for a multiple selection.
         SetPivotMode~: (mode: PivotMode) -> void {
             if pivotMode != mode {
                 pivotMode = mode;
@@ -614,6 +693,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Turns snapping on or off.
         SetSnapEnabled~: (enabled: bool) -> void {
             if snap.enabled != enabled {
                 snap.enabled = enabled;
@@ -621,6 +701,8 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Sets the step of the "translate", "rotate" or "scale" snap. A step that is not a positive, finite number
+        // is refused.
         SetSnapStep~: (name: string, value: f32) -> bool {
             if !(value > 0.0f && lantern:::core:::IsFinite(value)) {
                 shown: string! = FormatNumber(value);
@@ -641,6 +723,7 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // The step for a snap name, or null for an unknown name.
         SnapStep :: (name: string) -> f32? {
             if name == "translate" {
                 return snap.translateStep;
@@ -654,6 +737,7 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // Sets a View menu option by name and reports a bad name or value.
         SetViewOption~: (name: string, value: string) -> bool {
             failure: string!? = view.Set(name, value);
             succeeded: bool = Report(failure!);
@@ -661,11 +745,14 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // Throws away the drag in progress without restoring anything (the document does that).
         CancelDragState~: () -> void {
             delete drag;
             drag = null;
         }
 
+        // Undoes the last step (or cancels a drag), forgets selected entities that no longer exist and says
+        // what was undone.
         Undo~: () -> bool {
             CancelDragState();
             label~ string! = "drag".copy();
@@ -682,6 +769,7 @@ lantern:::editor :: namespace {
             return undone;
         }
 
+        // Redoes the last undone step.
         Redo~: () -> bool {
             label~ string! = "".copy();
             if given := document->RedoLabel() {
@@ -697,6 +785,7 @@ lantern:::editor :: namespace {
             return redone;
         }
 
+        // Moves to a step of the history panel.
         JumpHistory~: (position: usize) -> bool {
             CancelDragState();
             moved: bool = document->JumpHistory(position);
@@ -707,20 +796,26 @@ lantern:::editor :: namespace {
             return moved;
         }
 
+        // A copy of the entity with this key, or null.
         EntityCopy :: (key: u64) -> lantern:::world:::WorldEntity*!? {
-            found: usize? = document->world->IndexOf(key);
+            found: usize? = document->documentWorldFile->IndexOf(key);
             guard index := found return null;
-            return document->world->entities[index]->Copy();
+            return document->documentWorldFile->entities[index]->Copy();
         }
 
+        // Runs edits as one undo step and reports a failure. Everything that changes the level goes through
+        // this or the document's Execute.
         ExecuteEdits~: (label: string, edits: Array<Edit*!>!) -> bool {
             return Report(document->Execute(label, edits!));
         }
 
+        // Applies an edit from the inspector to one entity: ApplyField makes the changed copy, and if it really
+        // differs it is run as an undo step called "Edit FIELD". Steps for the same field of the same entity
+        // merge into one, so typing in a box is one undo.
         SetField~: (key: u64, field: string, text: string) -> bool {
-            found: usize? = document->world->IndexOf(key);
+            found: usize? = document->documentWorldFile->IndexOf(key);
             guard index := found return Refuse(`no entity ${key}`);
-            entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+            entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
             when ApplyField(entity, field, text) {
                 Result:::Ok(edited) -> {
                     if edited->SameAs(entity) {
@@ -741,6 +836,9 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Applies an inspector edit to every selected entity as one undo step. A name edit is applied to the
+        // primary entity only, since giving many entities one name makes no sense. If any entity refuses the
+        // value, nothing changes.
         SetFieldOnSelection~: (field: string, text: string) -> bool {
             if selection.length() <= 1 || field == "name" {
                 primaryFound: u64? = PrimarySelection();
@@ -750,9 +848,9 @@ lantern:::editor :: namespace {
             document->SealHistory();
             edits~ Array<Edit*!>! = [];
             for key in selection {
-                found: usize? = document->world->IndexOf(key);
+                found: usize? = document->documentWorldFile->IndexOf(key);
                 guard index := found continue;
-                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
                 when ApplyField(entity, field, text) {
                     Result:::Ok(edited) -> {
                         if edited->SameAs(entity) {
@@ -780,10 +878,12 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // Ends the merging of edits when a box loses focus, so the next edit is a new undo step.
         CommitField~: () -> void {
             document->SealHistory();
         }
 
+        // Renames a property on every selected entity that has it, keeping its value.
         RenameProperty~: (oldName: string, requestedName: string) -> bool {
             newName: string = requestedName.trim();
             if newName.length() == 0 {
@@ -791,9 +891,9 @@ lantern:::editor :: namespace {
             }
             edits~ Array<Edit*!>! = [];
             for key in selection {
-                found: usize? = document->world->IndexOf(key);
+                found: usize? = document->documentWorldFile->IndexOf(key);
                 guard index := found continue;
-                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
                 propertyFound: usize? = entity->PropertyIndex(oldName);
                 guard propertyIndex := propertyFound continue;
                 value: lantern:::world:::PropertyValue = entity->propertyValues[propertyIndex];
@@ -814,6 +914,10 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // Places a new entity from a palette template and selects it. The position is where the mouse ray
+        // (or the centre of the viewport) meets the level, rounded to the snap step on x and z, then raised so
+        // a box rests on the surface and by the template's lift. The name is made unique (`block_1`,
+        // `block_2`...). Returns the new key, or null if it failed.
         AddEntity~: (templateId: string, atCursor: bool) -> u64? {
             templateFound: EntityTemplate*? = palette->Template(templateId);
             if templateFound == null {
@@ -834,17 +938,17 @@ lantern:::editor :: namespace {
                 }
             }
             position.y += template->lift;
-            key: u64 = document->world->NextEntityKey();
+            key: u64 = document->documentWorldFile->NextEntityKey();
             entity := template->prototype->Copy();
             entity->id = key;
-            name: string! = UniqueName(document->world, template->id);
+            name: string! = UniqueName(document->documentWorldFile, template->id);
             entity->SetName(name);
             delete name;
             entity->transform = lantern:::world:::TransformData:::FromPosition(position);
             label: string! = `Add ${template->label}`;
             lowered: string! = template->label.toLower();
             edits~ Array<Edit*!>! = [];
-            edits.push(Edit:::Insert(document->world->entities.length(), entity!));
+            edits.push(Edit:::Insert(document->documentWorldFile->entities.length(), entity!));
             added: bool = ExecuteEdits(label, edits!);
             if !added {
                 delete label;
@@ -858,6 +962,9 @@ lantern:::editor :: namespace {
             return key;
         }
 
+        // Deletes the selected entities and all their descendants as one undo step. The removes are ordered
+        // from the last position to the first, so the positions stay valid, and undo puts each back where it
+        // was.
         DeleteSelection~: () -> bool {
             if selection.length() == 0 {
                 return false;
@@ -865,7 +972,7 @@ lantern:::editor :: namespace {
             doomed: Array<u64>! = Descendants(selection);
             positions~ Array<usize>! = [];
             for key in doomed {
-                if index := document->world->IndexOf(key) {
+                if index := document->documentWorldFile->IndexOf(key) {
                     positions.push(index);
                 }
             }
@@ -879,7 +986,7 @@ lantern:::editor :: namespace {
                     }
                 }
                 position: usize = positions.remove(largestAt);
-                edits.push(Edit:::Remove(document->world->entities[position]->id));
+                edits.push(Edit:::Remove(document->documentWorldFile->entities[position]->id));
             }
             delete positions;
             count: usize = edits.length();
@@ -898,11 +1005,15 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Duplicates the selection, offset along x: four snap steps (at least one metre) with snapping
+        // on, otherwise one metre.
         DuplicateSelection~: () -> bool {
             offset: f32 = when snap.enabled { true -> Math:::max(snap.translateStep, 0.25f) * 4.0f, false -> 1.0f };
             return DuplicateWithOffset(Vec3 { x: offset, y: 0.0f, z: 0.0f }, "Duplicate");
         }
 
+        // Duplicates the selection one body's width along an axis, so repeated duplicates make a row of
+        // bricks that touch. With snapping on the distance is rounded to the step.
         DuplicateSelectionAlong~: (axis: Axis) -> bool {
             RefreshGeometry();
             bounds: lantern:::core:::Aabb = geometry->BoundsOf(selection);
@@ -914,6 +1025,8 @@ lantern:::editor :: namespace {
             return duplicated;
         }
 
+        // Copies each selected entity (keeping its parent), gives the copy a unique name and moves it by an
+        // offset in world space, then selects the copies. One undo step, named with `verb`.
         DuplicateWithOffset~: (worldOffset: Vec3, verb: string) -> bool {
             if selection.length() == 0 {
                 return false;
@@ -921,8 +1034,8 @@ lantern:::editor :: namespace {
             keys: Array<u64>! = CopyKeys(selection);
             originals~ Array<DragOriginal*!>! = DragOriginalsFor(keys);
             delete keys;
-            nextKey~ u64 = document->world->NextEntityKey();
-            names~ Array<string!>! = EntityNames(document->world);
+            nextKey~ u64 = document->documentWorldFile->NextEntityKey();
+            names~ Array<string!>! = EntityNames(document->documentWorldFile);
             edits~ Array<Edit*!>! = [];
             copies~ Array<u64>! = [];
             for original in originals {
@@ -951,6 +1064,9 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Mirrors the movable selection across the plane through the centre of the selection, at right
+        // angles to an axis: positions flip along the axis, and the rotation angles about the other two axes
+        // are negated.
         MirrorSelection~: (axis: Axis) -> bool {
             movable: Array<u64>! = MovableSelection();
             if movable.length() == 0 {
@@ -981,6 +1097,8 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // Drops each movable entity straight down until its lowest point rests on whatever is below (not
+        // counting the selection), or on the ground at y = 0.
         SnapSelectionToGround~: () -> bool {
             movable: Array<u64>! = MovableSelection();
             if movable.length() == 0 {
@@ -1023,6 +1141,7 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // The world matrix of an entity (the identity for none), which includes all its parents.
         WorldMatrixOf~: (key: u64?) -> Mat4 {
             guard present := key return Mat4 { };
             RefreshGeometry();
@@ -1031,6 +1150,7 @@ lantern:::editor :: namespace {
             return placed->worldMatrix;
         }
 
+        // An entity's position in the world.
         WorldOriginOf~: (key: u64) -> Vec3 {
             RefreshGeometry();
             found: EntityGeometry*? = geometry->Find(key);
@@ -1038,6 +1158,8 @@ lantern:::editor :: namespace {
             return placed->Origin();
         }
 
+        // Puts an entity under another (or at the top level for null), keeping it where it is in the world.
+        // Parenting an entity under itself or its own descendant is refused.
         SetParent~: (child: u64, parent: u64?) -> bool {
             entityFound: lantern:::world:::WorldEntity*!? = EntityCopy(child);
             guard entityFound return false;
@@ -1055,21 +1177,23 @@ lantern:::editor :: namespace {
             return ExecuteEdits("Change parent", edits!);
         }
 
+        // Moves an entity in the list so it comes just before a sibling (or to the end for null), taking on the
+        // sibling's parent. It is the outliner's drag and drop. Done as a remove and an insert in one undo step.
         MoveBefore~: (child: u64, sibling: u64?) -> bool {
-            world: lantern:::world:::WorldFile* = document->world;
-            guard childIndex := world->IndexOf(child) return false;
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
+            guard childIndex := worldFile->IndexOf(child) return false;
             newParent~ u64? = null;
             targetIndex~ usize = LAST_INDEX;
             if siblingKey := sibling {
                 if siblingKey == child {
                     return true;
                 }
-                guard siblingIndex := world->IndexOf(siblingKey) return false;
-                newParent = world->entities[siblingIndex]->parent;
+                guard siblingIndex := worldFile->IndexOf(siblingKey) return false;
+                newParent = worldFile->entities[siblingIndex]->parent;
                 targetIndex = when (childIndex < siblingIndex) { true -> siblingIndex - 1, false -> siblingIndex };
             }
-            sameParent: bool = SameOptionalU64(world->entities[childIndex]->parent, newParent);
-            alreadyLast: bool = sibling == null && childIndex + 1 == world->entities.length();
+            sameParent: bool = SameOptionalU64(worldFile->entities[childIndex]->parent, newParent);
+            alreadyLast: bool = sibling == null && childIndex + 1 == worldFile->entities.length();
             if sameParent && (targetIndex == childIndex || alreadyLast) {
                 return true;
             }
@@ -1092,24 +1216,29 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // True when going up from `start` through its parents reaches `key`. It is how a parent cycle is
+        // spotted, and the loop stops after as many steps as there are entities in case the file already
+        // has a cycle.
         ParentChainContains~: (start: u64?, key: u64) -> bool {
             current~ u64? = start;
             steps~ usize = 0;
-            while current != null && steps <= document->world->entities.length() {
+            while current != null && steps <= document->documentWorldFile->entities.length() {
                 visited: u64 = current ?? 0;
                 if visited == key {
                     return true;
                 }
-                found: usize? = document->world->IndexOf(visited);
+                found: usize? = document->documentWorldFile->IndexOf(visited);
                 current = null;
                 if index := found {
-                    current = document->world->entities[index]->parent;
+                    current = document->documentWorldFile->entities[index]->parent;
                 }
                 steps += 1;
             }
             return false;
         }
 
+        // Gives an entity a new parent and recalculates its local position so its world position does
+        // not change.
         KeepWorldPositionUnder~: (entity: lantern:::world:::WorldEntity~*, key: u64, parent: u64?) -> void {
             worldPosition: Vec3 = WorldOriginOf(key);
             newParentWorld: Mat4 = WorldMatrixOf(parent);
@@ -1117,6 +1246,9 @@ lantern:::editor :: namespace {
             entity->transform.position = InverseOrIdentity(newParentWorld).transformPoint(worldPosition);
         }
 
+        // Puts the selected entities under a new empty "group" entity placed at their centre. If they all
+        // share a parent, the group goes under it too. Each member's position is made relative to the group, so
+        // nothing moves on screen.
         GroupSelection~: () -> bool {
             if selection.length() == 0 {
                 return false;
@@ -1124,15 +1256,15 @@ lantern:::editor :: namespace {
             keys: Array<u64>! = CopyKeys(selection);
             centerFound: Vec3? = PivotPoint(PivotMode:::Center);
             center: Vec3 = centerFound ?? Vec3 { };
-            world: lantern:::world:::WorldFile* = document->world;
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
             firstParent~ u64? = null;
-            if firstIndex := world->IndexOf(keys[0]) {
-                firstParent = world->entities[firstIndex]->parent;
+            if firstIndex := worldFile->IndexOf(keys[0]) {
+                firstParent = worldFile->entities[firstIndex]->parent;
             }
             shared~ bool = true;
             for key in keys {
-                if index := world->IndexOf(key) {
-                    if !SameOptionalU64(world->entities[index]->parent, firstParent) {
+                if index := worldFile->IndexOf(key) {
+                    if !SameOptionalU64(worldFile->entities[index]->parent, firstParent) {
                         shared = false;
                     }
                 } else {
@@ -1140,9 +1272,9 @@ lantern:::editor :: namespace {
                 }
             }
             commonParent: u64? = when shared { true -> firstParent, false -> null };
-            groupKey: u64 = world->NextEntityKey();
+            groupKey: u64 = worldFile->NextEntityKey();
             parentWorld: Mat4 = WorldMatrixOf(commonParent);
-            name: string! = UniqueName(document->world, "group");
+            name: string! = UniqueName(document->documentWorldFile, "group");
             group := new lantern:::world:::WorldEntity(groupKey, name, "group");
             delete name;
             group->parent = commonParent;
@@ -1175,6 +1307,7 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Moves the other movable entities to the primary entity's position along one axis.
         AlignSelection~: (axis: Axis) -> bool {
             primaryFound: u64? = PrimarySelection();
             guard primary := primaryFound return false;
@@ -1208,6 +1341,8 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // Spaces three or more movable entities evenly along an axis between the lowest and highest, in
+        // their current order along it.
         DistributeSelection~: (axis: Axis) -> bool {
             movable: Array<u64>! = MovableSelection();
             if movable.length() < 3 {
@@ -1247,6 +1382,7 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // The first palette template that makes this kind of entity, or null.
         TemplateForKind :: (kind: string) -> EntityTemplate*? {
             for template in palette->templates {
                 if template->Kind() == kind {
@@ -1256,12 +1392,14 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // Resets each selected entity's shape, material, tint, collider and properties to its template's,
+        // keeping its id, name, kind, parent and transform.
         RevertSelectionToTemplate~: () -> bool {
             edits~ Array<Edit*!>! = [];
             for key in selection {
-                found: usize? = document->world->IndexOf(key);
+                found: usize? = document->documentWorldFile->IndexOf(key);
                 guard index := found continue;
-                entity: lantern:::world:::WorldEntity* = document->world->entities[index];
+                entity: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[index];
                 templateFound: EntityTemplate*? = TemplateForKind(entity->kind);
                 guard template := templateFound continue;
                 edited := template->prototype->Copy();
@@ -1289,6 +1427,8 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // The reverse: makes the primary entity the new prototype of the template for its kind (without its
+        // id, parent or transform) and saves the palette file, so later placements look like it.
         ApplyPrimaryToTemplate~: () -> bool {
             primaryFound: u64? = PrimarySelection();
             guard key := primaryFound return false;
@@ -1333,11 +1473,13 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Frees an entity copy and reports a refusal. A shortcut for the early returns of the function above.
         RefuseAndDelete~: (entity: lantern:::world:::WorldEntity*!, message: string!) -> bool {
             delete entity;
             return Refuse(message!);
         }
 
+        // Moves the camera to look at the selection, or at the whole level when nothing is selected.
         FrameSelection~: () -> void {
             if selection.length() == 0 {
                 FrameAll();
@@ -1347,6 +1489,7 @@ lantern:::editor :: namespace {
             camera.Frame(geometry->BoundsOf(selection));
         }
 
+        // Moves the camera to look at the whole level, a little closer than a full fit.
         FrameAll~: () -> void {
             RefreshGeometry();
             bounds: lantern:::core:::Aabb = geometry->LevelBounds();
@@ -1356,6 +1499,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Snaps the camera to a named view (see OrbitCamera.ApplyPreset).
         CameraPreset~: (name: string) -> bool {
             if !camera.ApplyPreset(name) {
                 return Refuse(`unknown camera preset '${name}'`);
@@ -1366,6 +1510,7 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Switches between perspective and orthographic.
         SetOrthographic~: (orthographic: bool) -> void {
             if camera.orthographic != orthographic {
                 camera.orthographic = orthographic;
@@ -1373,6 +1518,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Saves the camera in one of the nine bookmark slots (control and a digit key).
         SetBookmark~: (slot: usize) -> bool {
             if slot >= BOOKMARK_COUNT {
                 return false;
@@ -1383,6 +1529,7 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Restores the camera from a bookmark slot (the digit key).
         GoToBookmark~: (slot: usize) -> bool {
             if !HasBookmark(slot) {
                 return Refuse(`camera bookmark ${slot + 1} is empty`);
@@ -1392,6 +1539,8 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Puts the camera at the primary entity, 1.6 m up (about eye height), looking along its forward
+        // direction. It is how a spawn point is checked from the player's point of view.
         AlignCameraToSelection~: () -> bool {
             primaryFound: u64? = PrimarySelection();
             guard primary := primaryFound return false;
@@ -1406,6 +1555,7 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // The reverse: moves the primary entity to the camera and turns it to face where the camera faces.
         AlignSelectionToCamera~: () -> bool {
             primaryFound: u64? = PrimarySelection();
             guard primary := primaryFound return false;
@@ -1428,10 +1578,13 @@ lantern:::editor :: namespace {
             return ExecuteEdits("Align to camera", edits!);
         }
 
+        // Tells the session how big the viewport is in pixels. Picking and the gizmo size need it.
         SetViewportSize~: (size: Vec2) -> void {
             viewportSize = lantern:::core:::ComponentMax2(size, Vec2 { x: 1.0f, y: 1.0f });
         }
 
+        // Where the gizmo goes: the primary entity's position, or the centre of the selection's box in
+        // centre mode. Null with nothing selected.
         PivotPoint~: (mode: PivotMode) -> Vec3? {
             primaryFound: u64? = PrimarySelection();
             guard primary := primaryFound return null;
@@ -1447,18 +1600,22 @@ lantern:::editor :: namespace {
             return placed->Origin();
         }
 
+        // The primary entity's rotation in the world.
         PrimaryOrientation~: () -> Quaternion {
             primaryFound: u64? = PrimarySelection();
             guard primary := primaryFound return Quaternion { };
             return lantern:::core:::DecomposeMatrix(WorldMatrixOf(primary)).rotation;
         }
 
+        // The gizmo as it would be drawn now, or null with nothing selected.
         CurrentGizmoFrame~: () -> GizmoFrame? {
             pivotFound: Vec3? = PivotPoint(pivotMode);
             guard pivot := pivotFound return null;
             return GizmoFrame:::Create(tool, space, pivot, PrimaryOrientation(), Projection());
         }
 
+        // The gizmo to draw. During a gizmo drag it keeps the axes it started with and follows the pivot, so
+        // the handles do not spin while the entity rotates under them.
         VisibleGizmo~: () -> GizmoFrame? {
             if current := drag {
                 if current->kind == DragKind:::Gizmo {
@@ -1472,6 +1629,8 @@ lantern:::editor :: namespace {
             return CurrentGizmoFrame();
         }
 
+        // Records the starting state (a copy, the parent's matrix and the world position) of each entity a
+        // drag will move.
         DragOriginalsFor~: (keys: Array<u64>) -> Array<DragOriginal*!>! {
             RefreshGeometry();
             originals~ Array<DragOriginal*!>! = [];
@@ -1484,6 +1643,7 @@ lantern:::editor :: namespace {
             return originals!;
         }
 
+        // The same for the selected entities that are not locked.
         MovableDragOriginals~: () -> Array<DragOriginal*!>! {
             movable: Array<u64>! = MovableSelection();
             originals: Array<DragOriginal*!>! = DragOriginalsFor(movable);
@@ -1491,6 +1651,11 @@ lantern:::editor :: namespace {
             return originals!;
         }
 
+        // The mouse moved. With no drag it only updates what is under the pointer. Otherwise it feeds the
+        // drag: camera orbit and pan move the camera; a pending press that moves more than the click slop
+        // becomes a body drag (when it began on an entity and the tool is move) or a selection rectangle
+        // (when it began on empty space); gizmo and body drags update their previews. The drag is taken out of
+        // the session while it is updated and put back after.
         PointerMoved~: (position: Vec2) -> void {
             delta: Vec2 = position - pointer;
             pointer = position;
@@ -1538,6 +1703,7 @@ lantern:::editor :: namespace {
             drag = activeFound!;
         }
 
+        // Works out what the pointer is over, in priority order: a view cube face, a gizmo handle, an entity.
         UpdateHover~: () -> void {
             hoveredViewCubeFace = ViewCubeHit(camera, viewportSize, pointer);
             if hoveredViewCubeFace != null {
@@ -1558,6 +1724,8 @@ lantern:::editor :: namespace {
             }
         }
 
+        // The entity under a ray, or null. Hidden and locked entities, and markers when markers are not
+        // shown, cannot be picked.
         Pick~: (ray: Ray) -> u64? {
             nothingSkipped~ Array<u64>! = [];
             found: u64? = PickSkipping(ray, nothingSkipped);
@@ -1565,6 +1733,7 @@ lantern:::editor :: namespace {
             return found;
         }
 
+        // The same, also ignoring some entities. Click cycling uses it to look through the one it picked last.
         PickSkipping~: (ray: Ray, skipped: Array<u64>) -> u64? {
             RefreshGeometry();
             excluded~ Array<u64>! = CopyKeys(hidden);
@@ -1587,6 +1756,7 @@ lantern:::editor :: namespace {
             return found.key;
         }
 
+        // A mouse button went down or up. Remembers it, and then runs the press or release.
         SetPointerButton~: (button: PointerButton, down: bool, modifiers: Modifiers) -> void {
             if button == PointerButton:::Left {
                 leftDown = down;
@@ -1602,6 +1772,11 @@ lantern:::editor :: namespace {
             }
         }
 
+        // A button went down. The right button orbits (with shift, pans), the middle button pans, alt and
+        // the left button orbits. Otherwise a left press is tried against the view cube (a click snaps
+        // the camera), then the gizmo (a drag begins, recording where on the handle it started), and
+        // last it begins a pending press that the next move or release turns into a body drag, a rectangle or
+        // a click.
         PointerPressed~: (button: PointerButton, modifiers: Modifiers) -> void {
             if drag != null {
                 return;
@@ -1664,6 +1839,11 @@ lantern:::editor :: namespace {
             drag = pending!;
         }
 
+        // A button went up, which ends the drag. A pending press that did not move is a click: it selects
+        // what is under it (clicking again cycles), shift or the command key adds to the selection, and
+        // clicking empty space clears it. A gizmo or body drag is committed as one undo step called Move,
+        // Rotate or Scale. A rectangle selects what it covers. Pan and orbit drags simply end, except that
+        // releasing a button that did not start the drag leaves the drag running.
         PointerReleased~: (button: PointerButton, modifiers: Modifiers) -> void {
             if drag == null {
                 return;
@@ -1719,12 +1899,15 @@ lantern:::editor :: namespace {
             UpdateHover();
         }
 
+        // Forgets the click cycle (see SelectByClick).
         ResetClickCycle~: () -> void {
             delete clickCycle;
             clickCycle = [];
             clickCyclePixel = null;
         }
 
+        // True when a click is a repeat of the last one: the same spot (within the click slop), the same camera
+        // view, and the selection is still the one entity the last click picked.
         ContinuesClickCycle :: (press: Vec2) -> bool {
             guard previous := clickCyclePixel return false;
             moved: Vec2 = press - previous;
@@ -1740,6 +1923,8 @@ lantern:::editor :: namespace {
             return selection[0] == clickCycle[clickCycle.length() - 1];
         }
 
+        // How many entities lie along the ray, found by picking again and again with the earlier ones skipped.
+        // The count is capped at MAX_CLICK_CYCLE_LENGTH.
         CountUnderCursor~: (ray: Ray) -> usize {
             counted~ Array<u64>! = [];
             while counted.length() < MAX_CLICK_CYCLE_LENGTH {
@@ -1752,6 +1937,9 @@ lantern:::editor :: namespace {
             return count;
         }
 
+        // Selects what a click hit. Clicking the same spot again picks the next entity behind the last one, so
+        // entities hidden behind others can be reached; when there is nothing further back the cycle starts
+        // again at the front. The status line says "2 of 3 under the cursor" when there is more than one.
         SelectByClick~: (press: Vec2, frontKey: u64) -> void {
             ray: Ray = Projection().RayThrough(press);
             chosen~ u64 = frontKey;
@@ -1775,12 +1963,14 @@ lantern:::editor :: namespace {
             SelectOnly(chosen);
             stackCount: usize = CountUnderCursor(ray);
             if stackCount > 1 {
-                if position := document->world->IndexOf(chosen) {
-                    SetStatus(`Selected ${document->world->entities[position]->name} (${clickCycle.length()} of ${stackCount} under the cursor)`);
+                if position := document->documentWorldFile->IndexOf(chosen) {
+                    SetStatus(`Selected ${document->documentWorldFile->entities[position]->name} (${clickCycle.length()} of ${stackCount} under the cursor)`);
                 }
             }
         }
 
+        // Selects the entities whose origin falls inside the dragged rectangle (not hidden or locked ones).
+        // With shift or the command key it adds to the selection instead of replacing it.
         FinishRubberBand~: (press: Vec2, additive: bool) -> void {
             projection: ViewportProjection = Projection();
             RefreshGeometry();
@@ -1817,6 +2007,8 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Escape during a drag: abandons it, and puts the entities back where they were if it was moving
+        // them. False when no drag was in progress.
         CancelDrag~: () -> bool {
             if drag == null {
                 return false;
@@ -1834,15 +2026,18 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // The scroll wheel zooms the camera.
         Wheel~: (notches: f32) -> void {
             camera.Dolly(notches);
         }
 
+        // Forgets every held key. The app calls it when the window loses focus so a key does not stay stuck.
         ReleaseKeys~: () -> void {
             delete keysHeld;
             keysHeld = [];
         }
 
+        // Where a letter is in the list of held keys, or null.
         HeldPosition :: (letter: u8) -> usize? {
             for index~ usize = 0; index < keysHeld.length(); index++ {
                 if keysHeld[index] == letter {
@@ -1852,6 +2047,7 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // 1 when the letter is held, else 0, so the movement keys can be added and subtracted.
         Held :: (letter: string) -> f32 {
             if HeldPosition(letter.byteAt(0)) != null {
                 return 1.0f;
@@ -1859,6 +2055,11 @@ lantern:::editor :: namespace {
             return 0.0f;
         }
 
+        // A key went down or up. It keeps track of held letters (for flying) and, on a press, handles the
+        // named keys: Escape cancels a drag or clears the selection, Delete deletes, End drops to the ground,
+        // Home frames everything, a digit goes to a camera bookmark (with the command key it saves one).
+        // Letters are passed on to LetterKey. Returns true when the key did something, so the app can stop
+        // the platform acting on it too.
         Key~: (key: EditorKey, down: bool, modifiers: Modifiers) -> bool {
             if key.kind == EditorKeyKind:::Letter {
                 position: usize? = HeldPosition(key.letter);
@@ -1904,6 +2105,11 @@ lantern:::editor :: namespace {
             return LetterKey(key, modifiers);
         }
 
+        // The letter shortcuts. With the command key: undo (Z), redo (shift Z or Y), duplicate (D), save (S),
+        // group (G) and select all (A). Without it: W, E and R choose move, rotate and scale; F frames the
+        // selection; X switches world and local axes; Z switches the pivot; G shows or hides the grid; H hides
+        // the selection and shift H shows everything. These are ignored while the right button is held,
+        // because then W, A, S, D, Q and E fly the camera.
         LetterKey~: (key: EditorKey, modifiers: Modifiers) -> bool {
             if modifiers.command {
                 if key.IsLetter("z") && modifiers.shift {
@@ -1976,6 +2182,8 @@ lantern:::editor :: namespace {
             return false;
         }
 
+        // Called every frame. While the right button is held, W A S D move the camera and Q and E move it down
+        // and up.
         Update~: (seconds: f32) -> void {
             if !rightDown {
                 return;
@@ -1986,6 +2194,9 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Starts dragging the selected entities by grabbing their body (not a handle). The drag slides over
+        // the horizontal plane through the pivot, starting from where the press hit it. False when nothing
+        // can be moved.
         BeginBodyDrag~: (press: Vec2) -> bool {
             if PrimarySelection() == null {
                 return false;
@@ -2008,6 +2219,8 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Moves the previewed entities to follow the mouse on the horizontal plane. With snapping, the
+        // primary entity lands on a snap step on x and z, and the rest keep their offsets from it.
         UpdateBodyDrag~: (active: Drag*) -> void {
             count: usize = active->originals.length();
             if count == 0 {
@@ -2028,6 +2241,8 @@ lantern:::editor :: namespace {
             PreviewWorldTranslation(active, delta);
         }
 
+        // Shows every dragged entity moved by a world offset. Nothing is added to the undo history until the
+        // mouse is released.
         PreviewWorldTranslation~: (active: Drag*, worldDelta: Vec3) -> void {
             for original in active->originals {
                 entity := original->entity->Copy();
@@ -2036,12 +2251,15 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Snaps the movement along one direction so the primary entity ends on a step of the grid.
         SnappedAlong :: (primary: DragOriginal*, delta: Vec3, direction: Vec3) -> Vec3 {
             component: f32 = primary->worldPosition.dot(direction);
             along: f32 = delta.dot(direction);
             return direction * (Snap(component + along, snap.translateStep) - component);
         }
 
+        // The snapped version of a move, by handle: the centre handle snaps each axis, a plane handle snaps
+        // along its two axes, and an axis handle along its one. Unchanged when snapping is off.
         SnappedTranslation :: (primary: DragOriginal*, delta: Vec3, frame: GizmoFrame, handle: Handle) -> Vec3 {
             if !snap.enabled {
                 return delta;
@@ -2059,6 +2277,12 @@ lantern:::editor :: namespace {
             return SnappedAlong(primary, delta, frame.AxisVector(handle.axis));
         }
 
+        // Updates a gizmo drag from the current mouse ray. Move: along an axis by how far the closest point
+        // on the axis has moved, in a plane or freely by how far the ray's point on the drag plane has moved.
+        // Rotate: by the change of angle round the ring, snapped to the rotate step, turning each entity about
+        // the pivot and turning its own rotation by the same amount (corrected for its parent's rotation).
+        // Scale: along an axis by the ratio of the closest point on the axis to where the drag began, in a plane
+        // or uniformly by the ratio of the distances from the pivot.
         UpdateGizmoDrag~: (active: Drag*) -> void {
             ray: Ray = Projection().RayThrough(pointer);
             count: usize = active->originals.length();
@@ -2126,6 +2350,8 @@ lantern:::editor :: namespace {
             PreviewScale(active, Vec3 { x: ratio, y: ratio, z: ratio });
         }
 
+        // Snaps a scale to the scale step and keeps its size at least 0.01, with its sign, so a drag can never
+        // scale an entity to nothing (a scale of zero cannot be edited back).
         TidyScale :: (value: f32) -> f32 {
             tidied~ f32 = value;
             if snap.enabled {
@@ -2138,6 +2364,7 @@ lantern:::editor :: namespace {
             return tidied;
         }
 
+        // Shows every dragged entity with its starting scale multiplied by the factors.
         PreviewScale~: (active: Drag*, factors: Vec3) -> void {
             for original in active->originals {
                 entity := original->entity->Copy();

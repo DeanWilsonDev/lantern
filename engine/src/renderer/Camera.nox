@@ -1,21 +1,48 @@
 lantern:::renderer :: namespace {
+    /**
+     * Where the frame is seen from, and how much of the world it sees. Produces the two matrices every vertex goes
+     * through: view (world space to camera space) and projection (camera space to clip space, where the GPU clips and
+     * divides by w).
+     *
+     * Lantern's conventions: right-handed, +Y up, the camera looks down its -Z, and clip-space depth runs 0 (near) to 1
+     * (far), as Vulkan, Metal and Direct3D expect.
+     */
     Camera :: struct {
+        /** The camera's position in the world. */
         position~ Vec3 = Vec3 { x: 0.0f, y: 2.0f, z: 6.0f };
+        /** The unit direction the camera looks. */
         forward~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+        /** How wide the view is from top to bottom edge; the horizontal angle follows from the aspect ratio. */
         verticalFieldOfViewRadians~ f32 = 60.0f * (Math:::PI / 180.0f);
+        /**
+         * The nearest distance drawn. Depth precision is spread very unevenly between near and far, mostly close to the
+         * near plane, so pushing it out improves precision far more than pulling the far plane in.
+         */
         nearPlane~ f32 = 0.1f;
+        /** The farthest distance drawn; anything beyond is clipped. */
         farPlane~ f32 = 300.0f;
+        /**
+         * Set for an orthographic camera (the editor's straight top, front and side views): half the view's height in
+         * world units. Null for perspective.
+         */
         orthographicHalfHeight~ f32? = null;
 
+        /** Two units up and six back from the origin, looking at it. */
         static Default :: () -> Camera {
             return Camera:::LookAt(Vec3 { x: 0.0f, y: 2.0f, z: 6.0f }, Vec3 { });
         }
 
+        /** A camera at `position` looking at `target`. */
         static LookAt :: (position: Vec3, target: Vec3) -> Camera {
             forward := lantern:::core:::NormalizeOr3(target - position, lantern:::core:::WorldForward());
             return Camera { position: position, forward: forward };
         }
 
+        /**
+         * The view matrix: moves the world so the camera sits at the origin looking down -Z. It's the inverse of the
+         * camera's own placement. Up is world +Y, unless the camera looks straight up or down, where that's undefined
+         * and world forward is used instead.
+         */
         View :: () -> Mat4 {
             up~ Vec3 = lantern:::core:::WorldUp();
             if lantern:::core:::LengthSquared3(forward.cross(lantern:::core:::WorldUp())) < 0.000001f {
@@ -24,6 +51,12 @@ lantern:::renderer :: namespace {
             return lantern:::core:::LookToRightHanded(position, forward, up);
         }
 
+        /**
+         * The projection matrix for a target of this width / height. Perspective makes distant things smaller and puts
+         * the distance in w, so the GPU's divide by w does the foreshortening. Orthographic keeps sizes constant, and
+         * its depth range runs from -far to far so geometry behind the camera position still shows in the editor's
+         * straight views.
+         */
         Projection :: (aspectRatio: f32) -> Mat4 {
             safeAspect: f32 = Math:::max(aspectRatio, 0.001f);
             if halfHeight := orthographicHalfHeight {
@@ -33,10 +66,15 @@ lantern:::renderer :: namespace {
             return lantern:::core:::Perspective(verticalFieldOfViewRadians, safeAspect, nearPlane, farPlane);
         }
 
+        /** Whether this is an orthographic camera. */
         IsOrthographic :: () -> bool {
             return orthographicHalfHeight != null;
         }
 
+        /**
+         * Projection times view: takes a world position straight to clip space. Computed once per frame and pushed to
+         * the shaders.
+         */
         ViewProjection :: (aspectRatio: f32) -> Mat4 {
             return Projection(aspectRatio) * View();
         }

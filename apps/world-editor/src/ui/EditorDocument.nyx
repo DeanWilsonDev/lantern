@@ -5,8 +5,14 @@ LogItem :: import LogItem;
 StatusInfo :: import StatusInfo;
 ToolbarState :: import ToolbarState;
 
+// The interface's copy of the editor's state. The editor (Nox) is the truth; this class reads it through
+// the host functions and keeps it in signals, so the interface redraws only when something it shows has
+// changed. `revision` is bumped on every refresh so parts that cannot see a field change, like the
+// viewport, can still tell.
 EditorDocument :: class {
 public:
+    // The status bar's numbers (frame rate, play time) change every frame, so they are read twice a second
+    // and not on every revision.
     static STATUS_REFRESH_SECONDS :: 0.5f;
 
     @signal revision~ i64 = 0;
@@ -24,6 +30,10 @@ public:
     inspectorRefillPending~ bool = false;
     statusTimer~ f32 = 0.0f;
 
+    // Once a frame: if the editor's revision has changed, refresh everything (and rebuild the inspector
+    // unless the change came from typing in it, which would take the cursor away). A rebuilt inspector
+    // is first emptied and then refilled on the next tick, so its text boxes are made afresh. Also
+    // refreshes the status every half second, and at once when play starts or stops.
     Tick~: (deltaSeconds: f32) -> void {
         current := editorRevision();
         if current != this.seenRevision {
@@ -43,14 +53,35 @@ public:
         }
     }
 
+    // Reads the toolbar, status, inspector title, history, console and recent files from the editor, and
+    // assigns each only if it differs. Sets the window title too. With `rebuildInspector` it also starts
+    // rebuilding the inspector.
     Refresh~: (rebuildInspector: bool) -> void {
         this.revision += 1;
-        this.toolbar = EditorModel:::CurrentToolbar();
-        this.status = EditorModel:::Status();
-        this.inspectorTitle = EditorModel:::InspectorTitle();
-        this.history = EditorModel:::History();
-        this.log = EditorModel:::Log(true, true, true);
-        this.recentFiles = ReadRecentFiles();
+        nextToolbar := EditorModel:::CurrentToolbar();
+        if nextToolbar != this.toolbar {
+            this.toolbar = nextToolbar;
+        }
+        nextStatus := EditorModel:::Status();
+        if nextStatus != this.status {
+            this.status = nextStatus;
+        }
+        nextInspectorTitle := EditorModel:::InspectorTitle();
+        if nextInspectorTitle != this.inspectorTitle {
+            this.inspectorTitle = nextInspectorTitle;
+        }
+        nextHistory := EditorModel:::History();
+        if nextHistory != this.history {
+            this.history = nextHistory;
+        }
+        nextLog := EditorModel:::Log(true, true, true);
+        if nextLog != this.log {
+            this.log = nextLog;
+        }
+        nextRecentFiles := ReadRecentFiles();
+        if nextRecentFiles != this.recentFiles {
+            this.recentFiles = nextRecentFiles;
+        }
         if rebuildInspector {
             this.inspectorVersion += 1;
             this.inspectorGroups = [];
@@ -59,6 +90,8 @@ public:
         penumbra:::setWindowTitle(editorTitle());
     }
 
+    // An inspector box was edited: applies the text to the whole selection, or to the single selected
+    // entity, and remembers that this revision came from typing.
     EditField~: (field: string, text: string) -> void {
         if editorSelectionCount() > 1 {
             editorSetSelectionField(field, text);
@@ -68,11 +101,13 @@ public:
         this.revisionFromTyping = editorRevision();
     }
 
+    // Forgets the recent files.
     ClearRecentFiles~: () -> void {
         editorSetPreference("recent_files", "");
         this.recentFiles = [];
     }
 
+    // The recent files list from the editor.
     ReadRecentFiles :: () -> Array<string> {
         files~ Array<string> = [];
         count := editorRecentFileCount();

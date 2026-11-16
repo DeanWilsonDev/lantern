@@ -1,4 +1,8 @@
 lantern:::host :: namespace {
+    /**
+     * Reads argument `index` as an entity id and checks that entity still exists, failing the call with not-found if it
+     * doesn't. A script that keeps an id past a despawn gets an error and not a crash.
+     */
     LiveEntity :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, index: usize) -> lantern:::core:::Handle<lantern:::engine:::EntityTag>? {
         id: i64 = context->I64(index);
         if Stopped(context) {
@@ -6,7 +10,7 @@ lantern:::host :: namespace {
         }
         entity: lantern:::core:::Handle<lantern:::engine:::EntityTag> = EntityFromScript(id);
         unsafe {
-            if state->world->Contains(entity) {
+            if state->entityWorld->Contains(entity) {
                 return entity;
             }
         }
@@ -16,6 +20,9 @@ lantern:::host :: namespace {
         return null;
     }
 
+    /**
+     * The name of what went wrong when setting a parent, or null when nothing did.
+     */
     ParentChangeProblem :: (change: lantern:::engine:::ParentChange) -> string? {
         return when change {
             lantern:::engine:::ParentChange:::Done -> null,
@@ -24,6 +31,9 @@ lantern:::host :: namespace {
         };
     }
 
+    /**
+     * Copies a world entity's kind and properties into the tags the script reads.
+     */
     TagsFromWorldEntity :: (spawned: lantern:::core:::Handle<lantern:::engine:::EntityTag>, entity: lantern:::world:::WorldEntity*) -> EntityTags*! {
         tags := new EntityTags(spawned, entity->kind);
         for index~ usize = 0; index < entity->propertyKeys.length(); index++ {
@@ -32,6 +42,9 @@ lantern:::host :: namespace {
         return tags!;
     }
 
+    /**
+     * The texture for an entity's material name, or null (with a warning) when no texture has that name.
+     */
     PieceTexture :: (state: raw EngineState~*, entity: lantern:::world:::WorldEntity*) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
         guard material := entity->material return null;
         unsafe {
@@ -45,6 +58,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Adds an entity's collider to the collision world: a static one is added where it stands, and a kinematic one becomes a
+     * body that is moved by matrix and is joined to the entity.
+     */
     AddPieceCollider :: (state: raw EngineState~*, piece: lantern:::world:::WorldPiece*, spawned: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> void {
         guard kind := piece->collider return;
         unsafe {
@@ -64,16 +81,19 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Spawns one entity of a loaded level, with a mesh and renderer when it has a shape.
+     */
     SpawnPiece :: (state: raw EngineState~*, piece: lantern:::world:::WorldPiece*, entity: lantern:::world:::WorldEntity*) -> Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!> {
         transform: lantern:::engine:::Transform = lantern:::engine:::Transform:::FromMatrix(piece->localMatrix);
         unsafe {
-            guard meshData := piece->mesh return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Ok(state->world->Spawn(entity->name, GameScene(), transform));
-            created := state->renderer->CreateMesh(meshData);
+            guard meshData := piece->mesh return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Ok(state->entityWorld->Spawn(entity->name, GameScene(), transform));
+            created := state->renderBackend->CreateMesh(meshData);
             when created! {
                 Result:::Ok(mesh) -> {
                     state->worldMeshes.push(mesh);
-                    renderer: lantern:::engine:::MeshRenderer = lantern:::engine:::MeshRenderer:::Create(mesh, PieceTexture(state, entity), piece->tint);
-                    return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Ok(state->world->SpawnMesh(entity->name, GameScene(), transform, renderer));
+                    meshRenderer: lantern:::engine:::MeshRenderer = lantern:::engine:::MeshRenderer:::Create(mesh, PieceTexture(state, entity), piece->tint);
+                    return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Ok(state->entityWorld->SpawnMesh(entity->name, GameScene(), transform, meshRenderer));
                 },
                 Result:::Err(message) -> {
                     return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Err(message!);
@@ -82,6 +102,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Sets each spawned entity's parent from the file's parent ids. A parent loop or a missing entity is reported with the
+     * entity's name.
+     */
     LinkPieceParents :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*, pieces: Array<lantern:::world:::WorldPiece*!>, keys: Array<u64>, spawned: Array<lantern:::core:::Handle<lantern:::engine:::EntityTag>>) -> string!? {
         for index~ usize = 0; index < pieces.length(); index++ {
             piece: lantern:::world:::WorldPiece* = pieces[index];
@@ -91,7 +115,7 @@ lantern:::host :: namespace {
                     continue;
                 }
                 unsafe {
-                    change: lantern:::engine:::ParentChange = state->world->SetParent(spawned[index], spawned[parentIndex]);
+                    change: lantern:::engine:::ParentChange = state->entityWorld->SetParent(spawned[index], spawned[parentIndex]);
                     if problem := ParentChangeProblem(change) {
                         return `${worldFile->entities[piece->entityIndex]->name}: ${problem}`;
                     }
@@ -102,6 +126,29 @@ lantern:::host :: namespace {
         return null;
     }
 
+    /**
+     * Turns the world file's light entities into lights in the render world: each point and spot light is added and
+     * its id remembered so `ClearWorld` can remove it, and a `sun` entity replaces the sun and ambient light (the last
+     * one in the file wins). A light is placed by its own transform; a parent's transform is not applied.
+     */
+    AddWorldLights :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> void {
+        for entity in worldFile->entities {
+            placement: Mat4 = entity->transform.Matrix();
+            unsafe {
+                if light := lantern:::world:::LocalLightFromEntity(entity, placement) {
+                    state->worldLightIds.push(state->renderWorld->AddLight(light));
+                }
+                if sun := lantern:::world:::SunFromEntity(entity, placement) {
+                    state->renderWorld->light = sun;
+                }
+            }
+        }
+    }
+
+    /**
+     * Turns a loaded world file into live entities: spawns each piece, adds its collider and tags, links parents, settles
+     * the transforms and adds the lights. Returns how many entities were made, or the first error.
+     */
     LoadWorldFile :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> Result<usize, string!> {
         pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(worldFile);
         keys~ Array<u64>! = [];
@@ -139,15 +186,19 @@ lantern:::host :: namespace {
         }
         delete linkFailure;
         unsafe {
-            state->world->UpdateWorldTransforms();
-            state->world->StorePreviousTransforms();
+            state->entityWorld->UpdateWorldTransforms();
+            state->entityWorld->StorePreviousTransforms();
         }
+        AddWorldLights(state, worldFile);
         return Result<usize, string!>:::Ok(count);
     }
 
+    /**
+     * Sets an entity's local position, and moves its collision body with it when it has one.
+     */
     MoveEntity :: (state: raw EngineState~*, entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, position: Vec3) -> void {
         unsafe {
-            guard record ~= state->world->BorrowMutable(entity) return;
+            guard record ~= state->entityWorld->BorrowMutable(entity) return;
             record->local.translation = position;
             matrix: Mat4 = record->local.Matrix();
             if body := state->Body(entity) {
@@ -156,6 +207,9 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Where a property is in an entity's tags, failing the call with not-found when the entity has no such property.
+     */
     PropertyIndexOf :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, key: string) -> usize? {
         unsafe {
             if tags := state->Tags(entity) {
@@ -170,6 +224,9 @@ lantern:::host :: namespace {
         return null;
     }
 
+    /**
+     * The value of an entity's property, failing the call when it has none.
+     */
     PropertyValueOf :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>, key: string) -> lantern:::world:::PropertyValue? {
         guard index := PropertyIndexOf(context, state, entity, key) return null;
         unsafe {
@@ -178,21 +235,28 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Fails the call when a property is a different kind from the one asked for (a number read as text, say).
+     */
     WrongPropertyKind :: (context: lantern:::nyx:::CallContext~*, key: string, expected: string) -> void {
         message: string! = `the property '${key}' is not ${expected}`;
         NotFound(context, message);
         delete message;
     }
 
-    RegisterWorldEntityQueries :: (world: HostNamespace~*, state: raw EngineState~*, math: MathTypes) -> void {
-        world->Function("Find", "(name: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+    /**
+     * Adds `Find`, `FindByKind`, `Kind`, `HasProperty` and the property readers (`NumberProperty`, `TextProperty`,
+     * `VectorProperty`) to `lantern:::world`.
+     */
+    RegisterWorldEntityQueries :: (worldNamespace: HostNamespace~*, state: raw EngineState~*, math: MathTypes) -> void {
+        worldNamespace->Function("Find", "(name: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             name: string! = context->Text(0);
             defer delete name;
             if Stopped(context) {
                 return;
             }
             unsafe {
-                if entity := state->world->FindByName(name) {
+                if entity := state->entityWorld->FindByName(name) {
                     context->ReturnI64(EntityToScript(entity));
                     return;
                 }
@@ -201,7 +265,7 @@ lantern:::host :: namespace {
             NotFound(context, message);
             delete message;
         });
-        world->Function("FindByKind", "(kind: string) -> Array<i64>", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("FindByKind", "(kind: string) -> Array<i64>", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             wanted: string! = context->Text(0);
             defer delete wanted;
             if Stopped(context) {
@@ -209,7 +273,7 @@ lantern:::host :: namespace {
             }
             found~ Array<i64>! = [];
             unsafe {
-                ids: Array<lantern:::core:::Handle<lantern:::engine:::EntityTag>>! = state->world->Ids();
+                ids: Array<lantern:::core:::Handle<lantern:::engine:::EntityTag>>! = state->entityWorld->Ids();
                 for id in ids {
                     if tags := state->Tags(id) {
                         if tags->kind == wanted {
@@ -222,7 +286,7 @@ lantern:::host :: namespace {
             context->ReturnI64Array(found);
             delete found;
         });
-        world->Function("Kind", "(entity: i64) -> string", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("Kind", "(entity: i64) -> string", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             unsafe {
                 if tags := state->Tags(entity) {
@@ -232,7 +296,7 @@ lantern:::host :: namespace {
             }
             context->ReturnText("");
         });
-        world->Function("HasProperty", "(entity: i64, key: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("HasProperty", "(entity: i64, key: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             key: string! = context->Text(1);
             defer delete key;
@@ -247,7 +311,7 @@ lantern:::host :: namespace {
             }
             context->ReturnBool(has);
         });
-        world->Function("NumberProperty", "(entity: i64, key: string) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("NumberProperty", "(entity: i64, key: string) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             key: string! = context->Text(1);
             defer delete key;
@@ -260,7 +324,7 @@ lantern:::host :: namespace {
                 override -> WrongPropertyKind(context, key, "a number"),
             }
         });
-        world->Function("TextProperty", "(entity: i64, key: string) -> string", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("TextProperty", "(entity: i64, key: string) -> string", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             key: string! = context->Text(1);
             defer delete key;
@@ -276,7 +340,7 @@ lantern:::host :: namespace {
                 }
             }
         });
-        world->Function("VectorProperty", "(entity: i64, key: string) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("VectorProperty", "(entity: i64, key: string) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             guard entity := LiveEntity(context, state, 0) return;
             key: string! = context->Text(1);
             defer delete key;
@@ -291,8 +355,12 @@ lantern:::host :: namespace {
         });
     }
 
-    RegisterWorldEntityLooks :: (world: HostNamespace~*, state: raw EngineState~*) -> void {
-        world->Function("SetMaterial", "(material: string, texture: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+    /**
+     * Adds the functions that change how an entity looks (`SetMaterial`, `SetMesh`, `SetTexturedMesh`, `SetNormalMap`,
+     * `SetTint`, `SetSurface`, `SetGlow`, `SetCastsShadows`).
+     */
+    RegisterWorldEntityLooks :: (worldNamespace: HostNamespace~*, state: raw EngineState~*) -> void {
+        worldNamespace->Function("SetMaterial", "(material: string, texture: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             material: string! = context->Text(0);
             defer delete material;
             texture: i64 = context->I64(1);
@@ -303,7 +371,7 @@ lantern:::host :: namespace {
                 state->SetMaterial(material, HandleFromScript<lantern:::renderer:::TextureTag>(texture));
             }
         });
-        world->Function("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             mesh: i64 = context->I64(1);
             tint: lantern:::core:::Color = ColorArgument(context, 2);
@@ -311,11 +379,11 @@ lantern:::host :: namespace {
                 return;
             }
             unsafe {
-                guard record ~= state->world->BorrowMutable(entity) return;
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
                 record->meshRenderer = lantern:::engine:::MeshRenderer:::Create(HandleFromScript<lantern:::renderer:::MeshTag>(mesh), null, tint);
             }
         });
-        world->Function("SetTexturedMesh", "(entity: i64, mesh: i64, texture: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("SetTexturedMesh", "(entity: i64, mesh: i64, texture: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             mesh: i64 = context->I64(1);
             texture: i64 = context->I64(2);
@@ -324,47 +392,111 @@ lantern:::host :: namespace {
                 return;
             }
             unsafe {
-                guard record ~= state->world->BorrowMutable(entity) return;
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
                 record->meshRenderer = lantern:::engine:::MeshRenderer:::Create(HandleFromScript<lantern:::renderer:::MeshTag>(mesh), HandleFromScript<lantern:::renderer:::TextureTag>(texture), tint);
             }
         });
-        world->Function("SetTint", "(entity: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("SetNormalMap", "(entity: i64, texture: i64, strength: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            texture: i64 = context->I64(1);
+            strength: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
+                guard current := record->meshRenderer return;
+                updated~ lantern:::engine:::MeshRenderer = current;
+                updated.normalTexture = HandleFromScript<lantern:::renderer:::TextureTag>(texture);
+                updated.material.normalStrength = Math:::clamp(strength, 0.0f, 4.0f);
+                record->meshRenderer = updated;
+            }
+        });
+        worldNamespace->Function("SetTint", "(entity: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             tint: lantern:::core:::Color = ColorArgument(context, 1);
             if Stopped(context) {
                 return;
             }
             unsafe {
-                guard record ~= state->world->BorrowMutable(entity) return;
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
                 guard current := record->meshRenderer return;
                 updated~ lantern:::engine:::MeshRenderer = current;
                 updated.color = tint;
                 record->meshRenderer = updated;
             }
         });
+        worldNamespace->Function("SetSurface", "(entity: i64, metallic: f32, roughness: f32, emissive: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            metallic: f32 = context->F32(1);
+            roughness: f32 = context->F32(2);
+            emissive: lantern:::core:::Color = ColorArgument(context, 3);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
+                guard current := record->meshRenderer return;
+                updated~ lantern:::engine:::MeshRenderer = current;
+                updated.material = lantern:::renderer:::Material { metallic: metallic, roughness: roughness, emissive: emissive, normalStrength: current.material.normalStrength };
+                record->meshRenderer = updated;
+            }
+        });
+        worldNamespace->Function("SetGlow", "(entity: i64, color: string, strength: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            color: lantern:::core:::Color = ColorArgument(context, 1);
+            strength: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
+                guard current := record->meshRenderer return;
+                updated~ lantern:::engine:::MeshRenderer = current;
+                updated.material.emissive = Strengthened(color, strength);
+                record->meshRenderer = updated;
+            }
+        });
+        worldNamespace->Function("SetCastsShadows", "(entity: i64, castsShadows: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            castsShadows: bool = context->Bool(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
+                guard current := record->meshRenderer return;
+                updated~ lantern:::engine:::MeshRenderer = current;
+                updated.castsShadows = castsShadows;
+                record->meshRenderer = updated;
+            }
+        });
     }
 
-    RegisterWorldEntityVisibility :: (world: HostNamespace~*, state: raw EngineState~*) -> void {
-        world->Function("IsVisible", "(entity: i64) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+    /**
+     * Adds `IsVisible` and `SetVisible`.
+     */
+    RegisterWorldEntityVisibility :: (worldNamespace: HostNamespace~*, state: raw EngineState~*) -> void {
+        worldNamespace->Function("IsVisible", "(entity: i64) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             shown~ bool = true;
             unsafe {
-                if record := state->world->Get(entity) {
-                    if renderer := record.meshRenderer {
-                        shown = renderer.visible;
+                if record := state->entityWorld->Get(entity) {
+                    if meshRenderer := record.meshRenderer {
+                        shown = meshRenderer.visible;
                     }
                 }
             }
             context->ReturnBool(shown);
         });
-        world->Function("SetVisible", "(entity: i64, visible: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("SetVisible", "(entity: i64, visible: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             shown: bool = context->Bool(1);
             if Stopped(context) {
                 return;
             }
             unsafe {
-                guard record ~= state->world->BorrowMutable(entity) return;
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
                 guard current := record->meshRenderer return;
                 updated~ lantern:::engine:::MeshRenderer = current;
                 updated.visible = shown;
@@ -373,12 +505,16 @@ lantern:::host :: namespace {
         });
     }
 
-    RegisterWorldEntityTransforms :: (world: HostNamespace~*, state: raw EngineState~*, math: MathTypes) -> void {
-        world->Function("SetParent", "(child: i64, parent: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+    /**
+     * Adds the functions that move an entity (`SetParent`, `Position`, `WorldPosition`, `InterpolatedPosition`,
+     * `SetPosition`, `Teleport`, `SetYaw`, `SetScale`).
+     */
+    RegisterWorldEntityTransforms :: (worldNamespace: HostNamespace~*, state: raw EngineState~*, math: MathTypes) -> void {
+        worldNamespace->Function("SetParent", "(child: i64, parent: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard child := LiveEntity(context, state, 0) return;
             guard parent := LiveEntity(context, state, 1) return;
             unsafe {
-                change: lantern:::engine:::ParentChange = state->world->SetParent(child, parent);
+                change: lantern:::engine:::ParentChange = state->entityWorld->SetParent(child, parent);
                 if problem := ParentChangeProblem(change) {
                     message: string! = `cannot parent: ${problem}`;
                     Invalid(context, message);
@@ -386,27 +522,27 @@ lantern:::host :: namespace {
                 }
             }
         });
-        world->Function("Position", "(entity: i64) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("Position", "(entity: i64) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             guard entity := LiveEntity(context, state, 0) return;
             position~ Vec3 = Vec3 { };
             unsafe {
-                if record := state->world->Get(entity) {
+                if record := state->entityWorld->Get(entity) {
                     position = record.local.translation;
                 }
             }
             ReturnVec3(context, math, position);
         });
-        world->Function("WorldPosition", "(entity: i64) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("WorldPosition", "(entity: i64) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             guard entity := LiveEntity(context, state, 0) return;
             position~ Vec3 = Vec3 { };
             unsafe {
-                if record := state->world->Get(entity) {
+                if record := state->entityWorld->Get(entity) {
                     position = record.WorldPosition();
                 }
             }
             ReturnVec3(context, math, position);
         });
-        world->Function("InterpolatedPosition", "(entity: i64, alpha: f32) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("InterpolatedPosition", "(entity: i64, alpha: f32) -> lantern:::math:::Vec3", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             guard entity := LiveEntity(context, state, 0) return;
             alpha: f32 = context->F32(1);
             if Stopped(context) {
@@ -414,49 +550,53 @@ lantern:::host :: namespace {
             }
             position~ Vec3 = Vec3 { };
             unsafe {
-                if record := state->world->Get(entity) {
+                if record := state->entityWorld->Get(entity) {
                     position = lantern:::core:::MatrixColumn3(record.InterpolatedWorld(alpha), 3);
                 }
             }
             ReturnVec3(context, math, position);
         });
-        world->Function("SetPosition", "(entity: i64, position: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("SetPosition", "(entity: i64, position: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             position: Vec3 = Vec3Argument(context, 1, math);
             guard entity := LiveEntity(context, state, 0) return;
             MoveEntity(state, entity, position);
         });
-        world->Function("Teleport", "(entity: i64, position: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("Teleport", "(entity: i64, position: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             position: Vec3 = Vec3Argument(context, 1, math);
             guard entity := LiveEntity(context, state, 0) return;
             MoveEntity(state, entity, position);
             unsafe {
-                state->world->Teleport(entity, position);
+                state->entityWorld->Teleport(entity, position);
             }
         });
-        world->Function("SetYaw", "(entity: i64, yaw: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("SetYaw", "(entity: i64, yaw: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             yaw: f32 = context->F32(1);
             if Stopped(context) {
                 return;
             }
             unsafe {
-                guard record ~= state->world->BorrowMutable(entity) return;
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
                 record->local.rotation = lantern:::core:::QuaternionFromRotationY(yaw);
             }
         });
-        world->Function("SetScale", "(entity: i64, scale: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("SetScale", "(entity: i64, scale: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             scale: Vec3 = Vec3Argument(context, 1, math);
             guard entity := LiveEntity(context, state, 0) return;
             unsafe {
-                guard record ~= state->world->BorrowMutable(entity) return;
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
                 record->local.scale = scale;
             }
         });
     }
 
+    /**
+     * Registers `lantern:::world`: `Load` a level file, `Clear` it, `Spawn` and `Despawn` single entities, plus the groups
+     * above. See game-api.md for each function's arguments.
+     */
     RegisterWorldApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
-        world := new HostNamespace(runtime, "lantern::world");
-        world->Function("Load", "(path: string) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace := new HostNamespace(runtime, "lantern::world");
+        worldNamespace->Function("Load", "(path: string) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             path: string! = AssetPathArgument(context, state, 0);
             defer delete path;
             if Stopped(context) {
@@ -493,12 +633,12 @@ lantern:::host :: namespace {
                 }
             }
         });
-        world->Function("Clear", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("Clear", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             unsafe {
                 state->ClearWorld();
             }
         });
-        world->Function("Spawn", "(name: string, position: lantern:::math:::Vec3) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+        worldNamespace->Function("Spawn", "(name: string, position: lantern:::math:::Vec3) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             name: string! = context->Text(0);
             defer delete name;
             position: Vec3 = Vec3Argument(context, 1, math);
@@ -506,23 +646,23 @@ lantern:::host :: namespace {
                 return;
             }
             unsafe {
-                entity: lantern:::core:::Handle<lantern:::engine:::EntityTag> = state->world->Spawn(name, GameScene(), lantern:::engine:::Transform:::FromTranslation(position));
+                entity: lantern:::core:::Handle<lantern:::engine:::EntityTag> = state->entityWorld->Spawn(name, GameScene(), lantern:::engine:::Transform:::FromTranslation(position));
                 context->ReturnI64(EntityToScript(entity));
             }
         });
-        world->Function("Despawn", "(entity: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("Despawn", "(entity: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             unsafe {
-                state->world->Despawn(entity);
+                state->entityWorld->Despawn(entity);
                 state->RemoveTags(entity);
             }
         });
-        RegisterWorldEntityQueries(world, state, math);
-        RegisterWorldEntityLooks(world, state);
-        RegisterWorldEntityTransforms(world, state, math);
-        RegisterWorldEntityVisibility(world, state);
-        failure := world->Finish();
-        delete world;
+        RegisterWorldEntityQueries(worldNamespace, state, math);
+        RegisterWorldEntityLooks(worldNamespace, state);
+        RegisterWorldEntityTransforms(worldNamespace, state, math);
+        RegisterWorldEntityVisibility(worldNamespace, state);
+        failure := worldNamespace->Finish();
+        delete worldNamespace;
         return failure!;
     }
 }

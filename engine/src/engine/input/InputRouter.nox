@@ -1,0 +1,456 @@
+lantern:::engine :: namespace {
+    /**
+     * How far a stick must move from the centre before it counts, as a fraction of its travel. Sticks drift slightly at rest.
+     */
+    STICK_DEAD_ZONE: f32 : 0.18f;
+    /**
+     * The same for a single axis such as a trigger.
+     */
+    AXIS_DEAD_ZONE: f32 : 0.15f;
+
+    /**
+     * A set held in an array, for a few members (the keys down at once). It checks every member, which is faster than a hash
+     * for a handful.
+     */
+    SmallSet<T> :: class {
+    public:
+        members~ Array<T>! = [];
+
+        SmallSet~: () { }
+
+        !SmallSet~: () {
+            delete members;
+        }
+
+        /**
+         * True when `member` is in the set.
+         */
+        Contains :: (member: T) -> bool {
+            for existing in members {
+                if existing == member {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Adds a member unless it is already there.
+         */
+        Insert~: (member: T) -> void {
+            if !Contains(member) {
+                members.push(member);
+            }
+        }
+
+        /**
+         * Removes a member (the order of the rest may change).
+         */
+        Remove~: (member: T) -> void {
+            for index~ usize = 0; index < members.length(); index++ {
+                if members[index] == member {
+                    members.swapRemove(index);
+                    return;
+                }
+            }
+        }
+
+        /**
+         * Empties the set.
+         */
+        Clear~: () -> void {
+            members.clear();
+        }
+    }
+
+    /**
+     * One gamepad axis and its last reading.
+     */
+    AxisValue :: struct {
+        axis~ lantern:::core:::GamepadAxis = lantern:::core:::GamepadAxis:::LeftX;
+        value~ f32 = 0.0f;
+    }
+
+    /**
+     * What the keyboard, mouse and gamepad are doing right now: the keys, buttons and axes held, the ones that went down since
+     * the last frame ("tapped", so a press shorter than a frame isn't missed), and the mouse movement this frame.
+     */
+    DeviceState :: class {
+    public:
+        keysDown~ SmallSet<lantern:::core:::KeyCode>*!;
+        keysTapped~ SmallSet<lantern:::core:::KeyCode>*!;
+        mouseDown~ SmallSet<lantern:::core:::MouseButton>*!;
+        mouseTapped~ SmallSet<lantern:::core:::MouseButton>*!;
+        gamepadDown~ SmallSet<lantern:::core:::GamepadButton>*!;
+        gamepadTapped~ SmallSet<lantern:::core:::GamepadButton>*!;
+        gamepadAxes~ Array<AxisValue>! = [];
+        mouseDelta~ Vec2 = Vec2 { };
+
+        DeviceState~: () {
+            keysDown = new SmallSet<lantern:::core:::KeyCode>();
+            keysTapped = new SmallSet<lantern:::core:::KeyCode>();
+            mouseDown = new SmallSet<lantern:::core:::MouseButton>();
+            mouseTapped = new SmallSet<lantern:::core:::MouseButton>();
+            gamepadDown = new SmallSet<lantern:::core:::GamepadButton>();
+            gamepadTapped = new SmallSet<lantern:::core:::GamepadButton>();
+        }
+
+        !DeviceState~: () {
+            delete keysDown;
+            delete keysTapped;
+            delete mouseDown;
+            delete mouseTapped;
+            delete gamepadDown;
+            delete gamepadTapped;
+            delete gamepadAxes;
+        }
+
+        /**
+         * True when a key is held or was tapped this frame.
+         */
+        Key :: (key: lantern:::core:::KeyCode) -> bool {
+            return keysDown->Contains(key) || keysTapped->Contains(key);
+        }
+
+        /**
+         * The last reading of a gamepad axis (0 until it moves).
+         */
+        Axis :: (axis: lantern:::core:::GamepadAxis) -> f32 {
+            for entry in gamepadAxes {
+                if entry.axis == axis {
+                    return entry.value;
+                }
+            }
+            return 0.0f;
+        }
+
+        /**
+         * Records a gamepad axis reading.
+         */
+        SetAxis~: (axis: lantern:::core:::GamepadAxis, value: f32) -> void {
+            for index~ usize = 0; index < gamepadAxes.length(); index++ {
+                if gamepadAxes[index].axis == axis {
+                    gamepadAxes[index].value = value;
+                    return;
+                }
+            }
+            gamepadAxes.push(AxisValue { axis: axis, value: value });
+        }
+
+        /**
+         * Lets go of every key, button and axis. Used when the window loses focus or the gamepad is unplugged, so nothing stays
+         * stuck down.
+         */
+        ReleaseEverything~: () -> void {
+            keysDown->Clear();
+            mouseDown->Clear();
+            gamepadDown->Clear();
+            gamepadAxes.clear();
+        }
+
+        /**
+         * Forgets the taps and the mouse movement, which are only good for one frame.
+         */
+        ClearFrameData~: () -> void {
+            keysTapped->Clear();
+            mouseTapped->Clear();
+            gamepadTapped->Clear();
+            mouseDelta = Vec2 { };
+        }
+    }
+
+    /**
+     * What one binding (or all of an action's bindings) says right now: whether it is held, and its value.
+     */
+    BindingResult :: struct {
+        held~ bool = false;
+        value~ Vec2 = Vec2 { };
+    }
+
+    /**
+     * Turns raw device events into the action states the game reads ("Jump is pressed", "Move is (0.7, 0)").
+     *
+     * Events arrive once per frame, but the simulation may run zero, one or several fixed steps in that frame. The
+     * router keeps two views:
+     *
+     * - the frame snapshot, rebuilt by `EndFrameEvents` after the frame's events, which `FrameUpdate` reads;
+     * - latched presses and releases, which collect every edge since the last fixed step and are handed to the next
+     *   step by `TakeFixedStepSnapshot`, then cleared.
+     *
+     * So a key tapped during a frame that ran no fixed step still counts as pressed in the next step, and a press is
+     * never seen twice by two steps in the same frame.
+     */
+    InputRouter :: class {
+    public:
+        /** The game's named actions (Jump, Move, ...) and each one's kind: a button, a 1D axis or a 2D axis. */
+        actions~ lantern:::core:::ActionSet*!;
+        /** Which keys, buttons and sticks drive each action. */
+        bindings~ lantern:::core:::Bindings*!;
+        /**
+         * The raw state of every device: what is held, what was tapped this frame, stick positions and mouse motion.
+         */
+        devices~ DeviceState*!;
+        /** Per action, whether it was held at the end of the previous frame, to detect press and release edges. */
+        heldLastFrame~ Array<bool>! = [];
+        /** Per action, its state for the current frame. Owned by the router; `FrameSnapshot` lends it out. */
+        frameSnapshot~ lantern:::core:::InputSnapshot*!;
+        /** Per action, whether it was pressed at any point since the last fixed step took a snapshot. */
+        latchedPressed~ Array<bool>! = [];
+        /** Per action, whether it was released at any point since the last fixed step took a snapshot. */
+        latchedReleased~ Array<bool>! = [];
+
+        InputRouter~: (newActions: lantern:::core:::ActionSet*!, newBindings: lantern:::core:::Bindings*!) {
+            actions = newActions!;
+            bindings = newBindings!;
+            devices = new DeviceState();
+            frameSnapshot = new lantern:::core:::InputSnapshot();
+            ResetActionState();
+        }
+
+        !InputRouter~: () {
+            delete actions;
+            delete bindings;
+            delete devices;
+            delete heldLastFrame;
+            delete frameSnapshot;
+            delete latchedPressed;
+            delete latchedReleased;
+        }
+
+        Actions :: () -> lantern:::core:::ActionSet* {
+            return actions;
+        }
+
+        Reconfigure~: (newActions: lantern:::core:::ActionSet*!, newBindings: lantern:::core:::Bindings*!) -> void {
+            delete actions;
+            delete bindings;
+            actions = newActions!;
+            bindings = newBindings!;
+            ResetActionState();
+        }
+
+        ResetActionState~: () -> void {
+            actionCount: usize = actions->Length();
+            heldLastFrame.clear();
+            latchedPressed.clear();
+            latchedReleased.clear();
+            frameSnapshot->states.clear();
+            for index~ usize = 0; index < actionCount; index++ {
+                heldLastFrame.push(false);
+                latchedPressed.push(false);
+                latchedReleased.push(false);
+                frameSnapshot->states.push(lantern:::core:::ActionState { });
+            }
+        }
+
+        /**
+         * Updates the raw device state for one event. Losing focus or a gamepad releases everything, so no key stays
+         * stuck down.
+         */
+        HandleEvent~: (event: lantern:::platform:::PlatformEvent) -> void {
+            when event <lantern:::platform:::PlatformEvent> {
+                KeyDown(key, _) -> {
+                    devices->keysDown->Insert(key);
+                    devices->keysTapped->Insert(key);
+                },
+                KeyUp(key) -> {
+                    devices->keysDown->Remove(key);
+                },
+                MouseButtonDown(button, _, _) -> {
+                    devices->mouseDown->Insert(button);
+                    devices->mouseTapped->Insert(button);
+                },
+                MouseButtonUp(button, _, _) -> {
+                    devices->mouseDown->Remove(button);
+                },
+                MouseMoved(deltaX, deltaY, _, _) -> {
+                    devices->mouseDelta = devices->mouseDelta + Vec2 { x: deltaX, y: deltaY };
+                },
+                GamepadButtonDown(button) -> {
+                    devices->gamepadDown->Insert(button);
+                    devices->gamepadTapped->Insert(button);
+                },
+                GamepadButtonUp(button) -> {
+                    devices->gamepadDown->Remove(button);
+                },
+                GamepadAxisMoved(axis, value) -> {
+                    devices->SetAxis(axis, value);
+                },
+                FocusLost -> {
+                    devices->ReleaseEverything();
+                },
+                GamepadDisconnected -> {
+                    devices->ReleaseEverything();
+                },
+                default -> {},
+            }
+        }
+
+        /**
+         * Called by the game loop after the frame's events: evaluates every action from its bindings, works out press
+         * and release edges against the previous frame, latches them for the fixed steps and clears per-frame device
+         * data.
+         */
+        EndFrameEvents~: () -> void {
+            for index~ usize = 0; index < actions->Length(); index++ {
+                action := lantern:::core:::ActionId { value: u16(index) };
+                actionBindings := bindings->ForAction(action);
+                result := EvaluateAction(actions->Kind(action), actionBindings, devices);
+                delete actionBindings;
+                wasHeld: bool = heldLastFrame[index];
+                pressed: bool = result.held && !wasHeld;
+                released: bool = !result.held && wasHeld;
+                frameSnapshot->states[index] = lantern:::core:::ActionState {
+                    held: result.held,
+                    pressed: pressed,
+                    released: released,
+                    value: result.value
+                };
+                latchedPressed[index] = latchedPressed[index] || pressed;
+                latchedReleased[index] = latchedReleased[index] || released;
+                heldLastFrame[index] = result.held;
+            }
+            devices->ClearFrameData();
+        }
+
+        /** This frame's action states, for `FrameUpdate`. Lent, not owned; valid until the next `EndFrameEvents`. */
+        FrameSnapshot :: () -> lantern:::core:::InputSnapshot* {
+            return frameSnapshot;
+        }
+
+        /**
+         * A new snapshot for one fixed step, with the latched edges, which are then cleared so the next step in the
+         * same frame doesn't see them again. The caller owns and deletes it.
+         */
+        TakeFixedStepSnapshot~: () -> lantern:::core:::InputSnapshot*! {
+            snapshot := new lantern:::core:::InputSnapshot();
+            for index~ usize = 0; index < frameSnapshot->states.length(); index++ {
+                frameState := frameSnapshot->states[index];
+                snapshot->states.push(lantern:::core:::ActionState {
+                    held: frameState.held,
+                    pressed: latchedPressed[index],
+                    released: latchedReleased[index],
+                    value: frameState.value
+                });
+                latchedPressed[index] = false;
+                latchedReleased[index] = false;
+            }
+            return snapshot!;
+        }
+    }
+
+    /**
+     * Combines all of an action's bindings into one result. A button action takes the largest value; a number or pair
+     * adds the values of its bindings, and clamps a number to -1..1 and a pair to length 1 (except with mouse motion,
+     * which has no limit). A number or pair counts as held while its value isn't zero.
+     */
+    EvaluateAction :: (kind: lantern:::core:::ActionKind, actionBindings: Array<lantern:::core:::Binding>, devices: DeviceState*) -> BindingResult {
+        held~ bool = false;
+        value~ Vec2 = Vec2 { };
+        unbounded~ bool = false;
+        for binding in actionBindings {
+            bindingResult := EvaluateBinding(binding, devices);
+            held = held || bindingResult.held;
+            when binding <lantern:::core:::Binding> {
+                MouseMotion(_) -> {
+                    unbounded = true;
+                },
+                default -> {},
+            }
+            if kind == lantern:::core:::ActionKind:::Button {
+                value = lantern:::core:::ComponentMax2(value, bindingResult.value);
+            } else {
+                value = value + bindingResult.value;
+            }
+        }
+        if kind == lantern:::core:::ActionKind:::Axis1D {
+            value.x = Math:::clamp(value.x, -1.0f, 1.0f);
+        }
+        if kind == lantern:::core:::ActionKind:::Axis2D && !unbounded {
+            value = lantern:::core:::ClampLengthMax2(value, 1.0f);
+        }
+        if kind != lantern:::core:::ActionKind:::Button {
+            held = !(value == Vec2 { });
+        }
+        return BindingResult { held: held, value: value };
+    }
+
+    /**
+     * The result of a button binding: held with value 1, or not held with 0.
+     */
+    ButtonValue :: (held: bool) -> BindingResult {
+        if held {
+            return BindingResult { held: true, value: Vec2 { x: 1.0f, y: 0.0f } };
+        }
+        return BindingResult { held: false, value: Vec2 { } };
+    }
+
+    /**
+     * 1 for a key that is down, else 0.
+     */
+    KeyValue :: (devices: DeviceState*, key: lantern:::core:::KeyCode) -> f32 {
+        if devices->Key(key) {
+            return 1.0f;
+        }
+        return 0.0f;
+    }
+
+    /**
+     * A result for a value binding, held when the value isn't zero.
+     */
+    ValueResult :: (value: Vec2) -> BindingResult {
+        return BindingResult { held: !(value == Vec2 { }), value: value };
+    }
+
+    /**
+     * The result of one binding on the current device state. A key axis is the positive key minus the negative key; a key
+     * vector is the four keys as a direction (diagonals at length 1); a stick goes through the radial dead zone; mouse
+     * motion is the movement this frame with Y flipped so up is positive.
+     */
+    EvaluateBinding :: (binding: lantern:::core:::Binding, devices: DeviceState*) -> BindingResult {
+        return when binding <lantern:::core:::Binding> {
+            Key(key) -> ButtonValue(devices->Key(key)),
+            Mouse(button) -> ButtonValue(devices->mouseDown->Contains(button) || devices->mouseTapped->Contains(button)),
+            Gamepad(button) -> ButtonValue(devices->gamepadDown->Contains(button) || devices->gamepadTapped->Contains(button)),
+            GamepadAxisButton(axis, threshold) -> ButtonValue(AxisPastThreshold(devices->Axis(axis), threshold)),
+            KeyAxis(negative, positive) -> ValueResult(Vec2 { x: KeyValue(devices, positive) - KeyValue(devices, negative), y: 0.0f }),
+            GamepadAxisValue(axis, scale) -> ValueResult(Vec2 { x: AxisOutsideDeadZone(devices->Axis(axis)) * scale, y: 0.0f }),
+            KeyVector(up, down, left, right) -> ValueResult(lantern:::core:::NormalizeOrZero2(Vec2 {
+                x: KeyValue(devices, right) - KeyValue(devices, left),
+                y: KeyValue(devices, up) - KeyValue(devices, down)
+            })),
+            Stick(stick, scale) -> ValueResult(lantern:::core:::ApplyRadialDeadZone(StickAxes(devices, stick), STICK_DEAD_ZONE) * scale),
+            MouseMotion(scale) -> ValueResult(Vec2 { x: devices->mouseDelta.x, y: -devices->mouseDelta.y } * scale)
+        };
+    }
+
+    /**
+     * True when an axis reading has passed a threshold, in the threshold's direction.
+     */
+    AxisPastThreshold :: (value: f32, threshold: f32) -> bool {
+        if threshold >= 0.0f {
+            return value >= threshold;
+        }
+        return value <= threshold;
+    }
+
+    /**
+     * An axis reading, or 0 when it is inside the dead zone.
+     */
+    AxisOutsideDeadZone :: (raw: f32) -> f32 {
+        if Math:::abs(raw) < AXIS_DEAD_ZONE {
+            return 0.0f;
+        }
+        return raw;
+    }
+
+    /**
+     * A stick's two axes as a vector.
+     */
+    StickAxes :: (devices: DeviceState*, stick: lantern:::core:::GamepadStick) -> Vec2 {
+        if stick == lantern:::core:::GamepadStick:::Left {
+            return Vec2 { x: devices->Axis(lantern:::core:::GamepadAxis:::LeftX), y: devices->Axis(lantern:::core:::GamepadAxis:::LeftY) };
+        }
+        return Vec2 { x: devices->Axis(lantern:::core:::GamepadAxis:::RightX), y: devices->Axis(lantern:::core:::GamepadAxis:::RightY) };
+    }
+}
