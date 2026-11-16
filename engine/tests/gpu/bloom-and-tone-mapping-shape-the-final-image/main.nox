@@ -1,0 +1,119 @@
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+GlowWorld :: (emissive: lantern:::core:::Color) -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+        color: lantern:::core:::Color:::Black(),
+        ambient: lantern:::core:::Color:::Black(),
+        groundAmbient: lantern:::core:::Color:::Black()
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 12.0f, z: 0.0f }, Vec3 { });
+    world->post.toneMapper = lantern:::renderer:::ToneMapper:::Clamp;
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            cubeData := lantern:::renderer:::Cube(1.0f);
+            defer delete cubeData;
+            cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(cubeData) {
+                Result:::Ok(handle) -> {
+                    cube = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+            white := lantern:::core:::Color:::White();
+            place: Mat4 = Mat4:::translation(Vec3 { x: 0.0f, y: 0.5f, z: 0.0f });
+
+            blazing := lantern:::core:::Color:::Rgb(8.0f, 8.0f, 8.0f);
+            plain := GlowWorld(blazing);
+            defer delete plain;
+            plain->post.bloomEnabled = false;
+            plain->DrawWithMaterial(cube, null, place, white, lantern:::renderer:::Material:::Glowing(blazing));
+            when renderer->RenderOffscreen(plain, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(PixelAt(pixels, size, 64, 64)[0] > 250, "light far above 1 shows as white");
+                    assert(PixelAt(pixels, size, 78, 64)[0] < 3, "with bloom off the dark beside the glow stays dark");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            glowing := GlowWorld(blazing);
+            defer delete glowing;
+            glowing->post.bloomEnabled = true;
+            glowing->post.bloomStrength = 0.4f;
+            glowing->post.bloomThreshold = 1.0f;
+            glowing->DrawWithMaterial(cube, null, place, white, lantern:::renderer:::Material:::Glowing(blazing));
+            when renderer->RenderOffscreen(glowing, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    beside: u8[4] = PixelAt(pixels, size, 78, 64);
+                    far: u8[4] = PixelAt(pixels, size, 126, 4);
+                    if beside[0] < 10 {
+                        print(`beside the glow: ${beside[0]}, far: ${far[0]}`);
+                    }
+                    assert(beside[0] > 10, "with bloom on the glow spreads into the dark beside it");
+                    assert(far[0] < beside[0], "and fades with distance");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            dim := lantern:::core:::Color:::Rgb(0.5f, 0.5f, 0.5f);
+            normalExposure := GlowWorld(dim);
+            defer delete normalExposure;
+            normalExposure->post.bloomEnabled = false;
+            normalExposure->DrawWithMaterial(cube, null, place, white, lantern:::renderer:::Material:::Glowing(dim));
+            when renderer->RenderOffscreen(normalExposure, size, size, pixels) {
+                Result:::Ok(report) -> { },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            normalValue: u8 = PixelAt(pixels, size, 64, 64)[0];
+            normalExposure->post.exposure = 0.5f;
+            when renderer->RenderOffscreen(normalExposure, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(PixelAt(pixels, size, 64, 64)[0] < normalValue - 30, "a lower exposure darkens the picture");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("bloom and tone mapping shape the final image");
+    return 0;
+}

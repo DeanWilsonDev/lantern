@@ -98,6 +98,7 @@ Keys are `A`..`Z`, `Digit0`..`Digit9`, `Up`, `Down`, `Left`, `Right`, `Space`, `
 | `lantern:::world:::SetMesh(entity, mesh, tint)`, `SetTexturedMesh(entity, mesh, texture, tint)` | |
 | `lantern:::world:::SetTint(entity, tint)`, `SetVisible(entity, visible)`, `IsVisible(entity) -> bool` | |
 | `lantern:::world:::SetSurface(entity, metallic, roughness, emissive)` | the entity's material: 0 to 1 metallic and roughness, an "RRGGBB" emissive glow; see `lighting-and-shadows.md` |
+| `lantern:::world:::SetGlow(entity, color, strength)` | the entity's emissive light as `color` times `strength`; a strength above 1 is brighter than white, so it blooms. Keeps metallic and roughness |
 | `lantern:::world:::SetCastsShadows(entity, castsShadows)` | whether the entity blocks light |
 | `lantern:::world:::SetParent(child, parent)` | transforms become relative to the parent |
 | `lantern:::world:::Position(entity) -> Vec3` | local position |
@@ -137,6 +138,9 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::camera:::LookAt(eye, target)` | this frame's camera |
 | `lantern:::renderer:::SetClearColor(color)`, `lantern:::renderer:::SetFog(start, end)` | |
+| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom off; see `bloom-and-tone-mapping.md` |
+| `lantern:::graphics:::SetBloom(enabled, strength, threshold)` | the glow around bright things: how much is added back and the brightness where it starts (1 is a white wall in full sun) |
+| `lantern:::graphics:::SetExposure(exposure)`, `lantern:::graphics:::SetToneMapper(name)` | a brightness knob applied before the curve, and the curve itself: `"none"`, `"neutral"` or `"aces"` |
 | `lantern:::lights:::SetSun(direction, color, skyAmbient, groundAmbient)` | the sun and the ambient light; colours are `"RRGGBB"` |
 | `lantern:::lights:::SetSunShadows(enabled)`, `lantern:::lights:::SetShadowQuality(enabled, sunMapSize, localTileSize, distance)` | whether the sun casts shadows; the shadow master switch, map sizes in pixels (256 to 4096) and how far the sun's shadows reach |
 | `lantern:::lights:::AddPoint(position, color, strength, range) -> i64` | a point light; the id names it from now on |

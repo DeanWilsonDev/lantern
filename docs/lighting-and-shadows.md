@@ -118,7 +118,11 @@ lantern:::world:::SetSurface(entity, 0.0f, 0.2f, "3FD0FF");
 - *Emissive* is light the surface gives off by itself, added after lighting, so it stays bright in shadow. It does
   not light its neighbours; for that, add a lamp next to it.
 
-The platformer's gems use it: a smooth non-metal that glows pale blue.
+`lantern:::world:::SetGlow(entity, color, strength)` sets the emissive light as a colour times a strength. A strength
+above 1 is brighter than a white wall in full sun; the renderer keeps that light unclamped, and bloom turns it into a halo
+(see `bloom-and-tone-mapping.md`).
+
+The platformer's gems use it: a smooth non-metal that glows pale blue, at four times its colour.
 
 ## Keeping 60 fps
 

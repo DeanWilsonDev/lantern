@@ -37,6 +37,12 @@ lantern:::gpu :: namespace {
         depthWrite~ bool = false;
         /** Mix the fragment over what's there by its alpha, instead of replacing it. */
         alphaBlend~ bool = false;
+        /** Add the fragment to what's there (`source + destination`): bloom piles each size's glow onto the next. */
+        additiveBlend~ bool = false;
+        /** Whether the render pass has a depth buffer. The full-screen post passes have none. */
+        hasDepth~ bool = true;
+        /** Take the three vertices from `gl_VertexIndex` instead of a vertex buffer: the full-screen triangle. */
+        noVertexBuffer~ bool = false;
         /**
          * Draw into a depth texture only, with no colour target: a shadow map. Such a pipeline also pushes every depth
          * it writes slightly farther away, in proportion to how steeply the triangle tilts from the light. That slope
@@ -45,7 +51,7 @@ lantern:::gpu :: namespace {
         depthOnly~ bool = false;
     }
 
-    /** The four pipelines the renderer uses, created once at start-up. */
+    /** The pipelines the renderer uses, created once at start-up. */
     Pipelines :: struct {
         /** Lit, textured, opaque meshes: back faces culled, depth tested and written. */
         lit~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
@@ -55,6 +61,12 @@ lantern:::gpu :: namespace {
         overlay~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Shadow maps: the lit meshes' geometry drawn into a depth texture alone, from a light's point of view. */
         shadow~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** Bloom's shrink: halves a picture, blurring it. The first shrink also picks out the bright parts (a uniform). */
+        bloomDownsample~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** Bloom's growth: blur a small picture and add it to the next larger one. */
+        bloomUpsample~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** Scene plus glow to the screen: exposure, tone mapping and sRGB encoding. */
+        composite~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
 
         /** Releases the pipelines that were created. */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
@@ -70,6 +82,15 @@ lantern:::gpu :: namespace {
                 }
                 if shadow != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, shadow);
+                }
+                if bloomDownsample != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, bloomDownsample);
+                }
+                if bloomUpsample != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, bloomUpsample);
+                }
+                if composite != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, composite);
                 }
             }
         }
@@ -119,6 +140,27 @@ lantern:::gpu :: namespace {
             depthWrite: true,
             alphaBlend: false,
             depthOnly: true
+        };
+    }
+
+    /**
+     * A full-screen post pass: `fullscreen.vert` draws one triangle over the whole target and the fragment shader
+     * named here runs for every pixel. No vertex buffer, no depth.
+     */
+    FullscreenPipelineDescription :: (fragmentName: string, samplerCount: u32, additiveBlend: bool) -> PipelineDescription {
+        return PipelineDescription {
+            vertex: ShaderDescription { name: "fullscreen", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 0 },
+            fragment: ShaderDescription { name: fragmentName, stage: ShaderStageKind:::Fragment, samplerCount: samplerCount, uniformBufferCount: 1 },
+            stride: 0,
+            attributeCount: 0,
+            primitive: Sdl:::SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            cullBackFaces: false,
+            depthTest: false,
+            depthWrite: false,
+            alphaBlend: false,
+            additiveBlend: additiveBlend,
+            hasDepth: false,
+            noVertexBuffer: true
         };
     }
 
@@ -172,7 +214,18 @@ lantern:::gpu :: namespace {
      * itself blended as `source.a + destination.a * (1 - source.a)`. With blending off, the fragment replaces the
      * pixel.
      */
-    BlendState :: (alphaBlend: bool) -> Sdl:::SDL_GPUColorTargetBlendState {
+    BlendState :: (alphaBlend: bool, additiveBlend: bool) -> Sdl:::SDL_GPUColorTargetBlendState {
+        if additiveBlend {
+            return Sdl:::SDL_GPUColorTargetBlendState {
+                src_color_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_ONE,
+                dst_color_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_ONE,
+                color_blend_op: Sdl:::SDL_GPU_BLENDOP_ADD,
+                src_alpha_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_ONE,
+                dst_alpha_blendfactor: Sdl:::SDL_GPU_BLENDFACTOR_ONE,
+                alpha_blend_op: Sdl:::SDL_GPU_BLENDOP_ADD,
+                enable_blend: true
+            };
+        }
         if !alphaBlend {
             return Sdl:::SDL_GPUColorTargetBlendState { };
         }
@@ -231,6 +284,10 @@ lantern:::gpu :: namespace {
             depthBiasConstant = 2.0f;
             depthBiasSlope = 2.5f;
         }
+        vertexBufferCount~ u32 = 1;
+        if description.noVertexBuffer {
+            vertexBufferCount = 0;
+        }
         pipeline~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         unsafe {
             bufferDescription := Sdl:::SDL_GPUVertexBufferDescription {
@@ -238,14 +295,14 @@ lantern:::gpu :: namespace {
                 pitch: description.stride,
                 input_rate: Sdl:::SDL_GPU_VERTEXINPUTRATE_VERTEX
             };
-            colorTarget := Sdl:::SDL_GPUColorTargetDescription { format: colorFormat, blend_state: BlendState(description.alphaBlend) };
+            colorTarget := Sdl:::SDL_GPUColorTargetDescription { format: colorFormat, blend_state: BlendState(description.alphaBlend, description.additiveBlend) };
             firstAttribute: Sdl:::SDL_GPUVertexAttribute* = reinterpret<Sdl:::SDL_GPUVertexAttribute>(attributes);
             info := Sdl:::SDL_GPUGraphicsPipelineCreateInfo {
                 vertex_shader: vertexShader,
                 fragment_shader: fragmentShader,
                 vertex_input_state: Sdl:::SDL_GPUVertexInputState {
                     vertex_buffer_descriptions: bufferDescription,
-                    num_vertex_buffers: 1,
+                    num_vertex_buffers: vertexBufferCount,
                     vertex_attributes: firstAttribute,
                     num_vertex_attributes: attributeCount
                 },
@@ -267,7 +324,7 @@ lantern:::gpu :: namespace {
                     color_target_descriptions: colorTarget,
                     num_color_targets: colorTargetCount,
                     depth_stencil_format: depthFormat,
-                    has_depth_stencil_target: true
+                    has_depth_stencil_target: description.hasDepth
                 }
             };
             pipeline = Sdl:::SDL_CreateGPUGraphicsPipeline(device, info);
@@ -283,10 +340,14 @@ lantern:::gpu :: namespace {
         return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Ok(pipeline);
     }
 
-    /** Builds all four pipelines, releasing any already built if one fails. */
-    CreatePipelines :: (device: raw Sdl:::SDL_GPUDevice~*, format: ShaderFormat, colorFormat: Sdl:::SDL_GPUTextureFormat, depthFormat: Sdl:::SDL_GPUTextureFormat) -> Result<Pipelines, string!> {
+    /**
+     * Builds every pipeline, releasing any already built if one fails. The lit pipeline draws into the scene's high dynamic
+     * range target, so it takes `hdrFormat`; the post passes before the screen draw into `hdrFormat` too, and the
+     * composite, the lines and the overlay draw into the screen's `colorFormat`.
+     */
+    CreatePipelines :: (device: raw Sdl:::SDL_GPUDevice~*, format: ShaderFormat, colorFormat: Sdl:::SDL_GPUTextureFormat, hdrFormat: Sdl:::SDL_GPUTextureFormat, depthFormat: Sdl:::SDL_GPUTextureFormat) -> Result<Pipelines, string!> {
         pipelines~ Pipelines = Pipelines { };
-        when CreatePipeline(device, format, colorFormat, depthFormat, LitPipelineDescription()) {
+        when CreatePipeline(device, format, hdrFormat, depthFormat, LitPipelineDescription()) {
             Result:::Ok(pipeline) -> {
                 pipelines.lit = pipeline;
             },
@@ -315,6 +376,33 @@ lantern:::gpu :: namespace {
         when CreatePipeline(device, format, colorFormat, depthFormat, ShadowPipelineDescription()) {
             Result:::Ok(pipeline) -> {
                 pipelines.shadow = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, hdrFormat, depthFormat, FullscreenPipelineDescription("bloom-downsample", 1, false)) {
+            Result:::Ok(pipeline) -> {
+                pipelines.bloomDownsample = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, hdrFormat, depthFormat, FullscreenPipelineDescription("bloom-upsample", 1, true)) {
+            Result:::Ok(pipeline) -> {
+                pipelines.bloomUpsample = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, colorFormat, depthFormat, FullscreenPipelineDescription("composite", 2, false)) {
+            Result:::Ok(pipeline) -> {
+                pipelines.composite = pipeline;
             },
             Result:::Err(message) -> {
                 pipelines.Release(device);
