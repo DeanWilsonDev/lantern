@@ -1447,3 +1447,34 @@ See `photo-mode.md`.
 
 Cards: `platformer-game/night-and-photo-mode` (`photo-sights-in-world-files`, `photo-mode-camera-and-framing`,
 `photo-viewfinder-hud-and-album`).
+
+## Gameplay prototypes and the crossing
+
+- **D-081: she is a character with her own body, not a route.** In the prototype rooms and the crossing she has a
+  character controller of her own (radius 0.24 m, so she fits the 0.66 m slot the player cannot), three modes
+  (follow, wait, walk to a point) and acts at command points. The scripted route (`companion_stop`) stays for the
+  streets, rooftops and `streets-later`, where she leads.
+- **D-082: three commands on four keys.** Q calls, E waits, F pulls a lever beside you or else sends her to the nearest
+  `command_point` within 24 m in front of the camera. A request she cannot meet is answered with a status line, never
+  ignored. On a gamepad the D-pad left and right call and wait, and West is use; the shoulders belong to photo mode.
+- **D-083: she follows your trail, not a straight line.** She retraces a breadcrumb of your route (a point every
+  metre), so she goes through doors, slots and bridges you used. If she is stuck 2.5 s while following she is put behind
+  you; while walking to a point she says "She can't get there". Provisional: a real nav mesh is not worth it yet.
+- **D-084: channels, not scripts.** Plates, levers and crystals switch a numbered channel; gates read a channel.
+  Plates are momentary or timed (`hold_seconds`), levers latch or time out, a crystal is lit while a light has a
+  raycast line of sight to it. A gate never closes on someone standing in it. The same pieces build every puzzle, so a
+  new puzzle is a world file.
+- **D-085: every puzzle has a solo route.** A timed plate, the lantern, ledges, steps or cover. The solo route is longer,
+  riskier or needs more platforming skill, never impossible. Rooms 1, 3 and 5 prove theirs end to end in tests; the
+  ledge and step climbs are reasoned from the geometry only.
+- **D-086: moving a collider away is a teleport.** The engine cannot switch a collider off, so doors slide (and carry
+  anyone riding them, which is wanted) and crumbled slabs are teleported 1000 m down, which drops whoever stood on them.
+- **D-087: a bounce launch holds the jump.** A pad asks the controller for a taller jump for one step, and the game
+  keeps the jump held until the next landing, because a released jump is cut short.
+- **D-088: the watcher resets, it doesn't kill.** Being seen sends the player to the last checkpoint after a 1.5 s
+  grace; the lure keeps the beam on her for 6 s.
+- **D-089: a full level beside the existing ones.** The crossing is a new chapter 2 level between the rooftops and
+  `streets-later`, instead of lengthening three files another thread was editing. It is also entry 7 of the Prototypes
+  list. The rooftops' goal now points at it.
+
+Cards: `platformer-game/gameplay-prototypes`.
