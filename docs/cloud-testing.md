@@ -1,8 +1,15 @@
 # Testing in a cloud session
 
-A cloud session can build `nox` and `mist` and run the whole suite with `mist run test`, so a game change can be
-tested before it reaches a Mac. A clean bootstrap takes about 15 minutes on 4 cores (Nox about 6, Mist about 2 and
-`mist install` about 4); a session that has already built them does it again in seconds.
+A cloud session can run the whole suite with `mist run test`, so a game change can be tested before it reaches a Mac.
+
+| Path | Time on 4 cores |
+| --- | --- |
+| Building from source (Nox 2m17, Mist 0m41, `mist install` 5m23) | about 8m25 |
+| Restoring the prebuilt toolchain | about 13s, plus the download of about 150 MB |
+| `mist run test` once set up | about 16s |
+
+Threads should use the prebuilt toolchain. The source build is the fallback when no prebuilt one exists or it does
+not fit the checkout's layout.
 
 ## Bootstrap
 
@@ -12,7 +19,8 @@ export PATH="$HOME/.local/bin:$PATH"
 mist run test
 ```
 
-The script is safe to run again. It:
+The script is safe to run again. It first tries the prebuilt toolchain (below), then falls back to building from
+source. The source build:
 
 1. Points `https://github.com/fearlessgamedev/` at `fearlessgamelabs`, because submodule URLs still use the old
    organisation name.
@@ -24,6 +32,31 @@ The script is safe to run again. It:
 
 Settings: `LANTERN_WORKSPACE` (where the sibling checkouts live), `LANTERN_PREFIX` (default `~/.local`),
 `LANTERN_JOBS`, and `CC`/`CXX` (default `gcc-14` and `g++-14`).
+
+## The prebuilt toolchain
+
+`cloud-bootstrap.sh` downloads `lantern-cloud-toolchain.tar.gz` (and its `.sha256`) from the release tagged
+`lantern-cloud-toolchain` in `LANTERN_TOOLCHAIN_REPOSITORY`, checks the checksum and unpacks it over `/`. It holds
+`nox`, `nox-lsp` and `mist`, plus Mist's `builds/` and `sources/` caches, so `mist install` finds the SDL, cgltf and
+`lantern-native` builds already done and finishes in seconds. The Mist git cache (about 0.8 GB) is left out on purpose:
+`lantern-native` is a path package that CMake rebuilds from the files' modification times, so the cache's `sources/`
+has to come back with its times intact, and the git cache is only needed when `mist.lock` changes.
+
+The bundle records the Nox and Mist commits it was built from, the hash of `mist.lock`, and the home, Lantern and
+install directories. The bootstrap uses it only when the three directories match this session, and warns when
+`nox-systems-language` `proto` or `mist-package-manager` `main` has moved on. A newer `mist.lock` still works: `mist
+install` fetches and builds what changed. When a test needs a newer compiler, run with `LANTERN_BUILD_FROM_SOURCE=1`.
+
+Refresh it after Nox, Mist or the mist dependencies change:
+
+```sh
+LANTERN_BUILD_FROM_SOURCE=1 engine/tools/cloud-bootstrap.sh
+engine/tools/cloud-toolchain-pack.sh OUTPUT-DIRECTORY
+```
+
+then upload the two files it writes as the release's assets. Settings: `LANTERN_TOOLCHAIN_REPOSITORY`,
+`LANTERN_TOOLCHAIN_TAG`, `LANTERN_TOOLCHAIN_FILE` (use a local archive instead of downloading) and
+`LANTERN_BUILD_FROM_SOURCE=1`.
 
 ## What the session needs
 
