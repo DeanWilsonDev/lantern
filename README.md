@@ -22,7 +22,7 @@ Linux, other Linux and Windows), from the repository root:
 
 ```sh
 mist install            # fetch and build SDL3, cgltf, stb_image, Penumbra, penumbra-bridge and lantern-native
-mist run game                      # play the platformer (`mist run game -- --stub` runs the engine's stub scene)
+mist run game                      # play the platformer (`mist run game --stub` runs the engine's stub scene)
 mist run editor         # open the world editor on the course
 mist run test           # run the engine's tests
 mist run build-shaders  # recompile the shaders after editing engine/shaders (needs glslangValidator and spirv-cross)
