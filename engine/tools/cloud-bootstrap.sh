@@ -25,15 +25,71 @@ checkout_directory_for() {
     echo "$checkout_directory"
 }
 
-nox_directory="$(checkout_directory_for nox-systems-language proto)"
-cmake -S "$nox_directory" -B "$nox_directory/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DNOX_UNITY_BUILD=ON
-cmake --build "$nox_directory/build" --target nox nox-lsp --parallel "$parallel_jobs"
-cmake --install "$nox_directory/build" --component nox --prefix "$install_prefix"
+toolchain_repository="${LANTERN_TOOLCHAIN_REPOSITORY:-fearlessgamelabs/fearless-hq}"
+toolchain_tag="${LANTERN_TOOLCHAIN_TAG:-lantern-cloud-toolchain}"
+toolchain_archive_name="lantern-cloud-toolchain.tar.gz"
 
-mist_directory="$(checkout_directory_for mist-package-manager main)"
-cmake -S "$mist_directory" -B "$mist_directory/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build "$mist_directory/build" --target mist --parallel "$parallel_jobs"
-cmake --install "$mist_directory/build" --component mist --prefix "$install_prefix"
+download_release_asset() {
+    local asset_name="$1" destination_path="$2" asset_identifier
+    asset_identifier="$(curl -fsS "https://api.github.com/repos/$toolchain_repository/releases/tags/$toolchain_tag" \
+        | python3 -I -c 'import json,sys; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"]==sys.argv[1]))' "$asset_name")" || return 1
+    curl -fsSL -H "Accept: application/octet-stream" -o "$destination_path" \
+        "https://api.github.com/repos/$toolchain_repository/releases/assets/$asset_identifier"
+}
+
+install_prebuilt_toolchain() {
+    [[ "${LANTERN_BUILD_FROM_SOURCE:-0}" == 1 ]] && return 1
+    local download_directory archive_path manifest_text
+    download_directory="$(mktemp -d)"
+    archive_path="${LANTERN_TOOLCHAIN_FILE:-$download_directory/$toolchain_archive_name}"
+    if [[ -z "${LANTERN_TOOLCHAIN_FILE:-}" ]]; then
+        download_release_asset "$toolchain_archive_name" "$archive_path" \
+            && download_release_asset "$toolchain_archive_name.sha256" "$archive_path.sha256" \
+            || { echo "cloud-bootstrap: no prebuilt toolchain at $toolchain_repository@$toolchain_tag" >&2; rm -rf "$download_directory"; return 1; }
+        (cd "$download_directory" && sha256sum --check --quiet "$toolchain_archive_name.sha256") \
+            || { echo "cloud-bootstrap: prebuilt toolchain checksum mismatch" >&2; rm -rf "$download_directory"; return 1; }
+    fi
+    manifest_text="$(tar -xzOf "$archive_path" toolchain-manifest.txt)"
+    for expected_line in "home_directory=$HOME" "lantern_directory=$lantern_directory" "install_prefix=$install_prefix"; do
+        grep -qxF "$expected_line" <<<"$manifest_text" \
+            || { echo "cloud-bootstrap: prebuilt toolchain was made for a different layout ($expected_line); building from source" >&2; rm -rf "$download_directory"; return 1; }
+    done
+    if ! tar -C / -xzf "$archive_path" --exclude=toolchain-manifest.txt; then
+        echo "cloud-bootstrap: could not unpack the prebuilt toolchain; building from source" >&2
+        rm -rf "$download_directory"
+        return 1
+    fi
+    rm -rf "$download_directory"
+    warn_when_prebuilt_toolchain_is_stale "$manifest_text"
+}
+
+warn_when_prebuilt_toolchain_is_stale() {
+    local manifest_text="$1" repository_name branch_name key live_commit built_commit
+    for repository_name in nox-systems-language:proto:nox_commit mist-package-manager:main:mist_commit; do
+        IFS=: read -r repository_name branch_name key <<<"$repository_name"
+        built_commit="$(sed -n "s/^$key=//p" <<<"$manifest_text")"
+        live_commit="$(git ls-remote "https://github.com/fearlessgamelabs/$repository_name" "refs/heads/$branch_name" 2>/dev/null | cut -f1)"
+        [[ -z "$live_commit" || "$live_commit" == "$built_commit" ]] \
+            || echo "cloud-bootstrap: warning: prebuilt $repository_name is $built_commit but $branch_name is $live_commit; if a test needs the newer one, run git -C $workspace_directory/$repository_name pull --ff-only and rerun with LANTERN_BUILD_FROM_SOURCE=1" >&2
+    done
+}
+
+build_toolchain_from_source() {
+    nox_directory="$(checkout_directory_for nox-systems-language proto)"
+    cmake -S "$nox_directory" -B "$nox_directory/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DNOX_UNITY_BUILD=ON
+    cmake --build "$nox_directory/build" --target nox nox-lsp --parallel "$parallel_jobs"
+    cmake --install "$nox_directory/build" --component nox --prefix "$install_prefix"
+
+    mist_directory="$(checkout_directory_for mist-package-manager main)"
+    cmake -S "$mist_directory" -B "$mist_directory/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+    cmake --build "$mist_directory/build" --target mist --parallel "$parallel_jobs"
+    cmake --install "$mist_directory/build" --component mist --prefix "$install_prefix"
+
+}
+
+if ! install_prebuilt_toolchain; then
+    build_toolchain_from_source
+fi
 
 cd "$lantern_directory"
 mist install
