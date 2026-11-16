@@ -49,6 +49,8 @@ public:
         targetIndex = -1;
         flashSecondsLeft = 0.0f;
         feedbackSecondsLeft = 0.0f;
+        isDemo = lantern:::engine:::Flag("LANTERN_PHOTO_DEMO");
+        demoFrame = 0;
         for entity: i64 in lantern:::world:::FindByKind("photo_sight") {
             sight~ PhotoSight = new PhotoSight(entity);
             sight.Place(cubeMesh);
@@ -60,6 +62,18 @@ public:
     // flash are about what is on screen.
     HandleInput~: (frameSeconds: f32, camera~ ThirdPersonCamera, player~ Player) -> void {
         clock += frameSeconds;
+        // A scripted run for screenshots (LANTERN_PHOTO_DEMO=1 with LANTERN_AUTOPLAY=1): lift the
+        // camera on the third frame of play and press the shutter on the twelfth. The game has no way
+        // to send itself key presses, and counting frames makes the capture repeatable.
+        if isDemo {
+            demoFrame++;
+            if demoFrame == DEMO_RAISE_FRAME && !isActive {
+                Enter(camera, player);
+            }
+            if demoFrame == DEMO_SHUTTER_FRAME {
+                TakePhoto();
+            }
+        }
         flashSecondsLeft = Math:::max(flashSecondsLeft - frameSeconds, 0.0f);
         feedbackSecondsLeft = Math:::max(feedbackSecondsLeft - frameSeconds, 0.0f);
         for sight: PhotoSight in sights {
@@ -153,6 +167,8 @@ private:
     static OCCLUSION_MARGIN :: 0.75f;        // metres in front of a sight that still count as reaching it
     static TOGETHER_REACH :: 7.0f;           // metres from the sight that the companion may stand
     static COMPANION_CHEST :: 1.0f;          // metres above her feet: the point of her that has to be in the shot
+    static DEMO_RAISE_FRAME :: 3;
+    static DEMO_SHUTTER_FRAME :: 12;
     static FLASH_SECONDS :: 0.18f;
     static FEEDBACK_SECONDS :: 3.0f;
 
@@ -163,6 +179,8 @@ private:
     right~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     up~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     clock~ f32 = 0.0f;
+    isDemo~ bool = false;
+    demoFrame~ i32 = 0;
     flashSecondsLeft~ f32 = 0.0f;
     feedbackSecondsLeft~ f32 = 0.0f;
     feedback~ string = "";
@@ -228,34 +246,46 @@ private:
         };
     }
 
-    // Picks the untaken sight nearest the middle of the frame and judges the shot against it.
+    // Judges every untaken sight in frame and keeps one: the nearest the middle that would count,
+    // or, when none would, the nearest the middle, so the hint says what is wrong with it. Picking
+    // a sight that counts first means a far sight in the same view never hides a near one.
     Evaluate~: (companionPosition: lantern:::math:::Vec3, hasCompanion: bool) -> void {
         targetIndex = -1;
         verdict = PhotoVerdict:::NothingInFrame;
-        nearestToCentre~ f32 = 1000.0f;
+        nearestReady~ f32 = 1000.0f;
+        nearestOther~ f32 = 1000.0f;
         sightNumber~ i32 = 0;
         for sight: PhotoSight in sights {
             if !sight.isTaken && IsInFrame(sight.position) {
                 projected := Project(sight.position);
                 fromCentre := Math:::sqrt(projected.x * projected.x + projected.y * projected.y);
-                if fromCentre < nearestToCentre {
-                    nearestToCentre = fromCentre;
+                judged := Judge(sight, companionPosition, hasCompanion);
+                if judged == PhotoVerdict:::Ready && fromCentre < nearestReady {
+                    nearestReady = fromCentre;
                     targetIndex = sightNumber;
+                    verdict = judged;
+                } else if judged != PhotoVerdict:::Ready && nearestReady >= 1000.0f && fromCentre < nearestOther {
+                    nearestOther = fromCentre;
+                    targetIndex = sightNumber;
+                    verdict = judged;
                 }
             }
             sightNumber++;
         }
-        guard targetIndex >= 0;
-        target := sights[targetIndex];
+    }
+
+    // What a photo of `target` would be, given that it is in frame.
+    Judge :: (target: PhotoSight, companionPosition: lantern:::math:::Vec3, hasCompanion: bool) -> PhotoVerdict {
         if eye.DistanceTo(target.position) > target.maxDistance {
-            verdict = PhotoVerdict:::TooFar;
-        } else if !IsInTheClear(target.position) {
-            verdict = PhotoVerdict:::Blocked;
-        } else if target.isTogether && hasCompanion && !IsCompanionInTheShot(target, companionPosition) {
-            verdict = PhotoVerdict:::NeedsCompanion;
-        } else {
-            verdict = PhotoVerdict:::Ready;
+            return PhotoVerdict:::TooFar;
         }
+        if !IsInTheClear(target.position) {
+            return PhotoVerdict:::Blocked;
+        }
+        if target.isTogether && hasCompanion && !IsCompanionInTheShot(target, companionPosition) {
+            return PhotoVerdict:::NeedsCompanion;
+        }
+        return PhotoVerdict:::Ready;
     }
 
     IsCompanionInTheShot :: (target: PhotoSight, companionPosition: lantern:::math:::Vec3) -> bool {

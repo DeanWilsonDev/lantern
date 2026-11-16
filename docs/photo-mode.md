@@ -16,7 +16,7 @@ While the camera is raised the world keeps running (the companion walks on) but 
 diamond hangs at each sight so you can find them with the camera down; they hide while the camera is up, so they are never
 in the photo.
 
-The status line shows `Photos 1 / 4`, and the level complete screen lists the title of each photo taken.
+The status line shows `Photos 1 / 5`, and the level complete screen lists the title of each photo taken.
 
 ## What counts as a photo
 
@@ -69,3 +69,16 @@ In the world editor, place a **Photo sight** where the camera should be aimed an
 Put it in the open (more than 0.75 m from any wall) and where the player can get the view: a sight no one can see is a
 sight no one will photograph. For a `together` sight, put it where she waits (a boost stop holds her until the boost is
 used, so it is a reliable place).
+
+## Taking screenshots of it
+
+The game can't send itself key presses, so for a repeatable capture run it with `LANTERN_PHOTO_DEMO=1` (and
+`LANTERN_AUTOPLAY=1` to start playing): the camera is raised on the third frame of play and the shutter pressed on the
+twelfth. Add `LANTERN_LEVEL=worlds/streets.world.json`, `LANTERN_MAX_FRAMES=N` and `LANTERN_CAPTURE_PATH=file.png` to stop on
+frame N and save it.
+
+## Tested
+
+`engine/tests/host/a-photo-of-a-sight-counts-once` plays the streets from the menu, raises the camera, checks the verdict is
+`ready` for the first street lamp, takes the photo, and checks it counts once and the camera lowers again. The debug HUD
+(F1) shows `Photo/Camera raised`, `Photo/Verdict` and `Photo/Photos`.
