@@ -1,6 +1,8 @@
 AnchorSystem :: import AnchorSystem;
 Autopilot :: import Autopilot;
 BoostSystem :: import BoostSystem;
+BouncePad :: import BouncePad;
+CrumblePlatform :: import CrumblePlatform;
 CheckpointSystem :: import CheckpointSystem;
 CollisionView :: import CollisionView;
 ChapterLooks :: import ChapterLooks;
@@ -338,6 +340,7 @@ private:
         }
         controller := player.controller;
         UpdatePuzzle(dt);
+        UpdateCrumbles(dt);
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
@@ -381,7 +384,11 @@ private:
         isGrounded := player.controller.IsGrounded();
         partnerBoost := BoostSystem:::IsReady(partner.IsOfferingBoost(), partner.position, player.FeetPosition(), isGrounded);
         boostReady := partnerBoost || BoostSystem:::IsReady(companion.IsOfferingBoost(), companion.position, player.FeetPosition(), isGrounded);
-        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed, jumpHeld, boostReady, dt);
+        // A bounce pad launches by itself: standing on one while grounded is a jump, held to its full height.
+        bounceHeight := BounceHeightUnderPlayer();
+        launchHeight := boostReady ? PlayerTuning:::BOOST_JUMP_HEIGHT : bounceHeight;
+        isLaunching := bounceHeight > 0.0f && !boostReady;
+        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed || isLaunching, jumpHeld || isLaunching, launchHeight, dt);
         companion.Update(player.FeetPosition(), player.controller.IsGrounded(), dt);
         // A boosted jump is its own event with its own sound, so it isn't also a plain jump.
         if step.Jumped() {
@@ -492,6 +499,25 @@ private:
             return "F: pull the lever";
         }
         return "";
+    }
+
+    // The apex of the pad the player is standing on, or 0.
+    BounceHeightUnderPlayer :: () -> f32 {
+        guard player.controller.IsGrounded() return 0.0f;
+        for pad: BouncePad in level.bouncePads {
+            if pad.IsOn(player.FeetPosition()) {
+                return pad.height;
+            }
+        }
+        return 0.0f;
+    }
+
+    // Crumbling platforms shiver under whoever stands on them.
+    UpdateCrumbles~: (dt: f32) -> void {
+        for platform~ CrumblePlatform in level.crumbles {
+            isStoodOn := platform.IsStoodOnBy(player.FeetPosition()) || (partner.isPresent && platform.IsStoodOnBy(partner.position));
+            platform.Update(isStoodOn, simulationSeconds, dt);
+        }
     }
 
     UpdateGlows~: (dt: f32) -> void {
