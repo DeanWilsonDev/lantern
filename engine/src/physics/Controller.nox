@@ -1,9 +1,28 @@
 lantern:::physics :: namespace {
+    /**
+     * How many times one step may bump into a surface and slide along it before the controller gives up on the rest of
+     * the movement. Four covers a corner between two walls and a floor.
+     */
     MAX_SLIDE_ITERATIONS: usize : 4;
+    /**
+     * How many times one step may push the body out of overlapping geometry.
+     */
     MAX_DEPENETRATION_ITERATIONS: usize : 4;
+    /**
+     * How far (in metres) beside a contact point WalkableFaceNear starts its downward ray, to find the face under an
+     * edge instead of the edge itself.
+     */
     WALKABLE_FACE_SIDE_OFFSET: f32 : 0.02f;
+    /**
+     * How far above that point the ray starts, so it doesn't begin inside the surface.
+     */
     WALKABLE_FACE_START_ABOVE: f32 : 0.05f;
 
+    /**
+     * Every number that decides how the character moves, in metres and seconds. A game changes the walk speed, jump height and gravity
+     * through the controller's `Set...` functions (see game-api.md); these are the defaults. `jumpHeight` and `gravity` set the jump
+     * speed (see JumpSpeed), so a game tunes the height it wants and not an arbitrary speed.
+     */
     ControllerSettings :: struct {
         radius~ f32 = 0.35f;
         height~ f32 = 1.7f;
@@ -21,44 +40,76 @@ lantern:::physics :: namespace {
         coyoteSeconds~ f32 = 0.1f;
         jumpBufferSeconds~ f32 = 0.12f;
 
+        /**
+         * The upward speed that reaches `jumpHeight` under `gravity`: v = sqrt(2 g h).
+         */
         JumpSpeed :: () -> f32 {
             return Math:::sqrt(2.0f * gravity * jumpHeight);
         }
 
+        /**
+         * The body: an upright capsule `height` tall.
+         */
         CapsuleShape :: () -> Capsule {
             return Capsule:::Upright(radius, height);
         }
 
+        /**
+         * The smallest upward component a surface normal may have to count as ground: the cosine of the steepest
+         * walkable slope. A flat floor has 1, a wall 0.
+         */
         MinGroundNormalY :: () -> f32 {
             return Math:::cos(maxWalkableSlopeDegrees * (Math:::PI / 180.0f));
         }
 
+        /**
+         * The body grown by the skin width. Movement is cast with this slightly fatter shape so the body stops a hair
+         * before a surface and never ends up exactly touching it, where the next cast would be unreliable.
+         */
         MovementCapsule :: () -> Capsule {
             return Capsule { radius: radius + skinWidth, halfSegment: CapsuleShape().halfSegment };
         }
     }
 
+    /**
+     * What the player asked for this step: a direction in the world's horizontal plane (the game works it out from
+     * the stick and the camera), a jump that went down this step, and whether the jump is still held.
+     */
     ControllerInput :: struct {
         moveDirection~ Vec3 = Vec3 { };
         jumpPressed~ bool = false;
         jumpHeld~ bool = false;
     }
 
+    /**
+     * What happened during a step, for the game to react to with a sound or a particle: it jumped, it landed (and how
+     * fast it was falling), or it hit its head.
+     */
     ControllerEvents :: struct {
         jumped~ bool = false;
         landedWithSpeed~ f32? = null;
         hitCeiling~ bool = false;
     }
 
+    /**
+     * A downward cast that found ground: the hit, and the walkable normal to use for it (which may differ from the
+     * hit's own normal when the capsule touched an edge).
+     */
     GroundProbe :: struct {
         hit~ ShapeHit = ShapeHit { };
         normal~ Vec3 = Vec3 { };
     }
 
+    /**
+     * A vector with its up-down part removed.
+     */
     Horizontal :: (vector: Vec3) -> Vec3 {
         return Vec3 { x: vector.x, y: 0.0f, z: vector.z };
     }
 
+    /**
+     * The vector at length 1, or null when its length is zero, not a number or infinite.
+     */
     TryNormalize3 :: (vector: Vec3) -> Vec3? {
         reciprocalLength: f32 = 1.0f / vector.length();
         if reciprocalLength > 0.0f && reciprocalLength < lantern:::core:::INFINITY {
@@ -67,6 +118,9 @@ lantern:::physics :: namespace {
         return null;
     }
 
+    /**
+     * The vector at length 1, or zero for a vector that can't be normalised.
+     */
     NormalizeOrZero3 :: (vector: Vec3) -> Vec3 {
         if normalized := TryNormalize3(vector) {
             return normalized;
@@ -74,6 +128,9 @@ lantern:::physics :: namespace {
         return Vec3 { };
     }
 
+    /**
+     * The vector shortened to `maximumLength` if it is longer.
+     */
     ClampLengthMax3 :: (vector: Vec3, maximumLength: f32) -> Vec3 {
         lengthSquared: f32 = lantern:::core:::LengthSquared3(vector);
         if lengthSquared > maximumLength * maximumLength {
@@ -82,6 +139,10 @@ lantern:::physics :: namespace {
         return vector;
     }
 
+    /**
+     * Moves `current` toward `target` by at most `maxDelta`, landing exactly on it when closer than that. It is how
+     * the horizontal velocity accelerates toward the wanted velocity.
+     */
     MoveTowardsVector :: (current: Vec3, target: Vec3, maxDelta: f32) -> Vec3 {
         difference: Vec3 = target - current;
         distance: f32 = difference.length();
@@ -91,6 +152,12 @@ lantern:::physics :: namespace {
         return current + (difference / distance) * maxDelta;
     }
 
+    /**
+     * A kinematic character: the game moves it by asking for a velocity, and it collides and slides, instead of being
+     * pushed by forces. All the "game feel" lives in Step: acceleration, gravity, a shorter jump when the button is
+     * released early, coyote time (a jump still works for a moment after walking off a ledge), a jump buffer (a
+     * press just before landing still jumps), step-up over small ledges, and sticking to slopes.
+     */
     CharacterController :: struct {
         settings~ ControllerSettings = ControllerSettings { };
         feetPosition~ Vec3 = Vec3 { };
@@ -106,6 +173,9 @@ lantern:::physics :: namespace {
             return CharacterController { settings: settings, feetPosition: feetPosition };
         }
 
+        /**
+         * Puts the feet at a position and clears all motion state, so the next step starts from rest in the air.
+         */
         Teleport~: (newFeetPosition: Vec3) -> void {
             feetPosition = newFeetPosition;
             velocity = Vec3 { };
@@ -117,18 +187,33 @@ lantern:::physics :: namespace {
             risingFromJump = false;
         }
 
+        /**
+         * The middle of the body, half the height above the feet.
+         */
         CapsuleCenter :: () -> Vec3 {
             return feetPosition + lantern:::core:::WorldUp() * (settings.height * 0.5f);
         }
 
+        /**
+         * Moves the body so its middle is at `center`.
+         */
         SetCapsuleCenter~: (center: Vec3) -> void {
             feetPosition = center - lantern:::core:::WorldUp() * (settings.height * 0.5f);
         }
 
+        /**
+         * True when a surface with this normal is gentle enough to stand on.
+         */
         IsWalkable :: (normal: Vec3) -> bool {
             return normal.y >= settings.MinGroundNormalY();
         }
 
+        /**
+         * One fixed step of movement. In order: ride a moving platform the body is standing on; update the jump buffer
+         * and coyote timer; accelerate the horizontal velocity toward the wanted one; apply gravity (stronger when a
+         * jump is released early); start a jump if one is buffered and allowed; move and slide; look for ground below;
+         * push the body out of anything it overlaps. Returns the events.
+         */
         Step~: (collisionWorld: CollisionWorld*, input: ControllerInput, deltaSeconds: f32) -> ControllerEvents {
             events~ ControllerEvents = ControllerEvents { };
             wasGrounded: bool = grounded;
@@ -217,6 +302,10 @@ lantern:::physics :: namespace {
             return events;
         }
 
+        /**
+         * Moves the body along `displacement`, stopping at the first thing it hits, ignoring `ignore`. It carries the
+         * body with a moving platform without letting the platform's own collider stop it.
+         */
         MoveWithoutSliding~: (collisionWorld: CollisionWorld*, displacement: Vec3, ignore: ColliderId?) -> void {
             capsule: Capsule = settings.CapsuleShape();
             center: Vec3 = CapsuleCenter();
@@ -227,6 +316,12 @@ lantern:::physics :: namespace {
             }
         }
 
+        /**
+         * Moves by `displacement`. Each time the body hits something it keeps the part of the movement that runs along
+         * the surface and loses the part that goes into it, for up to MAX_SLIDE_ITERATIONS hits. After two surfaces
+         * it slides along their crease; after three it stops. A steep surface met on the ground first tries a step up,
+         * and a ceiling stops an upward velocity. Returns the events, with `hitCeiling` set if that happened.
+         */
         MoveAndSlide~: (collisionWorld: CollisionWorld*, displacement: Vec3, incomingEvents: ControllerEvents) -> ControllerEvents {
             events~ ControllerEvents = incomingEvents;
             capsule: Capsule = settings.MovementCapsule();
@@ -290,6 +385,9 @@ lantern:::physics :: namespace {
             return events;
         }
 
+        /**
+         * How much of `displacement` can be travelled before hitting something, from 0 to 1 (1 when nothing is hit).
+         */
         CastFractionOr :: (collisionWorld: CollisionWorld*, capsule: Capsule, center: Vec3, displacement: Vec3) -> f32 {
             if hit := collisionWorld->CapsuleCast(capsule, center, displacement, null) {
                 return hit.fraction;
@@ -297,6 +395,10 @@ lantern:::physics :: namespace {
             return 1.0f;
         }
 
+        /**
+         * Tries to climb a ledge of up to `stepHeight`: raise the body, move forward, then lower it. The result is the
+         * new body centre when it ends up on walkable ground higher than it started, else null.
+         */
         TryStepUp :: (collisionWorld: CollisionWorld*, forwardMotion: Vec3) -> Vec3? {
             capsule: Capsule = settings.MovementCapsule();
             forwardLength: f32 = forwardMotion.length();
@@ -331,6 +433,10 @@ lantern:::physics :: namespace {
             return null;
         }
 
+        /**
+         * A ray straight down just beside `contact`, in `direction`. Returns the normal of the walkable face it hits, or
+         * null. It tells a capsule resting on the rounded edge of a ledge from one touching a wall.
+         */
         WalkableFaceNear :: (collisionWorld: CollisionWorld*, contact: Vec3, direction: Vec3) -> Vec3? {
             origin: Vec3 = contact + NormalizeOrZero3(Horizontal(direction)) * WALKABLE_FACE_SIDE_OFFSET + lantern:::core:::WorldUp() * WALKABLE_FACE_START_ABOVE;
             found: RayHit? = collisionWorld->Raycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, WALKABLE_FACE_START_ABOVE + settings.stepHeight);
@@ -342,6 +448,10 @@ lantern:::physics :: namespace {
             return null;
         }
 
+        /**
+         * Casts the body down by `down`. The ground it finds may be a face that isn't walkable by its own normal (the
+         * body touched an edge), so it also looks for a walkable face ahead of the movement and toward the body's axis.
+         */
         FindGround :: (collisionWorld: CollisionWorld*, center: Vec3, down: Vec3) -> GroundProbe? {
             found: ShapeHit? = collisionWorld->CapsuleCast(settings.MovementCapsule(), center, down, null);
             guard found return null;
@@ -364,6 +474,10 @@ lantern:::physics :: namespace {
             return null;
         }
 
+        /**
+         * Looks `reach` below the body. On ground it snaps the body to it and records the normal and the collider (so a
+         * moving platform can carry the body); otherwise it marks the body as airborne.
+         */
         ProbeGround~: (collisionWorld: CollisionWorld*, reach: f32) -> void {
             center: Vec3 = CapsuleCenter();
             down: Vec3 = lantern:::core:::WorldUp() * -reach;
@@ -379,6 +493,10 @@ lantern:::physics :: namespace {
             }
         }
 
+        /**
+         * If the body overlaps geometry (a platform moved into it, say), pushes it out along the deepest contact's
+         * normal, up to MAX_DEPENETRATION_ITERATIONS times.
+         */
         Depenetrate~: (collisionWorld: CollisionWorld*) -> void {
             capsule: Capsule = settings.CapsuleShape();
             for iteration~ usize = 0; iteration < MAX_DEPENETRATION_ITERATIONS; iteration++ {

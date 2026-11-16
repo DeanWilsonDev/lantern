@@ -1,4 +1,8 @@
 lantern:::core :: namespace {
+    /**
+     * The keys the engine knows about. The SDL layer turns a physical key into one of these; nothing else in the
+     * engine sees SDL's key codes.
+     */
     KeyCode :: enum {
         A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
         Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
@@ -8,12 +12,18 @@ lantern:::core :: namespace {
         F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12
     }
 
+    /**
+     * The three mouse buttons a game can bind.
+     */
     MouseButton :: enum {
         Left,
         Right,
         Middle
     }
 
+    /**
+     * Gamepad buttons by position, not by label: South is A on an Xbox pad and cross on a PlayStation pad.
+     */
     GamepadButton :: enum {
         South, East, West, North,
         Back, Start,
@@ -22,6 +32,9 @@ lantern:::core :: namespace {
         DPadUp, DPadDown, DPadLeft, DPadRight
     }
 
+    /**
+     * The six analogue inputs of a gamepad: two for each stick and one for each trigger.
+     */
     GamepadAxis :: enum {
         LeftX,
         LeftY,
@@ -31,17 +44,26 @@ lantern:::core :: namespace {
         RightTrigger
     }
 
+    /**
+     * One of the two sticks, used when both of its axes are read together as a vector.
+     */
     GamepadStick :: enum {
         Left,
         Right
     }
 
+    /**
+     * What an action produces: a button (held or not), a single number from -1 to 1, or a pair of numbers.
+     */
     ActionKind :: enum {
         Button,
         Axis1D,
         Axis2D
     }
 
+    /**
+     * A handle to an action, which is its index in the ActionSet. It is a number so a snapshot can be a plain array.
+     */
     ActionId :: struct {
         value~ u16 = 0;
 
@@ -54,6 +76,10 @@ lantern:::core :: namespace {
         }
     }
 
+    /**
+     * The actions a game declared ("jump", "move"), each with a name and a kind. A game declares them once at
+     * start; the input system then reads bindings for them every frame.
+     */
     ActionSet :: class {
     public:
         names~ Array<string!>! = [];
@@ -112,6 +138,11 @@ lantern:::core :: namespace {
         }
     }
 
+    /**
+     * A physical input an action can be bound to. The first four make a button; KeyAxis and GamepadAxisValue make a
+     * number; KeyVector, Stick and MouseMotion make a pair of numbers. `scale` multiplies the reading, so a negative
+     * scale flips an axis.
+     */
     Binding :: enum {
         Key(key: KeyCode),
         Mouse(button: MouseButton),
@@ -124,11 +155,17 @@ lantern:::core :: namespace {
         MouseMotion(scale: f32)
     }
 
+    /**
+     * One line of the binding table: this action listens to this binding. An action may have several.
+     */
     BoundAction :: struct {
         action~ ActionId = ActionId { };
         binding~ Binding = Binding:::MouseMotion(0.0f);
     }
 
+    /**
+     * The binding table: every BoundAction. The InputRouter can be reconfigured with a new table to rebind controls.
+     */
     Bindings :: class {
     public:
         entries~ Array<BoundAction>! = [];
@@ -162,6 +199,10 @@ lantern:::core :: namespace {
         }
     }
 
+    /**
+     * What an action did this frame: whether it is held, whether it went down or up this frame, and its value (the
+     * number in `x` for an axis, both for a pair).
+     */
     ActionState :: struct {
         held~ bool = false;
         pressed~ bool = false;
@@ -173,6 +214,10 @@ lantern:::core :: namespace {
         }
     }
 
+    /**
+     * The state of every action for one frame, indexed by ActionId. The InputRouter builds one per frame and one per
+     * fixed step, and the game only reads it, so a step always sees a consistent frame.
+     */
     InputSnapshot :: class {
     public:
         states~ Array<ActionState>! = [];
@@ -220,6 +265,11 @@ lantern:::core :: namespace {
         }
     }
 
+    /**
+     * Ignores a stick pushed less than `deadZone` from the centre and rescales the rest so the output still reaches 1.
+     * It is radial (it measures the stick's length), so a stick pushed diagonally isn't cut off differently from one
+     * pushed straight.
+     */
     ApplyRadialDeadZone :: (stick: Vec2, deadZone: f32) -> Vec2 {
         length: f32 = Vec2Length(stick);
         if length <= deadZone {

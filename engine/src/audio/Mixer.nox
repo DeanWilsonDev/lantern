@@ -1,31 +1,61 @@
 lantern:::audio :: namespace {
+    /**
+     * The most sound effects that can play at once. Starting a 33rd drops the oldest one.
+     */
     MAX_VOICES: usize : 32;
 
+    /**
+     * A marker type. A `Handle<SoundTag>` is the handle a game holds for a loaded sound; the type parameter stops it
+     * being used where another kind of handle is expected.
+     */
     SoundTag :: struct { }
 
+    /**
+     * The marker for the mixer's own pool of slots. The pool hands out `Handle<SoundSlot>`, and the mixer converts it
+     * to a `Handle<SoundTag>` with CastHandle before giving it to the game.
+     */
     SoundSlot :: struct { }
 
+    /**
+     * The three volume knobs, each from 0 to 1. Effects play at master times effects, music at master times music.
+     */
     Volumes :: struct {
         master~ f32 = 0.8f;
         music~ f32 = 0.5f;
         effects~ f32 = 0.9f;
     }
 
+    /**
+     * One sound being played: which sound, how many frames of it have been played, and its own volume.
+     */
     Voice :: struct {
         sound~ lantern:::core:::Handle<SoundTag> = lantern:::core:::Handle<SoundTag> { };
         frame~ usize = 0;
         volume~ f32 = 1.0f;
     }
 
+    /**
+     * A handle written as text for a log message, such as `Handle(3v1)` (slot 3, generation 1).
+     */
     HandleText :: (sound: lantern:::core:::Handle<SoundTag>) -> string! {
         return `Handle(${sound.index}v${sound.generation})`;
     }
 
+    /**
+     * Squeezes a sample into -1 to 1 with a gentle curve instead of cutting it off. When several loud sounds add
+     * up past 1, a hard cut makes a harsh crackle; this bends the peaks smoothly. Below about 0.5 it changes
+     * nothing you can hear.
+     */
     SoftClip :: (sample: f32) -> f32 {
         clamped: f32 = Math:::clamp(sample, -1.5f, 1.5f);
         return clamped - clamped * clamped * clamped / 6.75f;
     }
 
+    /**
+     * Plays loaded sounds and music into one stereo stream. It has no idea where the audio goes: the SDL layer
+     * asks it for N frames with Mix and sends them to the device. Sounds are resampled to the device's rate when
+     * added, so mixing is plain addition.
+     */
     Mixer :: class {
     public:
         sampleRate~ u32 = 0;
@@ -51,6 +81,10 @@ lantern:::audio :: namespace {
             return sampleRate;
         }
 
+        /**
+         * Stores a sound (resampled to the mixer's rate) and returns its handle. A slot freed by RemoveSound is reused,
+         * with a new generation, so an old handle can't play the new sound.
+         */
         AddSound~: (sound: SoundData*) -> lantern:::core:::Handle<SoundTag> {
             handle: lantern:::core:::Handle<SoundSlot> = slots->Insert(SoundSlot { });
             slot: usize = usize(handle.index);
@@ -65,10 +99,16 @@ lantern:::audio :: namespace {
             return lantern:::core:::CastHandle<SoundSlot, SoundTag>(handle);
         }
 
+        /**
+         * True when the handle still refers to a loaded sound.
+         */
         Contains :: (sound: lantern:::core:::Handle<SoundTag>) -> bool {
             return slots->Contains(lantern:::core:::CastHandle<SoundTag, SoundSlot>(sound));
         }
 
+        /**
+         * Unloads a sound. Voices playing it stop, and so does the music if it was that sound.
+         */
         RemoveSound~: (sound: lantern:::core:::Handle<SoundTag>) -> void {
             kept~ Array<Voice>! = [];
             for voice in voices {
@@ -93,6 +133,10 @@ lantern:::audio :: namespace {
             sounds.insert(slot, new SoundData(0));
         }
 
+        /**
+         * Starts a sound effect at `volume` (0 to 1) on top of what is playing. An unknown handle logs a warning and
+         * plays nothing. When all voices are busy the oldest is dropped.
+         */
         Play~: (sound: lantern:::core:::Handle<SoundTag>, volume: f32) -> void {
             if !Contains(sound) {
                 name: string! = HandleText(sound);
@@ -108,6 +152,10 @@ lantern:::audio :: namespace {
             voices.push(Voice { sound: sound, frame: 0, volume: volume });
         }
 
+        /**
+         * Starts looping music. Asking for the track already playing does nothing, so a game can call it every time
+         * a level loads without restarting the song.
+         */
         PlayMusic~: (sound: lantern:::core:::Handle<SoundTag>) -> void {
             if playing := music {
                 if playing.sound == sound {
@@ -117,10 +165,16 @@ lantern:::audio :: namespace {
             music = Voice { sound: sound, frame: 0, volume: 1.0f };
         }
 
+        /**
+         * Stops the music.
+         */
         StopMusic~: () -> void {
             music = null;
         }
 
+        /**
+         * How many sounds are playing, music included. The debug HUD shows it.
+         */
         ActiveVoiceCount :: () -> usize {
             if music != null {
                 return voices.length() + 1;
@@ -128,10 +182,17 @@ lantern:::audio :: namespace {
             return voices.length();
         }
 
+        /**
+         * How many frames Mix has produced since start, which tests use to check the device is pulling audio.
+         */
         FramesMixed :: () -> u64 {
             return framesMixed;
         }
 
+        /**
+         * Produces the next `frames` stereo frames as interleaved left and right samples. Each effect voice is added in
+         * and advanced, and dropped when it reaches its end; the music loops. The sum goes through SoftClip last.
+         */
         Mix~: (frames: usize) -> Array<f32>! {
             output~ Array<f32>! = [];
             for index~ usize = 0; index < frames * 2; index++ {
@@ -190,6 +251,10 @@ lantern:::audio :: namespace {
         }
     }
 
+    /**
+     * Loaded sounds by name, so the engine looks a sound up by its asset name
+     * instead of keeping handles around.
+     */
     SoundBank :: class {
     public:
         names~ Array<string!>! = [];
