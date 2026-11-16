@@ -1,0 +1,98 @@
+// The sky on the GPU: the uniform blocks the sky pass and the lit shader read it through.
+//
+// The sky is drawn by one full-screen triangle at the far plane (sky.vert, sky.frag) after the meshes, so only pixels
+// no mesh covered are shaded. It is not drawn for an orthographic camera, which has no view direction per pixel; the
+// editor's straight-on views clear to the colour instead. The lit shader reads the same three colours to light surfaces
+// (see sky-common.glsl).
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    /** The sky fragment shader's block, 128 bytes, as `SkyUniforms` in sky.frag lays it out: eight vec4s. */
+    SkyUniforms :: struct {
+        /** The camera's right vector times tan(half the field of view) times the aspect ratio. */
+        rightScaled~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's up vector times tan(half the field of view). */
+        upScaled~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's forward vector. */
+        forward~ f32[4] = filled<f32, 4>(0.0f);
+        /** Unit vector towards the sun, then the cosine of the disc's angular radius. */
+        toSunAndDiscCosine~ f32[4] = filled<f32, 4>(0.0f);
+        /** Colour straight up. */
+        zenith~ f32[4] = filled<f32, 4>(0.0f);
+        /** Colour at the horizon. */
+        horizon~ f32[4] = filled<f32, 4>(0.0f);
+        /** Colour straight down. */
+        ground~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sun's colour times the disc's strength. */
+        sunColor~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    /** The sky's colours and strength as the lit shader reads them: four vec4s, copied into `LightUniforms`. */
+    SkyLightUniforms :: struct {
+        /** Colour straight up. */
+        zenith~ f32[4] = filled<f32, 4>(0.0f);
+        /** Colour at the horizon. */
+        horizon~ f32[4] = filled<f32, 4>(0.0f);
+        /** Colour straight down. */
+        ground~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: how much ambient comes from the sky (0 to 1), y: how bright it is. */
+        strengthAndIntensity~ f32[4] = filled<f32, 4>(0.0f);
+    }
+
+    /** True when the sky should be drawn behind the meshes: it is on and the camera looks in a direction per pixel. */
+    SkyIsDrawn :: (renderWorld: lantern:::renderer:::RenderWorld*) -> bool {
+        return renderWorld->sky.enabled && !renderWorld->camera.IsOrthographic();
+    }
+
+    /** A colour as four floats with alpha 1. */
+    ColorToVector :: (color: lantern:::core:::Color) -> f32[4] {
+        return [color.r, color.g, color.b, 1.0f];
+    }
+
+    /** The lit shader's sky block. With the sky off, its strength is 0 so the shader keeps the flat ambient pair. */
+    PackSkyLightUniforms :: (renderWorld: lantern:::renderer:::RenderWorld*) -> SkyLightUniforms {
+        sky: lantern:::renderer:::SkySettings = renderWorld->sky;
+        strength: f32 = sky.enabled ? Math:::clamp(sky.lightingStrength, 0.0f, 1.0f) : 0.0f;
+        return SkyLightUniforms {
+            zenith: ColorToVector(sky.zenith),
+            horizon: ColorToVector(sky.horizon),
+            ground: ColorToVector(sky.ground),
+            strengthAndIntensity: [strength, sky.lightingIntensity, 0.0f, 0.0f]
+        };
+    }
+
+    /**
+     * The sky pass's block. The camera's right and up vectors are scaled so that `forward + right * x + up * y`, for a
+     * pixel at screen position (x, y) in -1..1, points through that pixel: the half-height of the view one unit ahead is
+     * tan(half the vertical field of view) and the half-width is that times the aspect ratio.
+     */
+    PackSkyUniforms :: (renderWorld: lantern:::renderer:::RenderWorld*, aspectRatio: f32) -> SkyUniforms {
+        camera: lantern:::renderer:::Camera = renderWorld->camera;
+        forward: Vec3 = camera.forward;
+        worldUp: Vec3 = lantern:::core:::WorldUp();
+        reference~ Vec3 = worldUp;
+        if lantern:::core:::LengthSquared3(forward.cross(worldUp)) < 0.000001f {
+            reference = lantern:::core:::WorldForward();
+        }
+        right: Vec3 = lantern:::core:::NormalizeOr3(forward.cross(reference), lantern:::core:::WorldRight());
+        up: Vec3 = right.cross(forward);
+        halfHeight: f32 = Math:::tan(camera.verticalFieldOfViewRadians * 0.5f);
+        halfWidth: f32 = halfHeight * Math:::max(aspectRatio, 0.001f);
+        sky: lantern:::renderer:::SkySettings = renderWorld->sky;
+        toSun: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - renderWorld->light.direction, worldUp);
+        sunStrength: f32 = sky.sunDiscStrength > 0.0f ? sky.sunDiscStrength : 0.0f;
+        sunColor: lantern:::core:::Color = renderWorld->light.color;
+        return SkyUniforms {
+            rightScaled: [right.x * halfWidth, right.y * halfWidth, right.z * halfWidth, 0.0f],
+            upScaled: [up.x * halfHeight, up.y * halfHeight, up.z * halfHeight, 0.0f],
+            forward: [forward.x, forward.y, forward.z, 0.0f],
+            toSunAndDiscCosine: [toSun.x, toSun.y, toSun.z, Math:::cos(sky.sunDiscRadiusRadians)],
+            zenith: ColorToVector(sky.zenith),
+            horizon: ColorToVector(sky.horizon),
+            ground: ColorToVector(sky.ground),
+            sunColor: [sunColor.r * sunStrength, sunColor.g * sunStrength, sunColor.b * sunStrength, 1.0f]
+        };
+    }
+}

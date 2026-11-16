@@ -5,9 +5,14 @@
 //
 //   colour = ambient + sun + every local light + emissive, then faded into the fog colour with distance
 //
+// where the ambient comes from the sky (see below), or from the flat sky and ground colours when the sky's lighting is off
+//
 // - albedo: the surface's own colour, the texture times the vertex colour times the draw's tint.
 // - ambient: sky light from above blended with ground light from below by which way the surface faces, standing in for
-//   all the light that bounces around the scene.
+//   all the light that bounces around the scene. With the procedural sky on, the ambient is image-based instead: the
+//   sky's colour averaged around the surface's normal lights its diffuse colour, and the sky seen in the mirror direction
+//   (blurred by roughness) is its reflection, scaled by an approximation of how the surface responds (EnvironmentBrdf).
+//   The sky is the function in sky-common.glsl, the same one sky.frag draws.
 // - the sun and each local light go through one function, EvaluateLight, with a direction to the light and the light's
 //   colour at this pixel. A point or spot light first loses brightness with distance (its attenuation) and a spot light
 //   loses more outside its cone.
@@ -32,6 +37,8 @@
 // SDL GPU fixes where resources live in SPIR-V for a fragment shader: texture-sampler pairs are set 2, uniform blocks
 // are set 3, binding n for push slot n.
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "sky-common.glsl"
 
 const float PI = 3.14159265359;
 // Must match MAX_LOCAL_LIGHTS in RenderWorld.nox.
@@ -46,7 +53,7 @@ layout(set = 2, binding = 1) uniform sampler2DShadow sun_shadow_map;
 // The local lights' shadow map: tiles in a grid, one per spot light and six per point light.
 layout(set = 2, binding = 2) uniform sampler2DShadow local_shadow_map;
 
-// Slot 0, pushed once per frame: LightUniforms in GpuUniforms.nox (112 bytes).
+// Slot 0, pushed once per frame: LightUniforms in GpuUniforms.nox (176 bytes).
 layout(set = 3, binding = 0) uniform LightUniforms {
     // Unit vector from the surface towards the sun.
     vec4 direction_to_light;
@@ -58,6 +65,13 @@ layout(set = 3, binding = 0) uniform LightUniforms {
     vec4 fog_color;
     // x: fog start distance, y: fog end distance.
     vec4 fog_and_output;
+    // The sky that lights the scene: its colour straight up, at the horizon and straight down.
+    vec4 sky_zenith;
+    vec4 sky_horizon;
+    vec4 sky_ground;
+    // x: how much of the ambient light comes from the sky instead of the flat sky and ground pair (0 to 1), y: how
+    // bright that sky light is.
+    vec4 sky_strength_and_intensity;
     vec4 camera_position;
 } light;
 
@@ -251,6 +265,18 @@ float LocalShadow(LocalLight local, vec3 position, vec3 normal, vec3 light_to_po
     return FilteredShadow(local_shadow_map, atlas_uv, reference_depth - 0.0001, texel, tile_minimum, tile_maximum);
 }
 
+// The split-sum approximation of a surface's response to light arriving from every direction (Karis, "Physically Based
+// Shading on Mobile"): how much of a distant light the specular colour keeps, as a scale and a bias that depend on the
+// roughness and the angle to the viewer. A fit to numbers that would otherwise need a lookup texture.
+vec3 EnvironmentBrdf(vec3 specular_color, float roughness, float normal_dot_view) {
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * normal_dot_view)) * r.x + r.y;
+    vec2 scale_and_bias = vec2(-1.04, 1.04) * a004 + r.zw;
+    return specular_color * scale_and_bias.x + scale_and_bias.y;
+}
+
 void main() {
     vec4 albedo = texture(albedo_texture, surface_uv) * surface_color * material.color;
     // Interpolating unit normals across a triangle shortens them, so normalise again per pixel.
@@ -269,7 +295,15 @@ void main() {
 
     float up_amount = 0.5 + 0.5 * normal.y;
     vec3 ambient = mix(light.ground_ambient_color.rgb, light.ambient_color.rgb, up_amount);
-    vec3 lit = ambient * (diffuse_color + f0 * (1.0 - roughness));
+    vec3 flat_ambient = ambient * (diffuse_color + f0 * (1.0 - roughness));
+    // Image-based lighting from the sky: a rough average of the sky around the normal lights diffuse colour, and the sky
+    // in the mirror direction, blurred by roughness, shows in the specular. It replaces the flat pair above by the
+    // strength the game sets.
+    vec3 sky_diffuse = SkyGradient(normal, light.sky_zenith.rgb, light.sky_horizon.rgb, light.sky_ground.rgb, 1.0) * diffuse_color;
+    vec3 sky_reflection = SkyGradient(reflect(-view, normal), light.sky_zenith.rgb, light.sky_horizon.rgb, light.sky_ground.rgb, roughness);
+    vec3 sky_specular = sky_reflection * EnvironmentBrdf(f0, roughness, max(dot(normal, view), 0.0001));
+    vec3 sky_ambient = (sky_diffuse + sky_specular) * light.sky_strength_and_intensity.y;
+    vec3 lit = mix(flat_ambient, sky_ambient, light.sky_strength_and_intensity.x);
 
     float sun_visibility = SunShadow(world_position, normal);
     lit += EvaluateLight(normal, view, light.direction_to_light.xyz, light.light_color.rgb * sun_visibility, diffuse_color, f0, alpha);

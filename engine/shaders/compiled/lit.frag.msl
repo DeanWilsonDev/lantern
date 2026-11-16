@@ -30,6 +30,10 @@ struct LightUniforms
     float4 ground_ambient_color;
     float4 fog_color;
     float4 fog_and_output;
+    float4 sky_zenith;
+    float4 sky_horizon;
+    float4 sky_ground;
+    float4 sky_strength_and_intensity;
     float4 camera_position;
 };
 
@@ -68,6 +72,26 @@ struct main0_in
 };
 
 static inline __attribute__((always_inline))
+float3 SkyGradient(thread const float3& direction, thread const float3& zenith, thread const float3& horizon, thread const float3& ground, thread const float& blur)
+{
+    float elevation = direction.y;
+    float upward = fast::clamp(elevation, 0.0, 1.0);
+    float3 above = mix(horizon, zenith, float3(pow(upward, mix(0.449999988079071044921875, 1.0, blur))));
+    float softness = mix(0.00999999977648258209228515625, 0.5, blur);
+    float below_amount = smoothstep(-softness, softness, -elevation);
+    return mix(above, ground, float3(below_amount));
+}
+
+static inline __attribute__((always_inline))
+float3 EnvironmentBrdf(thread const float3& specular_color, thread const float& roughness, thread const float& normal_dot_view)
+{
+    float4 r = (float4(-1.0, -0.0274999998509883880615234375, -0.572000026702880859375, 0.02199999988079071044921875) * roughness) + float4(1.0, 0.0425000004470348358154296875, 1.03999996185302734375, -0.039999999105930328369140625);
+    float a004 = (fast::min(r.x * r.x, exp2((-9.27999973297119140625) * normal_dot_view)) * r.x) + r.y;
+    float2 scale_and_bias = (float2(-1.03999996185302734375, 1.03999996185302734375) * a004) + r.zw;
+    return (specular_color * scale_and_bias.x) + float3(scale_and_bias.y);
+}
+
+static inline __attribute__((always_inline))
 float FilteredShadow(depth2d<float> shadow_map, sampler shadow_mapSmplr, thread const float2& uv, thread const float& reference_depth, thread const float2& texel, thread const float2& tile_minimum, thread const float2& tile_maximum)
 {
     float lit_amount = 0.0;
@@ -76,8 +100,8 @@ float FilteredShadow(depth2d<float> shadow_map, sampler shadow_mapSmplr, thread 
         for (int y = -1; y <= 1; y++)
         {
             float2 sample_uv = fast::clamp(uv + (float2(float(x), float(y)) * texel), tile_minimum + (texel * 0.5), tile_maximum - (texel * 0.5));
-            float3 _269 = float3(sample_uv, reference_depth);
-            lit_amount += shadow_map.sample_compare(shadow_mapSmplr, _269.xy, _269.z);
+            float3 _319 = float3(sample_uv, reference_depth);
+            lit_amount += shadow_map.sample_compare(shadow_mapSmplr, _319.xy, _319.z);
         }
     }
     return lit_amount / 9.0;
@@ -117,44 +141,44 @@ float SunShadow(thread const float3& position, thread const float3& normal, cons
     float3 pushed = position + (normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w));
     float4 clip = shadows.cascade_matrices[cascade] * float4(pushed, 1.0);
     float2 tile_uv = float2((clip.x * 0.5) + 0.5, 0.5 - (clip.y * 0.5));
-    bool _382 = clip.z > 1.0;
-    bool _389;
-    if (!_382)
+    bool _430 = clip.z > 1.0;
+    bool _437;
+    if (!_430)
     {
-        _389 = tile_uv.x < 0.0;
+        _437 = tile_uv.x < 0.0;
     }
     else
     {
-        _389 = _382;
+        _437 = _430;
     }
-    bool _396;
-    if (!_389)
+    bool _444;
+    if (!_437)
     {
-        _396 = tile_uv.x > 1.0;
+        _444 = tile_uv.x > 1.0;
     }
     else
     {
-        _396 = _389;
+        _444 = _437;
     }
-    bool _403;
-    if (!_396)
+    bool _451;
+    if (!_444)
     {
-        _403 = tile_uv.y < 0.0;
+        _451 = tile_uv.y < 0.0;
     }
     else
     {
-        _403 = _396;
+        _451 = _444;
     }
-    bool _410;
-    if (!_403)
+    bool _458;
+    if (!_451)
     {
-        _410 = tile_uv.y > 1.0;
+        _458 = tile_uv.y > 1.0;
     }
     else
     {
-        _410 = _403;
+        _458 = _451;
     }
-    if (_410)
+    if (_458)
     {
         return 1.0;
     }
@@ -237,17 +261,17 @@ float LocalShadow(thread const LocalLight& local, thread const float3& position,
     {
         float3 magnitude = abs(light_to_position);
         int face = 5;
-        bool _485 = magnitude.x >= magnitude.y;
-        bool _493;
-        if (_485)
+        bool _533 = magnitude.x >= magnitude.y;
+        bool _541;
+        if (_533)
         {
-            _493 = magnitude.x >= magnitude.z;
+            _541 = magnitude.x >= magnitude.z;
         }
         else
         {
-            _493 = _485;
+            _541 = _533;
         }
-        if (_493)
+        if (_541)
         {
             face = (light_to_position.x > 0.0) ? 0 : 1;
         }
@@ -268,44 +292,44 @@ float LocalShadow(thread const LocalLight& local, thread const float3& position,
     float4 clip = shadows.local_tile_matrices[tile] * float4(pushed, 1.0);
     float reference_depth = clip.z / clip.w;
     float2 tile_uv = float2(((clip.x / clip.w) * 0.5) + 0.5, 0.5 - ((clip.y / clip.w) * 0.5));
-    bool _568 = (clip.w <= 0.0) || (reference_depth > 1.0);
-    bool _575;
-    if (!_568)
+    bool _616 = (clip.w <= 0.0) || (reference_depth > 1.0);
+    bool _623;
+    if (!_616)
     {
-        _575 = tile_uv.x < 0.0;
+        _623 = tile_uv.x < 0.0;
     }
     else
     {
-        _575 = _568;
+        _623 = _616;
     }
-    bool _582;
-    if (!_575)
+    bool _630;
+    if (!_623)
     {
-        _582 = tile_uv.x > 1.0;
+        _630 = tile_uv.x > 1.0;
     }
     else
     {
-        _582 = _575;
+        _630 = _623;
     }
-    bool _589;
-    if (!_582)
+    bool _637;
+    if (!_630)
     {
-        _589 = tile_uv.y < 0.0;
+        _637 = tile_uv.y < 0.0;
     }
     else
     {
-        _589 = _582;
+        _637 = _630;
     }
-    bool _596;
-    if (!_589)
+    bool _644;
+    if (!_637)
     {
-        _596 = tile_uv.y > 1.0;
+        _644 = tile_uv.y > 1.0;
     }
     else
     {
-        _596 = _589;
+        _644 = _637;
     }
-    if (_596)
+    if (_644)
     {
         return 1.0;
     }
@@ -336,21 +360,39 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     float3 f0 = mix(float3(0.039999999105930328369140625), albedo.xyz, float3(metallic));
     float up_amount = 0.5 + (0.5 * normal.y);
     float3 ambient = mix(light.ground_ambient_color.xyz, light.ambient_color.xyz, float3(up_amount));
-    float3 lit = ambient * (diffuse_color + (f0 * (1.0 - roughness)));
-    float3 param = in.world_position;
-    float3 param_1 = normal;
-    float sun_visibility = SunShadow(param, param_1, shadows, light, sun_shadow_map, sun_shadow_mapSmplr);
-    float3 param_2 = normal;
-    float3 param_3 = view;
-    float3 param_4 = light.direction_to_light.xyz;
-    float3 param_5 = light.light_color.xyz * sun_visibility;
-    float3 param_6 = diffuse_color;
-    float3 param_7 = f0;
-    float param_8 = alpha;
-    lit += EvaluateLight(param_2, param_3, param_4, param_5, param_6, param_7, param_8);
+    float3 flat_ambient = ambient * (diffuse_color + (f0 * (1.0 - roughness)));
+    float3 param = normal;
+    float3 param_1 = light.sky_zenith.xyz;
+    float3 param_2 = light.sky_horizon.xyz;
+    float3 param_3 = light.sky_ground.xyz;
+    float param_4 = 1.0;
+    float3 sky_diffuse = SkyGradient(param, param_1, param_2, param_3, param_4) * diffuse_color;
+    float3 param_5 = reflect(-view, normal);
+    float3 param_6 = light.sky_zenith.xyz;
+    float3 param_7 = light.sky_horizon.xyz;
+    float3 param_8 = light.sky_ground.xyz;
+    float param_9 = roughness;
+    float3 sky_reflection = SkyGradient(param_5, param_6, param_7, param_8, param_9);
+    float3 param_10 = f0;
+    float param_11 = roughness;
+    float param_12 = fast::max(dot(normal, view), 9.9999997473787516355514526367188e-05);
+    float3 sky_specular = sky_reflection * EnvironmentBrdf(param_10, param_11, param_12);
+    float3 sky_ambient = (sky_diffuse + sky_specular) * light.sky_strength_and_intensity.y;
+    float3 lit = mix(flat_ambient, sky_ambient, float3(light.sky_strength_and_intensity.x));
+    float3 param_13 = in.world_position;
+    float3 param_14 = normal;
+    float sun_visibility = SunShadow(param_13, param_14, shadows, light, sun_shadow_map, sun_shadow_mapSmplr);
+    float3 param_15 = normal;
+    float3 param_16 = view;
+    float3 param_17 = light.direction_to_light.xyz;
+    float3 param_18 = light.light_color.xyz * sun_visibility;
+    float3 param_19 = diffuse_color;
+    float3 param_20 = f0;
+    float param_21 = alpha;
+    lit += EvaluateLight(param_15, param_16, param_17, param_18, param_19, param_20, param_21);
     int local_count = min(int(locals.header.x), 8);
     LocalLight local;
-    float _854;
+    float _1020;
     for (int index = 0; index < local_count; index++)
     {
         local.position_and_range = locals.lights[index].position_and_range;
@@ -364,9 +406,9 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
             continue;
         }
         to_light /= float3(fast::max(distance_to_light, 9.9999997473787516355514526367188e-05));
-        float param_9 = distance_to_light;
-        float param_10 = local.position_and_range.w;
-        float strength = DistanceAttenuation(param_9, param_10);
+        float param_22 = distance_to_light;
+        float param_23 = local.position_and_range.w;
+        float strength = DistanceAttenuation(param_22, param_23);
         if (local.color_and_kind.w > 0.5)
         {
             float cosine_to_axis = dot(-to_light, local.direction_and_outer_cosine.xyz);
@@ -374,29 +416,29 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
             float inner_cosine = local.cone.x;
             if ((inner_cosine - outer_cosine) > 9.9999997473787516355514526367188e-05)
             {
-                _854 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
+                _1020 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
             }
             else
             {
-                _854 = step(outer_cosine, cosine_to_axis);
+                _1020 = step(outer_cosine, cosine_to_axis);
             }
-            float cone_fade = _854;
+            float cone_fade = _1020;
             strength *= cone_fade;
         }
-        LocalLight param_11 = local;
-        float3 param_12 = in.world_position;
-        float3 param_13 = normal;
-        float3 param_14 = (-to_light) * distance_to_light;
-        float param_15 = distance_to_light;
-        float visibility = LocalShadow(param_11, param_12, param_13, param_14, param_15, shadows, local_shadow_map, local_shadow_mapSmplr);
-        float3 param_16 = normal;
-        float3 param_17 = view;
-        float3 param_18 = to_light;
-        float3 param_19 = (local.color_and_kind.xyz * strength) * visibility;
-        float3 param_20 = diffuse_color;
-        float3 param_21 = f0;
-        float param_22 = alpha;
-        lit += EvaluateLight(param_16, param_17, param_18, param_19, param_20, param_21, param_22);
+        LocalLight param_24 = local;
+        float3 param_25 = in.world_position;
+        float3 param_26 = normal;
+        float3 param_27 = (-to_light) * distance_to_light;
+        float param_28 = distance_to_light;
+        float visibility = LocalShadow(param_24, param_25, param_26, param_27, param_28, shadows, local_shadow_map, local_shadow_mapSmplr);
+        float3 param_29 = normal;
+        float3 param_30 = view;
+        float3 param_31 = to_light;
+        float3 param_32 = (local.color_and_kind.xyz * strength) * visibility;
+        float3 param_33 = diffuse_color;
+        float3 param_34 = f0;
+        float param_35 = alpha;
+        lit += EvaluateLight(param_29, param_30, param_31, param_32, param_33, param_34, param_35);
     }
     lit += material.emissive.xyz;
     float distance_to_camera = distance(in.world_position, light.camera_position.xyz);

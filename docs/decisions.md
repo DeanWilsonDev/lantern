@@ -1064,3 +1064,20 @@ three more steps turn it into the picture. `bloom-and-tone-mapping.md` is the gu
   Vulkan driver, so the 60 fps goal needs Dean's Mac.
 
 Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
+
+## D-065: A procedural sky that lights the scene
+
+- **The sky is a formula, not a cubemap.** `SkyGradient(direction, zenith, horizon, ground, blur)` in
+  `engine/shaders/sky-common.glsl` is shared by the backdrop shader and the lit shader, so what you see behind the world
+  is exactly what lights it. No bake step, no texture to load.
+- **Image-based lighting is analytic.** Diffuse irradiance is the sky's blurred lookup along the normal; specular is the
+  roughness-blurred lookup along the mirror direction times an approximation of the environment BRDF table.
+- **The sky colours ride in the existing light uniform block** (now 176 bytes). SDL GPU allows four uniform buffers per
+  stage, and a fifth crashed lavapipe, so no new buffer was added.
+- **The sky is drawn after the meshes** at the far depth with a less-or-equal test, so it only shades uncovered pixels.
+  It is skipped for orthographic cameras.
+- **On at every quality level.** It is one fullscreen pass and arithmetic per lit pixel.
+- **`lantern::sky`** sets colours, the sun disc, the lighting strength and intensity, and turns the sky off.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.

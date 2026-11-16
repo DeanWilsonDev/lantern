@@ -39,6 +39,8 @@ lantern:::gpu :: namespace {
         alphaBlend~ bool = false;
         /** Add the fragment to what's there (`source + destination`): bloom piles each size's glow onto the next. */
         additiveBlend~ bool = false;
+        /** Pass a fragment as deep as what the depth buffer holds, not only nearer: the sky sits exactly at the far plane. */
+        depthLessOrEqual~ bool = false;
         /** Whether the render pass has a depth buffer. The full-screen post passes have none. */
         hasDepth~ bool = true;
         /** Take the three vertices from `gl_VertexIndex` instead of a vertex buffer: the full-screen triangle. */
@@ -61,6 +63,8 @@ lantern:::gpu :: namespace {
         overlay~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Shadow maps: the lit meshes' geometry drawn into a depth texture alone, from a light's point of view. */
         shadow~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** The sky: a full-screen triangle at the far plane, drawn after the meshes into the scene texture. */
+        sky~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Bloom's shrink: halves a picture, blurring it. The first shrink also picks out the bright parts (a uniform). */
         bloomDownsample~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Bloom's growth: blur a small picture and add it to the next larger one. */
@@ -82,6 +86,9 @@ lantern:::gpu :: namespace {
                 }
                 if shadow != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, shadow);
+                }
+                if sky != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, sky);
                 }
                 if bloomDownsample != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, bloomDownsample);
@@ -160,6 +167,26 @@ lantern:::gpu :: namespace {
             alphaBlend: false,
             additiveBlend: additiveBlend,
             hasDepth: false,
+            noVertexBuffer: true
+        };
+    }
+
+    /**
+     * The sky pipeline: `sky.vert` puts one oversized triangle at the far plane. Depth is tested with "less or equal" and
+     * not written, in a pass that has the scene's depth buffer, so the sky only fills pixels no mesh covered.
+     */
+    SkyPipelineDescription :: () -> PipelineDescription {
+        return PipelineDescription {
+            vertex: ShaderDescription { name: "sky", stage: ShaderStageKind:::Vertex, samplerCount: 0, uniformBufferCount: 0 },
+            fragment: ShaderDescription { name: "sky", stage: ShaderStageKind:::Fragment, samplerCount: 0, uniformBufferCount: 1 },
+            stride: 0,
+            attributeCount: 0,
+            primitive: Sdl:::SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+            cullBackFaces: false,
+            depthTest: true,
+            depthWrite: false,
+            depthLessOrEqual: true,
+            alphaBlend: false,
             noVertexBuffer: true
         };
     }
@@ -316,7 +343,7 @@ lantern:::gpu :: namespace {
                     enable_depth_bias: description.depthOnly
                 },
                 depth_stencil_state: Sdl:::SDL_GPUDepthStencilState {
-                    compare_op: Sdl:::SDL_GPU_COMPAREOP_LESS,
+                    compare_op: description.depthLessOrEqual ? Sdl:::SDL_GPU_COMPAREOP_LESS_OR_EQUAL : Sdl:::SDL_GPU_COMPAREOP_LESS,
                     enable_depth_test: description.depthTest,
                     enable_depth_write: description.depthWrite
                 },
@@ -376,6 +403,15 @@ lantern:::gpu :: namespace {
         when CreatePipeline(device, format, colorFormat, depthFormat, ShadowPipelineDescription()) {
             Result:::Ok(pipeline) -> {
                 pipelines.shadow = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, hdrFormat, depthFormat, SkyPipelineDescription()) {
+            Result:::Ok(pipeline) -> {
+                pipelines.sky = pipeline;
             },
             Result:::Err(message) -> {
                 pipelines.Release(device);
