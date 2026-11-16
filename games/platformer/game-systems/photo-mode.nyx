@@ -1,0 +1,322 @@
+GameUiModel :: import GameUiModel;
+InputSettings :: import InputSettings;
+Math :: import standard:::Math;
+PhotoSight :: import PhotoSight;
+PhotoVerdict :: import PhotoVerdict;
+PlayerTuning :: import PlayerTuning;
+Player :: import Player;
+ThirdPersonCamera :: import ThirdPersonCamera;
+
+// Photo mode: a second kind of collectable. Raise the camera to the player's eyes, frame a sight,
+// take the photo. Nothing about it is required: no door waits behind a photo, and the level can be
+// finished without ever lifting the camera.
+//
+// What happens, in the order a frame sees it:
+// 1. HandleInput (per display frame, from the Playing state): the camera key raises or lowers the
+//    camera, the mouse and right stick turn it, and the shutter key takes a photo.
+// 2. PlaceCamera (per drawn frame, from OnRender): puts the lens at the player's eyes, looking along
+//    the camera's yaw and pitch, and judges the shot (Evaluate).
+// 3. Publish (per display frame): copies what the viewfinder shows into the UI model
+//    (ui/photo-hud.chaos draws it).
+//
+// A photo counts a sight when four things are true:
+// - the sight is inside the viewfinder's frame (the bordered rectangle on screen),
+// - the camera is no farther from it than the sight's `max_distance`,
+// - nothing solid is between the lens and the sight (a ray from the lens must reach it), and
+// - when the sight is `together`, the companion is in the frame too, in the clear, and standing
+//   within TOGETHER_REACH of the sight, so the photo is of the two of you there.
+// The sight nearest the middle of the frame is the one a photo is judged against, so two sights
+// in the same view never fight.
+//
+// While the camera is raised the world keeps running: the companion walks on and the clock keeps
+// time. The player's body is hidden, because the lens is inside it.
+PhotoMode :: class {
+public:
+    isActive~ bool = false;
+    sights~ Array<PhotoSight> = [];
+    takenCount~ i32 = 0;
+    // The latest verdict, and which sight it is about (-1 when none is in frame).
+    verdict~ PhotoVerdict = PhotoVerdict:::NothingInFrame;
+    targetIndex~ i32 = -1;
+
+    // Builds this level's sights and puts everything back to its starting state. Call it after the
+    // level is loaded, because the sights are world entities.
+    Start~: (cubeMesh: i64) -> void {
+        sights = [];
+        takenCount = 0;
+        isActive = false;
+        verdict = PhotoVerdict:::NothingInFrame;
+        targetIndex = -1;
+        flashSecondsLeft = 0.0f;
+        feedbackSecondsLeft = 0.0f;
+        isDemo = lantern:::engine:::Flag("LANTERN_PHOTO_DEMO");
+        demoFrame = 0;
+        for entity: i64 in lantern:::world:::FindByKind("photo_sight") {
+            sight~ PhotoSight = new PhotoSight(entity);
+            sight.Place(cubeMesh);
+            sights.add(sight);
+        }
+    }
+
+    // Per display frame while playing. `frameSeconds` is real time, because the viewfinder and the
+    // flash are about what is on screen.
+    HandleInput~: (frameSeconds: f32, camera~ ThirdPersonCamera, player~ Player) -> void {
+        clock += frameSeconds;
+        // A scripted run for screenshots (LANTERN_PHOTO_DEMO=1 with LANTERN_AUTOPLAY=1): lift the
+        // camera on the third frame of play and press the shutter on the twelfth. The game has no way
+        // to send itself key presses, and counting frames makes the capture repeatable.
+        if isDemo {
+            demoFrame++;
+            if demoFrame == DEMO_RAISE_FRAME && !isActive {
+                Enter(camera, player);
+            }
+            if demoFrame == DEMO_SHUTTER_FRAME {
+                TakePhoto();
+            }
+        }
+        flashSecondsLeft = Math:::max(flashSecondsLeft - frameSeconds, 0.0f);
+        feedbackSecondsLeft = Math:::max(feedbackSecondsLeft - frameSeconds, 0.0f);
+        for sight: PhotoSight in sights {
+            sight.Animate(clock);
+        }
+        if lantern:::input:::IsPressed(InputSettings:::PHOTO) {
+            if isActive {
+                Leave(camera, player);
+            } else {
+                Enter(camera, player);
+            }
+        }
+        guard isActive;
+        // The same look as the ordinary camera (mouse motion is already radians, the stick is a
+        // speed), slowed down a little so a shot can be lined up.
+        stickLook := lantern:::input:::Vector(InputSettings:::LOOK_STICK) * (frameSeconds * PlayerTuning:::LOOK_STICK_SPEED);
+        look := (lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook) * LOOK_SLOWDOWN;
+        yaw = lantern:::angle:::Wrap(yaw - look.x);
+        pitch = Math:::clamp(pitch + look.y, -MAX_PITCH, MAX_PITCH);
+        if lantern:::input:::IsPressed(InputSettings:::SHUTTER) {
+            TakePhoto();
+        }
+    }
+
+    // Per drawn frame, instead of the ordinary camera while the camera is raised. `feet` is the
+    // player's blended position; `companionPosition` where she stands, and `hasCompanion` whether
+    // the level has her at all.
+    PlaceCamera~: (feet: lantern:::math:::Vec3, companionPosition: lantern:::math:::Vec3, hasCompanion: bool) -> void {
+        eye = feet + Lift(EYE_HEIGHT);
+        forward = Forward();
+        // Right is the horizontal direction a quarter turn clockwise from forward (the same
+        // formula as ThirdPersonCamera.Right), and up is right x forward.
+        right = lantern:::math:::Vec3 { x: Math:::cos(yaw), y: 0.0f, z: -Math:::sin(yaw) };
+        up = right.Cross(forward);
+        lantern:::camera:::LookAt(eye, eye + forward);
+        Evaluate(companionPosition, hasCompanion);
+    }
+
+    // Copies what the viewfinder shows into the UI model. The model only passes on real changes.
+    Publish~: (ui~ GameUiModel) -> void {
+        ui.SetPhotoMode(isActive);
+        ui.SetPhotoReady(isActive && verdict == PhotoVerdict:::Ready);
+        ui.SetPhotoFlash(flashSecondsLeft > 0.0f);
+        ui.SetPhotoHint(isActive ? (feedbackSecondsLeft > 0.0f ? feedback : Hint()) : "");
+    }
+
+    // " | Photos 1 / 3" for the status line, or nothing in a level without sights.
+    StatusSuffix :: () -> string {
+        return sights.length() == 0 ? "" : `  |  Photos ${takenCount:d} / ${sights.length():d}`;
+    }
+
+    // The tally for the level complete screen: how many, and the title of each photo taken.
+    AlbumText :: () -> string {
+        guard sights.length() > 0 return "";
+        titles~ string = "";
+        for sight: PhotoSight in sights {
+            name := sight.isTaken ? sight.title : "?";
+            titles = titles == "" ? name : `${titles}, ${name}`;
+        }
+        return `Photos ${takenCount:d} / ${sights.length():d}: ${titles}`;
+    }
+
+    // Lowers the camera without a photo, for the pause menu and for a level change.
+    Leave~: (camera~ ThirdPersonCamera, player~ Player) -> void {
+        guard isActive;
+        isActive = false;
+        player.SetBodyVisible(true);
+        for sight: PhotoSight in sights {
+            sight.ShowMarker(true);
+        }
+        camera.ResetBehind(yaw);
+    }
+
+    // The verdict as a word, for the debug HUD and for tests.
+    VerdictName :: () -> string {
+        when verdict <PhotoVerdict> {
+            Ready -> { return "ready"; },
+            TooFar -> { return "too far"; },
+            Blocked -> { return "blocked"; },
+            NeedsCompanion -> { return "needs companion"; },
+            NothingInFrame -> { return "nothing in frame"; }
+        }
+    }
+
+private:
+    static EYE_HEIGHT :: PlayerTuning:::HEIGHT - 0.2f;
+    static MAX_PITCH :: 1.2f;                // radians; short of straight up or down
+    static LOOK_SLOWDOWN :: 0.6f;
+    static VERTICAL_FIELD_OF_VIEW_DEGREES :: 60.0f;
+    static FRAME_MARGIN :: 0.08f;            // the viewfinder frame's margin, as a fraction of the screen on each side
+    static OCCLUSION_MARGIN :: 0.75f;        // metres in front of a sight that still count as reaching it
+    static TOGETHER_REACH :: 7.0f;           // metres from the sight that the companion may stand
+    static COMPANION_CHEST :: 1.0f;          // metres above her feet: the point of her that has to be in the shot
+    static DEMO_RAISE_FRAME :: 3;
+    static DEMO_SHUTTER_FRAME :: 12;
+    static FLASH_SECONDS :: 0.18f;
+    static FEEDBACK_SECONDS :: 3.0f;
+
+    yaw~ f32 = 0.0f;
+    pitch~ f32 = 0.0f;
+    eye~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    forward~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    right~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    up~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    clock~ f32 = 0.0f;
+    isDemo~ bool = false;
+    demoFrame~ i32 = 0;
+    flashSecondsLeft~ f32 = 0.0f;
+    feedbackSecondsLeft~ f32 = 0.0f;
+    feedback~ string = "";
+
+    Enter~: (camera: ThirdPersonCamera, player~ Player) -> void {
+        isActive = true;
+        // Start looking where the ordinary camera was looking, level with the horizon.
+        yaw = camera.yaw;
+        pitch = 0.0f;
+        player.SetBodyVisible(false);
+        for sight: PhotoSight in sights {
+            sight.ShowMarker(false);
+        }
+    }
+
+    // The way the lens points: the same spherical-to-Cartesian step as the ordinary camera, but
+    // pointing forward from the eye instead of back from a pivot. At yaw 0 and pitch 0 it is -z.
+    Forward :: () -> lantern:::math:::Vec3 {
+        return {
+            x: -Math:::cos(pitch) * Math:::sin(yaw),
+            y: Math:::sin(pitch),
+            z: -Math:::cos(pitch) * Math:::cos(yaw)
+        };
+    }
+
+    Lift :: (metres: f32) -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: metres };
+        return lift;
+    }
+
+    // Where `point` lands on the screen, as { x, y } from -1 to 1 across the frame, and its depth in
+    // z (metres in front of the lens; zero or less means behind it). A pinhole camera: scale the
+    // point's offset from the view axis by how far away it is, then by the field of view.
+    Project :: (point: lantern:::math:::Vec3) -> lantern:::math:::Vec3 {
+        offset := point - eye;
+        depth := offset.Dot(forward);
+        guard depth > 0.05f return { x: 0.0f, y: 0.0f, z: 0.0f };
+        halfTangent := Math:::tan(VERTICAL_FIELD_OF_VIEW_DEGREES * 0.5f * (Math:::PI / 180.0f));
+        screenHeight := Math:::max(lantern:::screen:::Height(), 1.0f);
+        aspect := lantern:::screen:::Width() / screenHeight;
+        return {
+            x: offset.Dot(right) / depth / (halfTangent * aspect),
+            y: offset.Dot(up) / depth / halfTangent,
+            z: depth
+        };
+    }
+
+    // True when `point` is inside the viewfinder's frame.
+    IsInFrame :: (point: lantern:::math:::Vec3) -> bool {
+        projected := Project(point);
+        limit := 1.0f - 2.0f * FRAME_MARGIN;
+        return projected.z > 0.0f && Math:::abs(projected.x) <= limit && Math:::abs(projected.y) <= limit;
+    }
+
+    // True when a ray from the lens reaches `point` without meeting anything solid first.
+    IsInTheClear :: (point: lantern:::math:::Vec3) -> bool {
+        offset := point - eye;
+        distance := offset.Length();
+        guard distance > OCCLUSION_MARGIN return true;
+        return when lantern:::physics:::Raycast(eye, offset.Normalized(), distance) {
+            hit: lantern:::physics:::RayHit -> hit.Distance() >= distance - OCCLUSION_MARGIN,
+            null -> true
+        };
+    }
+
+    // Judges every untaken sight in frame and keeps one: the nearest the middle that would count,
+    // or, when none would, the nearest the middle, so the hint says what is wrong with it. Picking
+    // a sight that counts first means a far sight in the same view never hides a near one.
+    Evaluate~: (companionPosition: lantern:::math:::Vec3, hasCompanion: bool) -> void {
+        targetIndex = -1;
+        verdict = PhotoVerdict:::NothingInFrame;
+        nearestReady~ f32 = 1000.0f;
+        nearestOther~ f32 = 1000.0f;
+        sightNumber~ i32 = 0;
+        for sight: PhotoSight in sights {
+            if !sight.isTaken && IsInFrame(sight.position) {
+                projected := Project(sight.position);
+                fromCentre := Math:::sqrt(projected.x * projected.x + projected.y * projected.y);
+                judged := Judge(sight, companionPosition, hasCompanion);
+                if judged == PhotoVerdict:::Ready && fromCentre < nearestReady {
+                    nearestReady = fromCentre;
+                    targetIndex = sightNumber;
+                    verdict = judged;
+                } else if judged != PhotoVerdict:::Ready && nearestReady >= 1000.0f && fromCentre < nearestOther {
+                    nearestOther = fromCentre;
+                    targetIndex = sightNumber;
+                    verdict = judged;
+                }
+            }
+            sightNumber++;
+        }
+    }
+
+    // What a photo of `target` would be, given that it is in frame.
+    Judge :: (target: PhotoSight, companionPosition: lantern:::math:::Vec3, hasCompanion: bool) -> PhotoVerdict {
+        if eye.DistanceTo(target.position) > target.maxDistance {
+            return PhotoVerdict:::TooFar;
+        }
+        if !IsInTheClear(target.position) {
+            return PhotoVerdict:::Blocked;
+        }
+        if target.isTogether && hasCompanion && !IsCompanionInTheShot(target, companionPosition) {
+            return PhotoVerdict:::NeedsCompanion;
+        }
+        return PhotoVerdict:::Ready;
+    }
+
+    IsCompanionInTheShot :: (target: PhotoSight, companionPosition: lantern:::math:::Vec3) -> bool {
+        chest := companionPosition + Lift(COMPANION_CHEST);
+        return companionPosition.DistanceTo(target.position) <= TOGETHER_REACH && IsInFrame(chest) && IsInTheClear(chest);
+    }
+
+    // The line under the viewfinder while no photo has just been taken.
+    Hint :: () -> string {
+        when verdict <PhotoVerdict> {
+            Ready -> { return `${sights[targetIndex].title}: take the photo`; },
+            TooFar -> { return `${sights[targetIndex].title}: too far, get closer`; },
+            Blocked -> { return `${sights[targetIndex].title}: something is in the way`; },
+            NeedsCompanion -> { return `${sights[targetIndex].title}: she has to be in the shot too`; },
+            NothingInFrame -> { return sights.length() == 0 ? "Nothing to photograph here" : "Look for a glowing marker"; }
+        }
+    }
+
+    // The shutter: always flashes, and counts the sight when the shot is Ready.
+    TakePhoto~: () -> void {
+        flashSecondsLeft = FLASH_SECONDS;
+        feedbackSecondsLeft = FEEDBACK_SECONDS;
+        if verdict == PhotoVerdict:::Ready {
+            target~ PhotoSight = sights[targetIndex];
+            target.Take();
+            takenCount++;
+            feedback = `Photo taken: ${target.title}`;
+            lantern:::audio:::Play("pickup", 1.0f);
+        } else {
+            feedback = verdict == PhotoVerdict:::NothingInFrame ? "A photo, but nothing worth keeping" : Hint();
+            lantern:::audio:::Play("menu_select", 0.7f);
+        }
+    }
+}

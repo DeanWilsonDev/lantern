@@ -1,0 +1,167 @@
+Checkpoint :: import Checkpoint;
+Goal :: import Goal;
+LanternPickup :: import LanternPickup;
+LevelScene :: import LevelScene;
+
+// The small lights that make a night level readable. At night the moon is dim, so what you can
+// see is what glows: the companion's light and the lantern (GuideLight) are the big ones, and this
+// class adds the rest. Every one is a point light, so it brightens the ground, walls and platforms
+// around it, and the glowing part of the thing itself blooms:
+// - A street lamp (a world-file entity of kind "street_lamp") is a post with a lit head, spaced
+//   along a street so a long run of dark ground is never completely dark.
+// - A lit window (kind "lit_window") is a glowing pane on a tower beside the street. It casts no
+//   light of its own; it is there so the city beyond the walls is full of small yellow squares
+//   instead of black, and so there is something worth a photograph.
+// - A checkpoint post is a faint cool glow until the player reaches it, then a warm one, so the
+//   places you are safe are the places that shine.
+// - The goal is the brightest thing in the level, so it can be seen from far down the street.
+// - A lantern pickup glows until it is taken.
+//
+// A light is a number the engine gives back (an id), and it stays in the engine until it is
+// removed, so Clear takes down every light this class added. StartLevel calls Apply after the level
+// is loaded, which clears the old level's lights first.
+//
+// The lights follow the objects' state (a checkpoint's `isReached` and so on), so a restart or a
+// respawn needs no extra code here: Update just reads the state again each step.
+NightLights :: class {
+public:
+    // Puts a light on every street lamp, checkpoint, goal and lantern pickup of `level`. The lists
+    // keep the order of the level's own lists, which is how Update finds each object's light.
+    Apply~: (level: LevelScene, cubeMesh: i64) -> void {
+        Clear();
+        for entity: i64 in lantern:::world:::FindByKind("street_lamp") {
+            PlaceStreetLamp(entity, cubeMesh);
+        }
+        for entity: i64 in lantern:::world:::FindByKind("lit_window") {
+            PlaceLitWindow(entity, cubeMesh);
+        }
+        for checkpoint: Checkpoint in level.checkpoints {
+            checkpointLights.add(lantern:::lights:::AddPoint(checkpoint.respawnPosition + Lift(CHECKPOINT_LIGHT_HEIGHT), WAITING_COLOR, WAITING_STRENGTH, CHECKPOINT_RANGE));
+        }
+        for goal: Goal in level.goals {
+            goalLights.add(lantern:::lights:::AddPoint(lantern:::world:::WorldPosition(goal.entity) + Lift(GOAL_LIGHT_HEIGHT), GOAL_COLOR, GOAL_WAITING_STRENGTH, GOAL_RANGE));
+        }
+        for pickup: LanternPickup in level.lanterns {
+            lanternLights.add(lantern:::lights:::AddPoint(pickup.home + Lift(LANTERN_LIGHT_HEIGHT), LANTERN_COLOR, LANTERN_STRENGTH, LANTERN_RANGE));
+        }
+    }
+
+    // Brightens a checkpoint or the goal once it is reached, and puts a taken lantern's light out.
+    // Called every fixed step; setting a light's colour to the value it already has costs nothing
+    // you could measure.
+    Update :: (level: LevelScene) -> void {
+        checkpointNumber~ i32 = 0;
+        for checkpoint: Checkpoint in level.checkpoints {
+            lightId := checkpointLights[checkpointNumber];
+            if checkpoint.isReached {
+                lantern:::lights:::SetColor(lightId, REACHED_COLOR, REACHED_STRENGTH);
+                lantern:::world:::SetGlow(checkpoint.pole, REACHED_COLOR, POLE_GLOW_STRENGTH);
+            } else {
+                lantern:::lights:::SetColor(lightId, WAITING_COLOR, WAITING_STRENGTH);
+                lantern:::world:::SetGlow(checkpoint.pole, WAITING_COLOR, 0.0f);
+            }
+            checkpointNumber++;
+        }
+        goalNumber~ i32 = 0;
+        for goal: Goal in level.goals {
+            lightId := goalLights[goalNumber];
+            lantern:::lights:::SetColor(lightId, GOAL_COLOR, goal.isReached ? GOAL_REACHED_STRENGTH : GOAL_WAITING_STRENGTH);
+            lantern:::world:::SetGlow(goal.post, GOAL_COLOR, goal.isReached ? GOAL_REACHED_GLOW : GOAL_WAITING_GLOW);
+            goalNumber++;
+        }
+        lanternNumber~ i32 = 0;
+        for pickup: LanternPickup in level.lanterns {
+            lightId := lanternLights[lanternNumber];
+            lantern:::lights:::SetColor(lightId, LANTERN_COLOR, pickup.IsTaken() ? 0.0f : LANTERN_STRENGTH);
+            lanternNumber++;
+        }
+    }
+
+    // Removes every light this class added. The lamps' posts and heads are world entities, which
+    // the level's own Unload clears.
+    Clear~: () -> void {
+        for lightId: i64 in streetLights {
+            lantern:::lights:::Remove(lightId);
+        }
+        for lightId: i64 in checkpointLights {
+            lantern:::lights:::Remove(lightId);
+        }
+        for lightId: i64 in goalLights {
+            lantern:::lights:::Remove(lightId);
+        }
+        for lightId: i64 in lanternLights {
+            lantern:::lights:::Remove(lightId);
+        }
+        streetLights = [];
+        checkpointLights = [];
+        goalLights = [];
+        lanternLights = [];
+    }
+
+private:
+    streetLights~ Array<i64> = [];
+    checkpointLights~ Array<i64> = [];
+    goalLights~ Array<i64> = [];
+    lanternLights~ Array<i64> = [];
+
+    // Colours are "RRGGBB". A strength of 1 is "a white matte surface facing the light, close by,
+    // looks white" (settings/lighting-settings.nyx); the engine draws in high dynamic range, so
+    // a glow strength above 1 is brighter than white and blooms.
+    static LAMP_COLOR :: "FFC070";
+    static LAMP_STRENGTH :: 5.0f;
+    static LAMP_RANGE :: 14.0f;
+    static LAMP_HEAD_GLOW :: 6.0f;
+    static LAMP_POST_HEIGHT :: 3.2f;
+    static WINDOW_COLOR :: "FFD58A";
+    static WINDOW_GLOW :: 2.0f;
+    static WAITING_COLOR :: "9AA8C8";
+    static WAITING_STRENGTH :: 0.5f;
+    static REACHED_COLOR :: "FF7A8C";
+    static REACHED_STRENGTH :: 2.2f;
+    static CHECKPOINT_RANGE :: 7.0f;
+    static CHECKPOINT_LIGHT_HEIGHT :: 1.8f;
+    static POLE_GLOW_STRENGTH :: 3.0f;
+    static GOAL_COLOR :: "FFD27A";
+    static GOAL_WAITING_STRENGTH :: 3.5f;
+    static GOAL_REACHED_STRENGTH :: 7.0f;
+    static GOAL_WAITING_GLOW :: 2.5f;
+    static GOAL_REACHED_GLOW :: 6.0f;
+    static GOAL_RANGE :: 16.0f;
+    static GOAL_LIGHT_HEIGHT :: 3.0f;
+    static LANTERN_COLOR :: "FFD27A";
+    static LANTERN_STRENGTH :: 1.6f;
+    static LANTERN_RANGE :: 6.0f;
+    static LANTERN_LIGHT_HEIGHT :: 0.3f;
+
+    // A lamp is a slim post with a small lit head. Both are child entities of the world-file
+    // entity, so they stand where the editor put it (the same trick as a checkpoint's pole).
+    PlaceStreetLamp~: (entity: i64, cubeMesh: i64) -> void {
+        post := lantern:::world:::Spawn("street_lamp_post", Lift(LAMP_POST_HEIGHT * 0.5f));
+        lantern:::world:::SetMesh(post, cubeMesh, "2A2E3A");
+        lantern:::world:::SetScale(post, { x: 0.14f, y: LAMP_POST_HEIGHT, z: 0.14f });
+        lantern:::world:::SetParent(post, entity);
+        head := lantern:::world:::Spawn("street_lamp_head", Lift(LAMP_POST_HEIGHT + 0.15f));
+        lantern:::world:::SetMesh(head, cubeMesh, LAMP_COLOR);
+        lantern:::world:::SetScale(head, { x: 0.5f, y: 0.3f, z: 0.5f });
+        lantern:::world:::SetGlow(head, LAMP_COLOR, LAMP_HEAD_GLOW);
+        lantern:::world:::SetParent(head, entity);
+        headPosition := lantern:::world:::WorldPosition(entity) + Lift(LAMP_POST_HEIGHT + 0.1f);
+        streetLights.add(lantern:::lights:::AddPoint(headPosition, LAMP_COLOR, LAMP_STRENGTH, LAMP_RANGE));
+    }
+
+    // A pane 1.4 m wide and 1.8 m tall, thin in x because the towers stand to the left and right
+    // of the street and the pane faces it. It glows warm, so it blooms a little.
+    PlaceLitWindow~: (entity: i64, cubeMesh: i64) -> void {
+        pane := lantern:::world:::Spawn("lit_window_pane", lantern:::math:::Vec3:::Zero());
+        lantern:::world:::SetMesh(pane, cubeMesh, WINDOW_COLOR);
+        lantern:::world:::SetScale(pane, { x: 0.12f, y: 1.8f, z: 1.4f });
+        lantern:::world:::SetGlow(pane, WINDOW_COLOR, WINDOW_GLOW);
+        lantern:::world:::SetCastsShadows(pane, false);
+        lantern:::world:::SetParent(pane, entity);
+    }
+
+    Lift :: (metres: f32) -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: metres };
+        return lift;
+    }
+}
