@@ -1,4 +1,9 @@
 lantern:::editor :: namespace {
+    // Numbers the editor session uses. A press that moves less than CLICK_SLOP_PIXELS before the button
+    // comes up is a click and not a drag. Clicking again on the same spot cycles through the entities
+    // under it, up to MAX_CLICK_CYCLE_LENGTH of them. There are BOOKMARK_COUNT camera bookmarks (the digit
+    // keys), the recent files list keeps RECENT_FILE_LIMIT, and the console keeps its last LOG_LIMIT lines.
+    // LAST_INDEX is the largest usize, meaning "the end of a list".
     CLICK_SLOP_PIXELS: f32 : 4.0f;
     MAX_CLICK_CYCLE_LENGTH: usize : 64;
     BOOKMARK_COUNT: usize : 9;
@@ -6,12 +11,14 @@ lantern:::editor :: namespace {
     LOG_LIMIT: usize : 500;
     LAST_INDEX: usize : 18446744073709551615;
 
+    // The three mouse buttons the editor uses.
     PointerButton :: enum {
         Left,
         Middle,
         Right
     }
 
+    // The button for a number from the platform (0 left, 1 middle, 2 right), or null for others.
     PointerButtonAt :: (index: u32) -> PointerButton? {
         if index == 0 {
             return PointerButton:::Left;
@@ -25,6 +32,7 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // A button's number, for indexing the session's array of pressed buttons.
     PointerButtonIndex :: (button: PointerButton) -> usize {
         return when button {
             PointerButton:::Left -> 0,
@@ -33,20 +41,25 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The platform reports held modifier keys as bits of one number. `command` is Ctrl on Windows and
+    // Linux and Cmd on macOS.
     MODIFIER_SHIFT: u32 : 1;
     MODIFIER_COMMAND: u32 : 2;
     MODIFIER_ALT: u32 : 4;
 
+    // Shift, command and alt as three flags.
     Modifiers :: struct {
         shift~ bool = false;
         command~ bool = false;
         alt~ bool = false;
 
+        // Unpacks the platform's modifier bits.
         static FromBits :: (bits: u32) -> Modifiers {
             return Modifiers { shift: (bits & MODIFIER_SHIFT) != 0, command: (bits & MODIFIER_COMMAND) != 0, alt: (bits & MODIFIER_ALT) != 0 };
         }
     }
 
+    // The kinds of key the editor reacts to: a letter, a digit, and four named keys.
     EditorKeyKind :: enum {
         Letter,
         Digit,
@@ -56,23 +69,29 @@ lantern:::editor :: namespace {
         End
     }
 
+    // One key press as the editor sees it: its kind plus the letter or digit.
     EditorKey :: struct {
         kind~ EditorKeyKind = EditorKeyKind:::Escape;
         letter~ u8 = 0;
         digit~ u8 = 0;
 
+        // A key of a named kind with no letter or digit.
         static Of :: (keyKind: EditorKeyKind) -> EditorKey {
             return EditorKey { kind: keyKind };
         }
 
+        // A letter key (always lower case).
         static Letter :: (character: u8) -> EditorKey {
             return EditorKey { kind: EditorKeyKind:::Letter, letter: character };
         }
 
+        // A digit key, 0 to 9.
         static Digit :: (value: u8) -> EditorKey {
             return EditorKey { kind: EditorKeyKind:::Digit, digit: value };
         }
 
+        // Reads the key name the platform gives. Delete and Backspace are one key; letters are made lower
+        // case; names the editor does not use give null.
         static FromName :: (name: string) -> EditorKey? {
             if name == "Delete" || name == "Backspace" {
                 return EditorKey:::Of(EditorKeyKind:::Delete);
@@ -102,11 +121,14 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // True when this is the given letter key.
         IsLetter :: (character: string) -> bool {
             return kind == EditorKeyKind:::Letter && letter == character.byteAt(0);
         }
     }
 
+    // One row of the outliner (the tree of entities): the entity's key and parent, its name and kind, how
+    // deeply it is nested, and whether it is selected, hidden, locked or has children. The UI draws these.
     OutlineRow :: class {
     public:
         key~ u64 = 0;
@@ -131,12 +153,14 @@ lantern:::editor :: namespace {
         }
     }
 
+    // The console's three levels of message.
     LogLevel :: enum {
         Info,
         Warning,
         Error
     }
 
+    // The word for a level, as the console filter shows it.
     LogLevelName :: (level: LogLevel) -> string {
         return when level {
             LogLevel:::Info -> "info",
@@ -145,6 +169,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // One console line: its level and text.
     LogEntry :: class {
     public:
         level~ LogLevel = LogLevel:::Info;
@@ -160,6 +185,7 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Reads on/off, true/false or 1/0 from the command line or a setting.
     ParseFlag :: (value: string) -> Result<bool, string!> {
         trimmed: string = value.trim();
         if trimmed == "true" || trimmed == "on" || trimmed == "1" {
@@ -171,6 +197,9 @@ lantern:::editor :: namespace {
         return Result<bool, string!>:::Err(`'${trimmed}' is not on or off`);
     }
 
+    // The switches of the View menu: grid and its spacing, colliders, markers, wireframe, the level
+    // box, hidden entities and the stats readout. They can be read and set by name, which is how the
+    // console and the menu share one code path.
     ViewOptions :: struct {
         showGrid~ bool = true;
         gridSpacing~ f32 = 1.0f;
@@ -181,6 +210,7 @@ lantern:::editor :: namespace {
         showHidden~ bool = false;
         showStats~ bool = false;
 
+        // The names of every view option.
         static Names :: () -> Array<string>! {
             names~ Array<string>! = [];
             names.push("grid");
@@ -194,6 +224,7 @@ lantern:::editor :: namespace {
             return names!;
         }
 
+        // An option's value as text, or null for an unknown name.
         Get :: (name: string) -> string!? {
             if name == "grid" {
                 return `${showGrid}`;
@@ -222,6 +253,8 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // Sets an option from text. Returns an error message for an unknown name or a bad value (the grid
+        // spacing must be a positive number), or null on success.
         Set~: (name: string, value: string) -> string!? {
             if name == "grid_spacing" {
                 parsed: f32? = ParsedNumber(value.trim());
@@ -263,6 +296,9 @@ lantern:::editor :: namespace {
         }
     }
 
+    // What a drag needs to remember about each entity it moves: a copy as it was, its parent's world
+    // matrix, and its world position. Every frame of the drag is worked out from these starting values
+    // rather than from the last frame, so no error builds up.
     DragOriginal :: class {
     public:
         entity~ lantern:::world:::WorldEntity*!;
@@ -279,15 +315,20 @@ lantern:::editor :: namespace {
             delete entity;
         }
 
+        // Turns a new world position into the entity's position inside its parent.
         LocalPosition :: (newWorld: Vec3) -> Vec3 {
             return InverseOrIdentity(parentWorld).transformPoint(newWorld);
         }
 
+        // The rotation of the entity's parent in the world.
         ParentRotation :: () -> Quaternion {
             return lantern:::core:::DecomposeMatrix(parentWorld).rotation;
         }
     }
 
+    // What a mouse drag is doing. Pending means the button is down and it is not yet known whether this is
+    // a click or a drag. The others are camera orbit and pan, a gizmo handle, moving the body of the
+    // selection, and the selection rectangle.
     DragKind :: enum {
         Pending,
         Orbit,
@@ -297,6 +338,9 @@ lantern:::editor :: namespace {
         RubberBand
     }
 
+    // The state of a mouse drag in progress: its kind, where it began, what was under the press, the
+    // gizmo tool, handle and frame it started with, the starting measurement along the handle, and the
+    // originals of the entities being moved.
     Drag :: class {
     public:
         kind~ DragKind = DragKind:::Orbit;
@@ -318,17 +362,20 @@ lantern:::editor :: namespace {
             originals.freeAll();
         }
 
+        // Takes ownership of the list of originals, freeing any earlier list.
         TakeOriginals~: (dragOriginals: Array<DragOriginal*!>!) -> void {
             originals.freeAll();
             originals = dragOriginals!;
         }
     }
 
+    // A matrix's inverse, or the identity for one that cannot be inverted.
     InverseOrIdentity :: (matrix: Mat4) -> Mat4 {
         inverted: Mat4? = matrix.inverse();
         return inverted ?? Mat4 { };
     }
 
+    // True when the list holds the key.
     ContainsKeyIn :: (keys: Array<u64>, key: u64) -> bool {
         for candidate in keys {
             if candidate == key {
@@ -338,6 +385,7 @@ lantern:::editor :: namespace {
         return false;
     }
 
+    // Where the key is in the list, or null.
     KeyPosition :: (keys: Array<u64>, key: u64) -> usize? {
         for index~ usize = 0; index < keys.length(); index++ {
             if keys[index] == key {
@@ -347,6 +395,7 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // Copies a list of keys.
     CopyKeys :: (keys: Array<u64>) -> Array<u64>! {
         copied~ Array<u64>! = [];
         for key in keys {
@@ -355,10 +404,14 @@ lantern:::editor :: namespace {
         return copied!;
     }
 
+    // True when two optional keys are both empty or hold the same number.
     SameOptionalU64 :: (left: u64?, right: u64?) -> bool {
         return lantern:::world:::SameOptionalKey(left, right);
     }
 
+    // How much to scale by when dragging a scale handle: the distance of the mouse point from the pivot
+    // over the distance at the start. Never less than 0.01 so an entity cannot be squashed to nothing,
+    // and 1 when the drag started on the pivot.
     ScaleRatio :: (pivot: Vec3, startPoint: Vec3, point: Vec3) -> f32 {
         startDistance: f32 = (startPoint - pivot).length();
         if startDistance < 0.0001f {
@@ -367,6 +420,7 @@ lantern:::editor :: namespace {
         return Math:::max((point - pivot).length() / startDistance, 0.01f);
     }
 
+    // "entity" for one, or a count and "entities", for undo labels.
     CountEntities :: (count: usize) -> string! {
         if count == 1 {
             return "entity".copy();
@@ -374,6 +428,7 @@ lantern:::editor :: namespace {
         return `${count} entities`;
     }
 
+    // The text with its first letter in upper case.
     Capitalise :: (text: string) -> string! {
         if text.length() == 0 {
             return "".copy();
@@ -384,6 +439,7 @@ lantern:::editor :: namespace {
         return joined!;
     }
 
+    // The file name of a path, for the title bar and the recent files list.
     DisplayName :: (path: string) -> string! {
         if separator := LastSeparator(path) {
             if separator + 1 < path.length() {
@@ -393,6 +449,7 @@ lantern:::editor :: namespace {
         return `${path}`;
     }
 
+    // True for a non-empty run of digits.
     AllDigits :: (text: string) -> bool {
         if text.length() == 0 {
             return false;
@@ -405,6 +462,8 @@ lantern:::editor :: namespace {
         return true;
     }
 
+    // A name not in the list, made from `base` by adding _1, _2 and so on. A number already at the end of
+    // `base` is replaced, so copying `crate_2` gives `crate_3` and not `crate_2_1`.
     UniqueNameAmong :: (names: Array<string!>, base: string) -> string! {
         stem~ string = base;
         lastUnderscore~ usize? = null;
@@ -436,6 +495,7 @@ lantern:::editor :: namespace {
         return `${stem}`;
     }
 
+    // The names of every entity in a level.
     EntityNames :: (worldFile: lantern:::world:::WorldFile*) -> Array<string!>! {
         names~ Array<string!>! = [];
         for entity in worldFile->entities {
@@ -444,6 +504,7 @@ lantern:::editor :: namespace {
         return names!;
     }
 
+    // A name that no entity in the level has yet, based on `base`.
     UniqueName :: (worldFile: lantern:::world:::WorldFile*, base: string) -> string! {
         names~ Array<string!>! = EntityNames(worldFile);
         unique: string! = UniqueNameAmong(names, base);
@@ -451,10 +512,12 @@ lantern:::editor :: namespace {
         return unique!;
     }
 
+    // The vector with one axis (x, y or z) replaced.
     WithAxis :: (vector: Vec3, axis: Axis, value: f32) -> Vec3 {
         return WithComponent(vector, AxisIndex(axis), value);
     }
 
+    // One axis of a vector.
     AlongAxis :: (vector: Vec3, axis: Axis) -> f32 {
         return AxisComponent(vector, AxisIndex(axis));
     }

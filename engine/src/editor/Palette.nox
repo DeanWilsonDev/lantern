@@ -1,6 +1,11 @@
 lantern:::editor :: namespace {
+    // The palette is the editor's list of things that can be placed: entity templates, how each kind of
+    // marker looks in the viewport, and the material names. It is read from a JSON file in the assets
+    // folder, so a game adds its own pieces without changing the editor. The colour here is the
+    // colour of a marker kind the file does not describe.
     DEFAULT_MARKER_COLOR: string : "#D0D0E0";
 
+    // The shapes a marker (an entity with no shape of its own) can be drawn as in the viewport.
     MarkerMesh :: enum {
         Cube,
         Sphere,
@@ -9,6 +14,7 @@ lantern:::editor :: namespace {
         Plane
     }
 
+    // A marker mesh's name as written in the palette file.
     MarkerMeshName :: (mesh: MarkerMesh) -> string {
         return when mesh {
             MarkerMesh:::Cube -> "cube",
@@ -19,6 +25,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The mesh for a name in the palette file, or null for an unknown name.
     MarkerMeshNamed :: (name: string) -> MarkerMesh? {
         if name == "cube" {
             return MarkerMesh:::Cube;
@@ -38,6 +45,7 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // How a kind of marker is drawn: its mesh and its colour as hex text.
     MarkerStyle :: class {
     public:
         mesh~ MarkerMesh = MarkerMesh:::Cube;
@@ -52,11 +60,15 @@ lantern:::editor :: namespace {
             delete color;
         }
 
+        // A copy of the style.
         Copy :: () -> MarkerStyle*! {
             return new MarkerStyle(mesh, color);
         }
     }
 
+    // One thing the palette can place: an id, a label for the menu, how far to lift it off the surface it
+    // is placed on, and a prototype entity that is copied into the level when it is placed (its shape,
+    // material, tint, collider and properties).
     EntityTemplate :: class {
     public:
         id~ string!;
@@ -76,11 +88,13 @@ lantern:::editor :: namespace {
             delete prototype;
         }
 
+        // The kind of entity this template makes.
         Kind :: () -> string {
             return prototype->kind;
         }
     }
 
+    // All the templates, the marker styles (kept sorted by kind) and the material names.
     Palette :: class {
     public:
         templates~ Array<EntityTemplate*!>! = [];
@@ -97,6 +111,8 @@ lantern:::editor :: namespace {
             materials.freeAll();
         }
 
+        // A small built-in palette (a block, a ramp and a plain marker) for when the palette file cannot be
+        // read, so the editor still starts.
         static Fallback :: () -> Palette*! {
             palette := new Palette();
             block := new EntityTemplate("block", "Block", "block");
@@ -112,6 +128,7 @@ lantern:::editor :: namespace {
             return palette!;
         }
 
+        // Reads a palette file. Errors name the file.
         static Load :: (path: string) -> Result<Palette*!, string!> {
             when readTextFile(path) {
                 Result:::Ok(text) -> {
@@ -134,6 +151,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Builds a palette from JSON text.
         static FromJson :: (text: string, path: string) -> Result<Palette*!, string!> {
             when lantern:::json:::Parse(text) {
                 Result:::Ok(document) -> {
@@ -158,6 +176,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Writes the palette as JSON text, in the same form FromJson reads.
         ToJson :: () -> string! {
             document := new lantern:::json:::JsonDocument();
             root: u32 = document->NewObject();
@@ -186,6 +205,7 @@ lantern:::editor :: namespace {
             return text!;
         }
 
+        // Writes the palette to a file. Returns an error message or null.
         Save :: (path: string) -> string!? {
             text: string! = ToJson();
             failure~ string!? = null;
@@ -200,6 +220,7 @@ lantern:::editor :: namespace {
             return failure!;
         }
 
+        // The template with this id, or null.
         Template :: (templateId: string) -> EntityTemplate*? {
             for template in templates {
                 if template->id == templateId {
@@ -209,6 +230,7 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // A copy of the style for a kind of marker; a kind the palette does not list gets a grey cube.
         MarkerStyleFor :: (kind: string) -> MarkerStyle*! {
             for index~ usize = 0; index < markerKinds.length(); index++ {
                 if markerKinds[index] == kind {
@@ -218,6 +240,7 @@ lantern:::editor :: namespace {
             return new MarkerStyle(MarkerMesh:::Cube, DEFAULT_MARKER_COLOR);
         }
 
+        // Adds or replaces the style for a kind, keeping the kinds in sorted order.
         SetMarker~: (kind: string, style: MarkerStyle*!) -> void {
             position~ usize = 0;
             while position < markerKinds.length() && lantern:::world:::TextBefore(markerKinds[position], kind) {
@@ -233,6 +256,8 @@ lantern:::editor :: namespace {
             markerStyles.insert(position, style!);
         }
 
+        // Every kind of entity the palette knows about, from its templates and its marker styles, sorted
+        // and without repeats.
         Kinds :: () -> Array<string!>! {
             candidates~ Array<string>! = [];
             for template in templates {
@@ -256,6 +281,8 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Writes one template as a JSON object. Fields that are not set are written as null so the file
+    // shows every field a template can have.
     TemplateNode :: (document: lantern:::json:::JsonDocument~*, template: EntityTemplate*) -> u32 {
         node: u32 = document->NewObject();
         entity: lantern:::world:::WorldEntity* = template->prototype;
@@ -287,6 +314,8 @@ lantern:::editor :: namespace {
         return node;
     }
 
+    // Reads the whole palette from a parsed document: the templates list is required; markers and
+    // materials are optional. The reader keeps the first problem it meets and the loops stop at it.
     ReadPalette :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, palette: Palette~*) -> void {
         root: u32 = document->root;
         if document->Kind(root) != lantern:::json:::JsonKind:::Object {
@@ -335,6 +364,7 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Finds a required field that must be text, or reports what is wrong and gives null.
     RequiredText :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, object: u32, key: string) -> u32? {
         found: u32? = reader->Required(document, object, key);
         guard at := found return null;
@@ -344,6 +374,8 @@ lantern:::editor :: namespace {
         return at;
     }
 
+    // Reads one template: id, label and kind are required, and the shape, material, tint, collider,
+    // properties and lift are optional. An unknown collider name is an error that lists the choices.
     ReadTemplate :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, node: u32) -> EntityTemplate*!? {
         if document->Kind(node) != lantern:::json:::JsonKind:::Object {
             reader->Fail("invalid type, expected struct EntityTemplate");
@@ -401,6 +433,8 @@ lantern:::editor :: namespace {
         return template!;
     }
 
+    // Reads one marker style: an optional mesh name (an unknown one is an error that lists the choices)
+    // and an optional colour.
     ReadMarkerStyle :: (reader: lantern:::world:::WorldReader~*, document: lantern:::json:::JsonDocument*, node: u32) -> MarkerStyle*!? {
         if document->Kind(node) != lantern:::json:::JsonKind:::Object {
             reader->Fail("invalid type, expected struct MarkerStyle");

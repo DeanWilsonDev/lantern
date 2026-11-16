@@ -1,4 +1,9 @@
 lantern:::editor :: namespace {
+    // The gizmo is the set of handles drawn on the selection for moving, rotating and scaling it. It is
+    // always about GIZMO_SIZE_PIXELS tall on screen, whatever the camera distance. A handle is grabbed
+    // when the mouse is within GRAB_DISTANCE_PIXELS of it. The other numbers are proportions of the
+    // gizmo's size: the square plane handles run from 0.35 to 0.6 of the way along two axes, and the
+    // centre handle (uniform scale and free move) has a radius of 0.11. A rotate ring is drawn as 64 short lines.
     GIZMO_SIZE_PIXELS: f32 : 90.0f;
     GRAB_DISTANCE_PIXELS: f32 : 9.0f;
     RING_SEGMENTS: u32 : 64;
@@ -6,12 +11,14 @@ lantern:::editor :: namespace {
     PLANE_HANDLE_TO: f32 : 0.6f;
     UNIFORM_HANDLE_RADIUS: f32 : 0.11f;
 
+    // The three tools: move, rotate, scale.
     GizmoTool :: enum {
         Translate,
         Rotate,
         Scale
     }
 
+    // A tool's name as it appears in commands and menus.
     GizmoToolName :: (tool: GizmoTool) -> string {
         return when tool {
             GizmoTool:::Translate -> "move",
@@ -20,6 +27,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The tool for a name ("translate" also means move), or null.
     GizmoToolNamed :: (name: string) -> GizmoTool? {
         if name == "move" || name == "translate" {
             return GizmoTool:::Translate;
@@ -33,11 +41,13 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // Whether the handles line up with the world axes or with the selected entity's own axes.
     GizmoSpace :: enum {
         World,
         Local
     }
 
+    // A space's name.
     GizmoSpaceName :: (space: GizmoSpace) -> string {
         return when space {
             GizmoSpace:::World -> "world",
@@ -45,6 +55,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The space for a name, or null.
     GizmoSpaceNamed :: (name: string) -> GizmoSpace? {
         if name == "world" {
             return GizmoSpace:::World;
@@ -55,6 +66,7 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // The other space.
     ToggledSpace :: (space: GizmoSpace) -> GizmoSpace {
         return when space {
             GizmoSpace:::World -> GizmoSpace:::Local,
@@ -62,11 +74,14 @@ lantern:::editor :: namespace {
         };
     }
 
+    // Where the gizmo sits when several entities are selected: on the primary (last selected) one, or
+    // at the centre of them all.
     PivotMode :: enum {
         Primary,
         Center
     }
 
+    // A pivot mode's name.
     PivotModeName :: (mode: PivotMode) -> string {
         return when mode {
             PivotMode:::Primary -> "primary",
@@ -74,6 +89,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The pivot mode for a name (a few spellings are accepted), or null.
     PivotModeNamed :: (name: string) -> PivotMode? {
         if name == "primary" || name == "pivot" {
             return PivotMode:::Primary;
@@ -84,6 +100,7 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // The other pivot mode.
     ToggledPivot :: (mode: PivotMode) -> PivotMode {
         return when mode {
             PivotMode:::Primary -> PivotMode:::Center,
@@ -91,12 +108,14 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The three axes. Their colours follow the usual rule: red x, green y, blue z.
     Axis :: enum {
         X,
         Y,
         Z
     }
 
+    // The axis for a number 0 to 2.
     AxisAt :: (index: usize) -> Axis {
         if index == 0 {
             return Axis:::X;
@@ -107,6 +126,7 @@ lantern:::editor :: namespace {
         return Axis:::Z;
     }
 
+    // An axis's number.
     AxisIndex :: (axis: Axis) -> usize {
         return when axis {
             Axis:::X -> 0,
@@ -115,6 +135,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The world direction of an axis.
     AxisUnit :: (axis: Axis) -> Vec3 {
         return when axis {
             Axis:::X -> Vec3 { x: 1.0f, y: 0.0f, z: 0.0f },
@@ -123,6 +144,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // An axis's colour.
     AxisColor :: (axis: Axis) -> lantern:::core:::Color {
         return when axis {
             Axis:::X -> lantern:::core:::Color:::FromHex(15225418),
@@ -131,6 +153,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // An axis's lower case letter.
     AxisName :: (axis: Axis) -> string {
         return when axis {
             Axis:::X -> "x",
@@ -139,6 +162,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // An axis's upper case letter.
     AxisUpperName :: (axis: Axis) -> string {
         return when axis {
             Axis:::X -> "X",
@@ -147,6 +171,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The axis for a letter in either case, or null.
     AxisNamed :: (name: string) -> Axis? {
         if name == "x" || name == "X" {
             return Axis:::X;
@@ -160,6 +185,8 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // The next axis around (x to y to z to x). With SecondOtherAxis it gives the two axes of a plane
+    // whose normal is the given axis.
     FirstOtherAxis :: (axis: Axis) -> Axis {
         return when axis {
             Axis:::X -> Axis:::Y,
@@ -168,6 +195,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The axis before it (x to z, y to x, z to y).
     SecondOtherAxis :: (axis: Axis) -> Axis {
         return when axis {
             Axis:::X -> Axis:::Z,
@@ -176,28 +204,36 @@ lantern:::editor :: namespace {
         };
     }
 
+    // What a handle does: act along one axis, in one plane (the two axes other than its normal), or
+    // uniformly (all axes at once, or free movement).
     HandleKind :: enum {
         Axis,
         Plane,
         Uniform
     }
 
+    // One handle of the gizmo: its kind and, for axis and plane handles, which axis (a plane handle
+    // is named by its normal).
     Handle :: struct {
         kind~ HandleKind = HandleKind:::Uniform;
         axis~ Axis = Axis:::X;
 
+        // The handle along an axis.
         static OnAxis :: (handleAxis: Axis) -> Handle {
             return Handle { kind: HandleKind:::Axis, axis: handleAxis };
         }
 
+        // The handle for the plane at right angles to an axis.
         static InPlane :: (normal: Axis) -> Handle {
             return Handle { kind: HandleKind:::Plane, axis: normal };
         }
 
+        // The centre handle.
         static Uniform :: () -> Handle {
             return Handle { kind: HandleKind:::Uniform, axis: Axis:::X };
         }
 
+        // True when two handles are the same one.
         Same :: (other: Handle) -> bool {
             if kind != other.kind {
                 return false;
@@ -205,6 +241,7 @@ lantern:::editor :: namespace {
             return kind == HandleKind:::Uniform || axis == other.axis;
         }
 
+        // The handle's colour: its axis colour, or pale grey for the centre handle.
         Color :: () -> lantern:::core:::Color {
             if kind == HandleKind:::Uniform {
                 return lantern:::core:::Color:::Rgb(0.85f, 0.85f, 0.9f);
@@ -212,6 +249,7 @@ lantern:::editor :: namespace {
             return AxisColor(axis);
         }
 
+        // The text shown while dragging: the axis letter ("X"), the plane's two letters ("XZ"), or "all".
         Describe :: () -> string! {
             if kind == HandleKind:::Axis {
                 return `${AxisUpperName(axis)}`;
@@ -223,16 +261,20 @@ lantern:::editor :: namespace {
         }
     }
 
+    // True when both are empty or the same handle.
     SameOptionalHandle :: (left: Handle?, right: Handle?) -> bool {
         guard leftHandle := left return right == null;
         guard rightHandle := right return false;
         return leftHandle.Same(rightHandle);
     }
 
+    // The yellow a handle turns when the mouse is over it.
     HoverColor :: () -> lantern:::core:::Color {
         return lantern:::core:::Color:::Rgb(1.0f, 0.86f, 0.3f);
     }
 
+    // Snapping rounds a drag to whole steps: metres for moving, degrees for rotating, a fraction for
+    // scaling.
     SnapSettings :: struct {
         enabled~ bool = true;
         translateStep~ f32 = 0.25f;
@@ -240,6 +282,7 @@ lantern:::editor :: namespace {
         scaleStep~ f32 = 0.1f;
     }
 
+    // Rounds a value to the nearest multiple of a step; a step of zero or less leaves it alone.
     Snap :: (value: f32, step: f32) -> f32 {
         if step <= 0.0f {
             return value;
@@ -247,11 +290,15 @@ lantern:::editor :: namespace {
         return Math:::round(value / step) * step;
     }
 
+    // The handle nearest the mouse so far while hit testing.
     BestHandle :: struct {
         found~ bool = false;
         score~ f32 = 0.0f;
         handle~ Handle = Handle { };
 
+        // Offers a candidate handle and its distance in pixels. It is taken if it is within grabbing range
+        // and better than the best so far. The `bias` takes a little off a handle's distance, so where
+        // handles overlap the centre handle wins over a plane, and a plane over an axis.
         Considered :: (distance: f32?, candidate: Handle, bias: f32) -> BestHandle {
             guard pixels := distance return BestHandle { found: found, score: score, handle: handle };
             scored: f32 = pixels - bias;
@@ -262,6 +309,8 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Where the gizmo is in the world for one frame: its pivot, its three axis directions, its world size
+    // (a size that makes it about 90 pixels on screen) and which way the camera looks.
     GizmoFrame :: struct {
         pivot~ Vec3 = Vec3 { };
         xAxis~ Vec3 = Vec3 { x: 1.0f, y: 0.0f, z: 0.0f };
@@ -270,6 +319,8 @@ lantern:::editor :: namespace {
         size~ f32 = 1.0f;
         viewDirection~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
 
+        // Builds the frame. Move and rotate use the world axes unless the space is local; scale always
+        // uses the entity's own axes, since scaling along a world axis would shear a rotated entity.
         static Create :: (tool: GizmoTool, space: GizmoSpace, framePivot: Vec3, orientation: Quaternion, projection: ViewportProjection) -> GizmoFrame {
             local: bool = tool == GizmoTool:::Scale || space == GizmoSpace:::Local;
             frame~ GizmoFrame = GizmoFrame {
@@ -285,6 +336,7 @@ lantern:::editor :: namespace {
             return frame;
         }
 
+        // The direction of an axis in this frame.
         AxisVector :: (axis: Axis) -> Vec3 {
             return when axis {
                 Axis:::X -> xAxis,
@@ -293,10 +345,13 @@ lantern:::editor :: namespace {
             };
         }
 
+        // The radius of the rotation rings.
         RingRadius :: () -> f32 {
             return size * 0.85f;
         }
 
+        // One of the points around a rotation ring. The ring is a circle in the plane at right angles to
+        // the axis.
         RingPoint :: (axis: Axis, index: u32) -> Vec3 {
             normal: Vec3 = AxisVector(axis);
             tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(normal);
@@ -305,6 +360,8 @@ lantern:::editor :: namespace {
             return pivot + (tangent * Math:::cos(angle) + bitangent * Math:::sin(angle)) * RingRadius();
         }
 
+        // A corner of the small square plane handle, which sits between 0.35 and 0.6 along each of the
+        // plane's two axes.
         PlaneCorner :: (normal: Axis, corner: usize) -> Vec3 {
             first: Vec3 = AxisVector(FirstOtherAxis(normal));
             second: Vec3 = AxisVector(SecondOtherAxis(normal));
@@ -322,6 +379,10 @@ lantern:::editor :: namespace {
             return pivot + first * near + second * far;
         }
 
+        // Finds the handle under the mouse, or null. Everything is measured in pixels on the screen: how far
+        // the mouse is from the centre handle, from each plane square (zero when inside it), from each axis
+        // line or, for rotation, from each short line of a ring. Move and scale test all of them; rotate tests
+        // only the rings.
         HitTest :: (tool: GizmoTool, projection: ViewportProjection, cursor: Vec2) -> Handle? {
             best~ BestHandle = BestHandle { };
             if tool != GizmoTool:::Rotate {
@@ -384,6 +445,9 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // How far along an axis through the pivot the mouse ray comes closest to it, so an axis drag can
+        // follow the mouse. Two lines closest-approach: this is the usual formula. Null when the ray and the
+        // axis run nearly parallel, which has no answer.
         AxisParameter :: (axis: Axis, ray: Ray) -> f32? {
             direction: Vec3 = AxisVector(axis);
             toPivot: Vec3 = pivot - ray.origin;
@@ -397,6 +461,8 @@ lantern:::editor :: namespace {
             return (cosine * alongRay - alongAxis) / denominator;
         }
 
+        // The plane a drag slides on: the one facing the camera for the centre handle, otherwise the plane
+        // of the handle's axis.
         DragPlaneNormal :: (handle: Handle) -> Vec3 {
             if handle.kind == HandleKind:::Uniform {
                 return viewDirection * -1.0f;
@@ -404,10 +470,13 @@ lantern:::editor :: namespace {
             return AxisVector(handle.axis);
         }
 
+        // Where the mouse ray meets that plane, or null.
         PlanePoint :: (handle: Handle, ray: Ray) -> Vec3? {
             return ray.IntersectPlane(pivot, DragPlaneNormal(handle));
         }
 
+        // The angle of the mouse around a rotation ring, from where the ray meets the ring's plane. A drag
+        // takes the difference from the angle at the start.
         RingAngle :: (axis: Axis, ray: Ray) -> f32? {
             normal: Vec3 = AxisVector(axis);
             crossing: Vec3? = ray.IntersectPlane(pivot, normal);
@@ -418,6 +487,7 @@ lantern:::editor :: namespace {
             return Math:::atan2(offset.dot(bitangent), offset.dot(tangent));
         }
 
+        // A handle's colour, yellow when highlighted.
         ColorFor :: (handle: Handle, highlighted: Handle?) -> lantern:::core:::Color {
             if lit := highlighted {
                 if lit.Same(handle) {
@@ -427,6 +497,9 @@ lantern:::editor :: namespace {
             return handle.Color();
         }
 
+        // Draws the gizmo as lines: arrows for move, lines ending in small boxes for scale, three rings for
+        // rotate. Move and scale also draw the plane squares (with diagonals when hovered) and the circle
+        // of the centre handle.
         Draw :: (tool: GizmoTool, highlighted: Handle?, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
             for axisIndex~ usize = 0; axisIndex < 3; axisIndex++ {
                 axis: Axis = AxisAt(axisIndex);
@@ -471,6 +544,8 @@ lantern:::editor :: namespace {
         }
     }
 
+    // True when a point is inside a four sided shape on the screen. A point is inside if it falls on the
+    // same side of each edge.
     PointInQuad :: (corners: Array<Vec2>, point: Vec2) -> bool {
         sign~ f32 = 0.0f;
         for index~ usize = 0; index < corners.length(); index++ {
@@ -490,6 +565,8 @@ lantern:::editor :: namespace {
         return sign != 0.0f;
     }
 
+    // The distance in pixels from the mouse to the screen image of a line between two world points, or
+    // null when either end is behind the camera.
     ScreenSegmentDistance :: (projection: ViewportProjection, start: Vec3, end: Vec3, cursor: Vec2) -> f32? {
         projectedStart: Vec2? = projection.Project(start);
         guard first := projectedStart return null;
@@ -504,10 +581,14 @@ lantern:::editor :: namespace {
         return lantern:::core:::Vec2Length(first + segment * along - cursor);
     }
 
+    // The dot product of two screen vectors.
     Dot2 :: (left: Vec2, right: Vec2) -> f32 {
         return left.x * right.x + left.y * right.y;
     }
 
+    // A rotation as three angles in degrees (pitch about x, yaw about y, roll about z), worked out from
+    // the rotation's matrix, for the inspector's rotation boxes. At the straight up and straight down
+    // limits, where the angles are not unique, roll is set to zero.
     EulerDegrees :: (rotation: Quaternion) -> Vec3 {
         unit: Quaternion = rotation.normalized();
         x2: f32 = unit.x + unit.x;
@@ -542,6 +623,8 @@ lantern:::editor :: namespace {
         return Vec3 { x: TidyDegrees(pitch), y: TidyDegrees(yaw), z: TidyDegrees(roll) };
     }
 
+    // Rounds an angle to a thousandth of a degree and turns -0 into 0, so the inspector does not show
+    // values like 89.99999.
     TidyDegrees :: (radians: f32) -> f32 {
         degrees: f32 = Math:::round(radians * 57.29578f * 1000.0f) / 1000.0f;
         if degrees == 0.0f {
