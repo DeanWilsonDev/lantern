@@ -27,6 +27,21 @@ In **The streets** she walks the route ahead of you (the commanded partner above
   work the moment you are at the start post?
 - Is 10 m (16 m at a swing) a good distance for her to set off? Did she ever leave you behind or wait for nothing?
 
+## Grounded adventure
+
+Rooms 8 to 10 of the Prototypes list (the climb, the word market, the station) use the grounded feel: a lower jump,
+a slower walk, speed that builds and fades, and a weighty landing. Details in [`grounded-adventure.md`](grounded-adventure.md).
+None of this has been run before; the first play is the test.
+
+| Room | Try | Questions |
+| --- | --- | --- |
+| 8 The climb | Climb the pipe (F, W). Hop on the crate, jump and press F in the air to take the ladder. Let go with Space. Then find the slot and the roof lever | Does the grounded jump feel weighty or just low? Is climbing fun for six seconds or a wait? Did the second route feel like her gift to you, or yours to her? |
+| 9 The word market | Walk into every tag. Eat at both stalls: hold F and keep still, let go and hold again | Is collecting a rest or a chore? Is holding F to eat charming for ten seconds, or too long? Did you want the kana to show? |
+| 10 The station | Buy a ticket, cross by the footbridge, then again by the ladder shortcut. Watch the trains from the island | Do trains feel like a place with life in it? Is the shortcut worth the risk? Did you ever not know where to go? |
+
+Also note: how long to full speed feels right (0.4 s), whether a hard landing's pause is felt or annoying, and whether
+the jump is too low for the steps and crates.
+
 ## Things to feel for
 
 - Boost height 3.6 m, pad height 5 m and 6 m, the four-second plates: too much, too little, right?
