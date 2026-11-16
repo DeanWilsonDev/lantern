@@ -1,0 +1,84 @@
+AdventureTuning :: import AdventureTuning;
+
+// A stall that sells one dish: a world-file entity of kind "food_stall", a counter with the meal on it.
+// Standing beside it and holding the use key eats the meal one bite at a time. The meal shrinks with each
+// bite, and the stall stays finished until the level restarts. Eating is the small game: it asks the player
+// to stand still and hold, which is its whole point as a rest after a hard stretch.
+//
+// Properties set on the entity in the world editor:
+// - `dish` (text): the dish as it sounds, such as "onigiri".
+// - `meaning` (text): what it is, such as "a rice ball".
+// - `bites` (number, optional): how many bites the meal takes; 4 when missing.
+FoodStall :: class {
+public:
+    entity: i64;
+    home: lantern:::math:::Vec3;
+    dish: string;
+    meaning: string;
+    bites: i32;
+    bitesTaken~ i32 = 0;
+    // Seconds of the current bite eaten, 0 up to FOOD_BITE_SECONDS.
+    biteProgress~ f32 = 0.0f;
+    meal~ i64 = 0;
+
+    FoodStall~: (entity: i64) : entity(entity), home(lantern:::world:::Position(entity)),
+        dish(lantern:::world:::TextProperty(entity, "dish")), meaning(lantern:::world:::TextProperty(entity, "meaning")),
+        bites(lantern:::world:::HasProperty(entity, "bites") ? i32(lantern:::world:::NumberProperty(entity, "bites")) : AdventureTuning:::FOOD_DEFAULT_BITES) { }
+
+    // The meal: a rounded-off cube sitting on the counter, bigger than a plate so it reads from a few metres.
+    Place~: (cubeMesh: i64) -> void {
+        meal = lantern:::world:::Spawn("stall_meal", { y: 0.75f });
+        lantern:::world:::SetMesh(meal, cubeMesh, MEAL_TINT);
+        lantern:::world:::SetGlow(meal, MEAL_TINT, 0.6f);
+        lantern:::world:::SetParent(meal, entity);
+        ShowMeal();
+    }
+
+    IsFinished :: () -> bool {
+        return bitesTaken >= bites;
+    }
+
+    // Whether someone standing at `feet` is close enough to eat.
+    IsReachedBy :: (feet: lantern:::math:::Vec3) -> bool {
+        return (feet - home).Horizontal().Length() < AdventureTuning:::FOOD_REACH;
+    }
+
+    // One step of eating (the use key held, the player standing still). True on the step a bite is finished.
+    Eat~: (dt: f32) -> bool {
+        guard !IsFinished() return false;
+        biteProgress += dt;
+        guard biteProgress >= AdventureTuning:::FOOD_BITE_SECONDS return false;
+        biteProgress = 0.0f;
+        bitesTaken++;
+        ShowMeal();
+        return true;
+    }
+
+    // Letting go of the key pauses the bite: the progress is kept, but a half-eaten bite fades back a little.
+    Pause~: (dt: f32) -> void {
+        guard biteProgress > 0.0f;
+        biteProgress = biteProgress - dt;
+        if biteProgress < 0.0f {
+            biteProgress = 0.0f;
+        }
+    }
+
+    // The meal again, whole, when the level restarts.
+    Reset~: () -> void {
+        bitesTaken = 0;
+        biteProgress = 0.0f;
+        ShowMeal();
+    }
+
+private:
+    static MEAL_TINT :: "F2D6A0";
+
+    // The meal is as big as the bites left: a full meal is 0.5 m across and nothing is left after the last bite.
+    ShowMeal~: () -> void {
+        guard meal != 0;
+        remaining := f32(bites - bitesTaken) / f32(bites);
+        size := 0.5f * remaining;
+        lantern:::world:::SetVisible(meal, bitesTaken < bites);
+        lantern:::world:::SetScale(meal, { x: size, y: size * 0.6f, z: size });
+    }
+}

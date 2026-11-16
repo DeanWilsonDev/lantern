@@ -1,3 +1,4 @@
+AdventureTuning :: import AdventureTuning;
 PlayerTuning :: import PlayerTuning;
 GameAssets :: import GameAssets;
 Math :: import standard:::Math;
@@ -24,6 +25,13 @@ public:
     spawn~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     facingYaw~ f32 = 0.0f;           // radians about +Y; 0 faces -Z
     controller~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(PlayerTuning:::RADIUS, PlayerTuning:::HEIGHT, lantern:::math:::Vec3:::Zero());
+    // The grounded feel (docs/gameplay-prototypes.md): a level whose spawn says `movement` is
+    // "grounded" asks for it with UseGroundedFeel after Spawn. `normalJumpHeight` is the apex of an
+    // ordinary jump in the feel the level uses, which Move puts back after a boosted jump.
+    isGroundedFeel~ bool = false;
+    normalJumpHeight~ f32 = PlayerTuning:::JUMP_HEIGHT;
+    easedDirection~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    recoverySecondsLeft~ f32 = 0.0f;
 
     Spawn~: (assets: GameAssets, spawnPosition: lantern:::math:::Vec3) -> void {
         spawn = spawnPosition;
@@ -34,6 +42,10 @@ public:
         controller.SetJumpHeight(PlayerTuning:::JUMP_HEIGHT);
         controller.SetGravity(PlayerTuning:::GRAVITY);
         facingYaw = 0.0f;
+        isGroundedFeel = false;
+        normalJumpHeight = PlayerTuning:::JUMP_HEIGHT;
+        easedDirection = lantern:::math:::Vec3:::Zero();
+        recoverySecondsLeft = 0.0f;
 
         // The root sits at the feet; the capsule mesh is centred, so the body is a child lifted
         // by half the height.
@@ -53,6 +65,27 @@ public:
         lantern:::world:::SetParent(visor, body);
         bodyMesh = body;
         visorMesh = visor;
+    }
+
+    // Switches the player between the platformer feel Spawn gives (false) and the grounded feel
+    // (true): a lower jump and heavier gravity, a slower walk, and Move easing the direction so
+    // speed builds and fades over a few tenths of a second (AdventureTuning has the numbers and the
+    // reasons). Called by the game after Spawn, from the level's spawn property.
+    UseGroundedFeel~: (enabled: bool) -> void {
+        isGroundedFeel = enabled;
+        easedDirection = lantern:::math:::Vec3:::Zero();
+        recoverySecondsLeft = 0.0f;
+        if enabled {
+            normalJumpHeight = AdventureTuning:::GROUNDED_JUMP_HEIGHT;
+            controller.SetWalkSpeed(AdventureTuning:::GROUNDED_WALK_SPEED);
+            controller.SetJumpHeight(AdventureTuning:::GROUNDED_JUMP_HEIGHT);
+            controller.SetGravity(AdventureTuning:::GROUNDED_GRAVITY);
+        } else {
+            normalJumpHeight = PlayerTuning:::JUMP_HEIGHT;
+            controller.SetWalkSpeed(PlayerTuning:::WALK_SPEED);
+            controller.SetJumpHeight(PlayerTuning:::JUMP_HEIGHT);
+            controller.SetGravity(PlayerTuning:::GRAVITY);
+        }
     }
 
     // Shows or hides the player's body. Visibility belongs to a mesh, not to a branch of the tree,
@@ -95,7 +128,11 @@ public:
         // ClampLength(1): pressing W and D together gives a stick of (1, 1), whose length is
         // √2 ≈ 1.41, which would make diagonal running 41% faster. Clamping the length to 1
         // fixes that, and still lets a half-pushed analogue stick (length 0.5) walk slowly.
-        moveDirection := (forward * stick.y + right * stick.x).ClampLength(1.0f);
+        wantedDirection := (forward * stick.y + right * stick.x).ClampLength(1.0f);
+        // In the grounded feel the controller is handed a direction that eases toward the wanted
+        // one, and a hard landing scales it down for a moment. The body still turns toward the
+        // wanted direction, so it responds at once even while the speed builds.
+        moveDirection := isGroundedFeel ? GroundedDirection(wantedDirection, dt) : wantedDirection;
         // The controller turns the direction into velocity: it accelerates toward
         // direction x walk speed (quickly on the ground, more slowly in the air), applies
         // gravity, jumps if asked, then moves and slides the capsule.
@@ -109,17 +146,20 @@ public:
             controller.SetJumpHeight(launchHeight);
         }
         step := controller.Step(moveDirection, jumpPressed, jumpHeld, dt);
-        controller.SetJumpHeight(PlayerTuning:::JUMP_HEIGHT);
+        controller.SetJumpHeight(normalJumpHeight);
+        if isGroundedFeel && step.Landed() && step.LandingSpeed() > AdventureTuning:::LANDING_RECOVERY_SPEED {
+            recoverySecondsLeft = AdventureTuning:::LANDING_RECOVERY_SECONDS;
+        }
         // Turn the body to face where it is going, at a limited speed so it swings round
         // instead of snapping. LengthSquared() > 0.01 means length > 0.1 (squared to skip a
         // square root): below that the stick is near its centre, its direction is mostly noise,
         // and the body should keep facing the way it was.
-        if moveDirection.LengthSquared() > 0.01f {
+        if wantedDirection.LengthSquared() > 0.01f {
             // The most it may turn this step: radians per second x seconds per step.
             maximumTurn := PlayerTuning:::TURN_SPEED * dt;
             // How far it still has to turn. Wrap() takes the short way round: from facing
             // 170 degrees to -170 degrees is 20 degrees, not 340 the other way.
-            difference := lantern:::angle:::Wrap(moveDirection.Yaw() - facingYaw);
+            difference := lantern:::angle:::Wrap(wantedDirection.Yaw() - facingYaw);
             // Take all of the remaining turn if it is small enough, otherwise the step's maximum
             // in the right direction. The clamp gives a constant turning speed that ends exactly
             // on the target without overshooting.
@@ -144,6 +184,29 @@ public:
     }
 
 private:
+    // The grounded feel's momentum. The eased direction moves toward the wanted one by at most
+    // dt / rampSeconds per step, measured as a change in the vector's length (a vector of length
+    // 1 is a full push), so a full push takes `rampSeconds` to reach full speed and lets go over
+    // the same time. In the air the ramp is longer, so a jump keeps its direction.
+    // The vector between them is `difference`; when it is shorter than the step's allowance the
+    // eased direction simply arrives, otherwise it moves the allowance along `difference`.
+    GroundedDirection~: (wantedDirection: lantern:::math:::Vec3, dt: f32) -> lantern:::math:::Vec3 {
+        rampSeconds := controller.IsGrounded() ? AdventureTuning:::GROUNDED_GROUND_RAMP_SECONDS : AdventureTuning:::GROUNDED_AIR_RAMP_SECONDS;
+        allowance := dt / rampSeconds;
+        difference := wantedDirection - easedDirection;
+        distance := difference.Length();
+        if distance <= allowance {
+            easedDirection = wantedDirection;
+        } else {
+            easedDirection = easedDirection + difference * (allowance / distance);
+        }
+        if recoverySecondsLeft > 0.0f {
+            recoverySecondsLeft -= dt;
+            return easedDirection * AdventureTuning:::LANDING_RECOVERY_SCALE;
+        }
+        return easedDirection;
+    }
+
     // Finds the surface below the player and remembers where the shadow goes and how big it is;
     // DrawBlobShadow hands that to the engine every drawn frame.
     // A blob shadow is a cheap stand-in for real shadows, and in a platformer its main job is

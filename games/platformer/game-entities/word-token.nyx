@@ -1,0 +1,55 @@
+Math :: import standard:::Math;
+
+// A word or phrase to collect: a world-file entity of kind "word_token", a small glowing tag that
+// spins and bobs where it was placed (the word market and the station, docs/gameplay-prototypes.md).
+// Walking into one adds it to the player's list and shows the word with its meaning.
+//
+// The engine's font is an 8x8 bitmap of ASCII, so the Japanese is written in romaji (Latin letters).
+// Kana and kanji need a font the engine does not have yet (a card on the engine follow-ups).
+//
+// Properties set on the entity in the world editor:
+// - `romaji` (text): the word or phrase as it sounds, such as "kippu".
+// - `meaning` (text): what it means in English, such as "ticket".
+//
+// Like a gem, a collected token is only hidden, so restarting the level can show it again.
+WordToken :: class {
+public:
+    entity: i64;
+    home: lantern:::math:::Vec3;
+    romaji: string;
+    meaning: string;
+    index: i32;
+    isCollected~ bool = false;
+
+    WordToken~: (entity: i64, index: i32) : entity(entity), home(lantern:::world:::Position(entity)),
+        romaji(lantern:::world:::TextProperty(entity, "romaji")), meaning(lantern:::world:::TextProperty(entity, "meaning")), index(index) { }
+
+    // Makes the tag glow so it reads as different from a gem (warm pink against the gem's cold light).
+    Glow~: () -> void {
+        lantern:::world:::SetSurface(entity, 0.0f, 0.3f, GLOW_COLOR);
+        lantern:::world:::SetGlow(entity, GLOW_COLOR, GLOW_STRENGTH);
+    }
+
+    Collect~: () -> void {
+        isCollected = true;
+        lantern:::world:::SetVisible(entity, false);
+    }
+
+    Restore~: () -> void {
+        isCollected = false;
+        lantern:::world:::SetVisible(entity, true);
+    }
+
+    // The same gentle bob and spin the gems have, offset by the token's number so a row of them is not in lockstep.
+    Animate :: (time: f32) -> void {
+        guard !isCollected;
+        bob := Math:::sin(time * 1.6f + f32(index)) * 0.08f;
+        bobOffset: lantern:::math:::Vec3 = { y: bob };
+        lantern:::world:::SetPosition(entity, home + bobOffset);
+        lantern:::world:::SetYaw(entity, time * 1.2f);
+    }
+
+private:
+    static GLOW_COLOR :: "FF8FB1";
+    static GLOW_STRENGTH :: 3.0f;
+}

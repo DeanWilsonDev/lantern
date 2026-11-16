@@ -1,4 +1,9 @@
+AdventureTuning :: import AdventureTuning;
 AnchorSystem :: import AnchorSystem;
+ClimbOutcome :: import ClimbOutcome;
+ClimbSystem :: import ClimbSystem;
+MinigameSystem :: import MinigameSystem;
+TrainSystem :: import TrainSystem;
 Autopilot :: import Autopilot;
 BoostSystem :: import BoostSystem;
 BouncePad :: import BouncePad;
@@ -125,7 +130,7 @@ public:
         }
         // What the HUD shows. The model only passes on real changes, so this doesn't re-render
         // the HUD every frame.
-        ui.SetStatus(state == GameState:::MainMenu ? "" : `${rules.statusText}${photoMode.StatusSuffix()}`);
+        ui.SetStatus(state == GameState:::MainMenu ? "" : `${rules.statusText}${minigames.StatusSuffix(level.wordTokens.length(), level.foodStalls.length())}${photoMode.StatusSuffix()}`);
         ui.SetAlbum(rules.isLevelComplete ? photoMode.AlbumText() : "");
         photoMode.Publish(ui);
         ui.SetMessage(rules.IsShowingMessage() ? rules.message : HintText());
@@ -186,6 +191,9 @@ private:
     static PROTOTYPE_HAND_OFF_PATH :: "worlds/prototypes/hand-off.world.json";
     static PROTOTYPE_WATCHER_PATH :: "worlds/prototypes/the-watcher.world.json";
     static CROSSING_PATH :: "worlds/the-crossing.world.json";
+    static PROTOTYPE_CLIMB_PATH :: "worlds/prototypes/the-climb.world.json";
+    static PROTOTYPE_WORD_MARKET_PATH :: "worlds/prototypes/word-market.world.json";
+    static STATION_PATH :: "worlds/the-station.world.json";
     static PROTOTYPE_FLOW_PATH :: "worlds/prototypes/flow-and-fragile.world.json";
     static ROOFTOPS_PATH :: "worlds/rooftops.world.json";
     static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
@@ -229,6 +237,13 @@ private:
     // either her or the route-following companion above, depending on its markers.
     partner~ Partner = new Partner();
     switchSystem~ SwitchSystem = new SwitchSystem();
+    // The grounded adventure prototypes (docs/gameplay-prototypes.md): the player's climbing, the word and food
+    // minigames, and the danger on a train's track. `seenClimbRestartCount` is the rules' restart count when the
+    // minigames were last put back, so a restart (R) resets them too.
+    climbSystem~ ClimbSystem = new ClimbSystem();
+    minigames~ MinigameSystem = new MinigameSystem();
+    trainSystem~ TrainSystem = new TrainSystem();
+    seenClimbRestartCount~ i32 = 0;
     // The rules' restart count the last time the partner was put back, so a restart (R) can bring her too.
     seenRestartCount~ i32 = 0;
     // True from a bounce pad launch until the next landing, so the jump is held through the whole rise.
@@ -261,6 +276,10 @@ private:
         nightLights.Apply(level, assets.unitCubeMesh);
         photoMode.Start(assets.unitCubeMesh);
         player.Spawn(assets, level.spawnPosition);
+        // A level can ask for the grounded feel with its spawn's `movement` property (settings/adventure-tuning.nyx).
+        player.UseGroundedFeel(level.isGroundedFeel);
+        climbSystem.Release();
+        minigames.Start(level.wordTokens, level.foodStalls);
         companion.Spawn(level.companionStops, level.anchors, assets.playerMesh, assets.playerTexture);
         if level.hasPartner {
             partner.Spawn(level.partnerStart, assets.playerMesh, assets.playerTexture);
@@ -277,6 +296,7 @@ private:
         camera.ResetBehind(0.0f);
         rules.Start(level);
         seenRestartCount = rules.restartCount;
+        seenClimbRestartCount = rules.restartCount;
         // Lights live in the engine until removed, so the last level's glows are turned off
         // here and this level's companion glow starts at her first stop.
         anchorSystem.Cancel();
@@ -314,6 +334,12 @@ private:
     //    difference nobody can see.
     Simulate~: (dt: f32) -> void {
         simulationSeconds += dt;
+        // A restart (R, or the pause menu) lets go of anything held and puts the words and meals back.
+        if rules.restartCount != seenClimbRestartCount {
+            seenClimbRestartCount = rules.restartCount;
+            climbSystem.Release();
+            minigames.Start(level.wordTokens, level.foodStalls);
+        }
         for platform: MovingPlatform in level.platforms {
             platform.Move(simulationSeconds);
         }
@@ -348,6 +374,13 @@ private:
         feetBefore := player.FeetPosition();
         isGroundedBefore := player.controller.IsGrounded();
         anchorSystem.ShowReady(level.anchors, feetBefore, isGroundedBefore, companion.position);
+        // Climbing (game-systems/climb-system.nyx): F beside a ladder, pipe or ledge grabs it, unless a lever is
+        // what F means here. While holding on the controller isn't asked to move the player at all.
+        if !isAutoplay && !photoMode.isActive && !anchorSystem.isSwinging && !climbSystem.isClimbing && !switchSystem.IsLeverNear(level.switches, feetBefore, PartnerTuning:::LEVER_REACH) {
+            if climbSystem.TryGrab(level.climbSurfaces, feetBefore, lantern:::input:::IsPressed(InputSettings:::USE), PlayerTuning:::RADIUS) {
+                lantern:::audio:::Play("land", 0.3f);
+            }
+        }
         if anchorSystem.TryStart(level.anchors, feetBefore, isGroundedBefore, companion.position, jumpPressed) {
             events.Push(GameEvent:::PlayerSwingStarted);
         }
@@ -359,18 +392,21 @@ private:
                 Dust:::Puff(player.FeetPosition(), 8, 1.0f, 0.2f);
                 events.Push(GameEvent:::PlayerSwingLanded);
             }
+        } else if climbSystem.isClimbing {
+            StepClimb(stick, jumpPressed, dt);
         } else {
             MovePlayer(stick, jumpPressed, jumpHeld, dt);
         }
         controller := player.controller;
         UpdatePuzzle(dt);
         UpdateCrumbles(dt);
+        UpdateAdventure(stick, dt);
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         lanternSystem.DetectTaken(level.lanterns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         thornSystem.DetectTouches(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
-        if controller.IsGrounded() && !anchorSystem.isSwinging && !glowSystem.IsStandingOnAny(level.glowPlatforms, player.FeetPosition()) && !thornSystem.IsNearAny(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), SAFE_SPOT_MARGIN) {
+        if controller.IsGrounded() && !anchorSystem.isSwinging && !glowSystem.IsStandingOnAny(level.glowPlatforms, player.FeetPosition()) && !thornSystem.IsNearAny(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), SAFE_SPOT_MARGIN) && !trainSystem.IsOnTrack(level.trains, player.FeetPosition()) && !climbSystem.isClimbing {
             rules.NoteSafeSpot(player.FeetPosition());
         }
         // The kill plane is just a height: once the feet drop below it, the player has fallen
@@ -397,6 +433,36 @@ private:
             }
         }
         gemSystem.Animate(level.gems, simulationSeconds);
+        for word in level.wordTokens {
+            word.Animate(simulationSeconds);
+        }
+    }
+
+    // One step of holding a surface: the climb system says where the feet are, and the player is put there. The
+    // companion's update still runs, because she goes on following (on the ground) while the player climbs.
+    StepClimb~: (stick: lantern:::math:::Vec2, jumpPressed: bool, dt: f32) -> void {
+        outcome := climbSystem.Advance(level.climbSurfaces, stick, jumpPressed, PlayerTuning:::RADIUS, dt);
+        player.SwingTo(climbSystem.feet, climbSystem.yaw);
+        companion.Update(player.FeetPosition(), false, dt);
+        if outcome == ClimbOutcome:::MountedTop {
+            Dust:::Puff(player.FeetPosition(), 8, 1.0f, 0.2f);
+            lantern:::audio:::Play("land", 0.5f);
+        } else if outcome == ClimbOutcome:::LetGo {
+            lantern:::audio:::Play("jump", 0.3f);
+        }
+    }
+
+    // The words, the meals and the trains of a grounded adventure level, after the player has moved. Eating asks for
+    // the use key held while the stick rests, and the line each one produces goes up as a message.
+    UpdateAdventure~: (stick: lantern:::math:::Vec2, dt: f32) -> void {
+        controller := player.controller;
+        isUseHeld := !isAutoplay && !photoMode.isActive && lantern:::input:::IsHeld(InputSettings:::USE);
+        minigames.Update(level.wordTokens, level.foodStalls, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), player.FeetPosition(), isUseHeld, stick.Length() < 0.1f && !climbSystem.isClimbing, dt);
+        noted := minigames.TakeNote();
+        if noted != "" {
+            rules.Announce(noted, AdventureTuning:::WORD_SHOW_SECONDS);
+        }
+        trainSystem.DetectHits(level.trains, player.FeetPosition(), simulationSeconds, events);
     }
 
     // Each light follows whoever carries it, then the glow system shows or hides the
@@ -528,7 +594,13 @@ private:
         if switchSystem.IsLeverNear(level.switches, feet, PartnerTuning:::LEVER_REACH) {
             return "F: pull the lever";
         }
-        return "";
+        if climbSystem.isClimbing {
+            return "W / S: climb   A / D: shimmy on pipes   Space: let go";
+        }
+        if climbSystem.NearestGrabbable(level.climbSurfaces, feet) >= 0 {
+            return "F: climb";
+        }
+        return minigames.HintFor(level.foodStalls, feet);
     }
 
     // The apex of the pad the player is standing on, or 0.
@@ -641,6 +713,9 @@ private:
             PlayTheWatcher -> { PlayLevel(PROTOTYPE_WATCHER_PATH); },
             PlayFlowAndFragile -> { PlayLevel(PROTOTYPE_FLOW_PATH); },
             PlayTheCrossing -> { PlayLevel(CROSSING_PATH); },
+            PlayTheClimb -> { PlayLevel(PROTOTYPE_CLIMB_PATH); },
+            PlayWordMarket -> { PlayLevel(PROTOTYPE_WORD_MARKET_PATH); },
+            PlayTheStation -> { PlayLevel(STATION_PATH); },
             PlayStreetsLater -> { PlayLevel(STREETS_LATER_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
@@ -723,6 +798,11 @@ private:
         for channel~ i32 = 1; channel <= 4; channel++ {
             lantern:::debug:::SetValue(`Channel/${channel:d}`, switchSystem.IsChannelOn(level.switches, channel) ? "on" : "off");
         }
+        lantern:::debug:::SetValue("Climb/Holding", climbSystem.isClimbing ? "yes" : "no");
+        lantern:::debug:::SetValue("Climb/Height", `${climbSystem.height:.2f}`);
+        lantern:::debug:::SetValue("Minigames/Words", `${minigames.wordsFound:d} / ${level.wordTokens.length():d}`);
+        lantern:::debug:::SetValue("Minigames/Meals", `${minigames.mealsFinished:d} / ${level.foodStalls.length():d}`);
+        lantern:::debug:::SetValue("Player/Feel", level.isGroundedFeel ? "grounded" : "platformer");
         lantern:::debug:::SetValue("Photo/Camera raised", photoMode.isActive ? "yes" : "no");
         lantern:::debug:::SetValue("Photo/Verdict", photoMode.VerdictName());
         lantern:::debug:::SetValue("Photo/Photos", `${photoMode.takenCount:d} / ${photoMode.sights.length():d}`);
