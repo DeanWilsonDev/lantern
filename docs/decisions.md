@@ -1065,7 +1065,7 @@ three more steps turn it into the picture. `bloom-and-tone-mapping.md` is the gu
 
 Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
 
-## D-064: A procedural sky that lights the scene
+## D-065: A procedural sky that lights the scene
 
 - **The sky is a formula, not a cubemap.** `SkyGradient(direction, zenith, horizon, ground, blur)` in
   `engine/shaders/sky-common.glsl` is shared by the backdrop shader and the lit shader, so what you see behind the world
