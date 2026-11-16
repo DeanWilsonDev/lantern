@@ -1478,3 +1478,27 @@ Cards: `platformer-game/night-and-photo-mode` (`photo-sights-in-world-files`, `p
   list. The rooftops' goal now points at it.
 
 Cards: `platformer-game/gameplay-prototypes`.
+
+## Companion leads and swings first
+
+Dean's play-test (2026-11-16): she can't swing the Anchor, and it is easy to get ahead of her because she only walks on
+when you are close. Details in `docs/crimson-and-thorn-slice.md`; the route-following companion is the one in the streets
+and `streets-later` (the commanded partner of the prototype rooms is unchanged, D-081).
+
+- **D-090: she leads, she doesn't follow.** She walks on when you are within 10 m (was 4) or nearer the next stop than she
+  is, in which case she hurries (1.8 times her speed) back in front; a player more than 30 m away counts as elsewhere, not
+  ahead. Mid-walk she stops when you fall 16 m behind and goes on again at 11 m, so she can't flicker at the edge. A stop's
+  `near` replaces the range and turns hurrying off: the gap-crossing stop uses 4 m so her light never leaves you.
+- **D-091: the wave is a hop.** Waiting for a player who is far off, she faces them and hops every 3 s. Walking back to
+  fetch them was rejected: her route is straight lines between stops, so going back off-route could cross walls.
+  Provisional: not reviewed by Dean.
+- **D-092: a swing stop is a first-class leg.** A `companion_stop` with `swing` set makes the leg to the next stop a swing
+  along the `swing_arc` whose start post is within 2.5 m, at the arc's own pace; she then walks from the far post to the
+  next stop. She sets off when you are within `near` (16 m in the streets), so you see it.
+- **D-093: a cooperative arc works with her at either post.** The old rule (beside the start post) can't hold once she swings
+  first, so `needs_companion` now means beside either post. After swinging a cooperative arc she stays at the far post
+  until you are within 4 m of her, which is also where your own swing lands. Solo arcs are unchanged and never need her,
+  so the level stays solvable alone wherever she is. Streets and `streets-later` got stops 7 and 8 for the second arc and
+  the goal, and the checkpoints now send her to the stop on their own side of each gap.
+
+Cards: `platformer-game/crimson-and-thorn-slice/the-companion-swings-first` and `.../the-companion-leads-the-way`.

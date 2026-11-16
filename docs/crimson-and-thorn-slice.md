@@ -43,8 +43,9 @@ Playable end to end with what the engine has today:
 
 1. **Checkpoints.** A `checkpoint` world kind. Touching one stores the respawn point; falling returns the player there and
    keeps the gems already collected.
-2. **The companion.** A `companion_stop` world kind with `order` and `wait_seconds`. She stands at a stop, walks to the
-   next when the player comes within a few metres of her, and waits less in later chapters.
+2. **The companion.** A `companion_stop` world kind with `order` and `wait_seconds`. She leads: she stands at a stop, walks
+   to the next when the player is within 10 m of her or has run past her, and waits less in later chapters. If the player
+   falls far behind she waits, faces them and hops every few seconds.
 3. **The Boost.** A `companion_stop` with `boost` set marks where she crouches. Standing beside her and pressing jump gives a higher
    jump than any normal jump (the exact height is a tuning question the design leaves to prototyping). A first ledge is
    one normal jump too high and has a crate stack beside it (the solo form); a second ledge is only reachable through
@@ -60,14 +61,14 @@ Pick **The streets** on the main menu (or run with `LANTERN_LEVEL=worlds/streets
 | World kind | Properties | Meaning |
 |---|---|---|
 | `checkpoint` | `companion_stop` (optional) | A grey post that turns warm when reached. A fall returns the player here with their gems; the companion goes back to the named stop. |
-| `companion_stop` | `order`, `wait_seconds`, `boost` (optional), `speed` (optional) | One stop of the companion's scripted route. She walks to the next stop when the player is within 4 m of her and she has waited; at a `boost` stop she crouches and waits until the player has jumped off her back. |
+| `companion_stop` | `order`, `wait_seconds`, `boost`, `speed`, `swing`, `near` (all optional but the first two) | One stop of the companion's scripted route. She walks to the next stop when she has waited and the player is within 10 m of her (`near` replaces the 10) or is nearer the next stop than she is, in which case she hurries; at a `boost` stop she crouches and waits until the player has jumped off her back; at a `swing` stop she crosses by swinging the `swing_arc` whose start post is within 2.5 m, then walks on from its far post. |
 
 The route through the level:
 
 1. Walk to the crate and jump onto it, then jump from the crate onto the upper street. The street is 2.2 m up, one
    normal jump (1.5 m) too high, so this is the solo form of the Boost.
-2. Walk up the street. The companion, waiting at the first stop, follows once you are close, and crouches against the
-   wall at the end. The rooftop is 3.2 m above the street.
+2. Walk up the street. The companion, waiting at the first stop, walks ahead once you are within 10 m and crouches against
+   the wall at the end, waiting for you there (if you hang back she stops, turns and hops to call you on). The rooftop is 3.2 m above the street.
 3. Stand beside her and jump: the jump takes you 3.6 m up (`PlayerTuning:::BOOST_JUMP_HEIGHT`), enough for the roof. She
    then climbs up after you.
 
@@ -131,14 +132,16 @@ the whole way with the keyboard.
 
 | World kind | Properties | Meaning |
 |---|---|---|
-| `swing_arc` | `end` (vector), `sag`, `seconds`, `needs_companion` (all optional but `end`) | The entity is the start post, `end` the far post. A jump on the ground beside the start post swings the player to the far post along an arc that dips `sag` metres (2) below the posts and takes `seconds` (1.8). With `needs_companion` set to 1 it only works while the companion stands within 3.5 m of the start post. |
+| `swing_arc` | `end` (vector), `sag`, `seconds`, `needs_companion` (all optional but `end`) | The entity is the start post, `end` the far post. A jump on the ground beside the start post swings the player to the far post along an arc that dips `sag` metres (2) below the posts and takes `seconds` (1.8). With `needs_companion` set to 1 it only works while the companion stands within 3.5 m of either post. |
 
 How it plays:
 
 1. The first arc is the companion's form. She walks across the gap to a stop beside the start post (she is scripted, so
-   she crosses the floorless gap above the plates her own light shows), and the post's cap turns warm. The jump swings the
-   player across.
-2. The second arc is the solo form. It has no `needs_companion`, and she is left far behind, so the player does it alone.
+   she crosses the floorless gap above the plates her own light shows) and, once the player is within 16 m, swings the arc
+   first so the player can watch. She then stands at the far post until the player has swung over, which is what the arc
+   asks of her, and the start post's cap turns warm. The jump swings the player across.
+2. The second arc is the solo form. It has no `needs_companion`, so it works with or without her; she swings it first too
+   and walks on to the goal.
 3. During a swing the character controller isn't asked to move the player: the game sets their feet along the arc
    each step (`Player.SwingTo`) and there is nothing to steer or miss. Gems can hang on the arc, and checkpoints sit on
    the landings, so a fall can't be a swing's fault.

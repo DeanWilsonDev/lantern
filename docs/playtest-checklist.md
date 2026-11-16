@@ -18,6 +18,15 @@ For every room, play it **twice**: once with her, once alone. Note the time each
 | 6 Flow and fragile | She follows the line | Same | Does momentum feel good? Do crumbling slabs feel fair? |
 | 7 The crossing | Use her wherever a sign suggests | Do it all alone | Which beat did you enjoy most, and which would you cut? Where did you want to stop? |
 
+## The streets companion
+
+In **The streets** she walks the route ahead of you (the commanded partner above is only in the prototype rooms).
+
+- Does she feel like she is leading? Run past her and hang back: does she hurry on, or stop and hop to call you?
+- The first swing: does she swing first, so you can watch, and then wait for you on the far post? Does your own swing
+  work the moment you are at the start post?
+- Is 10 m (16 m at a swing) a good distance for her to set off? Did she ever leave you behind or wait for nothing?
+
 ## Things to feel for
 
 - Boost height 3.6 m, pad height 5 m and 6 m, the four-second plates: too much, too little, right?
