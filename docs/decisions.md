@@ -1502,3 +1502,17 @@ and `streets-later` (the commanded partner of the prototype rooms is unchanged, 
   the goal, and the checkpoints now send her to the stop on their own side of each gap.
 
 Cards: `platformer-game/crimson-and-thorn-slice/the-companion-swings-first` and `.../the-companion-leads-the-way`.
+
+## Gem shadows and the watcher's light
+
+Dean's play-test (2026-11-16): the gems left odd dark specks on the floor, and the watcher's light was barely visible.
+Card: `platformer-game/gameplay-prototypes/fix-gem-shadows-and-watcher-light`. Not run on a real GPU or `nox` from the
+cloud, so Dean's Mac check is the first look.
+
+- **D-094: gems don't cast shadows.** A gem is a small mesh that spins and bobs, so as a shadow caster it drew a speck
+  that shimmered every frame, beside the player's blob shadow. `Gem.Glow` now turns `casts_shadows` off for it. Pillars,
+  the player and platforms still shadow as before.
+- **D-095: the watcher is readable at night.** The beam is amber (`FFA23C`, strength 140; it was pale yellow at 40),
+  the lamp has a glowing housing that blooms, and a glowing floor patch follows the beam, as wide as the catching cone
+  at that distance (it hides when the beam hits a wall or pillar). The patch is the danger zone, so what you see is the
+  rule. Provisional: the colour, strength and patch glow are first guesses, not reviewed by Dean.
