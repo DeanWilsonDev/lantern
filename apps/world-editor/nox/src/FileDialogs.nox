@@ -4,6 +4,10 @@ BridgeHost :: import penumbra:::bridge:::BridgeHost;
 WindowRequests :: import penumbra:::bridge:::WindowRequests;
 
 lantern:::worldeditor:::filedialogs :: namespace {
+    // The operating system's Open and Save dialogs, through SDL. SDL calls back from another thread when
+    // the person chooses a file or cancels, so the answer is left in `chosenPath` with an atomic `finished`
+    // flag, and the UI thread picks it up on its next frame (FinishIfClosed). `pending` is true from
+    // Show until then, so only one dialog is open at a time.
     FileDialog :: class {
     public:
         pending~ bool = false;
@@ -21,6 +25,9 @@ lantern:::worldeditor:::filedialogs :: namespace {
             delete this->filterPattern;
         }
 
+        // Opens a dialog as the UI asked (open or save, with a file type filter and a starting folder). The
+        // filter text must stay alive while the dialog is open, so it is kept in the class as C strings. It
+        // passes a pointer to this object to SDL as the callback's data. Returns false if one is already open.
         Show~: (requests: WindowRequests~*) -> bool {
             guard this->pending == false return false;
             delete this->filterName;
@@ -51,6 +58,7 @@ lantern:::worldeditor:::filedialogs :: namespace {
             return true;
         }
 
+        // Called every frame: when the dialog has closed, tells the UI the chosen path (or null for cancel).
         FinishIfClosed~: (host: BridgeHost~*) -> void {
             guard this->pending == true return;
             guard this->finished.load() == true return;
@@ -64,6 +72,7 @@ lantern:::worldeditor:::filedialogs :: namespace {
             this->chosenPath = null;
         }
 
+        // Called by the dialog's callback to leave the answer and raise the flag.
         Close~: (chosen: string!?) -> void {
             delete this->chosenPath;
             this->chosenPath = chosen!;
@@ -76,6 +85,8 @@ lantern:::worldeditor:::filedialogs :: namespace {
         filter~ Sdl:::SDL_DialogFileFilter = Sdl:::SDL_DialogFileFilter { };
     }
 
+    // The callback SDL calls when the dialog closes. It gets the first chosen path (the list is
+    // ended by a null), or null for a cancel or an error, and hands a copy to the dialog object.
     FileDialogClosed :: (userdata: raw u8~*, fileList: raw u8**, filterIndex: i32) -> void {
         unsafe {
             viewed := reinterpret<raw FileDialog~*>(userdata);

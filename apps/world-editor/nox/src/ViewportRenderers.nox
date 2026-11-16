@@ -5,9 +5,15 @@ ViewportFrame :: import penumbra:::bridge:::viewports:::ViewportFrame;
 ViewportRenderer :: import penumbra:::bridge:::viewports:::ViewportRenderer;
 
 lantern:::worldeditor:::viewports :: namespace {
+    // The interface shows 3D pictures in three places: the level viewport, the spinning preview of a
+    // template and the palette thumbnails. Each is a ViewportRenderer, an object the UI toolkit asks for
+    // a picture of a given size and tells about the mouse and keys. They draw through the editor's C
+    // API (Api), and pass the answer back as RGBA bytes. The preview turns at 0.6 radians a second.
     PREVIEW_TURNS_PER_SECOND_RADIANS: f32 : 0.6f;
     FULL_TURN_RADIANS: f32 : 6.2831855f;
 
+    // Packs the UI toolkit's modifier flags into the bits the editor logic uses. The toolkit's
+    // "shortcut" key is Ctrl or Cmd depending on the platform.
     ModifierBits :: (modifiers: Modifiers) -> u32 {
         bits~ u32 = 0;
         if modifiers.shift {
@@ -22,6 +28,7 @@ lantern:::worldeditor:::viewports :: namespace {
         return bits;
     }
 
+    // Makes the frame's pixel buffer exactly width by height by four bytes.
     SizeFrame :: (frame: ViewportFrame~*, width: u32, height: u32) -> void {
         frame->widthPhysical = width;
         frame->heightPhysical = height;
@@ -34,6 +41,9 @@ lantern:::worldeditor:::viewports :: namespace {
         }
     }
 
+    // The main viewport. Drawing renders the level at the requested size and copies the pixels into the
+    // frame; every mouse and key event is forwarded to the editor session, which owns all the behaviour.
+    // When the pointer leaves the viewport the held keys are released, or a fly key would stick.
     LevelRenderer :: class {
         implements:
             ViewportRenderer;
@@ -97,6 +107,8 @@ lantern:::worldeditor:::viewports :: namespace {
         editorInstance~ raw Editor~* = null;
     }
 
+    // The turning picture of the template chosen in the palette. It ignores all input, and each tick
+    // advances the angle, wrapping at a full turn.
     PreviewRenderer :: class {
         implements:
             ViewportRenderer;
@@ -154,6 +166,8 @@ lantern:::worldeditor:::viewports :: namespace {
         spinRadians~ f32 = 0.0f;
     }
 
+    // The small still picture of one template in the palette grid. It is square (the smaller side), and
+    // the editor only redraws it when the template or palette has changed. It ignores all input.
     ThumbnailRenderer :: class {
         implements:
             ViewportRenderer;
