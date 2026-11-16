@@ -14,9 +14,11 @@ game runs against, the whole engine API, the script session and the host that ru
 
 ## What you need
 
-- `nox` on `PATH`, from [nox-systems-language](https://github.com/fearlessgamedev/nox-systems-language) on `proto`:
+- `nox` on `PATH`, from [nox-systems-language](https://github.com/fearlessgamelabs/nox-systems-language) on `proto`:
+  `git clone -b proto https://github.com/fearlessgamelabs/nox-systems-language && cd nox-systems-language`, then
   `cmake -B build -G Ninja && cmake --build build && cmake --install build --component nox --prefix ~/.local`.
-- `mist` on `PATH`, from [mist-package-manager](https://github.com/fearlessgamedev/mist-package-manager):
+- `mist` on `PATH`, from [mist-package-manager](https://github.com/fearlessgamelabs/mist-package-manager):
+  `git clone https://github.com/fearlessgamelabs/mist-package-manager && cd mist-package-manager`, then
   `git submodule update --init --recursive && cmake -B build -G Ninja && cmake --build build && cmake --install build --component mist --prefix ~/.local`.
 - CMake 3.30 or later, a C++26 compiler (GCC 14, Clang 19 or a recent AppleClang) and Ninja, which Mist uses to build
   SDL3, SDL3_image, SDL3_ttf and lantern-native.

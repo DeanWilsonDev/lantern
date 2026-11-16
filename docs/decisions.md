@@ -15,7 +15,7 @@ every entry.
 | D-001 | Work on a branch based on `proto` |
 | D-002 | Nyx C ABI comes from the `nyx-capi` pull request branch |
 | D-003 | SDL3 through `sdl3-sys`, bundled by default |
-| D-004 | Shaders: WGSL compiled to SPIR-V and MSL by naga at build time |
+| D-004 | Shaders: WGSL compiled to SPIR-V and MSL by naga at build time (superseded: shaders are GLSL, built with `glslangValidator` and `spirv-cross`; see `running.md`) |
 | D-005 | Text: embedded 8×8 bitmap font |
 | D-006 | Audio: WAV only, mixed on the main thread |
 | D-007 | Collision: our own kinematic collision, no physics crate |
@@ -106,6 +106,8 @@ Raw bindings plus our own thin wrappers keep every `unsafe` block in two crates
 a system SDL3 instead, build with `--no-default-features --features system-sdl` on the game.
 
 ## D-004 Shaders: WGSL compiled to SPIR-V and MSL by naga at build time
+
+**Superseded.** This is the Rust engine's shader workflow. The Nox engine writes shaders in GLSL and builds them with `glslangValidator` and `spirv-cross` (`mist run build-shaders`; see `running.md`). The reasoning below is kept as history.
 
 - One source per shader, readable, and no external SDK needed.
 - SPIR-V is used by the Vulkan backend (Linux, Windows) and MSL by Metal (macOS).
