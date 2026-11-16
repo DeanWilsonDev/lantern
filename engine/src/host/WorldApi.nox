@@ -102,6 +102,25 @@ lantern:::host :: namespace {
         return null;
     }
 
+    /**
+     * Turns the world file's light entities into lights in the render world: each point and spot light is added and
+     * its id remembered so `ClearWorld` can remove it, and a `sun` entity replaces the sun and ambient light (the last
+     * one in the file wins). A light is placed by its own transform; a parent's transform is not applied.
+     */
+    AddWorldLights :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> void {
+        for entity in worldFile->entities {
+            placement: Mat4 = entity->transform.Matrix();
+            unsafe {
+                if light := lantern:::world:::LocalLightFromEntity(entity, placement) {
+                    state->worldLightIds.push(state->renderWorld->AddLight(light));
+                }
+                if sun := lantern:::world:::SunFromEntity(entity, placement) {
+                    state->renderWorld->light = sun;
+                }
+            }
+        }
+    }
+
     LoadWorldFile :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> Result<usize, string!> {
         pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(worldFile);
         keys~ Array<u64>! = [];
@@ -142,6 +161,7 @@ lantern:::host :: namespace {
             state->entityWorld->UpdateWorldTransforms();
             state->entityWorld->StorePreviousTransforms();
         }
+        AddWorldLights(state, worldFile);
         return Result<usize, string!>:::Ok(count);
     }
 

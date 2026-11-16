@@ -192,8 +192,55 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    /**
+     * Lights the editor's scene with a light entity, so the viewport shows what the game will: a point or spot light
+     * is added to the frame, and a `sun` entity replaces the default sun. Hiding an entity in the outliner puts its
+     * light out.
+     */
+    AddPreviewLight :: (renderWorld: lantern:::renderer:::RenderWorld~*, entity: lantern:::world:::WorldEntity*, worldMatrix: Mat4) -> void {
+        if light := lantern:::world:::LocalLightFromEntity(entity, worldMatrix) {
+            renderWorld->AddLight(light);
+        }
+        if sun := lantern:::world:::SunFromEntity(entity, worldMatrix) {
+            renderWorld->light = sun;
+        }
+    }
+
+    /**
+     * Draws what a selected light reaches: three circles of the light's range around a point light, the cone of a spot
+     * light out to its range, and an arrow along the sun's rays.
+     */
+    DrawLightGuides :: (renderWorld: lantern:::renderer:::RenderWorld~*, entity: lantern:::world:::WorldEntity*, worldMatrix: Mat4) -> void {
+        guideColor: lantern:::core:::Color = lantern:::core:::Color:::FromHex(16769120);
+        origin: Vec3 = worldMatrix.transformPoint(Vec3 { });
+        direction: Vec3 = lantern:::world:::LightDirection(worldMatrix);
+        if entity->kind == lantern:::world:::SunKind() {
+            DrawArrow(renderWorld, origin, origin + direction * 4.0f, guideColor);
+            return;
+        }
+        guard light := lantern:::world:::LocalLightFromEntity(entity, worldMatrix) return;
+        if light.kind == lantern:::renderer:::LightKind:::Point {
+            renderWorld->CircleLines(origin, Vec3 { x: 1.0f }, light.range, 32, guideColor);
+            renderWorld->CircleLines(origin, Vec3 { y: 1.0f }, light.range, 32, guideColor);
+            renderWorld->CircleLines(origin, Vec3 { z: 1.0f }, light.range, 32, guideColor);
+            return;
+        }
+        coneEnd: Vec3 = origin + direction * light.range;
+        coneRadius: f32 = (Math:::sin(light.outerConeRadians) / Math:::cos(light.outerConeRadians)) * light.range;
+        renderWorld->CircleLines(coneEnd, direction, coneRadius, 32, guideColor);
+        DrawArrow(renderWorld, origin, coneEnd, guideColor);
+        sideways: Vec3 = lantern:::core:::NormalizeOr3(direction.cross(Vec3 { y: 1.0f }), Vec3 { x: 1.0f });
+        upward: Vec3 = lantern:::core:::NormalizeOr3(sideways.cross(direction), Vec3 { y: 1.0f });
+        renderWorld->Line(origin, coneEnd + sideways * coneRadius, guideColor);
+        renderWorld->Line(origin, coneEnd - sideways * coneRadius, guideColor);
+        renderWorld->Line(origin, coneEnd + upward * coneRadius, guideColor);
+        renderWorld->Line(origin, coneEnd - upward * coneRadius, guideColor);
+    }
+
     BuildViewport :: (session: EditorSession~*, resources: ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
         renderWorld->Clear();
+        renderWorld->ClearLights();
+        renderWorld->light = lantern:::renderer:::DirectionalLight:::Default();
         renderWorld->camera = session->camera.RenderCamera();
         renderWorld->clearColor = EditorSkyColor();
         renderWorld->fogStart = 150.0f;
@@ -214,6 +261,9 @@ lantern:::editor :: namespace {
             }
             if entity->shape == null && !view.showMarkers {
                 continue;
+            }
+            if !hidden {
+                AddPreviewLight(renderWorld, entity, placed->worldMatrix);
             }
             selected: bool = session->IsSelected(entity->id);
             hovered: bool = SameOptionalU64(hoveredKey, entity->id);
@@ -263,6 +313,7 @@ lantern:::editor :: namespace {
                 }
             }
             if selected {
+                DrawLightGuides(renderWorld, entity, placed->worldMatrix);
                 for value in entity->propertyValues {
                     if value.kind == lantern:::world:::PropertyKind:::Vector {
                         start: Vec3 = placed->Origin();

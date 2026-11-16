@@ -50,7 +50,7 @@ engine/src/
   audio/                       WAV decoding and the software mixer
   physics/                     collision world and the character controller
   debug/                       the debug HUD and debug-line shapes
-  world/                       the .world.json format
+  world/                       the .world.json format, and WorldLights: how a light entity becomes a light
   nyx/                         the Nyx runtime wrapper
   chaosui/                     the game's Chaos and Cosmos UI
   host/                        the game host: EngineState, the engine API for Nyx, GameHost (a Game)

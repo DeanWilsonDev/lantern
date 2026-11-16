@@ -1,0 +1,46 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Load :: () -> i32 { return lantern:::world:::Load(\"../assets/worlds/lamp-yard.world.json\"); }\nClear :: () -> void { lantern:::world:::Clear(); }\nLightCount :: () -> i64 { return lantern:::lights:::Count(); }\nAddOwn :: () -> i64 { above: lantern:::math:::Vec3 = { y: 2.0f }; return lantern:::lights:::AddPoint(above, \"FFFFFF\", 1.0f, 5.0f); }";
+
+Near :: (value: f32, expected: f32) -> bool {
+    return Math:::abs(value - expected) < 0.01f;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    gameUi := lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    lantern:::testing:::CallOrFail(program, "AddOwn");
+    own: u32 = 1;
+    assert(state->renderWorld->FindLight(own) != null, "a light the game adds gets the first id");
+    sunBefore: lantern:::renderer:::DirectionalLight = state->renderWorld->light;
+    lantern:::testing:::CallOrFail(program, "Load");
+    assert(state->renderWorld->lights.length() == 3, "the game's lamp plus the world's point and spot light");
+    sun: lantern:::renderer:::DirectionalLight = state->renderWorld->light;
+    assert(sun.direction.y < -0.3f && sun.direction.y > -0.9f, "the sun entity points the sun, tilted from straight down");
+    assert(!Near(sun.direction.x, sunBefore.direction.x) || !Near(sun.direction.z, sunBefore.direction.z), "and replaces the default sun");
+    assert(Near(sun.ambient.b, 148.0f / 255.0f), "its sky ambient colour is used");
+    pointIndex: usize? = state->renderWorld->FindLight(2);
+    guard point := pointIndex return 1;
+    redLamp: lantern:::renderer:::Light = state->renderWorld->lights[point];
+    assert(redLamp.kind == lantern:::renderer:::LightKind:::Point && redLamp.castsShadows, "the red lamp is a shadowed point light");
+    assert(Near(redLamp.position.x, -2.0f) && Near(redLamp.position.y, 3.4f), "placed at its entity");
+    assert(Near(redLamp.range, 9.0f), "with its range");
+    spotIndex: usize? = state->renderWorld->FindLight(3);
+    guard spot := spotIndex return 1;
+    torch: lantern:::renderer:::Light = state->renderWorld->lights[spot];
+    assert(torch.kind == lantern:::renderer:::LightKind:::Spot, "the torch is a spot light");
+    assert(torch.direction.y < 0.0f, "aimed downward");
+    lantern:::testing:::CallOrFail(program, "Clear");
+    assert(state->renderWorld->lights.length() == 1, "clearing the world removes its lights and keeps the game's own");
+    assert(state->renderWorld->FindLight(own) != null, "the game's lamp is still there");
+    delete program;
+    delete runtime;
+    delete gameUi;
+    delete state;
+    print("world files light the scene and clearing puts the lights out");
+    return 0;
+}
