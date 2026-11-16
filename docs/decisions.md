@@ -1141,7 +1141,7 @@ Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
 
 Card: `renderer-visuals/softer-shadows-and-stable-cascades`.
 
-## D-069: Blob shadows darken surfaces by distance to a point, in the composite pass
+## D-070: Blob shadows darken surfaces by distance to a point, in the composite pass
 
 - **A blob is a point, a radius and a darkness**, and the composite pass darkens each pixel by how near its world position
   (rebuilt from the depth buffer) is to the point, as an ellipse that reaches only a short way above and below it. No mesh,
