@@ -163,15 +163,17 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
    **draw the sky** (`DrawSky`, if the sky is on and the camera is perspective): a fullscreen triangle at the far
    depth that fills only the pixels no mesh covered. The same sky function lights the meshes. See
    `sky-and-image-based-lighting.md`.
-7. **Bloom passes** (`RecordBloom`), if bloom is on: shrink the scene through five textures, each half the size of
+7. **Ambient occlusion passes** (`RecordAmbientOcclusion`), if it's on and the camera is perspective: read the scene's depth
+   buffer to estimate how blocked each pixel is, then average that over 4x4 pixels. See `ambient-occlusion.md`.
+8. **Bloom passes** (`RecordBloom`), if bloom is on: shrink the scene through five textures, each half the size of
    the last, keeping only its bright part in the first shrink, then grow them back one at a time adding each to the
    next larger. Every step is a full-screen pass: one oversized triangle drawn by `fullscreen.vert`, with no vertex
    buffer, so the fragment shader runs once per pixel of the target.
-8. **Composite pass** (`RecordComposite`): another full-screen pass that reads the scene and the glow, adds them,
+9. **Composite pass** (`RecordComposite`): another full-screen pass that reads the scene and the glow, adds them,
    multiplies by the exposure, applies the tone-mapping curve and writes the swapchain image. When the target can't
    sRGB-encode, the shader does it here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
    texture of its own and **the FXAA pass** (`RecordAntiAlias`) smooths it onto the screen image; see `anti-aliasing.md`.
-9. **Overlay pass**, only if there are lines or overlay quads: it loads the swapchain image and the scene's depth,
+10. **Overlay pass**, only if there are lines or overlay quads: it loads the swapchain image and the scene's depth,
    then **draws the lines** (`DrawLines`), depth-tested against the meshes but not writing depth, and **the overlay**
    (`DrawOverlay`) in screen pixels, with no depth test, so it sits on top. Every overlay vertex samples the font
    atlas; solid boxes use the atlas's white cell. Lines and overlay come after the composite on purpose: a HUD colour

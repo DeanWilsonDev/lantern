@@ -1095,3 +1095,18 @@ Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/anti-aliasing`.
+
+## D-067: Screen-space ambient occlusion over the depth buffer
+
+- **Twelve hemisphere samples per pixel** read the scene's depth, with a range check, then a depth-aware 4x4 average
+  removes the 4x4 sample-turning pattern. Two full-screen passes on one-channel textures.
+- **The depth buffer gains the sampler usage.** It was a depth target only; every depth format the renderer picks already
+  supports sampling (the shadow maps use them).
+- **The composite multiplies the scene by it, before bloom.** A single-pass lit shader can't apply it to ambient light
+  alone, so direct light in creases darkens a little too. A depth pre-pass would let AO touch only ambient; not done, to keep
+  the renderer small. The multiplier of 1.8 on the blocked fraction is because samples near the surface rarely count.
+- **Perspective cameras only.** The editor's orthographic views skip it.
+- **Quality:** low off, medium and high on. Defaults: radius 0.6 m, intensity 0.8, bias 0.04 m.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU. This is the most expensive effect so far.
+
+Card: `renderer-visuals/ambient-occlusion`.

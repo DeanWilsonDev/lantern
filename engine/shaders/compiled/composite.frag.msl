@@ -8,6 +8,7 @@ using namespace metal;
 struct CompositeUniforms
 {
     float4 exposure_bloom_tonemap_encode;
+    float4 occlusion_flag;
 };
 
 struct main0_out
@@ -78,10 +79,14 @@ float3 EncodeSrgb(thread const float3& linear_color)
     return select(high, low, linear_color <= float3(0.003130800090730190277099609375));
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& settings [[buffer(0)]], texture2d<float> scene_image [[texture(0)]], texture2d<float> bloom_image [[texture(1)]], sampler scene_imageSmplr [[sampler(0)]], sampler bloom_imageSmplr [[sampler(1)]])
+fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& settings [[buffer(0)]], texture2d<float> scene_image [[texture(0)]], texture2d<float> bloom_image [[texture(1)]], texture2d<float> occlusion_image [[texture(2)]], sampler scene_imageSmplr [[sampler(0)]], sampler bloom_imageSmplr [[sampler(1)]], sampler occlusion_imageSmplr [[sampler(2)]])
 {
     main0_out out = {};
     float3 scene = scene_image.sample(scene_imageSmplr, in.source_uv).xyz;
+    if (settings.occlusion_flag.x > 0.5)
+    {
+        scene *= occlusion_image.sample(occlusion_imageSmplr, in.source_uv).x;
+    }
     float bloom_strength = settings.exposure_bloom_tonemap_encode.y;
     if (bloom_strength > 0.0)
     {
