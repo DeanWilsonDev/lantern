@@ -1111,7 +1111,7 @@ Card: `renderer-visuals/anti-aliasing`.
 
 Card: `renderer-visuals/ambient-occlusion`.
 
-## D-067: Height fog and light shafts in the composite pass
+## D-068: Height fog and light shafts in the composite pass
 
 - **Both are done in `composite.frag`**, which already reads the scene, so it also reads the depth buffer. Each pixel's
   distance comes from its stored depth and its ray from the camera basis, as the sky does it.
