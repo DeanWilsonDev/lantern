@@ -3,8 +3,13 @@ EditorLayout :: import EditorLayout;
 EditorModel :: import EditorModel;
 EditorOverlays :: import EditorOverlays;
 
+// Every command the person can run, by a short name: from the menus, the right click menu, the command
+// palette and the keyboard shortcuts, which all end up in RunCommand. It also handles the questions that
+// come with them: "save first?" before something that would lose changes, and the open and save file
+// dialogs, which finish later (PollFileDialog).
 EditorCommands :: class {
 public:
+    // A dialog answer that carries a command to run after saving: "saveAsThen:open" means save as, then open.
     static SAVE_AS_THEN :: "saveAsThen:";
 
     document~ EditorDocument;
@@ -18,6 +23,9 @@ public:
         this.layout = layout;
     }
 
+    // Runs a command by name and then refreshes the interface. It first closes any popup. Commands that
+    // would lose unsaved changes (new, open, quit) go through WhenSaved. Commands with an argument
+    // are written "name:argument" and handled by RunPrefixedCommand.
     RunCommand~: (command: string) -> void {
         this.overlays.CloseAll();
         when command {
@@ -68,6 +76,9 @@ public:
         this.document.Refresh(false);
     }
 
+    // Runs a command of the form "prefix:argument": camera preset, duplicate along an axis, mirror, align,
+    // distribute, show a bottom panel, show a help page, choose a tool, open a recent file, and the
+    // camera bookmarks (the argument is a single digit). Unknown prefixes do nothing.
     RunPrefixedCommand~: (command: string) -> void {
         colon := command.indexOf(":", 0);
         guard colon > 0 return;
@@ -89,6 +100,8 @@ public:
         }
     }
 
+    // The answer "save" to the save question: saves, asking for a file name first if the level has none, and
+    // then runs the command that was waiting.
     ConfirmSave~: () -> void {
         command := this.overlays.confirmCommand;
         this.overlays.ClearConfirmCommand();
@@ -101,6 +114,7 @@ public:
         this.RunCommand(command);
     }
 
+    // The answer "don't save": runs the waiting command without saving.
     ConfirmDiscard~: () -> void {
         command := this.overlays.confirmCommand;
         this.overlays.ClearConfirmCommand();
@@ -113,10 +127,14 @@ public:
         this.document.Refresh(false);
     }
 
+    // The answer "cancel": forgets the waiting command.
     ConfirmCancel~: () -> void {
         this.overlays.ClearConfirmCommand();
     }
 
+    // Called every frame. When the file dialog the app asked for has closed, carries out what it was for:
+    // open the file, save to it, or save to it and then run the command that was waiting. A cancel does
+    // nothing.
     PollFileDialog~: () -> void {
         guard this.pendingDialog != "" return;
         guard penumbra:::fileDialogFinished() return;
@@ -135,6 +153,7 @@ public:
         }
     }
 
+    // Runs an action now if there are no unsaved changes, otherwise asks the person whether to save first.
     WhenSaved~: (command: string, action: () -> void) -> void {
         if editorIsDirty() {
             this.overlays.AskToSave(command);
@@ -143,6 +162,7 @@ public:
         action();
     }
 
+    // Saves, or opens Save As if the level has no file yet.
     Save~: () -> void {
         if editorDocumentPath() == "" {
             this.ShowDialog("saveAs");
@@ -151,6 +171,8 @@ public:
         editorSave();
     }
 
+    // Opens the open or save dialog, starting at the level's file or the worlds folder. Only one dialog
+    // at a time.
     ShowDialog~: (kind: string) -> void {
         guard this.pendingDialog == "" return;
         this.pendingDialog = kind;
@@ -162,6 +184,7 @@ public:
         }
     }
 
+    // Opens the numbered entry of the recent files list, after the save question if needed.
     OpenRecent~: (index: i32) -> void {
         recentFiles := this.document.recentFiles;
         guard index < recentFiles.length() return;
@@ -169,15 +192,18 @@ public:
         this.WhenSaved(`openRecent:${index}`, () -> { editorOpen(path); });
     }
 
+    // Saves the preferences and asks the application to quit.
     Quit~: () -> void {
         editorSavePreferences();
         penumbra:::requestQuit();
     }
 
+    // Flips a View menu option between true and false.
     ToggleViewOption :: (name: string) -> void {
         editorSetViewOption(name, editorViewOption(name) == "true" ? "false" : "true");
     }
 
+    // The folder of level files in the assets folder.
     WorldsDirectory :: () -> string {
         return editorAssetsDirectory() + "/worlds";
     }

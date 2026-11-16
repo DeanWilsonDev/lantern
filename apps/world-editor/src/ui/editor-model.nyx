@@ -1,3 +1,6 @@
+// The data types the interface shows. Each is a plain `data` value, so comparing two of them with
+// `!=` tells whether anything changed and a list of them can be a signal. This one is a row of
+// the outliner: the entity's number, name and kind, how deep it is, and its states.
 OutlineRowItem :: data {
     id: i64;
     key: string;
@@ -11,6 +14,9 @@ OutlineRowItem :: data {
     expanded: bool;
 }
 
+// One inspector box. `rowKey` is unique for the box and changes when the inspector is rebuilt, so
+// the widgets are made afresh. A position, rotation or scale arrives as three fields from the editor
+// and is shown as one "vector3" row, which keeps the three keys and values in `axisKeys` and `axisValues`.
 InspectorFieldItem :: data {
     rowKey: string;
     key: string;
@@ -24,12 +30,16 @@ InspectorFieldItem :: data {
     axisValues: Array<string>;
 }
 
+// A titled group of inspector fields (Entity, Transform, Shape and so on), and whether it is folded.
 InspectorGroupItem :: data {
     name: string;
     collapsed: bool;
     fields: Array<InspectorFieldItem>;
 }
 
+// Everything the toolbar and menus need to show ticks and greyed out entries: the tool, snap, space
+// and pivot, whether undo, redo and a selection exist, the camera mode, whether the game is playing, and the
+// View toggles.
 ToolbarState :: data {
     tool: string;
     snap: bool;
@@ -49,12 +59,15 @@ ToolbarState :: data {
     showHidden: bool;
 }
 
+// A palette template: id, label and kind.
 TemplateItem :: data {
     id: string;
     label: string;
     kind: string;
 }
 
+// A row of the history panel. `done` is false for steps that were undone and `current` marks the
+// step the document is at.
 HistoryItem :: data {
     key: string;
     position: i32;
@@ -63,12 +76,15 @@ HistoryItem :: data {
     current: bool;
 }
 
+// A console line.
 LogItem :: data {
     key: string;
     level: string;
     text: string;
 }
 
+// One line of a menu: label, command name, shortcut text, whether it is enabled, ticked or only a
+// separator line.
 MenuEntry :: data {
     label: string;
     command: string;
@@ -78,6 +94,7 @@ MenuEntry :: data {
     separator: bool = false;
 }
 
+// The text of the status bar.
 StatusInfo :: data {
     status: string;
     entities: string;
@@ -88,6 +105,10 @@ StatusInfo :: data {
     playing: bool;
 }
 
+// Functions that read the editor through its host functions and shape the answer into the data
+// values above. This is the only place the interface asks the editor for lists. The FIELD_ and
+// TEMPLATE_ numbers are the part numbers of the editor C API's Field and Template calls (see
+// EditorApi.nox), and ROOT_ENTITY (0) means no parent.
 EditorModel :: namespace {
     FIELD_KEY: i32 : 0;
     FIELD_LABEL: i32 : 1;
@@ -100,6 +121,9 @@ EditorModel :: namespace {
     TEMPLATE_KIND: i32 : 2;
     ROOT_ENTITY: i64 : 0;
 
+    // The outliner's rows. The editor lists every entity in tree order with its depth. A collapsed
+    // entity hides the rows below it (the ones deeper than it) until the depth comes back up. A filter
+    // shows every entity whose name or kind contains the text, flat (depth 0), and ignores collapsing.
     OutlineRows :: (filter: string, collapsed: Dictionary<i64, bool>) -> Array<OutlineRowItem> {
         rows~ Array<OutlineRowItem> = [];
         count := editorOutlineCount();
@@ -137,14 +161,20 @@ EditorModel :: namespace {
         return rows;
     }
 
+    // True for a field key ending .x, .y or .z.
     IsAxisKey :: (key: string) -> bool {
         return key.endsWith(".x") || key.endsWith(".y") || key.endsWith(".z");
     }
 
+    // The key without its axis suffix ("position" from "position.x").
     AxisBase :: (key: string) -> string {
         return key.substring(0, key.length() - 2);
     }
 
+    // The inspector's groups from the editor's flat list of fields. Fields come already ordered by group;
+    // this starts a new group when the name changes. Three fields in a row that are the x, y and z of one
+    // thing are joined into one vector row. `collapsed` says which groups the person has folded.
+    // `version` goes into the row keys.
     InspectorGroups :: (version: i32, collapsed: Dictionary<string, bool>) -> Array<InspectorGroupItem> {
         groups~ Array<InspectorGroupItem> = [];
         fields~ Array<InspectorFieldItem> = [];
@@ -201,10 +231,12 @@ EditorModel :: namespace {
         return groups;
     }
 
+    // "Position X" becomes "Position" for the joined row.
     AxisLabel :: (label: string) -> string {
         return label.endsWith(" X") ? label.substring(0, label.length() - 2) : label;
     }
 
+    // The choices of a drop down field.
     Choices :: (index: i32) -> Array<string> {
         choices~ Array<string> = [];
         count := editorFieldChoiceCount(index);
@@ -214,10 +246,12 @@ EditorModel :: namespace {
         return choices;
     }
 
+    // A View menu option as a bool.
     ViewOption :: (name: string) -> bool {
         return editorViewOption(name) == "true";
     }
 
+    // Reads the toolbar state.
     CurrentToolbar :: () -> ToolbarState {
         return ToolbarState {
             tool: editorTool(),
@@ -239,6 +273,7 @@ EditorModel :: namespace {
         };
     }
 
+    // The palette's templates.
     Templates :: () -> Array<TemplateItem> {
         templates~ Array<TemplateItem> = [];
         count := editorTemplateCount();
@@ -252,6 +287,8 @@ EditorModel :: namespace {
         return templates;
     }
 
+    // The history panel's rows: an "Opened" row for the state before any edit, then a row per step, marking
+    // the current one and the steps that were undone.
     History :: () -> Array<HistoryItem> {
         items~ Array<HistoryItem> = [];
         count := editorHistoryCount();
@@ -269,6 +306,7 @@ EditorModel :: namespace {
         return items;
     }
 
+    // The console's lines of the levels asked for.
     Log :: (showInfo: bool, showWarnings: bool, showErrors: bool) -> Array<LogItem> {
         items~ Array<LogItem> = [];
         count := editorLogCount();
@@ -286,6 +324,8 @@ EditorModel :: namespace {
         return items;
     }
 
+    // The inspector's heading: the primary entity's name, "(+N more)" for a larger selection, or
+    // "Nothing selected".
     InspectorTitle :: () -> string {
         count := editorSelectionCount();
         guard count > 0 return "Nothing selected";
@@ -293,6 +333,8 @@ EditorModel :: namespace {
         return count == 1 ? name : `${name} (+${count - 1} more)`;
     }
 
+    // Reads the status bar's text: the status line, entity and selection counts, camera, frame
+    // statistics and hovered gizmo handle.
     Status :: () -> StatusInfo {
         selected := editorSelectionCount();
         return StatusInfo {
@@ -306,6 +348,7 @@ EditorModel :: namespace {
         };
     }
 
+    // The icon for a kind of entity; kinds without one get a circle.
     KindIcon :: (kind: string) -> string {
         return when kind {
             "platform" -> "platform",
@@ -326,6 +369,7 @@ EditorModel :: namespace {
         };
     }
 
+    // The icon for a console level.
     LogIcon :: (level: string) -> string {
         return when level {
             "warning" -> "warning",
@@ -334,6 +378,8 @@ EditorModel :: namespace {
         };
     }
 
+    // The value, 0 to 15, of the digit at a position in text. It is used for single digit arguments in
+    // commands and (for decimal digits) for numbers in drag payloads. Anything else gives 0.
     HexDigit :: (text: string, index: i32) -> i32 {
         digit := text.substring(index, 1).toLower();
         return when digit {
@@ -343,12 +389,14 @@ EditorModel :: namespace {
         };
     }
 
+    // The red (0), green (1) or blue (2) value, 0 to 255, of a colour written #RRGGBB.
     ColorChannel :: (hex: string, channel: i32) -> f32 {
         guard hex.length() >= 7 && hex.startsWith("#") return 0.0f;
         start := 1 + channel * 2;
         return f32(HexDigit(hex, start) * 16 + HexDigit(hex, start + 1));
     }
 
+    // True when the text looks like #RRGGBB.
     HasColor :: (hex: string) -> bool {
         return hex.length() >= 7 && hex.startsWith("#");
     }
