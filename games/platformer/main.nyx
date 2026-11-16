@@ -15,6 +15,7 @@ GameState :: import GameState;
 GameUiModel :: import GameUiModel;
 GemSystem :: import GemSystem;
 GlowSystem :: import GlowSystem;
+GoalSystem :: import GoalSystem;
 GuideLight :: import GuideLight;
 InputSettings :: import InputSettings;
 LanternSystem :: import LanternSystem;
@@ -161,6 +162,7 @@ private:
         return levelFromSetting == "" ? LEVEL_PATH : levelFromSetting;
     }
     static STREETS_PATH :: "worlds/streets.world.json";
+    static COMPLETE_SECONDS :: 4.0f;     // how long the completion message shows before the next level loads
     static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
     // The Guide Light: warm and wide from the companion, cooler and smaller from the lantern the
     // player carries. `range` is how far the light is drawn, `reveal` how far it makes hidden
@@ -185,6 +187,9 @@ private:
     camera~ ThirdPersonCamera = new ThirdPersonCamera();
     gemSystem~ GemSystem = new GemSystem();
     anchorSystem~ AnchorSystem = new AnchorSystem();
+    goalSystem~ GoalSystem = new GoalSystem();
+    // How long the level has been complete, in simulation seconds (see Simulate).
+    completeSeconds~ f32 = 0.0f;
     glowSystem~ GlowSystem = new GlowSystem();
     lanternSystem~ LanternSystem = new LanternSystem();
     thornSystem~ ThornSystem = new ThornSystem();
@@ -219,6 +224,7 @@ private:
         gemSystem.Clear();
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
+        completeSeconds = 0.0f;
         camera.ResetBehind(0.0f);
         rules.Start(level);
         // Lights live in the engine until removed, so the last level's glows are turned off
@@ -299,6 +305,7 @@ private:
         controller := player.controller;
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
+        goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         lanternSystem.DetectTaken(level.lanterns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         thornSystem.DetectTouches(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         if controller.IsGrounded() && !anchorSystem.isSwinging && !glowSystem.IsStandingOnAny(level.glowPlatforms, player.FeetPosition()) && !thornSystem.IsNearAny(level.thorns, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), SAFE_SPOT_MARGIN) {
@@ -316,6 +323,16 @@ private:
             rules.Handle(event, level, player, camera, companion);
         }
         UpdateGlows(dt);
+        for goal in level.goals {
+            goal.Animate(simulationSeconds);
+        }
+        // A completed level waits a few seconds so the message can be read, then moves on.
+        if rules.isLevelComplete {
+            completeSeconds += dt;
+            if completeSeconds >= COMPLETE_SECONDS {
+                AdvanceLevel();
+            }
+        }
         gemSystem.Animate(level.gems, simulationSeconds);
     }
 
@@ -375,6 +392,20 @@ private:
         camera.Look(lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
     }
 
+    // The goal's level is done: play the level it names, or go back to the main menu when it names
+    // none. Playing the same level again starts it over.
+    AdvanceLevel~: () -> void {
+        next := rules.nextLevel;
+        if next == "" {
+            StartLevel();
+            SetState(GameState:::MainMenu);
+        } else {
+            pickedLevelPath = next;
+            StartLevel();
+            SetState(GameState:::Playing);
+        }
+    }
+
     // Starts the level at `path` ("" is the course, or the editor's level) from the main menu.
     // The title screen's level is loaded already, so choosing the same one again just resumes.
     PlayLevel~: (path: string) -> void {
@@ -425,6 +456,8 @@ private:
         lantern:::debug:::SetValue("Companion/Position", `${companionAt.x:.2f}, ${companionAt.y:.2f}, ${companionAt.z:.2f}`);
         lantern:::debug:::SetValue("Anchor/Ready", anchorSystem.IsAnyReady(level.anchors, feet, controller.IsGrounded(), companion.position) ? "yes" : "no");
         lantern:::debug:::SetValue("Anchor/Swinging", anchorSystem.isSwinging ? "yes" : "no");
+        lantern:::debug:::SetValue("Game/Complete", rules.isLevelComplete ? "yes" : "no");
+        lantern:::debug:::SetValue("Game/Level", LevelPath());
         lantern:::debug:::SetValue("Companion/Stop", `${companion.stopIndex:d}`);
         lantern:::debug:::SetValue("Companion/Offering boost", companion.IsOfferingBoost() ? "yes" : "no");
         shownPlatforms~ i32 = 0;

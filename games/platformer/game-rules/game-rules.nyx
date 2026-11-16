@@ -2,6 +2,7 @@ Checkpoint :: import Checkpoint;
 Companion :: import Companion;
 GameEvent :: import GameEvent;
 Gem :: import Gem;
+Goal :: import Goal;
 LevelScene :: import LevelScene;
 Player :: import Player;
 ThirdPersonCamera :: import ThirdPersonCamera;
@@ -25,6 +26,9 @@ public:
     respawnCompanionStop~ i32 = 0;
     // Slice 2. Set when the lantern is picked up; main turns its light on and keeps it on.
     isCarryingLantern~ bool = false;
+    // Slice 4. Set when a goal is reached; main waits a few seconds, then loads `nextLevel`.
+    isLevelComplete~ bool = false;
+    nextLevel~ string = "";
     // The last place the player stood on the ground away from any thorn. A thorn sends them
     // back here, which is a nudge, not a death: nothing is lost.
     safeSpot~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
@@ -33,6 +37,7 @@ public:
         respawnPosition = level.spawnPosition;
         respawnCompanionStop = 0;
         isCarryingLantern = false;
+        isLevelComplete = false;
         safeSpot = level.spawnPosition;
         RestartGems(level);
         ShowMessage("Collect every gem!", 3.0f);
@@ -44,6 +49,7 @@ public:
         when event <GameEvent> {
             CheckpointReached(entity) -> { Reach(entity, level); },
             GemTouched(entity) -> { Collect(entity, level); },
+            GoalReached(entity) -> { Finish(entity, level); },
             // A fall costs a walk back and nothing else: the gems stay collected, and the
             // companion is waiting where she was when the checkpoint was reached.
             PlayerFell -> {
@@ -106,6 +112,20 @@ private:
         }
     }
 
+    // The level is complete. Nothing is lost by finishing and nothing ends abruptly: a message with
+    // the gem count shows, and main moves on after a few seconds.
+    Finish~: (entity: i64, level~ LevelScene) -> void {
+        guard !isLevelComplete;
+        for goal~ Goal in level.goals {
+            guard goal.entity == entity continue;
+            goal.Reach();
+            isLevelComplete = true;
+            nextLevel = goal.nextLevel;
+            lantern:::audio:::Play("pickup", 1.0f);
+            ShowMessage(`Level complete! Gems ${collected:d} / ${level.gems.length():d}`, 6.0f);
+        }
+    }
+
     TakeLantern~: (entity: i64, level: LevelScene) -> void {
         for pickup in level.lanterns {
             guard pickup.entity == entity continue;
@@ -136,6 +156,10 @@ private:
         respawnPosition = level.spawnPosition;
         respawnCompanionStop = 0;
         safeSpot = level.spawnPosition;
+        isLevelComplete = false;
+        for goal~ Goal in level.goals {
+            goal.Restore();
+        }
         for checkpoint~ Checkpoint in level.checkpoints {
             checkpoint.Restore();
         }
