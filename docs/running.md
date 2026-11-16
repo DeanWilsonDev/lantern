@@ -9,7 +9,7 @@ driven by [Mist](https://github.com/fearlessgamelabs/mist-package-manager) from 
 | Command | What it does |
 | --- | --- |
 | `mist install` | Fetches and builds every dependency in `mist.json`: SDL3, SDL3_image, SDL3_ttf, cgltf, stb_image, Penumbra (`penumbra-ui-engine`, branch `nox-proto`), `penumbra-bridge` and `lantern-native`. `lantern-native` is the one library holding Nyx's C API, the Chaos UI bridge and penumbra-bridge's C API (`engine/native/`). Run it once, and again after pulling changes to `mist.json` or `mist.lock`. |
-| `mist run game [game-directory]` | Builds the engine in release mode and runs it from `engine/`, so a game directory is relative to `engine/`: `mist run game ../games/platformer` plays the platformer. With no directory it runs the engine's stub scene (a lit test scene), which is a quick smoke test. |
+| `mist run game [game-directory]` | Builds the engine in release mode and runs it from `engine/`. With no argument it plays the platformer. A game directory is relative to `engine/`: `mist run game ../games/platformer`. `mist run game --stub` runs the engine's stub scene (a lit block and a gem), which is a quick smoke test. |
 | `mist run editor [world-file]` | Builds the engine (the editor's Play button runs it), then builds and runs the world editor, `apps/world-editor/nox`. It opens `assets/worlds/course.world.json` unless given another world. |
 | `mist run test` | Runs `engine/tools/run-tests.sh`: `nox test` over every suite under `engine/tests/`. Arguments pass through, for example `--backend c`. |
 | `mist run build-shaders` | Recompiles `engine/shaders/*` to SPIR-V and Metal Shading Language into `engine/shaders/compiled/`. The compiled files are committed, so you only need this after editing a shader, and it needs `glslangValidator` and `spirv-cross`. |
@@ -130,7 +130,7 @@ These environment variables are read by the engine and the game:
 | `LANTERN_CAPTURE_PATH=out.png` | Save the last frame as a PNG when the run ends. Combine with `LANTERN_MAX_FRAMES` for a screenshot. |
 | `LANTERN_SHADER_DIRECTORY` | Load compiled shaders from another directory (`mist run test` sets it to `engine/shaders/compiled`). |
 | `LANTERN_RUNNER` | The path of the game executable the editor's Play button starts. |
-| `LANTERN_WINDOW_SCRIPT=1` | The stub scene resizes, minimises and restores its window, then quits (`engine/tools/check-window.sh`). |
+| `LANTERN_WINDOW_SCRIPT=1` | With `--stub`, the stub scene resizes, minimises and restores its window, then quits (`engine/tools/check-window.sh`). |
 | `LANTERN_REQUIRE_GPU=1` | In tests: a GPU test that can't get a device fails instead of skipping. |
 
 A screenshot of the streets level, headless or not:
