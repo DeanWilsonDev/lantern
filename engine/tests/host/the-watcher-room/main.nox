@@ -1,0 +1,49 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+SeenWithin :: (host: lantern:::host:::GameHost~*, platform: lantern:::testing:::ScriptedPlatform~*, frameLoop: lantern:::engine:::GameLoop~*, frames: i32) -> bool {
+    for round~ i32 = 0; round < frames / 10; round++ {
+        lantern:::testing:::WaitFrames(host, platform, frameLoop, 10);
+        if lantern:::testing:::DebugText(host, "Game/Message").startsWith("Seen") {
+            return true;
+        }
+    }
+    return false;
+}
+
+main :: () -> i32 {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, false);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+
+    lantern:::testing:::OpenPrototypeRoom(host, platform, frameLoop, 5);
+    lantern:::testing:::AssertNoScriptError(host, "after choosing the watcher");
+    assert(lantern:::testing:::DebugText(host, "Game/Level") == "worlds/prototypes/the-watcher.world.json", "the fifth prototype is the watcher");
+    assert(SeenWithin(host, platform, frameLoop, 900), "standing in the open, the sweeping light finds the player");
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 200);
+
+    lantern:::testing:::TapKey(host, platform, frameLoop, lantern:::core:::KeyCode:::R);
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 200);
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(lantern:::core:::KeyCode:::W, false));
+    assert(SeenWithin(host, platform, frameLoop, 450), "walking down the hall with no cover is seen");
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(lantern:::core:::KeyCode:::W));
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 200);
+    lantern:::testing:::TapKey(host, platform, frameLoop, lantern:::core:::KeyCode:::R);
+    lantern:::testing:::TapKey(host, platform, frameLoop, lantern:::core:::KeyCode:::F);
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 400);
+    assert(lantern:::testing:::DebugText(host, "Partner/Mode") == "acting lure", "she walks to the open spot and stands in the light");
+    assert(lantern:::testing:::DebugText(host, "Watcher/0") == "lured", "the light follows her");
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(lantern:::core:::KeyCode:::W, false));
+    for round~ i32 = 0; round < 48; round++ {
+        lantern:::testing:::WaitFrames(host, platform, frameLoop, 10);
+        assert(!lantern:::testing:::DebugText(host, "Game/Message").startsWith("Seen"), "the player crosses while the light is on her");
+    }
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(lantern:::core:::KeyCode:::W));
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 5);
+    assert(lantern:::testing:::PlayerZ(host) < -36.0f, "the player gets to the far end");
+    lantern:::testing:::AssertNoScriptError(host, "at the end");
+    print("the watcher: standing in the open is seen, and the lure lets the player cross");
+    return 0;
+}
