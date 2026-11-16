@@ -1,0 +1,143 @@
+lantern:::host :: namespace {
+    /**
+     * The lights a game can set from Nyx, as `lantern::lights`. The renderer holds the lights as data in the frame's
+     * `RenderWorld`; this is the seam game code reaches them through.
+     *
+     * The sun is one set of values (`SetSun`). Point and spot lights are added once, get an id (an `i64`, 0 meaning
+     * none) and stay until removed or the game reloads; `Move`, `Aim`, `SetColor` and `SetShadows` change them by id.
+     * Colours are written "RRGGBB" like every other colour in the API, and are multiplied by a strength: 1 lights a
+     * white surface fully at a distance of one unit.
+     */
+    RegisterLightsApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        lightsNamespace := new HostNamespace(runtime, "lantern::lights");
+        lightsNamespace->Function("SetSun", "(direction: lantern:::math:::Vec3, color: string, skyAmbient: string, groundAmbient: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            direction: Vec3 = Vec3Argument(context, 0, math);
+            color: lantern:::core:::Color = ColorArgument(context, 1);
+            skyAmbient: lantern:::core:::Color = ColorArgument(context, 2);
+            groundAmbient: lantern:::core:::Color = ColorArgument(context, 3);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                sun~ lantern:::renderer:::DirectionalLight = state->renderWorld->light;
+                sun.direction = lantern:::core:::NormalizeOr3(direction, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f });
+                sun.color = color;
+                sun.ambient = skyAmbient;
+                sun.groundAmbient = groundAmbient;
+                state->renderWorld->light = sun;
+            }
+        });
+        lightsNamespace->Function("AddPoint", "(position: lantern:::math:::Vec3, color: string, strength: f32, range: f32) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            position: Vec3 = Vec3Argument(context, 0, math);
+            color: lantern:::core:::Color = ColorArgument(context, 1);
+            strength: f32 = context->F32(2);
+            range: f32 = context->F32(3);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                light := lantern:::renderer:::Light:::Point(position, Strengthened(color, strength), range);
+                context->ReturnI64(i64(state->renderWorld->AddLight(light)));
+            }
+        });
+        lightsNamespace->Function("AddSpot", "(position: lantern:::math:::Vec3, target: lantern:::math:::Vec3, color: string, strength: f32, range: f32, innerDegrees: f32, outerDegrees: f32) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            position: Vec3 = Vec3Argument(context, 0, math);
+            target: Vec3 = Vec3Argument(context, 1, math);
+            color: lantern:::core:::Color = ColorArgument(context, 2);
+            strength: f32 = context->F32(3);
+            range: f32 = context->F32(4);
+            innerDegrees: f32 = context->F32(5);
+            outerDegrees: f32 = context->F32(6);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                light := lantern:::renderer:::Light:::Spot(position, target, Strengthened(color, strength), range, DegreesToRadians(innerDegrees), DegreesToRadians(outerDegrees));
+                context->ReturnI64(i64(state->renderWorld->AddLight(light)));
+            }
+        });
+        lightsNamespace->Function("Move", "(light: i64, position: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            guard index := LiveLight(context, state, 0) return;
+            position: Vec3 = Vec3Argument(context, 1, math);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->lights[index].position = position;
+            }
+        });
+        lightsNamespace->Function("Aim", "(light: i64, target: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            guard index := LiveLight(context, state, 0) return;
+            target: Vec3 = Vec3Argument(context, 1, math);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                position: Vec3 = state->renderWorld->lights[index].position;
+                state->renderWorld->lights[index].direction = lantern:::core:::NormalizeOr3(target - position, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f });
+            }
+        });
+        lightsNamespace->Function("SetColor", "(light: i64, color: string, strength: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard index := LiveLight(context, state, 0) return;
+            color: lantern:::core:::Color = ColorArgument(context, 1);
+            strength: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->lights[index].color = Strengthened(color, strength);
+            }
+        });
+        lightsNamespace->Function("SetShadows", "(light: i64, enabled: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard index := LiveLight(context, state, 0) return;
+            enabled: bool = context->Bool(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->lights[index].castsShadows = enabled;
+            }
+        });
+        lightsNamespace->Function("Remove", "(light: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard index := LiveLight(context, state, 0) return;
+            unsafe {
+                state->renderWorld->lights.remove(index);
+            }
+        });
+        lightsNamespace->Function("Count", "() -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI64(i64(state->renderWorld->lights.length()));
+            }
+        });
+        failure := lightsNamespace->Finish();
+        delete lightsNamespace;
+        return failure!;
+    }
+
+    /** The light the script's argument `index` names, as its index in the render world's list; reports a bad id. */
+    LiveLight :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, index: usize) -> usize? {
+        id: i64 = context->I64(index);
+        if Stopped(context) {
+            return null;
+        }
+        unsafe {
+            if found := state->renderWorld->FindLight(u32(id)) {
+                return found;
+            }
+        }
+        message: string! = `no light with id ${id}`;
+        NotFound(context, message);
+        delete message;
+        return null;
+    }
+
+    /** `color` with its red, green and blue multiplied by `strength`. */
+    Strengthened :: (color: lantern:::core:::Color, strength: f32) -> lantern:::core:::Color {
+        return lantern:::core:::Color:::Rgba(color.r * strength, color.g * strength, color.b * strength, 1.0f);
+    }
+
+    /** Degrees to radians, for cone angles scripts write in degrees. */
+    DegreesToRadians :: (degrees: f32) -> f32 {
+        return degrees * (Math:::PI / 180.0f);
+    }
+}

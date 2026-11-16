@@ -1,0 +1,115 @@
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+DarkWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+        color: lantern:::core:::Color:::Black(),
+        ambient: lantern:::core:::Color:::Black(),
+        groundAmbient: lantern:::core:::Color:::Black()
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 12.0f, z: 0.0f }, Vec3 { });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debug: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(30.0f, 30.0f);
+            defer delete floorData;
+            cubeData := lantern:::renderer:::Cube(1.0f);
+            defer delete cubeData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->CreateMesh(cubeData) {
+                Result:::Ok(handle) -> {
+                    cube = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+            white := lantern:::core:::Color:::White();
+
+            pointWorld := DarkWorld();
+            defer delete pointWorld;
+            pointWorld->Draw(floor, null, Mat4 { }, white);
+            pointWorld->AddLight(lantern:::renderer:::Light:::Point(Vec3 { x: -3.0f, y: 2.0f, z: 0.0f }, lantern:::core:::Color:::Rgb(20.0f, 20.0f, 20.0f), 6.0f));
+            when renderer->RenderOffscreen(pointWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    nearLight: u8[4] = PixelAt(pixels, size, 36, 64);
+                    farFromLight: u8[4] = PixelAt(pixels, size, 110, 64);
+                    assert(nearLight[0] > 100, "the floor under a point light is lit");
+                    assert(farFromLight[0] < 5, "the floor past the light's range stays dark");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            spotWorld := DarkWorld();
+            defer delete spotWorld;
+            spotWorld->Draw(floor, null, Mat4 { }, white);
+            spotWorld->AddLight(lantern:::renderer:::Light:::Spot(Vec3 { x: 0.0f, y: 4.0f, z: 0.0f }, Vec3 { }, lantern:::core:::Color:::Rgb(30.0f, 30.0f, 30.0f), 10.0f, 0.17f, 0.35f));
+            when renderer->RenderOffscreen(spotWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    insideCone: u8[4] = PixelAt(pixels, size, 64, 64);
+                    outsideCone: u8[4] = PixelAt(pixels, size, 104, 64);
+                    assert(insideCone[0] > 100, "the floor inside a spot light's cone is lit");
+                    assert(outsideCone[0] < 5, "the floor outside the cone stays dark");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            glowWorld := DarkWorld();
+            defer delete glowWorld;
+            glowWorld->DrawWithMaterial(cube, null, Mat4:::translation(Vec3 { x: 0.0f, y: 0.5f, z: 0.0f }), white, lantern:::renderer:::Material:::Glowing(lantern:::core:::Color:::Rgb(0.0f, 1.0f, 0.0f)));
+            when renderer->RenderOffscreen(glowWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    glowing: u8[4] = PixelAt(pixels, size, 64, 64);
+                    assert(glowing[1] > 200 && glowing[0] < 20, "an emissive surface glows with no light on it");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("local lights and emissive surfaces light the frame");
+    return 0;
+}

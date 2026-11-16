@@ -35,7 +35,7 @@ Two ideas carry the whole design:
 | File | What it holds |
 | --- | --- |
 | `renderer/RenderBackend.nox` | The `RenderBackend` interface and `RenderReport` |
-| `renderer/RenderWorld.nox` | `RenderWorld` (one frame), `DrawItem`, `DirectionalLight`, `LineVertex`, the 2D `Overlay` |
+| `renderer/RenderWorld.nox` | `RenderWorld` (one frame), `DrawItem`, `Material`, `DirectionalLight` (the sun), `Light` (point and spot), `LineVertex`, the 2D `Overlay` |
 | `renderer/Camera.nox` | `Camera`: position, forward, field of view, near/far planes, view and projection matrices |
 | `renderer/Frustum.nox` | The camera's view volume as six planes, and the box test used for culling |
 | `renderer/Mesh.nox` | `Vertex` (48 bytes: position, normal, uv, colour) and `MeshData` (vertices and indices) |
@@ -145,9 +145,10 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
 4. **Begin one render pass** with the colour image cleared to the world's clear colour and depth cleared to 1.0, the
    far plane.
 5. **Draw the meshes** (`DrawMeshes`). Push the per-frame uniforms once: the view-projection matrix and camera
-   position for the vertex shader, and the light, ambient and fog for the fragment shader. Then for each draw, bind
-   its mesh's buffers and its texture only if they differ from the previous draw's, push the per-draw uniforms (the
-   model matrix, its normal matrix and the tint) and issue one indexed draw.
+   position for the vertex shader, and the sun, the ambient light, fog and the chosen local lights for the fragment
+   shader. Then for each draw, bind its mesh's buffers and its texture only if they differ from the previous draw's,
+   push the per-draw uniforms (the model matrix and its normal matrix, then the tint and material) and issue one
+   indexed draw.
 6. **Draw the lines** (`DrawLines`), depth-tested against the meshes but not writing depth.
 7. **Draw the overlay** (`DrawOverlay`) in screen pixels, with no depth test, so it sits on top. Every overlay
    vertex samples the font atlas; solid boxes use the atlas's white cell.
@@ -162,8 +163,9 @@ GLSL declares it (std140, so every field is a whole number of 16-byte rows):
 | --- | --- | --- | --- |
 | vertex 0 | `MatrixAndVectorUniforms` (80 bytes) | once per frame | view-projection, camera position |
 | vertex 1 | `ObjectUniforms` (128 bytes) | per draw | model matrix, normal matrix |
-| fragment 0 | `LightUniforms` (96 bytes) | once per frame | direction to the light, light and ambient colour, fog colour, fog range and the sRGB flag, camera position |
-| fragment 1 | `VectorUniforms` (16 bytes) | per draw | tint colour |
+| fragment 0 | `LightUniforms` (112 bytes) | once per frame | direction to the sun, sun colour, sky and ground ambient, fog colour, fog range and the sRGB flag, camera position |
+| fragment 1 | `MaterialUniforms` (48 bytes) | per draw | tint, metallic and roughness, emissive colour |
+| fragment 2 | `LocalLightUniforms` (528 bytes) | once per frame | how many local lights, then up to eight of them (position, range, colour, kind, direction, cone cosines) |
 
 The normal matrix is the inverse transpose of the model matrix's 3x3 part. Normals moved by the model matrix itself
 would tilt off their surface under non-uniform scale.
@@ -171,19 +173,41 @@ would tilt off their surface under non-uniform scale.
 ### The shaders
 
 `lit.vert` moves each vertex to world space with the model matrix and to clip space with the view-projection matrix.
-`lit.frag` computes:
+`lit.frag` computes, for each pixel:
 
 ```text
-albedo  = texture(uv) * vertex colour * tint
-diffuse = max(dot(normal, directionToLight), 0)
-sky     = 0.65 + 0.35 * normal.y                     a cheap hemisphere term: faces pointing up get more ambient
-colour  = albedo * (ambient * sky + lightColour * diffuse)
-fog     = clamp((distanceToCamera - fogStart) / (fogEnd - fogStart), 0, 1)
-colour  = mix(colour, fogColour, fog)                fog fades into the clear colour, hiding the far plane
+albedo   = texture(uv) * vertex colour * tint
+ambient  = mix(groundAmbient, skyAmbient, 0.5 + 0.5 * normal.y)       faces up: sky light, faces down: ground light
+colour   = ambient * (diffuseColour + f0 * (1 - roughness))
+colour  += EvaluateLight(sun)
+colour  += EvaluateLight(light) * attenuation(light, pixel)           for each of up to eight point and spot lights
+colour  += emissive
+colour   = mix(colour, fogColour, fog)                                fog fades into the clear colour, hiding the far plane
 ```
 
 and encodes to sRGB itself when the swapchain can't. `lines` passes colours through. `overlay.vert` turns pixel
 positions into clip space (`x / width * 2 - 1`, `1 - y / height * 2`).
+
+`EvaluateLight` is the Cook-Torrance model, the usual "PBR-lite" shading:
+
+- **Diffuse**: the albedo, for non-metals, times how squarely the surface faces the light (`dot(normal, toLight)`).
+  A metal has no diffuse light: `diffuseColour = albedo * (1 - metallic)`.
+- **Specular**: a highlight shaped by three terms. GGX says how many of the surface's microscopic mirrors face
+  half-way between the light and the eye (rougher surfaces spread it out). Smith visibility says how many of them are
+  hidden by their neighbours. Schlick's Fresnel says surfaces reflect more at grazing angles. A non-metal reflects
+  about 4% of the light (`f0 = 0.04`); a metal reflects its own colour (`f0 = albedo`).
+- **Light units**: a light of strength 1 facing a white matte surface gives colour 1. The textbook formulas divide
+  diffuse light by pi, so `EvaluateLight` multiplies by pi to cancel it. That keeps the numbers an artist writes
+  meaning what they look like.
+
+A point light's strength falls with the square of the distance and is windowed to exactly zero at its `range`
+(`DistanceAttenuation`), so the shader can skip it beyond that. A spot light also fades from full strength at its
+inner cone to nothing at its outer cone with a `smoothstep` on the cosine of the angle to its axis; the cosines are
+worked out on the CPU in `PackLocalLights`, not per pixel.
+
+Only eight local lights are lit per frame (`MAX_LOCAL_LIGHTS`). When a scene has more, `SelectLocalLights` takes the
+eight whose reach is nearest the camera, so lights come and go as the player walks past them. Beyond a handful of
+lights the usual answer is clustered or deferred shading, which this renderer leaves out.
 
 ## 5. Capture and off-screen rendering
 
@@ -202,14 +226,14 @@ is why the application deletes the game (which owns the renderer) before itself 
 
 ## What this renderer leaves out, and where it would go
 
-The renderer is small because it does one forward pass with one light, and SDL GPU handles the device, swapchain,
+The renderer is small because it does one forward pass with a handful of lights, and SDL GPU handles the device, swapchain,
 memory and synchronisation underneath. These are the usual next features, and where each would fit:
 
 | Feature | What changes |
 | --- | --- |
 | Shadows from the sun | A depth-only pass from the light before the main pass, into a shadow-map texture; a fourth pipeline; the light's view-projection added to `LightUniforms`; `lit.frag` samples the map. `RecordFrame` grows a second pass. |
-| Materials | A `Material` type in `renderer/` (shader, textures, parameters) and a material handle on `DrawItem` instead of one texture and a tint. The draw list sorts by pipeline, then material, then mesh. |
-| More lights | An array of point and spot lights in `RenderWorld`, a storage buffer or larger uniform block, a loop in `lit.frag`; past a handful of lights, a clustered or deferred approach. |
+| Richer materials | `Material` has metallic, roughness and emissive values. Normal, roughness and emissive *textures*, and per-material shaders, would need a material handle on `DrawItem` instead of one texture, and a draw list that sorts by pipeline, then material, then mesh. |
+| Many lights | Eight lights in a loop is the limit of a forward renderer with a uniform block. A storage buffer and a clustered or deferred approach go past it. |
 | Transparency | A second list in `RenderWorld` for blended draws, sorted back to front and drawn after the opaque meshes with depth writes off. |
 | Post-processing | Render the scene into an off-screen colour texture (as `Capture` does), then draw a full-screen triangle that samples it (tone mapping, bloom, anti-aliasing) into the swapchain. |
 | Instancing | Group draws that share a mesh and material, put their transforms in a buffer, and issue one draw with an instance count. `GpuDrawList.nox` already sorts them together. |
