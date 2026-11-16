@@ -14,6 +14,9 @@
 // - EvaluateLight is the Cook-Torrance model: a diffuse part (the albedo, for non-metals) plus a specular highlight from
 //   a GGX microfacet distribution (how many tiny mirrors face the half vector), a Smith visibility term (how many of
 //   them are blocked by their neighbours) and Schlick's Fresnel (surfaces reflect more at grazing angles).
+// - shadows: before the sun and each local light add their colour, a lookup in a shadow map says how much of that light
+//   reaches this pixel (1 fully lit, 0 fully in shadow). The renderer drew the maps from the lights' points of view in an
+//   earlier pass; see SunShadow and LocalShadow below.
 // - emissive: light the surface gives off itself, added after the lighting.
 // - fog: linear between a start and end distance from the camera, fading to the clear colour so the far plane's cut
 //   is hidden.
@@ -36,6 +39,12 @@ const int MAX_LOCAL_LIGHTS = 8;
 
 // The draw's texture, or the 1x1 white texture when it has none, with the sampler matching its filter and wrap.
 layout(set = 2, binding = 0) uniform sampler2D albedo_texture;
+// The sun's shadow map: three cascades side by side. A shadow sampler compares the reference depth it is given with the
+// stored depth and returns 1 where the reference is nearer (lit) and 0 where it is farther (in shadow), blending the
+// four nearest texels' answers, which smooths the edge by up to one texel.
+layout(set = 2, binding = 1) uniform sampler2DShadow sun_shadow_map;
+// The local lights' shadow map: tiles in a grid, one per spot light and six per point light.
+layout(set = 2, binding = 2) uniform sampler2DShadow local_shadow_map;
 
 // Slot 0, pushed once per frame: LightUniforms in GpuUniforms.nox (112 bytes).
 layout(set = 3, binding = 0) uniform LightUniforms {
@@ -69,7 +78,8 @@ struct LocalLight {
     vec4 color_and_kind;
     // xyz: the way a spot light points, w: cosine of its outer cone angle.
     vec4 direction_and_outer_cosine;
-    // x: cosine of the inner cone angle.
+    // x: cosine of the inner cone angle, y: the index of its first shadow tile or -1 when it casts no shadow, z: the
+    // world size of one texel of its shadow map one unit away.
     vec4 cone;
 };
 
@@ -79,6 +89,20 @@ layout(set = 3, binding = 2) uniform LocalLightUniforms {
     vec4 header;
     LocalLight lights[MAX_LOCAL_LIGHTS];
 } locals;
+
+// Slot 3, pushed once per frame: where the shadow maps came from (ShadowUniforms in GpuShadows.nox, 1008 bytes).
+layout(set = 3, binding = 3) uniform ShadowUniforms {
+    // The light view-projection matrix of each tile of the local shadow map.
+    mat4 local_tile_matrices[12];
+    // The same for each of the sun's three cascades.
+    mat4 cascade_matrices[3];
+    // x, y, z: where each cascade ends, as a distance along the camera's forward vector. w: 1 when the sun casts shadows.
+    vec4 cascade_ends;
+    // x, y, z: the world size of one texel of each cascade. w: how many texels to push a surface along its normal.
+    vec4 cascade_texels;
+    // xyz: the way the camera looks. w: the depth bias, in the light's depth units.
+    vec4 camera_forward_and_bias;
+} shadows;
 
 // Interpolated from lit.vert's outputs.
 layout(location = 0) in vec3 world_position;
@@ -145,6 +169,96 @@ float DistanceAttenuation(float distance_to_light, float range) {
     return window * window / (distance_to_light * distance_to_light + 1.0);
 }
 
+// The sun's tiles sit side by side: 3 across.
+const float SUN_CASCADE_COUNT = 3.0;
+// The local tiles form a grid 6 across and 2 down. Must match LOCAL_SHADOW_COLUMNS and LOCAL_SHADOW_ROWS.
+const float LOCAL_COLUMNS = 6.0;
+const float LOCAL_ROWS = 2.0;
+
+// Reads a shadow map around `uv` with a 3x3 filter: nine lookups, each already smoothed over four texels by the shadow
+// sampler, so an edge fades over about three texels. `tile_minimum` and `tile_maximum` fence the lookups inside the
+// pixel's own tile, so they never read a neighbouring tile's depths.
+float FilteredShadow(sampler2DShadow shadow_map, vec2 uv, float reference_depth, vec2 texel, vec2 tile_minimum, vec2 tile_maximum) {
+    float lit_amount = 0.0;
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            vec2 sample_uv = clamp(uv + vec2(float(x), float(y)) * texel, tile_minimum + texel * 0.5, tile_maximum - texel * 0.5);
+            lit_amount += texture(shadow_map, vec3(sample_uv, reference_depth));
+        }
+    }
+    return lit_amount / 9.0;
+}
+
+// How much of the sun reaches this pixel: 1 fully lit, 0 fully shadowed. Picks the cascade by how far the pixel is from
+// the camera, and moves the pixel a little way along its normal first. Without that push a surface can shadow itself,
+// speckling it with "acne", because the map's texels are coarser than the surface. Past the last cascade there is
+// no shadow.
+float SunShadow(vec3 position, vec3 normal) {
+    if (shadows.cascade_ends.w < 0.5) {
+        return 1.0;
+    }
+    float view_depth = dot(position - light.camera_position.xyz, shadows.camera_forward_and_bias.xyz);
+    int cascade = 3;
+    if (view_depth < shadows.cascade_ends.x) {
+        cascade = 0;
+    } else if (view_depth < shadows.cascade_ends.y) {
+        cascade = 1;
+    } else if (view_depth < shadows.cascade_ends.z) {
+        cascade = 2;
+    }
+    if (cascade > 2) {
+        return 1.0;
+    }
+    vec3 pushed = position + normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w);
+    vec4 clip = shadows.cascade_matrices[cascade] * vec4(pushed, 1.0);
+    // Clip space has +y up and texture space has +y down.
+    vec2 tile_uv = vec2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    if (clip.z > 1.0 || tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0) {
+        return 1.0;
+    }
+    vec2 atlas_uv = vec2((float(cascade) + tile_uv.x) / SUN_CASCADE_COUNT, tile_uv.y);
+    vec2 texel = 1.0 / vec2(textureSize(sun_shadow_map, 0));
+    vec2 tile_minimum = vec2(float(cascade) / SUN_CASCADE_COUNT, 0.0);
+    vec2 tile_maximum = vec2(float(cascade + 1) / SUN_CASCADE_COUNT, 1.0);
+    return FilteredShadow(sun_shadow_map, atlas_uv, clip.z - shadows.camera_forward_and_bias.w, texel, tile_minimum, tile_maximum);
+}
+
+// How much of a local light reaches this pixel. A spot light has one tile. A point light has six, one per face of a cube
+// around it, and the face is the axis along which the pixel is farthest from the light: +x, -x, +y, -y, +z, -z in tile
+// order. A perspective shadow map's texels cover more world the farther they are, so the normal push grows with distance.
+float LocalShadow(LocalLight local, vec3 position, vec3 normal, vec3 light_to_position, float distance_to_light) {
+    int tile = int(local.cone.y);
+    if (tile < 0) {
+        return 1.0;
+    }
+    if (local.color_and_kind.w < 0.5) {
+        vec3 magnitude = abs(light_to_position);
+        int face = 5;
+        if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z) {
+            face = light_to_position.x > 0.0 ? 0 : 1;
+        } else if (magnitude.y >= magnitude.z) {
+            face = light_to_position.y > 0.0 ? 2 : 3;
+        } else {
+            face = light_to_position.z > 0.0 ? 4 : 5;
+        }
+        tile += face;
+    }
+    vec3 pushed = position + normal * (distance_to_light * local.cone.z * 2.0);
+    vec4 clip = shadows.local_tile_matrices[tile] * vec4(pushed, 1.0);
+    float reference_depth = clip.z / clip.w;
+    vec2 tile_uv = vec2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+    if (clip.w <= 0.0 || reference_depth > 1.0 || tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0) {
+        return 1.0;
+    }
+    float column = float(tile % 6);
+    float row = float(tile / 6);
+    vec2 atlas_uv = vec2((column + tile_uv.x) / LOCAL_COLUMNS, (row + tile_uv.y) / LOCAL_ROWS);
+    vec2 texel = 1.0 / vec2(textureSize(local_shadow_map, 0));
+    vec2 tile_minimum = vec2(column / LOCAL_COLUMNS, row / LOCAL_ROWS);
+    vec2 tile_maximum = vec2((column + 1.0) / LOCAL_COLUMNS, (row + 1.0) / LOCAL_ROWS);
+    return FilteredShadow(local_shadow_map, atlas_uv, reference_depth - 0.0001, texel, tile_minimum, tile_maximum);
+}
+
 void main() {
     vec4 albedo = texture(albedo_texture, surface_uv) * surface_color * material.color;
     // Interpolating unit normals across a triangle shortens them, so normalise again per pixel.
@@ -165,7 +279,8 @@ void main() {
     vec3 ambient = mix(light.ground_ambient_color.rgb, light.ambient_color.rgb, up_amount);
     vec3 lit = ambient * (diffuse_color + f0 * (1.0 - roughness));
 
-    lit += EvaluateLight(normal, view, light.direction_to_light.xyz, light.light_color.rgb, diffuse_color, f0, alpha);
+    float sun_visibility = SunShadow(world_position, normal);
+    lit += EvaluateLight(normal, view, light.direction_to_light.xyz, light.light_color.rgb * sun_visibility, diffuse_color, f0, alpha);
 
     int local_count = min(int(locals.header.x), MAX_LOCAL_LIGHTS);
     for (int index = 0; index < local_count; index++) {
@@ -188,7 +303,8 @@ void main() {
                 : step(outer_cosine, cosine_to_axis);
             strength *= cone_fade;
         }
-        lit += EvaluateLight(normal, view, to_light, local.color_and_kind.rgb * strength, diffuse_color, f0, alpha);
+        float visibility = LocalShadow(local, world_position, normal, -to_light * distance_to_light, distance_to_light);
+        lit += EvaluateLight(normal, view, to_light, local.color_and_kind.rgb * strength * visibility, diffuse_color, f0, alpha);
     }
 
     lit += material.emissive.rgb;

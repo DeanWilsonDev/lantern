@@ -131,7 +131,30 @@ lantern:::gpu :: namespace {
     }
 
     /**
-     * The four samplers every texture shares. Samplers are immutable state objects, so a handful covers every texture.
+     * The sampler the lit shader reads shadow maps with. A normal sampler returns a stored value; this one takes a
+     * reference depth as well, compares it with the stored depth (reference nearer or equal: 1, farther: 0) and
+     * with linear filtering blends the answers of the four nearest texels. That blend is the first, free step of
+     * smoothing a shadow's edge. Edges are clamped and there is one level, so it never reads outside a map.
+     */
+    CreateShadowSampler :: (device: raw Sdl:::SDL_GPUDevice~*) -> raw Sdl:::SDL_GPUSampler~* {
+        unsafe {
+            info := Sdl:::SDL_GPUSamplerCreateInfo {
+                min_filter: Sdl:::SDL_GPU_FILTER_LINEAR,
+                mag_filter: Sdl:::SDL_GPU_FILTER_LINEAR,
+                mipmap_mode: Sdl:::SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+                address_mode_u: Sdl:::SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+                address_mode_v: Sdl:::SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+                address_mode_w: Sdl:::SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+                compare_op: Sdl:::SDL_GPU_COMPAREOP_LESS_OR_EQUAL,
+                enable_compare: true
+            };
+            return Sdl:::SDL_CreateGPUSampler(device, info);
+        }
+    }
+
+    /**
+     * The four samplers every texture shares, and the one shadow maps are read with. Samplers are immutable state
+     * objects, so a handful covers every texture.
      */
     Samplers :: struct {
         /** Smooth and tiling: ground and wall textures. */
@@ -142,16 +165,19 @@ lantern:::gpu :: namespace {
         nearestRepeat~ raw Sdl:::SDL_GPUSampler~* = null;
         /** Blocky, edges clamped: the font atlas and captured frames. */
         nearestClamp~ raw Sdl:::SDL_GPUSampler~* = null;
+        /** Compares a reference depth with a shadow map's: see `CreateShadowSampler`. */
+        shadow~ raw Sdl:::SDL_GPUSampler~* = null;
 
-        /** Creates all four, or null (releasing any made) if one fails. */
+        /** Creates all five, or null (releasing any made) if one fails. */
         static Create :: (device: raw Sdl:::SDL_GPUDevice~*) -> Samplers? {
             samplers := Samplers {
                 linearRepeat: CreateSampler(device, lantern:::renderer:::TextureFilter:::Linear, lantern:::renderer:::TextureWrap:::Repeat),
                 linearClamp: CreateSampler(device, lantern:::renderer:::TextureFilter:::Linear, lantern:::renderer:::TextureWrap:::Clamp),
                 nearestRepeat: CreateSampler(device, lantern:::renderer:::TextureFilter:::Nearest, lantern:::renderer:::TextureWrap:::Repeat),
-                nearestClamp: CreateSampler(device, lantern:::renderer:::TextureFilter:::Nearest, lantern:::renderer:::TextureWrap:::Clamp)
+                nearestClamp: CreateSampler(device, lantern:::renderer:::TextureFilter:::Nearest, lantern:::renderer:::TextureWrap:::Clamp),
+                shadow: CreateShadowSampler(device)
             };
-            if samplers.linearRepeat == null || samplers.linearClamp == null || samplers.nearestRepeat == null || samplers.nearestClamp == null {
+            if samplers.linearRepeat == null || samplers.linearClamp == null || samplers.nearestRepeat == null || samplers.nearestClamp == null || samplers.shadow == null {
                 samplers.Release(device);
                 return null;
             }
@@ -172,9 +198,12 @@ lantern:::gpu :: namespace {
             return nearestClamp;
         }
 
-        /** Releases all four. */
+        /** Releases all five. */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
             unsafe {
+                if shadow != null {
+                    Sdl:::SDL_ReleaseGPUSampler(device, shadow);
+                }
                 if linearRepeat != null {
                     Sdl:::SDL_ReleaseGPUSampler(device, linearRepeat);
                 }
@@ -242,6 +271,27 @@ lantern:::gpu :: namespace {
                 usage: usage,
                 width: targetWidth,
                 height: targetHeight,
+                layer_count_or_depth: 1,
+                num_levels: 1,
+                sample_count: Sdl:::SDL_GPU_SAMPLECOUNT_1
+            };
+            return Sdl:::SDL_CreateGPUTexture(device, info);
+        }
+    }
+
+    /**
+     * A depth texture to draw shadows into and then read in the lit shader. Unlike the frame's own depth buffer, which
+     * only the depth test reads, this one has the sampler usage as well. Creates it in the same format as the frame's
+     * depth buffer, so one pipeline description fits both.
+     */
+    CreateShadowTexture :: (device: raw Sdl:::SDL_GPUDevice~*, format: Sdl:::SDL_GPUTextureFormat, width: u32, height: u32) -> raw Sdl:::SDL_GPUTexture~* {
+        unsafe {
+            info := Sdl:::SDL_GPUTextureCreateInfo {
+                type: Sdl:::SDL_GPU_TEXTURETYPE_2D,
+                format: format,
+                usage: Sdl:::SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | Sdl:::SDL_GPU_TEXTUREUSAGE_SAMPLER,
+                width: width,
+                height: height,
                 layer_count_or_depth: 1,
                 num_levels: 1,
                 sample_count: Sdl:::SDL_GPU_SAMPLECOUNT_1

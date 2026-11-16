@@ -215,6 +215,30 @@ lantern:::renderer :: namespace {
         return chosen!;
     }
 
+    /**
+     * How shadows are drawn, as plain data like the rest of the frame. Shadow maps trade memory and time for crispness:
+     * a bigger map has finer texels, and more of the scene in view means more draws into it.
+     */
+    ShadowSettings :: struct {
+        /** Master switch. Off, the renderer skips every shadow pass and the shader skips every lookup. */
+        enabled~ bool = true;
+        /**
+         * Width and height in pixels of each of the sun's three cascades. The three sit side by side in one texture, so
+         * the texture is three times this wide. Clamped to 256 through 4096 by the renderer.
+         */
+        sunMapSize~ u32 = 1024;
+        /**
+         * Width and height in pixels of one tile of the local-light shadow texture. A shadowed spot light uses one tile
+         * and a shadowed point light uses six, one per face of a cube around it. The texture holds twelve tiles.
+         */
+        localTileSize~ u32 = 512;
+        /**
+         * How far from the camera, in world units, the sun's shadows reach. Surfaces farther away are lit as if nothing
+         * shadowed them. A shorter distance gives sharper shadows near the camera.
+         */
+        distance~ f32 = 60.0f;
+    }
+
     /** One end of a debug line, laid out exactly as the GPU reads it (28 bytes). */
     LineVertex :: struct {
         /** World position. */
@@ -313,6 +337,8 @@ lantern:::renderer :: namespace {
          * `AddLight`, and move or remove it by the id that returns. `Clear` leaves them alone.
          */
         lights~ Array<Light>! = [];
+        /** How shadows are drawn; see `ShadowSettings`. */
+        shadows~ ShadowSettings = ShadowSettings { };
         /** The next id `AddLight` hands out. Starts at 1 so 0 can mean "no light". */
         nextLightId~ u32 = 1;
         /** The colour the frame starts as before anything is drawn (the sky), in linear RGB. Fog fades to it too. */
