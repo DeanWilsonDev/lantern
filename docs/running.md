@@ -122,6 +122,7 @@ These environment variables are read by the engine and the game:
 | `LANTERN_ASSETS` | The assets directory, overriding `game.json`'s `assets`. |
 | `LANTERN_AUTOPLAY=1` | The platformer plays itself (a scripted pilot), for smoke runs and screenshots. |
 | `LANTERN_DEBUG_HUD=1` | Start with the debug HUD showing. |
+| `LANTERN_COLLISION_VIEW=1` | Start with the platformer's collision overlay showing (nearby triangles, the player's capsule, ground normal, velocity and gem trigger spheres). F2 toggles it in game. |
 | `LANTERN_VSYNC=0` | Turn vertical sync off, to see raw frame time. |
 | `LANTERN_GPU_DRIVER` | Force an SDL GPU driver, such as `vulkan` or `metal`. |
 | `LANTERN_GPU_DEBUG=1` | SDL GPU's debug mode (validation layers where the driver has them). |
