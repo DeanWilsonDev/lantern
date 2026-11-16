@@ -89,22 +89,47 @@ impl Program {
     }
 
     fn finish_call(&self, status: sys::nyx_status, result: *mut sys::nyx_value) -> Result<Option<Value>> {
-        let result = self.runtime.adopt(result);
-        if status == sys::NYX_ERROR_FAILURE {
-            let message = match &result {
-                Some(failure) => format!(
-                    "{}: {}",
-                    failure.error_variant().unwrap_or("an error"),
-                    failure.error_message().unwrap_or_default()
-                ),
-                None => "the call failed".to_string(),
-            };
-            let stack = result.as_ref().and_then(|failure| failure.error_stack().ok()).unwrap_or_default();
-            return Err(Error { status: Status::Failure, message, failure: result, stack });
-        }
-        self.runtime.check(status)?;
-        Ok(result)
+        finish_call(&self.runtime, status, result)
     }
+
+    pub fn patch_function(&self, source: &str, function_name: &str, source_name: &str) -> Result<()> {
+        self.runtime.check(unsafe {
+            sys::nyx_program_patch_function(
+                self.raw.as_ptr(),
+                nyx_str(source),
+                nyx_str(function_name),
+                nyx_str(source_name),
+            )
+        })
+    }
+
+    pub fn patch_class(&self, source: &str, class_name: &str, source_name: &str) -> Result<()> {
+        self.runtime.check(unsafe {
+            sys::nyx_program_patch_class(self.raw.as_ptr(), nyx_str(source), nyx_str(class_name), nyx_str(source_name))
+        })
+    }
+}
+
+pub(crate) fn finish_call(
+    runtime: &Runtime,
+    status: sys::nyx_status,
+    result: *mut sys::nyx_value,
+) -> Result<Option<Value>> {
+    let result = runtime.adopt(result);
+    if status == sys::NYX_ERROR_FAILURE {
+        let message = match &result {
+            Some(failure) => format!(
+                "{}: {}",
+                failure.error_variant().unwrap_or("an error"),
+                failure.error_message().unwrap_or_default()
+            ),
+            None => "the call failed".to_string(),
+        };
+        let stack = result.as_ref().and_then(|failure| failure.error_stack().ok()).unwrap_or_default();
+        return Err(Error { status: Status::Failure, message, failure: result, stack });
+    }
+    runtime.check(status)?;
+    Ok(result)
 }
 
 impl Drop for Program {

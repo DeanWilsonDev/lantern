@@ -1,7 +1,18 @@
 lantern:::engine :: namespace {
+    /**
+     * How much sound to keep queued on the device: 60 ms. Less risks a gap if a frame runs long; more makes a sound
+     * start later than the action that caused it.
+     */
     TARGET_QUEUED_SECONDS: f32 : 0.06f;
+    /**
+     * The sample rate the mixer uses when there is no audio device (a headless run or a machine without sound).
+     */
     FALLBACK_SAMPLE_RATE: u32 : 48000;
 
+    /**
+     * What the debug HUD shows about audio: whether a device exists, how many sounds are playing, how much is queued, and
+     * how many times the queue ran dry (an underrun is an audible gap).
+     */
     AudioStats :: struct {
         hasDevice~ bool = false;
         activeVoices~ usize = 0;
@@ -9,6 +20,10 @@ lantern:::engine :: namespace {
         underrunCount~ u32 = 0;
     }
 
+    /**
+     * The engine's audio: a Mixer, the device it sends to (a sink, or none), and the sounds by name. Each frame `Update` tops
+     * up the device's queue from the mixer. Without a device everything still works but nothing is heard.
+     */
     AudioSystem :: class {
     public:
         mixer~ lantern:::audio:::Mixer*!;
@@ -33,6 +48,10 @@ lantern:::engine :: namespace {
             delete sounds;
         }
 
+        /**
+         * Loads a WAV file and stores it under a name. A file that can't be read logs a warning and returns null; the game
+         * carries on without the sound.
+         */
         LoadSound~: (name: string, path: string) -> lantern:::core:::Handle<lantern:::audio:::SoundTag>? {
             when lantern:::audio:::LoadWav(path) {
                 Result:::Ok(sound) -> {
@@ -51,34 +70,56 @@ lantern:::engine :: namespace {
             }
         }
 
+        /**
+         * True when a sound is loaded under this name.
+         */
         HasSound :: (name: string) -> bool {
             return sounds->Get(name) != null;
         }
 
+        /**
+         * Plays a loaded sound effect at `volume`. An unknown name does nothing.
+         */
         Play~: (name: string, volume: f32) -> void {
             if sound := sounds->Get(name) {
                 mixer->Play(sound, volume);
             }
         }
 
+        /**
+         * Starts the music track with this name, looping.
+         */
         PlayMusic~: (name: string) -> void {
             if sound := sounds->Get(name) {
                 mixer->PlayMusic(sound);
             }
         }
 
+        /**
+         * Stops the music.
+         */
         StopMusic~: () -> void {
             mixer->StopMusic();
         }
 
+        /**
+         * The master, music and effects volumes.
+         */
         Volumes :: () -> lantern:::audio:::Volumes {
             return mixer->volumes;
         }
 
+        /**
+         * Sets the three volumes.
+         */
         SetVolumes~: (volumes: lantern:::audio:::Volumes) -> void {
             mixer->volumes = volumes;
         }
 
+        /**
+         * Keeps about 60 ms of sound queued on the device: asks the mixer for just enough frames to fill it and pushes them. If
+         * the queue was empty after audio had started, that counts as an underrun.
+         */
         Update~: () -> void {
             if sink == null {
                 return;
@@ -99,11 +140,17 @@ lantern:::engine :: namespace {
             hasPushedAudio = true;
         }
 
+        /**
+         * How many frames are waiting on the device (0 with no device).
+         */
         QueuedFrames :: () -> usize {
             guard device := sink return 0;
             return device->QueuedFrames();
         }
 
+        /**
+         * The AudioStats for this moment.
+         */
         Stats :: () -> AudioStats {
             queuedFrames: usize = QueuedFrames();
             return AudioStats {

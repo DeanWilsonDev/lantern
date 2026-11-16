@@ -26,7 +26,7 @@ stop_servers() {
 }
 trap stop_servers EXIT
 
-SDL_VIDEODRIVER=x11 LANTERN_WINDOW_SCRIPT=1 LANTERN_MAX_FRAMES=600 timeout 30 ./build/lantern > "$log_path" 2>&1
+SDL_VIDEODRIVER=x11 LANTERN_WINDOW_SCRIPT=1 LANTERN_MAX_FRAMES=600 timeout 30 ./build/lantern --stub > "$log_path" 2>&1
 summary="$(tail -n 1 "$log_path")"
 echo "$summary"
 

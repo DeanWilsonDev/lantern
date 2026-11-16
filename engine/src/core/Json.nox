@@ -1,11 +1,22 @@
+// C's number parser, used to turn the digits of a JSON number into a float exactly as the C library does.
 lantern:::cnumbers :: foreign "c" {
     strtod :: (text: string, end: raw u8~*~*) -> f64;
 }
 
 lantern:::json :: namespace {
+    /**
+     * The "no node" index: a node with no sibling or child holds this.
+     */
     NO_NODE: u32 : 4294967295;
+    /**
+     * How deeply lists and objects may nest. A file nested past this is an error, which stops a hostile file from
+     * overflowing the stack.
+     */
     MAX_DEPTH: u32 : 128;
 
+    /**
+     * The six kinds of JSON value.
+     */
     JsonKind :: enum {
         Null,
         Boolean,
@@ -15,6 +26,11 @@ lantern:::json :: namespace {
         Object
     }
 
+    /**
+     * One value in a document. Nodes live in a flat array and refer to each other by index, not by pointer: a list or
+     * object has the index of its first and last child, and each child has the index of its next sibling. Numbers
+     * keep an integer separately so a 64-bit whole number isn't rounded through a float.
+     */
     JsonNode :: struct {
         kind~ JsonKind = JsonKind:::Null;
         boolean~ bool = false;
@@ -29,14 +45,23 @@ lantern:::json :: namespace {
         childCount~ u32 = 0;
     }
 
+    /**
+     * True for the bytes "0" to "9".
+     */
     IsDigit :: (byte: u8) -> bool {
         return byte >= 48 && byte <= 57;
     }
 
+    /**
+     * True for the four characters JSON allows between tokens: space, tab, line feed and carriage return.
+     */
     IsWhitespace :: (byte: u8) -> bool {
         return byte == 32 || byte == 9 || byte == 10 || byte == 13;
     }
 
+    /**
+     * The value 0 to 15 of a hex digit in either case, or null for any other byte.
+     */
     HexDigitValue :: (byte: u8) -> u32? {
         if IsDigit(byte) {
             return u32(byte) - 48;
@@ -50,6 +75,9 @@ lantern:::json :: namespace {
         return null;
     }
 
+    /**
+     * The lower-case hex digit for a value 0 to 15.
+     */
     HexDigit :: (value: u32) -> u8 {
         if value < 10 {
             return u8(48 + value);
@@ -57,6 +85,10 @@ lantern:::json :: namespace {
         return u8(87 + value);
     }
 
+    /**
+     * Adds a Unicode code point to a string as UTF-8, which is 1 to 4 bytes depending on its size. It decodes
+     * the `\u` escapes of a JSON string.
+     */
     AppendCodePoint :: (text: string!, codePoint: u32) -> string! {
         built~ string! = text!;
         if codePoint < 128 {
@@ -77,6 +109,10 @@ lantern:::json :: namespace {
         return built!;
     }
 
+    /**
+     * The text in double quotes with JSON's escapes: quote, backslash, the usual control characters, and `\u00xx` for
+     * the rest below 32. Bytes of 128 and up are copied as they are, since the text is UTF-8 already.
+     */
     QuotedText :: (text: string) -> string! {
         quoted~ string! = "" + "";
         quoted.appendByte(34);
@@ -108,6 +144,10 @@ lantern:::json :: namespace {
         return quoted!;
     }
 
+    /**
+     * A number as JSON text: a whole number without a point, anything else as the text of a 32-bit float, with
+     * no exponent.
+     */
     NumberText :: (node: JsonNode) -> string! {
         if node.isInteger {
             return `${node.integer}`;
@@ -119,6 +159,10 @@ lantern:::json :: namespace {
         return PlainDecimal(`${value}`);
     }
 
+    /**
+     * Rewrites a number written with an exponent (such as `1e-7`) as plain decimal digits, which is how the writer
+     * spells numbers.
+     */
     PlainDecimal :: (text: string!) -> string! {
         exponentIndex~ usize = text.length();
         for index~ usize = 0; index < text.length(); index++ {
@@ -188,6 +232,9 @@ lantern:::json :: namespace {
         return plain!;
     }
 
+    /**
+     * Adds two spaces per level of nesting, for the pretty-printed output.
+     */
     Indent :: (text: string!, depth: u32) -> string! {
         indented~ string! = text!;
         for level~ u32 = 0; level < depth; level++ {
@@ -196,6 +243,12 @@ lantern:::json :: namespace {
         return indented!;
     }
 
+    /**
+     * A parsed or hand-built JSON document. Parse fills one from text and the `New...` functions build one up, so
+     * the same type reads a world file and writes one back. Everything a game or the editor saves goes through
+     * Write. The parser is the usual recursive descent: ParseValue looks at the next byte and picks ParseObject,
+     * ParseList, ParseText, ParseNumber or a keyword.
+     */
     JsonDocument :: class {
     public:
         nodes~ Array<JsonNode>! = [];
@@ -212,26 +265,42 @@ lantern:::json :: namespace {
             delete problem;
         }
 
+        /**
+         * The node at an index.
+         */
         Node :: (index: u32) -> JsonNode {
             return nodes[usize(index)];
         }
 
+        /**
+         * The kind of the node at an index.
+         */
         Kind :: (index: u32) -> JsonKind {
             return nodes[usize(index)].kind;
         }
 
+        /**
+         * Appends a node and returns its index.
+         */
         AddNode~: (node: JsonNode) -> u32 {
             index: u32 = u32(nodes.length());
             nodes.push(node);
             return index;
         }
 
+        /**
+         * Stores a string and returns its index. Text and keys are kept apart from the nodes.
+         */
         AddText~: (text: string) -> u32 {
             index: u32 = u32(texts.length());
             texts.push(`${text}`);
             return index;
         }
 
+        /**
+         * Adds a null and returns its index. NewBoolean, NewNumber, NewInteger, NewText, NewList and NewObject do
+         * the same for the other kinds.
+         */
         NewNull~: () -> u32 {
             return AddNode(JsonNode { });
         }
@@ -261,6 +330,9 @@ lantern:::json :: namespace {
             return AddNode(JsonNode { kind: JsonKind:::Object });
         }
 
+        /**
+         * Adds a list of three numbers for a vector, which is how world files write positions.
+         */
         NewVector~: (vector: Vec3) -> u32 {
             list: u32 = NewList();
             Append(list, NewNumber(f64(vector.x)));
@@ -269,6 +341,9 @@ lantern:::json :: namespace {
             return list;
         }
 
+        /**
+         * Adds `value` as the last child of a list or object.
+         */
         Append~: (container: u32, value: u32) -> void {
             parent~ JsonNode = nodes[usize(container)];
             if parent.lastChild == NO_NODE {
@@ -283,6 +358,9 @@ lantern:::json :: namespace {
             nodes[usize(container)] = parent;
         }
 
+        /**
+         * Adds `value` to an object under `key`.
+         */
         Set~: (object: u32, key: string, value: u32) -> void {
             keyIndex: u32 = AddText(key);
             member~ JsonNode = nodes[usize(value)];
@@ -291,6 +369,9 @@ lantern:::json :: namespace {
             Append(object, value);
         }
 
+        /**
+         * The index of the value under `key` in an object, or null when there isn't one or the node isn't an object.
+         */
         Member :: (object: u32, key: string) -> u32? {
             if nodes[usize(object)].kind != JsonKind:::Object {
                 return null;
@@ -306,26 +387,44 @@ lantern:::json :: namespace {
             return null;
         }
 
+        /**
+         * The first child of a list or object (NO_NODE when empty). With NextSibling it walks the children.
+         */
         FirstChild :: (container: u32) -> u32 {
             return nodes[usize(container)].firstChild;
         }
 
+        /**
+         * The next child after this one, or NO_NODE.
+         */
         NextSibling :: (child: u32) -> u32 {
             return nodes[usize(child)].nextSibling;
         }
 
+        /**
+         * How many children a list or object has.
+         */
         ChildCount :: (container: u32) -> u32 {
             return nodes[usize(container)].childCount;
         }
 
+        /**
+         * The string of a text node.
+         */
         Text :: (index: u32) -> string {
             return texts[usize(nodes[usize(index)].textIndex)];
         }
 
+        /**
+         * The key a node has in its parent object.
+         */
         Key :: (index: u32) -> string {
             return texts[usize(nodes[usize(index)].keyIndex)];
         }
 
+        /**
+         * True when the node is a list holding only numbers. The writer prints those on one line.
+         */
         IsNumberList :: (container: u32) -> bool {
             child~ u32 = nodes[usize(container)].firstChild;
             while child != NO_NODE {
@@ -337,12 +436,18 @@ lantern:::json :: namespace {
             return true;
         }
 
+        /**
+         * The document, or the part under `index`, as pretty-printed JSON text.
+         */
         Write :: (index: u32) -> string! {
             text: string! = "" + "";
             written: string! = WriteInto(text!, index, 0);
             return written!;
         }
 
+        /**
+         * Appends the value at `index` to `text`, indented to `depth`, and returns the longer text.
+         */
         WriteInto :: (text: string!, index: u32, depth: u32) -> string! {
             built~ string! = text!;
             node: JsonNode = nodes[usize(index)];
@@ -414,6 +519,9 @@ lantern:::json :: namespace {
             return built!;
         }
 
+        /**
+         * Records the first problem (with the line and column it is at) and ignores later ones.
+         */
         Fail~: (source: string, message: string) -> void {
             if problem != null {
                 return;
@@ -458,6 +566,9 @@ lantern:::json :: namespace {
             return true;
         }
 
+        /**
+         * Parses a whole document: one value, then nothing but whitespace. Returns false and fills `problem` otherwise.
+         */
         ParseDocument~: (source: string) -> bool {
             position = 0;
             SkipWhitespace(source);
@@ -472,6 +583,9 @@ lantern:::json :: namespace {
             return true;
         }
 
+        /**
+         * Parses whatever value starts at the current position, or returns null after recording a problem.
+         */
         ParseValue~: (source: string, depth: u32) -> u32? {
             if depth > MAX_DEPTH {
                 Fail(source, "recursion limit exceeded");
@@ -763,6 +877,9 @@ lantern:::json :: namespace {
         }
     }
 
+    /**
+     * Parses JSON text. On a problem the result is an error holding the message and the position.
+     */
     Parse :: (source: string) -> Result<JsonDocument*!, string!> {
         document := new JsonDocument();
         if document->ParseDocument(source) {

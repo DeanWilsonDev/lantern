@@ -1,10 +1,15 @@
 lantern:::editor :: namespace {
+    // Every change to the level is made of edits of three kinds: replace an entity with a new version of
+    // it, insert an entity at a position, or remove an entity by key. Undo and redo are just lists of
+    // these, and applying an edit gives back the edit that reverses it.
     EditKind :: enum {
         Replace,
         Insert,
         Remove
     }
 
+    // One change to the level: its kind, the position (for an insert), the entity's key, and the entity
+    // itself (for a replace or an insert; a remove needs only the key). The edit owns its entity.
     Edit :: class {
     public:
         kind~ EditKind = EditKind:::Remove;
@@ -23,20 +28,24 @@ lantern:::editor :: namespace {
             delete entity;
         }
 
+        // Builds a replace edit. The key is taken from the entity.
         static Replace :: (replacement: lantern:::world:::WorldEntity*!) -> Edit*! {
             entityKey: u64 = replacement->id;
             return new Edit(EditKind:::Replace, 0, entityKey, replacement!);
         }
 
+        // Builds an insert edit that puts the entity at `position`.
         static Insert :: (position: usize, inserted: lantern:::world:::WorldEntity*!) -> Edit*! {
             entityKey: u64 = inserted->id;
             return new Edit(EditKind:::Insert, position, entityKey, inserted!);
         }
 
+        // Builds a remove edit for the entity with this key.
         static Remove :: (removedKey: u64) -> Edit*! {
             return new Edit(EditKind:::Remove, 0, removedKey, null);
         }
 
+        // A deep copy of the edit, so one list of edits can be kept for undo and another for redo.
         Copy :: () -> Edit*! {
             copiedEntity~ lantern:::world:::WorldEntity*!? = null;
             if held := entity {
@@ -46,31 +55,35 @@ lantern:::editor :: namespace {
         }
     }
 
-    ApplyEdit :: (edit: Edit~*, world: lantern:::world:::WorldFile~*) -> Result<Edit*!, string!> {
+    // Applies one edit to the level and returns the edit that undoes it: replacing returns the old
+    // entity as a replace, inserting returns a remove, removing returns an insert at the same position.
+    // Errors name the problem (no such entity, a duplicate key).
+    ApplyEdit :: (edit: Edit~*, worldFile: lantern:::world:::WorldFile~*) -> Result<Edit*!, string!> {
         when edit->kind {
             EditKind:::Replace -> {
-                guard position := world->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
+                guard position := worldFile->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
                 guard replacement ~= edit->entity return Result<Edit*!, string!>:::Err(OwnedEditorText("a replace edit has no entity"));
-                previous := world->entities.remove(position);
-                world->entities.insert(position, replacement->Copy());
+                previous := worldFile->entities.remove(position);
+                worldFile->entities.insert(position, replacement->Copy());
                 return Result<Edit*!, string!>:::Ok(Edit:::Replace(previous!));
             },
             EditKind:::Insert -> {
-                if world->IndexOf(edit->key) != null {
+                if worldFile->IndexOf(edit->key) != null {
                     return Result<Edit*!, string!>:::Err(`entity ${edit->key} already exists`);
                 }
                 guard inserted ~= edit->entity return Result<Edit*!, string!>:::Err(OwnedEditorText("an insert edit has no entity"));
-                world->entities.insert(ClampIndex(edit->index, world->entities.length()), inserted->Copy());
+                worldFile->entities.insert(ClampIndex(edit->index, worldFile->entities.length()), inserted->Copy());
                 return Result<Edit*!, string!>:::Ok(Edit:::Remove(edit->key));
             },
             EditKind:::Remove -> {
-                guard position := world->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
-                removed := world->entities.remove(position);
+                guard position := worldFile->IndexOf(edit->key) return Result<Edit*!, string!>:::Err(`no entity ${edit->key}`);
+                removed := worldFile->entities.remove(position);
                 return Result<Edit*!, string!>:::Ok(Edit:::Insert(position, removed!));
             },
         }
     }
 
+    // Keeps an insert position within the list.
     ClampIndex :: (index: usize, limit: usize) -> usize {
         if index > limit {
             return limit;
@@ -78,10 +91,15 @@ lantern:::editor :: namespace {
         return index;
     }
 
+    // Makes an owned copy of a message, since errors are returned as owned text.
     OwnedEditorText :: (text: string) -> string! {
         return `${text}`;
     }
 
+    // One step in the undo list: a label for the menu, the edits that undo it and those that redo it, and
+    // a state id that says which saved version of the document this step leads to. `coalesceEntity` and
+    // `coalesceField` mark a step that later edits to the same field of the same entity may be merged into
+    // (typing in an inspector box should be one undo step, not one per letter).
     HistoryEntry :: class {
     public:
         label~ string!;
@@ -103,6 +121,7 @@ lantern:::editor :: namespace {
             redo.freeAll();
         }
 
+        // True when a new edit to this entity and field may be merged into this step.
         CoalescesWith :: (entity: u64?, field: string?) -> bool {
             guard mineEntity := coalesceEntity return false;
             guard mineField := coalesceField return false;
@@ -112,6 +131,7 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Copies a list of edits.
     CopyEdits :: (edits: Array<Edit*!>) -> Array<Edit*!>! {
         copies~ Array<Edit*!>! = [];
         for edit in edits {
@@ -121,18 +141,20 @@ lantern:::editor :: namespace {
         return copies!;
     }
 
-    ApplyAll :: (world: lantern:::world:::WorldFile~*, edits: Array<Edit*!>!) -> Result<Array<Edit*!>!, string!> {
+    // Applies edits in order and returns the edits that undo them all, in reverse order. If one fails, the
+    // ones already done are rolled back, so the level is never left half edited.
+    ApplyAll :: (worldFile: lantern:::world:::WorldFile~*, edits: Array<Edit*!>!) -> Result<Array<Edit*!>!, string!> {
         inverses~ Array<Edit*!>! = [];
         pending~ Array<Edit*!>! = edits!;
         defer pending.freeAll();
         for index~ usize = 0; index < pending.length(); index++ {
-            applied := ApplyEdit(pending[index], world);
+            applied := ApplyEdit(pending[index], worldFile);
             when applied! {
                 Result:::Ok(inverse) -> {
                     inverses.push(inverse!);
                 },
                 Result:::Err(message) -> {
-                    RollBack(world, inverses!);
+                    RollBack(worldFile, inverses!);
                     return Result<Array<Edit*!>!, string!>:::Err(message!);
                 }
             }
@@ -146,11 +168,13 @@ lantern:::editor :: namespace {
         return Result<Array<Edit*!>!, string!>:::Ok(reversed!);
     }
 
-    RollBack :: (world: lantern:::world:::WorldFile~*, inverses: Array<Edit*!>!) -> void {
+    // Undoes edits already applied, newest first. A failure while rolling back is dropped, since there
+    // is nothing left to do about it.
+    RollBack :: (worldFile: lantern:::world:::WorldFile~*, inverses: Array<Edit*!>!) -> void {
         remaining~ Array<Edit*!>! = inverses!;
         while remaining.length() > 0 {
             last := remaining.remove(remaining.length() - 1);
-            undone := ApplyEdit(last, world);
+            undone := ApplyEdit(last, worldFile);
             when undone! {
                 Result:::Ok(edit) -> {
                     delete edit;
@@ -164,9 +188,14 @@ lantern:::editor :: namespace {
         remaining.freeAll();
     }
 
+    // The level being edited: the world file, its path, and the undo and redo stacks. `revision` goes up
+    // after every change so anything built from the level (the pick geometry, the outliner) knows when
+    // to rebuild. `savedStateId` is the state at the last save, so the document is dirty when the
+    // current state differs. `previewOriginals` holds the entities as they were before a drag began,
+    // see PreviewReplace.
     EditorDocument :: class {
     public:
-        world~ lantern:::world:::WorldFile*!;
+        documentWorldFile~ lantern:::world:::WorldFile*!;
         path~ string!? = null;
         undoStack~ Array<HistoryEntry*!>! = [];
         redoStack~ Array<HistoryEntry*!>! = [];
@@ -177,18 +206,19 @@ lantern:::editor :: namespace {
         revision~ u64 = 1;
 
         EditorDocument~: (documentWorld: lantern:::world:::WorldFile*!, documentPath: string!?) {
-            world = documentWorld!;
+            documentWorldFile = documentWorld!;
             path = documentPath!;
         }
 
         !EditorDocument~: () {
-            delete world;
+            delete documentWorldFile;
             delete path;
             undoStack.freeAll();
             redoStack.freeAll();
             previewOriginals.freeAll();
         }
 
+        // Loads a level file into a new document, or returns the loader's error message.
         static Open :: (filePath: string) -> Result<EditorDocument*!, string!> {
             loaded := lantern:::world:::Load(filePath);
             when loaded! {
@@ -201,10 +231,12 @@ lantern:::editor :: namespace {
             }
         }
 
+        // The change counter described above.
         Revision :: () -> u64 {
             return revision;
         }
 
+        // The state id of the newest undo step, or 0 with an empty history.
         CurrentStateId :: () -> u64 {
             if undoStack.length() == 0 {
                 return 0;
@@ -212,10 +244,14 @@ lantern:::editor :: namespace {
             return undoStack[undoStack.length() - 1]->stateId;
         }
 
+        // True when there is anything not saved: the state differs from the last save, or a drag is
+        // in progress.
         IsDirty :: () -> bool {
             return CurrentStateId() != savedStateId || previewOriginals.length() > 0;
         }
 
+        // Writes the level, to `target` or else to its own path (an error if it has neither). A drag in
+        // progress is committed first. On success the path and saved state are updated.
         Save~: (target: string?) -> Result<string!, string!> {
             CommitPreview("Edit");
             chosen~ string!? = null;
@@ -224,8 +260,8 @@ lantern:::editor :: namespace {
             } else if own := path {
                 chosen = `${own}`;
             }
-            guard chosenPath := chosen return Result<string!, string!>:::Err(OwnedEditorText("the world has no file yet"));
-            failure: string!? = world->Save(chosenPath);
+            guard chosenPath := chosen return Result<string!, string!>:::Err(OwnedEditorText("the documentWorldFile has no file yet"));
+            failure: string!? = documentWorldFile->Save(chosenPath);
             if message := failure {
                 reason: string! = `${message}`;
                 delete failure;
@@ -243,10 +279,14 @@ lantern:::editor :: namespace {
             return Result<string!, string!>:::Ok(savedPath!);
         }
 
+        // Runs a group of edits as one undo step called `label`. Returns an error message, or null.
         Execute~: (label: string, edits: Array<Edit*!>!) -> string!? {
             return ExecuteCoalescing(label, edits!, null, null);
         }
 
+        // Like Execute, but when the step on top of the history is still open and was made to the same
+        // field of the same entity, merges into it by keeping its undo edits and replacing its redo edits. A
+        // new change clears the redo stack. An empty list of edits does nothing.
         ExecuteCoalescing~: (label: string, edits: Array<Edit*!>!, coalesceEntity: u64?, coalesceField: string?) -> string!? {
             CommitPreview("Edit");
             if edits.length() == 0 {
@@ -255,7 +295,7 @@ lantern:::editor :: namespace {
                 return null;
             }
             redo~ Array<Edit*!>! = CopyEdits(edits);
-            applied := ApplyAll(world, edits!);
+            applied := ApplyAll(documentWorldFile, edits!);
             when applied! {
                 Result:::Ok(undo~ Array<Edit*!>!) -> {
                     revision += 1;
@@ -294,18 +334,22 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Ends coalescing, so the next edit starts a new step. Called when a text box loses focus.
         SealHistory~: () -> void {
             topOpenForCoalescing = false;
         }
 
+        // True when there is something to undo (a drag in progress counts, since undo cancels it).
         CanUndo :: () -> bool {
             return undoStack.length() > 0 || previewOriginals.length() > 0;
         }
 
+        // True when there is something to redo.
         CanRedo :: () -> bool {
             return redoStack.length() > 0;
         }
 
+        // The label of the step undo would undo, for the menu text.
         UndoLabel :: () -> string? {
             if undoStack.length() == 0 {
                 return null;
@@ -313,6 +357,7 @@ lantern:::editor :: namespace {
             return undoStack[undoStack.length() - 1]->label;
         }
 
+        // The label of the step redo would redo.
         RedoLabel :: () -> string? {
             if redoStack.length() == 0 {
                 return null;
@@ -320,6 +365,7 @@ lantern:::editor :: namespace {
             return redoStack[redoStack.length() - 1]->label;
         }
 
+        // Every step's label, oldest first, undone steps last. The history panel shows this.
         HistoryLabels :: () -> Array<string!>! {
             labels~ Array<string!>! = [];
             for entry in undoStack {
@@ -333,10 +379,13 @@ lantern:::editor :: namespace {
             return labels!;
         }
 
+        // How many steps are currently done. Steps past this position are the redo steps.
         HistoryPosition :: () -> usize {
             return undoStack.length();
         }
 
+        // Undoes or redoes steps until the history is at `position`. Used when clicking a row of the history
+        // panel. Returns whether anything moved.
         JumpHistory~: (position: usize) -> bool {
             moved~ bool = false;
             while HistoryPosition() > position && Undo() {
@@ -348,6 +397,8 @@ lantern:::editor :: namespace {
             return moved;
         }
 
+        // Cancels a drag in progress if there is one, else undoes the newest step and moves it to the redo
+        // stack. Returns false when there was nothing to undo.
         Undo~: () -> bool {
             if previewOriginals.length() > 0 {
                 CancelPreview();
@@ -357,26 +408,28 @@ lantern:::editor :: namespace {
                 return false;
             }
             entry := undoStack.remove(undoStack.length() - 1);
-            ReportHistoryFailure("undo", entry->label, ApplyAll(world, CopyEdits(entry->undo)));
+            ReportHistoryFailure("undo", entry->label, ApplyAll(documentWorldFile, CopyEdits(entry->undo)));
             redoStack.push(entry!);
             topOpenForCoalescing = false;
             revision += 1;
             return true;
         }
 
+        // Redoes the newest undone step (after committing any drag).
         Redo~: () -> bool {
             CommitPreview("Edit");
             if redoStack.length() == 0 {
                 return false;
             }
             entry := redoStack.remove(redoStack.length() - 1);
-            ReportHistoryFailure("redo", entry->label, ApplyAll(world, CopyEdits(entry->redo)));
+            ReportHistoryFailure("redo", entry->label, ApplyAll(documentWorldFile, CopyEdits(entry->redo)));
             undoStack.push(entry!);
             topOpenForCoalescing = false;
             revision += 1;
             return true;
         }
 
+        // Where an entity's pre-drag copy sits in `previewOriginals`, or null.
         OriginalIndex :: (key: u64) -> usize? {
             for index~ usize = 0; index < previewOriginals.length(); index++ {
                 if previewOriginals[index]->id == key {
@@ -386,8 +439,11 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // Swaps in a changed entity without adding to the history. While the mouse drags a gizmo handle,
+        // every frame replaces the entity this way, and the first time it keeps a copy of the original. Nothing
+        // is undoable until the drag ends and CommitPreview records one step.
         PreviewReplace~: (entity: lantern:::world:::WorldEntity*!) -> void {
-            positionFound: usize? = world->IndexOf(entity->id);
+            positionFound: usize? = documentWorldFile->IndexOf(entity->id);
             position~ usize = 0;
             if found := positionFound {
                 position = found;
@@ -396,25 +452,28 @@ lantern:::editor :: namespace {
                 return;
             }
             if OriginalIndex(entity->id) == null {
-                original~ lantern:::world:::WorldEntity*! = world->entities[position]->Copy();
+                original~ lantern:::world:::WorldEntity*! = documentWorldFile->entities[position]->Copy();
                 previewOriginals.push(original!);
             }
-            previous := world->entities.remove(position);
+            previous := documentWorldFile->entities.remove(position);
             delete previous;
-            world->entities.insert(position, entity!);
+            documentWorldFile->entities.insert(position, entity!);
             revision += 1;
         }
 
+        // True while a drag is in progress.
         IsPreviewing :: () -> bool {
             return previewOriginals.length() > 0;
         }
 
+        // Ends a drag: compares each previewed entity with its original and records one history step
+        // (replace edits both ways) for those that changed. If nothing really changed, no step is made.
         CommitPreview~: (label: string) -> void {
             if previewOriginals.length() == 0 {
                 return;
             }
             entry := new HistoryEntry(label, nextStateId);
-            for current in world->entities {
+            for current in documentWorldFile->entities {
                 guard originalIndex := OriginalIndex(current->id) continue;
                 original~ lantern:::world:::WorldEntity~* = previewOriginals[originalIndex];
                 if !original->SameAs(current) {
@@ -438,13 +497,14 @@ lantern:::editor :: namespace {
             revision += 1;
         }
 
+        // Ends a drag by putting the original entities back.
         CancelPreview~: () -> void {
             while previewOriginals.length() > 0 {
                 original := previewOriginals.remove(previewOriginals.length() - 1);
-                if position := world->IndexOf(original->id) {
-                    previous := world->entities.remove(position);
+                if position := documentWorldFile->IndexOf(original->id) {
+                    previous := documentWorldFile->entities.remove(position);
                     delete previous;
-                    world->entities.insert(position, original!);
+                    documentWorldFile->entities.insert(position, original!);
                 } else {
                     delete original;
                 }
@@ -453,6 +513,7 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Logs an undo or redo that failed to apply, since the menu action has no place to show it.
     ReportHistoryFailure :: (action: string, label: string, applied: Result<Array<Edit*!>!, string!>) -> void {
         when applied! {
             Result:::Ok(inverses~ Array<Edit*!>!) -> {

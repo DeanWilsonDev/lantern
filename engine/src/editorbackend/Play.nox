@@ -7,30 +7,40 @@ lantern:::processenvironment :: foreign "SDL3" {
 lantern:::editorbackend :: namespace {
     Sdl :: import Sdl;
 
+    // Play in editor runs the real game in a separate process. The editor saves the level being edited
+    // to this scratch file and starts the game runner on it, so the game loads exactly what is on screen
+    // without touching the file the person is editing. GAME_DIRECTORY is where the platformer lives
+    // in the repository.
     SCRATCH_LEVEL_FILE: string : ".editor-play.world.json";
     GAME_DIRECTORY: string : "games/platformer";
 
+    // The argument list of the game process as SDL wants it: a C array of C strings ending in a null
+    // pointer. The three fields sit side by side in memory so a pointer to the struct reads as that array.
     ProcessArguments :: struct {
         program~ raw u8~* = null;
         gameDirectory~ raw u8~* = null;
         terminator~ raw u8~* = null;
     }
 
+    // True on Windows, asked of SDL. Only the runner's file name differs (lantern.exe).
     RunningOnWindows :: () -> bool {
-        platform~ string! = "".copy();
+        platformName~ string! = "".copy();
         unsafe {
-            delete platform;
-            platform = copyCString(Sdl:::SDL_GetPlatform());
+            delete platformName;
+            platformName = copyCString(Sdl:::SDL_GetPlatform());
         }
-        windows: bool = platform == "Windows";
-        delete platform;
+        windows: bool = platformName == "Windows";
+        delete platformName;
         return windows;
     }
 
+    // The game runner's file name for this platform.
     RunnerFileName :: () -> string {
         return when RunningOnWindows() { true -> "lantern.exe", false -> "lantern" };
     }
 
+    // The folder above a path: trailing slashes are dropped, then everything from the last separator
+    // on. A path with no separator gives ".".
     ParentDirectory :: (path: string) -> string! {
         trimmed~ string! = `${path}`;
         while trimmed.length() > 1 && (trimmed.endsWith("/") || trimmed.endsWith("\\")) {
@@ -48,6 +58,8 @@ lantern:::editorbackend :: namespace {
         return ".".copy();
     }
 
+    // The repository root when the assets folder sits inside a checkout, found by looking for
+    // `engine/nox.json` next to the assets folder. Null for an installed editor with no checkout beside it.
     WorkspaceRoot :: (assetsDirectory: string) -> string!? {
         parent: string! = ParentDirectory(assetsDirectory);
         marker: string! = `${parent}/engine/nox.json`;
@@ -60,6 +72,9 @@ lantern:::editorbackend :: namespace {
         return parent!;
     }
 
+    // Finds the game runner to start, trying in order: the LANTERN_RUNNER environment variable, a
+    // `lantern` program beside the editor, then the build folder of a checkout (`engine/build`). Null
+    // when none exists, which the editor reports as "no runner found".
     ChooseRunner :: (assetsDirectory: string) -> string!? {
         explicit: string!? = environmentVariable("LANTERN_RUNNER");
         if text := explicit {
@@ -90,6 +105,7 @@ lantern:::editorbackend :: namespace {
         return null;
     }
 
+    // The game's folder: inside the checkout when there is one, else next to the assets folder.
     GameDirectoryFor :: (assetsDirectory: string) -> string! {
         workspace: string!? = WorkspaceRoot(assetsDirectory);
         if root := workspace {
@@ -100,6 +116,8 @@ lantern:::editorbackend :: namespace {
         return `${assetsDirectory}/../${GAME_DIRECTORY}`;
     }
 
+    // A running game process started by the editor. It remembers the process, the scratch level it was
+    // started on and when it started. Dropping it frees the process handle.
     PlaySession :: class {
     public:
         process~ raw Sdl:::SDL_Process~* = null;
@@ -123,6 +141,7 @@ lantern:::editorbackend :: namespace {
             delete levelPath;
         }
 
+        // How long the game has been running, in seconds.
         Seconds :: () -> f32 {
             now~ u64 = 0;
             unsafe {
@@ -131,6 +150,7 @@ lantern:::editorbackend :: namespace {
             return f32(now - startedTicks) / 1000.0f;
         }
 
+        // Stops the game process and waits for it to go away. Used when the person presses Stop.
         Kill~: () -> void {
             exitCode~ i32 = 0;
             unsafe {
@@ -141,6 +161,7 @@ lantern:::editorbackend :: namespace {
             }
         }
 
+        // Checks without waiting whether the game has exited: null while it still runs, else its exit code.
         Finished~: () -> i32? {
             exitCode~ i32 = 0;
             finished~ bool = false;
@@ -156,6 +177,11 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // Starts the game runner as a child process in `gameDirectory`. LANTERN_LEVEL names the level to
+    // load and LANTERN_ASSETS the assets folder, both passed through a fresh copy of the environment so
+    // the editor's own is left alone. The game has no input (stdin is null) and writes to the editor's
+    // console. Returns null if the process could not start. The strings given to SDL are freed once the
+    // process has been created.
     SpawnRunner :: (runner: string, gameDirectory: string, levelAssetPath: string, assetsDirectory: string) -> raw Sdl:::SDL_Process~* {
         arguments~ ProcessArguments = ProcessArguments { };
         process~ raw Sdl:::SDL_Process~* = null;

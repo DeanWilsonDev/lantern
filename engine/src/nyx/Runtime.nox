@@ -1,14 +1,26 @@
 NyxC :: import NyxC;
 
 lantern:::nyx :: namespace {
+    /**
+     * The version of the Nyx C API the loaded library reports. Compare it with HEADER_VERSION.
+     */
     CapiVersion :: () -> i32 {
         unsafe {
             return NyxC:::nyx_capi_version();
         }
     }
 
-    HEADER_VERSION: i32 : 4;
+    /**
+     * The C API version this bridge was written against (the header's version). A library that reports another one
+     * may have changed a signature.
+     */
+    HEADER_VERSION: i32 : 13;
 
+    /**
+     * Counts the values and programs still alive for a runtime. A Nyx runtime must outlive everything made from it,
+     * and the C API can't enforce that, so Value and Program add to the ledger on creation and take away on delete,
+     * and the Runtime checks it is empty before it is destroyed.
+     */
     RuntimeLedger :: class {
     public:
         handle~ raw NyxC:::nyx_runtime~* = null;
@@ -28,6 +40,12 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * One Nyx interpreter. It mounts source files into Programs, registers the engine's functions and types for
+     * scripts to call, and makes Values. It must be deleted after every Value and Program made from it; deleting it
+     * earlier prints what is left and panics, which turns a use-after-free into an immediate, clear failure. The host
+     * functions and types it registered stay alive in `functions` and `types` because Nyx calls back into them.
+     */
     Runtime :: class {
     public:
         handle~ raw NyxC:::nyx_runtime~* = null;
@@ -69,6 +87,10 @@ lantern:::nyx :: namespace {
             delete ledger;
         }
 
+        /**
+         * True when Nyx has let go of every registered function and type (its `free` callbacks have run). They have to be
+         * before the Runtime frees them.
+         */
         CallbacksReleased :: () -> bool {
             for function in functions {
                 if !function->released {
@@ -83,14 +105,23 @@ lantern:::nyx :: namespace {
             return true;
         }
 
+        /**
+         * True when the runtime was created.
+         */
         IsUsable :: () -> bool {
             return handle != null;
         }
 
+        /**
+         * Turns a status into null or an error, using this runtime's last error.
+         */
         Check :: (status: NyxC:::nyx_status) -> NyxError*!? {
             return CheckStatus(handle, status);
         }
 
+        /**
+         * Adds a folder where `import` in a script looks for other files.
+         */
         AddImportSearchPath~: (path: string) -> NyxError*!? {
             text := new CText(path);
             status~ NyxC:::nyx_status = 0;
@@ -101,6 +132,10 @@ lantern:::nyx :: namespace {
             return Check(status);
         }
 
+        /**
+         * Parses and checks a script from text, naming it `name` in messages, and returns a Program whose entry is
+         * `applicationClass`. Diagnostics are available from `Diagnostics` when it fails.
+         */
         MountSource~: (source: string, name: string, applicationClass: string) -> Result<Program*!, NyxError*!> {
             sourceText := new CText(source);
             nameText := new CText(name);
@@ -118,6 +153,9 @@ lantern:::nyx :: namespace {
             return Result<Program*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * Like MountSource, but reads the script from a file. Imports resolve relative to it and to the search paths.
+         */
         MountFile~: (path: string, applicationClass: string) -> Result<Program*!, NyxError*!> {
             pathText := new CText(path);
             classText := new CText(applicationClass);
@@ -133,6 +171,9 @@ lantern:::nyx :: namespace {
             return Result<Program*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * Everything the checker reported for the last mount.
+         */
         Diagnostics :: () -> Array<Diagnostic*!>! {
             diagnostics~ Array<Diagnostic*!>! = [];
             unsafe {
@@ -147,6 +188,9 @@ lantern:::nyx :: namespace {
             return diagnostics!;
         }
 
+        /**
+         * Reads a text value produced by a C API call, releasing it and turning a bad status into an error.
+         */
         TextValue :: (status: NyxC:::nyx_status, made: raw NyxC:::nyx_value~*) -> Result<string!, NyxError*!> {
             failed := Check(status);
             if failed == null {
@@ -170,6 +214,9 @@ lantern:::nyx :: namespace {
             return Result<string!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * The last diagnostics rendered as readable text.
+         */
         RenderDiagnostics :: () -> Result<string!, NyxError*!> {
             made~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -179,6 +226,10 @@ lantern:::nyx :: namespace {
             return TextValue(status, made);
         }
 
+        /**
+         * The functions and types registered here as a JSON host surface, the file Nyx's language server and checker read
+         * to know the engine's names (see `games/platformer/engine-host-surface.json`).
+         */
         WriteHostSurface :: () -> Result<string!, NyxError*!> {
             made~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -188,6 +239,10 @@ lantern:::nyx :: namespace {
             return TextValue(status, made);
         }
 
+        /**
+         * Takes a namespace of Nyx's standard library (such as `File`) away from scripts. The engine removes the ones a
+         * game shouldn't have, so game code reaches the outside world only through the engine's own functions.
+         */
         RemoveStandardNamespace~: (standardNamespace: string) -> NyxError*!? {
             text := new CText(standardNamespace);
             status~ NyxC:::nyx_status = 0;
@@ -198,10 +253,17 @@ lantern:::nyx :: namespace {
             return Check(status);
         }
 
+        /**
+         * Wraps a handle the C API gave this caller (which now owns one reference) in a Value.
+         */
         Adopt :: (made: raw NyxC:::nyx_value~*) -> Value*! {
             return new Value(made, ledgerPointer);
         }
 
+        /**
+         * A Nyx `null` value. MakeBool, MakeI32, MakeI64, MakeF32, MakeF64 and MakeString make the other simple
+         * kinds.
+         */
         MakeNull :: () -> Value*! {
             made~ raw NyxC:::nyx_value~* = null;
             unsafe {
@@ -260,6 +322,9 @@ lantern:::nyx :: namespace {
             return Adopt(made);
         }
 
+        /**
+         * A Nyx error value of the given variant and message, which a host function may return in place of a result.
+         */
         MakeError :: (variant: string, message: string) -> Result<Value*!, NyxError*!> {
             variantText := new CText(variant);
             messageText := new CText(message);
@@ -275,6 +340,9 @@ lantern:::nyx :: namespace {
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * A Nyx array holding the given values.
+         */
         MakeArray :: (items: Array<Value*>) -> Result<Value*!, NyxError*!> {
             if !AllBelongTo(handle, items) {
                 return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
@@ -291,6 +359,10 @@ lantern:::nyx :: namespace {
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * Makes a Nox function callable from scripts under a qualified name. `signature` is the Nyx signature the checker
+         * uses (such as `(x: f32) -> f32`); `body` receives a CallContext to read arguments from and return a result into.
+         */
         RegisterFunction~: (name: string, signature: string, body: ((context: CallContext~*) -> void)!) -> NyxError*!? {
             entry := new HostCall(HostCallKind:::Function, name, signature, body!);
             entry->ledger = ledgerPointer;
@@ -307,6 +379,9 @@ lantern:::nyx :: namespace {
             return failed!;
         }
 
+        /**
+         * Registers a host type (see HostType) so scripts can name it, construct it and call its methods.
+         */
         RegisterType~: (hostType: HostType*!) -> NyxError*!? {
             failed := hostType->Register(ledgerPointer);
             if failed == null {

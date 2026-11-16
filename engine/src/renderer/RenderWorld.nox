@@ -1,57 +1,501 @@
 lantern:::renderer :: namespace {
+    /**
+     * Marks a `Handle` as naming a mesh, so a mesh handle can't be passed where a texture handle is wanted. Carries no
+     * data.
+     */
     MeshTag :: struct { }
 
+    /** Marks a `Handle` as naming a texture. */
     TextureTag :: struct { }
 
+    /** Bytes per `LineVertex`: 3 floats of position and 4 of colour. Must match the lines pipeline's vertex layout. */
     LINE_VERTEX_STRIDE: u32 : 28;
+    /**
+     * Bytes per `OverlayVertex`: 2 floats of position, 2 of uv, 4 of colour. Must match the overlay pipeline's vertex
+     * layout.
+     */
     OVERLAY_VERTEX_STRIDE: u32 : 32;
 
+    /**
+     * One mesh to draw this frame: which mesh, which texture, where, and tinted how. The GPU renderer turns each
+     * visible one into one draw call.
+     */
     DrawItem :: struct {
+        /** The mesh, as returned by `CreateMesh`. */
         mesh~ lantern:::core:::Handle<MeshTag> = lantern:::core:::Handle<MeshTag> { };
+        /** The texture, or null to draw untextured (the white texture, so only the vertex colour and tint show). */
         texture~ lantern:::core:::Handle<TextureTag>? = null;
+        /** The normal map that adds fine bumps to the surface, or null for a smooth one. Used when `material.normalStrength` is above 0. */
+        normalTexture~ lantern:::core:::Handle<TextureTag>? = null;
+        /**
+         * The model matrix: places the mesh's local coordinates in the world (scale, then rotate, then translate). For
+         * entities, `ExtractDraws` has already interpolated it by the frame's `alpha`.
+         */
         transform~ Mat4 = Mat4 { };
+        /** A tint multiplied into the texture and vertex colour, in linear RGB. */
         color~ lantern:::core:::Color = lantern:::core:::Color { };
+        /** How the surface reacts to light: shiny or rough, metal or not, and whether it glows. */
+        material~ Material = Material { };
+        /** Whether this draw blocks light, so it leaves a shadow on what is behind it. Off for a sky dome or a decal. */
+        castsShadows~ bool = true;
     }
 
-    DirectionalLight :: struct {
-        direction~ Vec3 = Vec3 { };
-        color~ lantern:::core:::Color = lantern:::core:::Color { };
-        ambient~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+    /**
+     * What a surface is made of, as far as light is concerned. Two numbers and a colour describe nearly everything the
+     * renderer can show; the surface's own colour is the texture times the tint, not part of the material.
+     *
+     * This is "PBR-lite": the metallic and roughness parameters of physically based rendering, without the image
+     * based lighting, normal maps and layered coatings a full renderer adds.
+     */
+    Material :: struct {
+        /**
+         * 0 for paint, wood, stone and skin (a dielectric: the surface colour is diffuse and a faint white highlight sits
+         * on top), 1 for bare metal (no diffuse at all; the highlight carries the surface colour). In between is rare
+         * and mostly means dirty metal.
+         */
+        metallic~ f32 = 0.0f;
+        /**
+         * 0 is a mirror: a tiny sharp highlight. 1 is chalk: a broad dim one. Clamped to 0.04 and above in the
+         * shader, since a perfect mirror needs a reflection to show.
+         */
+        roughness~ f32 = 0.8f;
+        /** Light the surface gives off by itself, in linear RGB, added after the lighting. Not a light for other things. */
+        emissive~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+        /**
+         * How strongly the draw's `normalTexture` bends the surface: 0 ignores it, 1 follows it as authored, above 1
+         * exaggerates the bumps. Only meaningful when the draw has a normal map.
+         */
+        normalStrength~ f32 = 0.0f;
 
+        /** Painted wood or stone: not metal, and rough. The default. */
+        static Matte :: () -> Material {
+            return Material { };
+        }
+
+        /** A smooth non-metal, like glazed tile or plastic. */
+        static Glossy :: () -> Material {
+            return Material { metallic: 0.0f, roughness: 0.3f };
+        }
+
+        /** Polished metal. */
+        static Metal :: () -> Material {
+            return Material { metallic: 1.0f, roughness: 0.25f };
+        }
+
+        /** A surface that glows `color` and is otherwise matte, like a gem or a lamp's bulb. */
+        static Glowing :: (color: lantern:::core:::Color) -> Material {
+            return Material { emissive: color };
+        }
+    }
+
+    /**
+     * A light infinitely far away, like the sun: every surface sees it from the same direction, so only its direction
+     * matters, not a position.
+     */
+    DirectionalLight :: struct {
+        /** The direction the light travels (from the sun towards the ground), unit length. */
+        direction~ Vec3 = Vec3 { };
+        /** The light's colour times its strength, in linear RGB. */
+        color~ lantern:::core:::Color = lantern:::core:::Color { };
+        /**
+         * Light from the sky, added to every surface regardless of the sun: a cheap stand-in for the light that bounces
+         * around. Surfaces facing up get all of it, surfaces facing down get `groundAmbient`, and the ones between get
+         * a blend.
+         */
+        ambient~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+        /** The ambient light for surfaces facing down: light bounced off the ground, so usually dimmer and warmer. */
+        groundAmbient~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+        /** Whether the sun casts shadows. The shadow settings live on the `RenderWorld`. */
+        castsShadows~ bool = true;
+
+        /**
+         * A warm sun high overhead, slightly to the right of and behind the default camera, with a cool sky-blue
+         * ambient.
+         */
         static Default :: () -> DirectionalLight {
             return DirectionalLight {
                 direction: lantern:::core:::Normalize3(Vec3 { x: -0.4f, y: -1.0f, z: -0.3f }),
                 color: lantern:::core:::Color:::Rgb(1.0f, 0.96f, 0.88f),
-                ambient: lantern:::core:::Color:::Rgb(0.28f, 0.32f, 0.4f)
+                ambient: lantern:::core:::Color:::Rgb(0.28f, 0.32f, 0.4f),
+                groundAmbient: lantern:::core:::Color:::Rgb(0.084f, 0.096f, 0.12f)
             };
         }
     }
 
+
+    /** What shape of light a `Light` is. The sun is separate: see `DirectionalLight`. */
+    LightKind :: enum {
+        /** Shines the same in every direction from a position, like a bare bulb or a torch flame. */
+        Point,
+        /** Shines in a cone from a position along a direction, like a lamp shade or a flashlight. */
+        Spot
+    }
+
+    /** The most local lights one frame lights with. The shader loops over exactly this many at most. */
+    MAX_LOCAL_LIGHTS: u32 : 8;
+
+    /** The smallest range a light is given, in metres: a range of zero would divide by zero in the shader. */
+    MINIMUM_LIGHT_RANGE: f32 : 0.01f;
+
+    /**
+     * A light with a position: a point light or a spot light. Unlike the sun it gets dimmer with distance, reaching
+     * nothing at `range`.
+     *
+     * Colour and brightness are one thing: `color` is the colour in linear RGB multiplied by the light's strength.
+     * A strength of 1 lights a white surface facing it at about half brightness 1 unit away (the shader adds 1 to
+     * the squared distance so a light's centre stays finite). Brightness falls with the
+     * square of the distance, so the lamps in a course 10 units across want a strength near 20.
+     */
+    Light :: struct {
+        /** Names the light for `RenderWorld.RemoveLight` and friends. Set by `AddLight`; never reused. */
+        id~ u32 = 0;
+        /** Point or spot. */
+        kind~ LightKind = LightKind:::Point;
+        /** Where the light is, in world units. */
+        position~ Vec3 = Vec3 { };
+        /** For a spot light, the way the cone points, unit length. Unused by a point light. */
+        direction~ Vec3 = Vec3 { x: 0.0f, y: -1.0f, z: 0.0f };
+        /** Colour times strength, in linear RGB. */
+        color~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f };
+        /** The distance where the light has faded to nothing; past it, the shader skips the light. */
+        range~ f32 = 10.0f;
+        /** For a spot light, the angle from the axis inside which the light is at full strength, in radians. */
+        innerConeRadians~ f32 = 0.35f;
+        /** For a spot light, the angle from the axis where the light has faded out, in radians. */
+        outerConeRadians~ f32 = 0.6f;
+        /** Whether things block this light. Off by default: every shadow costs a pass over the scene. */
+        castsShadows~ bool = false;
+
+        /** A point light. */
+        static Point :: (position: Vec3, color: lantern:::core:::Color, range: f32) -> Light {
+            return Light { kind: LightKind:::Point, position: position, color: color, range: Math:::max(range, MINIMUM_LIGHT_RANGE) };
+        }
+
+        /**
+         * A spot light at `position` pointing at `target`, with the given cone angles in radians. The inner angle is
+         * held at or below the outer one, because the shader fades between them and needs the inner edge inside.
+         */
+        static Spot :: (position: Vec3, target: Vec3, color: lantern:::core:::Color, range: f32, innerConeRadians: f32, outerConeRadians: f32) -> Light {
+            outerConeClamped: f32 = Math:::min(Math:::max(outerConeRadians, 0.0f), 3.14159265f);
+            innerConeClamped: f32 = Math:::min(Math:::max(innerConeRadians, 0.0f), outerConeClamped);
+            return Light {
+                kind: LightKind:::Spot,
+                position: position,
+                direction: lantern:::core:::NormalizeOr3(target - position, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }),
+                color: color,
+                range: Math:::max(range, MINIMUM_LIGHT_RANGE),
+                innerConeRadians: innerConeClamped,
+                outerConeRadians: outerConeClamped
+            };
+        }
+    }
+
+    /**
+     * Picks which of `lights` the shader gets when there are more than `MAX_LOCAL_LIGHTS`: the ones nearest the
+     * camera, counting a light's range as part of its reach, so a big lamp a little far away beats a candle farther
+     * still. Returns indices into `lights`, nearest first. With few lights it returns them all, in order.
+     */
+    SelectLocalLights :: (lights: Array<Light>, cameraPosition: Vec3) -> Array<u32>! {
+        chosen~ Array<u32>! = [];
+        taken~ Array<bool>! = [];
+        for index~ usize = 0; index < lights.length(); index++ {
+            taken.push(false);
+        }
+        while chosen.length() < usize(MAX_LOCAL_LIGHTS) && chosen.length() < lights.length() {
+            best~ i64 = -1;
+            bestReach~ f32 = 0.0f;
+            for index~ usize = 0; index < lights.length(); index++ {
+                if taken[index] {
+                    continue;
+                }
+                offset: Vec3 = lights[index].position - cameraPosition;
+                reach: f32 = Math:::sqrt(offset.dot(offset)) - lights[index].range;
+                if best < 0 || reach < bestReach {
+                    best = i64(index);
+                    bestReach = reach;
+                }
+            }
+            taken[usize(best)] = true;
+            chosen.push(u32(best));
+        }
+        delete taken;
+        return chosen!;
+    }
+
+    /**
+     * How shadows are drawn, as plain data like the rest of the frame. Shadow maps trade memory and time for crispness:
+     * a bigger map has finer texels, and more of the scene in view means more draws into it.
+     */
+    ShadowSettings :: struct {
+        /** Master switch. Off, the renderer skips every shadow pass and the shader skips every lookup. */
+        enabled~ bool = true;
+        /**
+         * Width and height in pixels of each of the sun's three cascades. The three sit side by side in one texture, so
+         * the texture is three times this wide. Clamped to 256 through 4096 by the renderer.
+         */
+        sunMapSize~ u32 = 1024;
+        /**
+         * Width and height in pixels of one tile of the local-light shadow texture. A shadowed spot light uses one tile
+         * and a shadowed point light uses six, one per face of a cube around it. The texture holds twelve tiles.
+         */
+        localTileSize~ u32 = 512;
+        /**
+         * How far from the camera, in world units, the sun's shadows reach. Surfaces farther away are lit as if nothing
+         * shadowed them. A shorter distance gives sharper shadows near the camera.
+         */
+        distance~ f32 = 60.0f;
+        /**
+         * How wide a shadow's edge is, as a filter radius in shadow-map texels. 1 is nearly as sharp as the map allows;
+         * 3 gives a soft penumbra, at the price of blurrier contact points.
+         */
+        softness~ f32 = 2.0f;
+        /** How many lookups the filter makes per pixel and light. More is smoother; 4, 12 and 20 are the low, medium and high quality levels. */
+        filterSamples~ u32 = 12;
+        /** Fade between the sun's cascades near each one's end, instead of switching with a visible line. */
+        blendCascades~ bool = true;
+
+        /** These settings with the filter's sample count set for `level`. The map sizes and distance stay as the game set them. */
+        WithQuality :: (level: QualityLevel) -> ShadowSettings {
+            return ShadowSettings {
+                enabled: enabled,
+                sunMapSize: sunMapSize,
+                localTileSize: localTileSize,
+                distance: distance,
+                softness: softness,
+                filterSamples: when level {
+                    QualityLevel:::Low -> 4,
+                    QualityLevel:::Medium -> 12,
+                    QualityLevel:::High -> 20
+                },
+                blendCascades: blendCascades
+            };
+        }
+    }
+
+    /**
+     * The sky: what the camera sees where no mesh covers the screen, and the light the scene receives from it. It is three
+     * colours blended by direction (see `engine/shaders/sky-common.glsl`) plus a sun disc, with no picture. Light from the
+     * sky is image-based lighting: surfaces take their ambient light and their reflections from it, so a metal facing the
+     * sky shows the sky.
+     */
+    SkySettings :: struct {
+        /** Draw the sky and light the scene with it. Off, the frame clears to `clearColor` and the flat ambient pair lights it. */
+        enabled~ bool = true;
+        /** The colour straight up, in linear RGB. */
+        zenith~ lantern:::core:::Color = lantern:::core:::Color { r: 0.26f, g: 0.48f, b: 0.88f };
+        /** The colour all the way round at eye level. Fog fades into it, so distant things dissolve into the sky. */
+        horizon~ lantern:::core:::Color = lantern:::core:::Color { r: 0.7f, g: 0.8f, b: 0.92f };
+        /** The colour straight down, which the lower half of the view and the light from below use. */
+        ground~ lantern:::core:::Color = lantern:::core:::Color { r: 0.34f, g: 0.32f, b: 0.3f };
+        /** The sun disc's angular radius in radians. About 0.0047 is the real sun; a larger disc is friendlier. */
+        sunDiscRadiusRadians~ f32 = 0.02f;
+        /** How bright the disc is, in scene light units. Well above 1 so that it blooms. */
+        sunDiscStrength~ f32 = 12.0f;
+        /** How much of the scene's ambient light comes from the sky: 0 keeps the flat sky and ground pair, 1 replaces it. */
+        lightingStrength~ f32 = 1.0f;
+        /** How bright the sky's light is. */
+        lightingIntensity~ f32 = 0.6f;
+    }
+
+    /**
+     * The look a chapter or a place wants, applied to the finished picture after tone mapping. The defaults change nothing.
+     * The guide is `docs/colour-grade.md`.
+     */
+    ColorGrade :: struct {
+        /** 1 leaves colours as they are, 0 is black and white, above 1 is more vivid. */
+        saturation~ f32 = 1.0f;
+        /** 1 leaves contrast as it is; above 1 pushes darks darker and lights lighter, below 1 flattens them. */
+        contrast~ f32 = 1.0f;
+        /** The picture is multiplied by this colour: warm to warm it up, cool to cool it down. White changes nothing. */
+        tint~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f };
+        /** How much the corners darken, 0 (not at all) to 1. */
+        vignette~ f32 = 0.0f;
+    }
+
+    /** How many blob shadows a frame can hold. A ninth is ignored. */
+    MAX_BLOB_SHADOWS: usize : 8;
+
+    /**
+     * A soft dark ellipse on whatever surface is near a point: the cheap shadow that makes a character look planted. Like
+     * the frame's draws it lasts one frame, so the game adds it again every frame. The guide is
+     * `docs/blob-shadows.md`.
+     */
+    BlobShadow :: struct {
+        /** The point on the ground it sits on, in world space. */
+        center~ Vec3 = Vec3 { };
+        /** How far across the ground it reaches, in metres. */
+        radius~ f32 = 1.0f;
+        /** How dark it is at the centre, 0 to 1. */
+        strength~ f32 = 0.5f;
+        /** How far above and below `center` a surface can be and still darken, in metres. Keeps it off a character's body. */
+        reach~ f32 = 0.6f;
+    }
+
+    /**
+     * The air between the camera and what it looks at: fog that is thicker low down than high up, and shafts of sunlight
+     * through it. The guide is `docs/fog-and-light-shafts.md`. The older `fogStart` and `fogEnd` on the world still fade
+     * distant things to the horizon colour; this adds to that.
+     */
+    AtmosphereSettings :: struct {
+        /** Fog that thins with height: ground mist in valleys, haze that clears above the rooftops. */
+        heightFogEnabled~ bool = true;
+        /** How thick the fog is at the base height: the fraction of light lost per metre travelled through it. 0.01 is a light haze. */
+        fogDensity~ f32 = 0.008f;
+        /** How fast the fog thins as you go up, per metre. 0.1 halves it about every 7 metres. */
+        fogHeightFalloff~ f32 = 0.1f;
+        /** The height in metres where the fog is at its full density. */
+        fogBaseHeight~ f32 = 0.0f;
+        /** The fog's colour, in linear RGB. */
+        fogColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.62f, g: 0.72f, b: 0.85f };
+        /** How much brighter the fog is when you look towards the sun. 0 for none. */
+        fogSunScattering~ f32 = 0.5f;
+        /** Shafts of sunlight: bright streaks away from the sun where objects block it. Costs 24 depth reads per pixel. */
+        lightShaftsEnabled~ bool = true;
+        /** How bright the shafts are. */
+        lightShaftStrength~ f32 = 0.35f;
+        /** How much of a shaft survives each step towards the sun, 0 to 1; closer to 1 gives longer shafts. */
+        lightShaftDecay~ f32 = 0.95f;
+
+        /** These settings with every quality-dependent effect set for `level`. Height fog is cheap and stays; shafts go at Low. */
+        WithQuality :: (level: QualityLevel) -> AtmosphereSettings {
+            return AtmosphereSettings {
+                heightFogEnabled: heightFogEnabled,
+                fogDensity: fogDensity,
+                fogHeightFalloff: fogHeightFalloff,
+                fogBaseHeight: fogBaseHeight,
+                fogColor: fogColor,
+                fogSunScattering: fogSunScattering,
+                lightShaftsEnabled: level != QualityLevel:::Low,
+                lightShaftStrength: lightShaftStrength,
+                lightShaftDecay: lightShaftDecay
+            };
+        }
+    }
+
+    /**
+     * How much the renderer spends on looks. Each effect that costs frame time picks its setting from the level, so one
+     * call turns a whole set of effects up or down. The game sets it with `lantern:::graphics:::SetQuality`.
+     */
+    QualityLevel :: enum {
+        /** The cheapest: only what the picture needs to be correct. No bloom. */
+        Low,
+        /** Bloom on, at its default strength. */
+        Medium,
+        /** Everything Medium has; later effects join here. */
+        High
+    }
+
+    /**
+     * The curve that squeezes the scene's light (any brightness) into the 0 to 1 a display shows. Each keeps dark and
+     * middle colours close to how they were and treats bright ones differently.
+     */
+    ToneMapper :: enum {
+        /** No curve: values above 1 are cut off flat. The look of a renderer with no high dynamic range. */
+        Clamp,
+        /**
+         * Colours below about 0.8 are left exactly as they are, and only brighter light is rolled off towards white,
+         * losing a little saturation as it goes (Khronos PBR Neutral). The least change to a scene lit for a clamped
+         * target, so it's the default.
+         */
+        Neutral,
+        /**
+         * A filmic S-curve (an ACES fit): a lifted toe, a contrasty middle and a long shoulder. More dramatic, and it
+         * brightens and desaturates pastels, so lights and colours tuned without it need re-balancing.
+         */
+        Aces
+    }
+
+    /**
+     * How the finished frame is processed before it reaches the screen. The scene is drawn as light in a high dynamic
+     * range target, where values can go far above 1; these settings say how that light becomes the 0 to 1 colours a
+     * display shows, and whether the bright parts bloom.
+     */
+    PostSettings :: struct {
+        /** Glow around bright surfaces: the bright parts are blurred and added back. Costs nine small full-screen passes. */
+        bloomEnabled~ bool = true;
+        /** How much of the blurred glow is added back. 0.04 is a faint halo; 0.2 is a hazy one. */
+        bloomStrength~ f32 = 0.1f;
+        /** The brightness (in the scene's light units, 1 being a white wall in full sun) where glow starts. */
+        bloomThreshold~ f32 = 1.5f;
+        /** The chapter's look: saturation, contrast, tint and vignette; see `ColorGrade`. */
+        grade~ ColorGrade = ColorGrade { };
+        /** Draw the frame's blob shadows. Cheap, so quality doesn't change it. */
+        blobShadowsEnabled~ bool = true;
+        /** Smooth jagged edges with FXAA, one extra full-screen pass over the tone-mapped picture; see `docs/anti-aliasing.md`. */
+        antiAliasingEnabled~ bool = true;
+        /** Darken creases and contact points using the depth buffer; see `docs/ambient-occlusion.md`. Two extra passes. */
+        ambientOcclusionEnabled~ bool = true;
+        /** How far from a surface, in metres, geometry can block its light. A bigger radius darkens wider areas. */
+        ambientOcclusionRadius~ f32 = 0.6f;
+        /** How dark a fully blocked point gets, 0 (not at all) to 1 (black). */
+        ambientOcclusionIntensity~ f32 = 0.8f;
+        /** How far in front of a sample a surface must be, in metres, to count as blocking it. Stops flat walls shading themselves. */
+        ambientOcclusionBias~ f32 = 0.04f;
+        /** A brightness knob applied before tone mapping: 2 shows the scene twice as bright. */
+        exposure~ f32 = 1.0f;
+        /** The curve that maps light to colour; see `ToneMapper`. */
+        toneMapper~ ToneMapper = ToneMapper:::Neutral;
+
+        /** These settings with every quality-dependent effect set for `level`. The look settings (exposure, curve) stay. */
+        WithQuality :: (level: QualityLevel) -> PostSettings {
+            return PostSettings {
+                bloomEnabled: level != QualityLevel:::Low,
+                antiAliasingEnabled: level != QualityLevel:::Low,
+                blobShadowsEnabled: blobShadowsEnabled,
+                grade: grade,
+                ambientOcclusionEnabled: level != QualityLevel:::Low,
+                ambientOcclusionRadius: ambientOcclusionRadius,
+                ambientOcclusionIntensity: ambientOcclusionIntensity,
+                ambientOcclusionBias: ambientOcclusionBias,
+                bloomStrength: bloomStrength,
+                bloomThreshold: bloomThreshold,
+                exposure: exposure,
+                toneMapper: toneMapper
+            };
+        }
+    }
+
+    /** One end of a debug line, laid out exactly as the GPU reads it (28 bytes). */
     LineVertex :: struct {
+        /** World position. */
         position~ f32[3] = [0.0f, 0.0f, 0.0f];
+        /** Linear RGBA; alpha below 1 blends. */
         color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
     }
 
+    /** One corner of an overlay triangle, laid out exactly as the GPU reads it (32 bytes). */
     OverlayVertex :: struct {
+        /** Screen position in pixels, from the top-left corner. */
         position~ f32[2] = [0.0f, 0.0f];
+        /** Where in the overlay texture (the font atlas) to sample, from 0 to 1. */
         uv~ f32[2] = [0.0f, 0.0f];
+        /** Linear RGBA, multiplied by the sampled texel. */
         color~ f32[4] = [0.0f, 0.0f, 0.0f, 0.0f];
 
+        /** A vertex from vectors and a colour. */
         static Create :: (position: Vec2, uv: Vec2, color: lantern:::core:::Color) -> OverlayVertex {
             return OverlayVertex { position: [position.x, position.y], uv: [uv.x, uv.y], color: color.ToArray() };
         }
     }
 
+    /**
+     * This frame's 2D overlay: HUD, menus and text, built from textured triangles in screen pixels and drawn on top of
+     * everything in one draw call.
+     */
     Overlay :: class {
     public:
+        /** Every overlay vertex this frame, three per triangle, in draw order: later triangles cover earlier ones. */
         vertices~ Array<OverlayVertex>! = [];
 
+        /** An empty overlay. */
         Overlay~: () { }
 
+        /** Frees the vertex list. */
         !Overlay~: () {
             delete vertices;
         }
 
+        /** An axis-aligned rectangle as two triangles, sampling the atlas between the two uv corners. */
         Quad~: (minimum: Vec2, maximum: Vec2, uvMinimum: Vec2, uvMaximum: Vec2, color: lantern:::core:::Color) -> void {
             topLeft: OverlayVertex = OverlayVertex:::Create(minimum, uvMinimum, color);
             topRight: OverlayVertex = OverlayVertex:::Create(Vec2 { x: maximum.x, y: minimum.y }, Vec2 { x: uvMaximum.x, y: uvMinimum.y }, color);
@@ -65,11 +509,13 @@ lantern:::renderer :: namespace {
             vertices.push(topRight);
         }
 
+        /** A solid rectangle: a quad whose uvs all point at the atlas's white texel, so it shows just `color`. */
         Rect~: (minimum: Vec2, maximum: Vec2, color: lantern:::core:::Color) -> void {
             white: Vec2 = WhiteTexelUv();
             Quad(minimum, maximum, white, white, color);
         }
 
+        /** A solid triangle with a colour per corner, blended across it by the GPU. */
         Triangle~: (first: Vec2, second: Vec2, third: Vec2, firstColor: lantern:::core:::Color, secondColor: lantern:::core:::Color, thirdColor: lantern:::core:::Color) -> void {
             white: Vec2 = WhiteTexelUv();
             vertices.push(OverlayVertex:::Create(first, white, firstColor));
@@ -77,54 +523,168 @@ lantern:::renderer :: namespace {
             vertices.push(OverlayVertex:::Create(third, white, thirdColor));
         }
 
+        /** A line of text in the built-in 8x8 font, `scale` pixels per font pixel; see `PushText`. */
         Text~: (text: string, topLeft: Vec2, scale: f32, color: lantern:::core:::Color) -> void {
             PushText(this, text, topLeft, scale, color);
         }
 
+        /** Empties the overlay for the next frame, keeping its memory. */
         Clear~: () -> void {
             vertices.clear();
         }
     }
 
+    /**
+     * One frame, described as plain data. The game fills it every frame and the renderer reads it; nothing in it is a
+     * GPU object, only handles, so the same frame can go to the GPU renderer, the headless renderer or a capture
+     * unchanged.
+     *
+     * Each frame: `Clear`, then the game sets the camera, sun and fog and adds draws, lines and overlay, then
+     * `RenderBackend.Render`. The lists keep their memory between frames, so a steady scene allocates nothing.
+     */
     RenderWorld :: class {
     public:
+        /** Where the frame is seen from. */
         camera~ Camera = Camera { };
+        /** The sun, and the ambient light. */
         light~ DirectionalLight = DirectionalLight { };
+        /**
+         * The point and spot lights. Unlike the draws, these stay from frame to frame: add a light once with
+         * `AddLight`, and move or remove it by the id that returns. `Clear` leaves them alone.
+         */
+        lights~ Array<Light>! = [];
+        /** How shadows are drawn; see `ShadowSettings`. */
+        shadows~ ShadowSettings = ShadowSettings { };
+        /** The sky and the light it gives; see `SkySettings`. */
+        sky~ SkySettings = SkySettings { };
+        /** Height fog and light shafts; see `AtmosphereSettings`. */
+        atmosphere~ AtmosphereSettings = AtmosphereSettings { };
+        /** How the frame is tone mapped and bloomed; see `PostSettings`. */
+        post~ PostSettings = PostSettings { };
+        /** The next id `AddLight` hands out. Starts at 1 so 0 can mean "no light". */
+        nextLightId~ u32 = 1;
+        /** The colour the frame starts as before anything is drawn (the sky), in linear RGB. Fog fades to it too. */
         clearColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.42f, g: 0.6f, b: 0.85f };
+        /** The distance from the camera where fog begins. */
         fogStart~ f32 = 60.0f;
+        /** The distance where fog is total. Keeping it inside the camera's far plane hides the far plane's cut. */
         fogEnd~ f32 = 160.0f;
+        /** The dust, sparks and trails; they live across frames and draw as lines each frame. See `ParticleSystem`. */
+        particles~ ParticleSystem*!;
+        /** The meshes to draw this frame. */
         draws~ Array<DrawItem>! = [];
+        /** The blob shadows to draw this frame; see `BlobShadow`. */
+        blobShadows~ Array<BlobShadow>! = [];
+        /** Debug line vertices this frame, two per line. */
         lines~ Array<LineVertex>! = [];
+        /** The 2D overlay this frame. Owned. */
         overlay~ Overlay*!;
+        /** The texture overlay quads sample, the font atlas; null samples white. */
         overlayTexture~ lantern:::core:::Handle<TextureTag>? = null;
 
+        /** A world with the default camera and light and empty lists. */
         RenderWorld~: () {
             camera = Camera:::Default();
             light = DirectionalLight:::Default();
             overlay = new Overlay();
+            particles = new ParticleSystem();
         }
 
+        /** Frees the lists and the overlay. */
         !RenderWorld~: () {
+            delete particles;
             delete draws;
+            delete blobShadows;
             delete lines;
+            delete lights;
             delete overlay;
         }
 
+        /** Adds a local light and returns the id that names it from now on. */
+        AddLight~: (light: Light) -> u32 {
+            added~ Light = light;
+            added.id = nextLightId;
+            nextLightId += 1;
+            lights.push(added);
+            return added.id;
+        }
+
+        /** Removes the light with this id. Returns false when there is none, such as a light already removed. */
+        RemoveLight~: (id: u32) -> bool {
+            for index~ usize = 0; index < lights.length(); index++ {
+                if lights[index].id == id {
+                    lights.remove(index);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** Removes every local light. The sun is left as it is. Ids keep counting up, so an old id never names a new light. */
+        ClearLights~: () -> void {
+            lights.clear();
+        }
+
+        /** The index in `lights` of the light with this id, or null. */
+        FindLight :: (id: u32) -> usize? {
+            for index~ usize = 0; index < lights.length(); index++ {
+                if lights[index].id == id {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Empties the draws, lines and overlay for a new frame. The camera, light, clear colour and fog stay as they
+         * were.
+         */
         Clear~: () -> void {
             draws.clear();
+            blobShadows.clear();
             lines.clear();
             overlay->Clear();
         }
 
+        /** Moves the particles on by `seconds` and adds a streak for each to this frame's lines, fading out as it ages. */
+        StepParticles~: (seconds: f32) -> void {
+            particles->Step(seconds);
+            for index~ usize = 0; index < particles->particles.length(); index++ {
+                particle: Particle = particles->particles[index];
+                fade: f32 = 1.0f - particle.age / particle.life;
+                tail: Vec3 = Vec3 {
+                    x: particle.position.x - particle.velocity.x * particle.length,
+                    y: particle.position.y - particle.velocity.y * particle.length,
+                    z: particle.position.z - particle.velocity.z * particle.length
+                };
+                Line(particle.position, tail, lantern:::core:::Color { r: particle.color.r, g: particle.color.g, b: particle.color.b, a: fade });
+            }
+        }
+
+        /** Adds a blob shadow for this frame: soft darkness on the surface around `center`. Past `MAX_BLOB_SHADOWS` it is ignored. */
+        AddBlobShadow~: (center: Vec3, radius: f32, strength: f32) -> void {
+            if blobShadows.length() < MAX_BLOB_SHADOWS {
+                blobShadows.push(BlobShadow { center: center, radius: Math:::max(radius, 0.01f), strength: strength, reach: Math:::max(radius * 0.6f, 0.3f) });
+            }
+        }
+
+        /** Adds one mesh draw with the default matte material. */
         Draw~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color) -> void {
             draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color });
         }
 
+        /** Adds one mesh draw with a material. */
+        DrawWithMaterial~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color, material: Material) -> void {
+            draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color, material: material });
+        }
+
+        /** Adds one debug line between two world points. */
         Line~: (start: Vec3, end: Vec3, color: lantern:::core:::Color) -> void {
             lines.push(LineVertex { position: [start.x, start.y, start.z], color: color.ToArray() });
             lines.push(LineVertex { position: [end.x, end.y, end.z], color: color.ToArray() });
         }
 
+        /** Outlines a box with its twelve edges. */
         AabbLines~: (bounds: lantern:::core:::Aabb, color: lantern:::core:::Color) -> void {
             edgeStarts: u32[12] = [0, 2, 4, 6, 0, 1, 4, 5, 0, 1, 2, 3];
             edgeEnds: u32[12] = [1, 3, 5, 7, 2, 3, 6, 7, 4, 5, 6, 7];
@@ -133,6 +693,7 @@ lantern:::renderer :: namespace {
             }
         }
 
+        /** Draws a circle around `center`, in the plane facing `normal`, as `segments` straight lines. */
         CircleLines~: (center: Vec3, normal: Vec3, radius: f32, segments: u32, color: lantern:::core:::Color) -> void {
             axis: Vec3 = lantern:::core:::NormalizeOr3(normal, lantern:::core:::WorldUp());
             tangent: Vec3 = lantern:::core:::AnyOrthonormalVector3(axis);
@@ -143,6 +704,9 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /**
+     * One of a box's eight corners, picked by the bits of `index`: bit 0 for max x, bit 1 for max y, bit 2 for max z.
+     */
     AabbCorner :: (bounds: lantern:::core:::Aabb, index: u32) -> Vec3 {
         corner~ Vec3 = bounds.min;
         if (index & 1) != 0 {
@@ -157,6 +721,7 @@ lantern:::renderer :: namespace {
         return corner;
     }
 
+    /** Point `index` of `segments` evenly spaced round a circle in the plane of `tangent` and `bitangent`. */
     CirclePoint :: (center: Vec3, tangent: Vec3, bitangent: Vec3, radius: f32, index: u32, segments: u32) -> Vec3 {
         angle: f32 = (2.0f * Math:::PI) * f32(index) / f32(segments);
         return center + (tangent * Math:::cos(angle) + bitangent * Math:::sin(angle)) * radius;

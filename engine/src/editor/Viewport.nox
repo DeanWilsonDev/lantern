@@ -1,8 +1,13 @@
 lantern:::editor :: namespace {
+    // The ground grid: lines for 30 steps each way from the camera's target, every fifth one drawn
+    // brighter, and a plane marker is drawn as a square 40 metres either side of its centre.
     GRID_HALF_EXTENT: i32 : 30;
     GRID_MAJOR_EVERY: i32 : 5;
     PLANE_MARKER_HALF_EXTENT: f32 : 40.0f;
 
+    // What the viewport needs from the GPU: meshes for shapes and markers, textures for materials and
+    // the font. The editor draws through this interface so it can be tested with no GPU, and the
+    // editor backend supplies the real one (GpuViewportResources).
     ViewportResources :: interface {
         ShapeMesh~ (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
         MaterialTexture~ (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? : 0;
@@ -10,6 +15,9 @@ lantern:::editor :: namespace {
         FontTexture~ () -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? : 0;
     }
 
+    // The colours the viewport uses: selection (amber), hover, grid lines (minor and major), vector
+    // property arrows, the sky behind the level, hidden and wireframe outlines, colliders (static
+    // green, kinematic orange), the level box, and the box drawn by dragging.
     SelectionColor :: () -> lantern:::core:::Color {
         return lantern:::core:::Color:::Rgb(1.0f, 0.78f, 0.2f);
     }
@@ -58,6 +66,8 @@ lantern:::editor :: namespace {
         return lantern:::core:::Color:::Rgb(0.55f, 0.75f, 1.0f);
     }
 
+    // Where a marker's mesh sits relative to its entity: a capsule is lifted so its feet are on the
+    // entity's origin, the rest are centred on it.
     MarkerLocalMatrix :: (mesh: MarkerMesh) -> Mat4 {
         if mesh == MarkerMesh:::Capsule {
             return Mat4:::translation(Vec3 { x: 0.0f, y: 0.9f, z: 0.0f });
@@ -65,6 +75,7 @@ lantern:::editor :: namespace {
         return Mat4 { };
     }
 
+    // The box around each marker kind, in the entity's own space, for outlines and picking.
     MarkerLocalBounds :: (mesh: MarkerMesh) -> lantern:::core:::Aabb {
         return when mesh {
             MarkerMesh:::Capsule -> lantern:::core:::Aabb:::Create(Vec3 { x: -0.35f, y: 0.0f, z: -0.35f }, Vec3 { x: 0.35f, y: 1.8f, z: 0.35f }),
@@ -75,6 +86,8 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The box around a shape in its own space. A box is centred on its origin; a ramp or similar
+    // shape stands on its origin with its height above it.
     ShapeLocalBounds :: (shape: lantern:::world:::Shape) -> lantern:::core:::Aabb {
         if shape.kind == lantern:::world:::ShapeKind:::Box {
             return lantern:::core:::Aabb:::FromCenterHalfExtents(Vec3 { }, shape.halfExtents);
@@ -84,6 +97,8 @@ lantern:::editor :: namespace {
             Vec3 { x: shape.width * 0.5f, y: shape.height, z: shape.length * 0.5f });
     }
 
+    // One of a box's eight corners (the three low bits of `index` choose min or max on x, y and z),
+    // moved by a matrix so it follows the entity's rotation.
     OrientedCorner :: (bounds: lantern:::core:::Aabb, matrix: Mat4, index: u32) -> Vec3 {
         corner := Vec3 {
             x: when ((index & 1) == 0) { true -> bounds.min.x, false -> bounds.max.x },
@@ -93,6 +108,8 @@ lantern:::editor :: namespace {
         return matrix.transformPoint(corner);
     }
 
+    // Draws a box's twelve edges after moving it by a matrix. The two tables pair up the corners of
+    // each edge.
     OrientedBoxLines :: (renderWorld: lantern:::renderer:::RenderWorld~*, bounds: lantern:::core:::Aabb, matrix: Mat4, color: lantern:::core:::Color) -> void {
         edgeStarts: u32[12] = [0, 2, 4, 6, 0, 1, 4, 5, 0, 1, 2, 3];
         edgeEnds: u32[12] = [1, 3, 5, 7, 2, 3, 6, 7, 4, 5, 6, 7];
@@ -101,6 +118,9 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Draws the ground grid around the camera's target, snapped to whole major steps so it does not
+    // slide as the camera moves, and the two long axis lines (x and z) through the origin in their
+    // axis colours. Grid lines on an axis are skipped so they do not draw twice.
     DrawGrid :: (renderWorld: lantern:::renderer:::RenderWorld~*, center: Vec3, requestedSpacing: f32) -> void {
         spacing: f32 = Math:::max(requestedSpacing, 0.01f);
         majorEvery: f32 = f32(GRID_MAJOR_EVERY) * spacing;
@@ -126,6 +146,7 @@ lantern:::editor :: namespace {
         renderWorld->Line(Vec3 { x: 0.0f, y: 0.0f, z: -axisExtent }, Vec3 { x: 0.0f, y: 0.0f, z: axisExtent }, AxisColor(Axis:::Z));
     }
 
+    // A corner of the square drawn for a plane marker (a ground level, a water plane), at a height.
     PlaneMarkerCorner :: (index: usize, height: f32) -> Vec3 {
         extent: f32 = PLANE_MARKER_HALF_EXTENT;
         if index == 0 {
@@ -140,6 +161,7 @@ lantern:::editor :: namespace {
         return Vec3 { x: -extent, y: height, z: extent };
     }
 
+    // Draws a plane marker as a square with its two diagonals.
     DrawPlaneMarker :: (renderWorld: lantern:::renderer:::RenderWorld~*, height: f32, color: lantern:::core:::Color) -> void {
         for index~ usize = 0; index < 4; index++ {
             renderWorld->Line(PlaneMarkerCorner(index, height), PlaneMarkerCorner((index + 1) % 4, height), color);
@@ -148,6 +170,8 @@ lantern:::editor :: namespace {
         renderWorld->Line(PlaneMarkerCorner(1, height), PlaneMarkerCorner(3, height), color);
     }
 
+    // Draws a line with a small four-sided arrow head at its end, sized to the line's length (but at
+    // most 0.4 m). Nothing is drawn for a zero length line.
     DrawArrow :: (renderWorld: lantern:::renderer:::RenderWorld~*, start: Vec3, end: Vec3, color: lantern:::core:::Color) -> void {
         renderWorld->Line(start, end, color);
         direction: Vec3 = lantern:::core:::NormalizeOr3(end - start, Vec3 { });
@@ -164,6 +188,8 @@ lantern:::editor :: namespace {
         renderWorld->Line(end, back - other * head * 0.4f, color);
     }
 
+    // Draws the box being dragged to select. The corners are drawn on a plane just in front of the
+    // camera so they stay under the mouse.
     DrawRubberBand :: (renderWorld: lantern:::renderer:::RenderWorld~*, projection: ViewportProjection, firstCorner: Vec2, secondCorner: Vec2) -> void {
         depth: f32 = projection.camera.nearPlane * 4.0f;
         pointA: Vec3 = projection.RayThrough(firstCorner).At(depth);
@@ -176,6 +202,8 @@ lantern:::editor :: namespace {
         renderWorld->Line(pointD, pointA, RubberBandColor());
     }
 
+    // Which outline an entity gets, by priority: selected, hovered, hidden, then wireframe. Null
+    // means no outline.
     OutlineColorFor :: (selected: bool, hovered: bool, hidden: bool, wireframe: bool) -> lantern:::core:::Color? {
         if selected {
             return SelectionColor();
@@ -192,20 +220,77 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    /**
+     * Lights the editor's scene with a light entity, so the viewport shows what the game will: a point or spot light
+     * is added to the frame, and a `sun` entity replaces the default sun. Hiding an entity in the outliner puts its
+     * light out.
+     */
+    AddPreviewLight :: (renderWorld: lantern:::renderer:::RenderWorld~*, entity: lantern:::world:::WorldEntity*, worldMatrix: Mat4) -> void {
+        if light := lantern:::world:::LocalLightFromEntity(entity, worldMatrix) {
+            renderWorld->AddLight(light);
+        }
+        if sun := lantern:::world:::SunFromEntity(entity, worldMatrix) {
+            renderWorld->light = sun;
+        }
+    }
+
+    /**
+     * Draws what a selected light reaches: three circles of the light's range around a point light, the cone of a spot
+     * light out to its range, and an arrow along the sun's rays.
+     */
+    DrawLightGuides :: (renderWorld: lantern:::renderer:::RenderWorld~*, entity: lantern:::world:::WorldEntity*, worldMatrix: Mat4) -> void {
+        guideColor: lantern:::core:::Color = lantern:::core:::Color:::FromHex(16769120);
+        origin: Vec3 = worldMatrix.transformPoint(Vec3 { });
+        direction: Vec3 = lantern:::world:::LightDirection(worldMatrix);
+        if entity->kind == lantern:::world:::SunKind() {
+            DrawArrow(renderWorld, origin, origin + direction * 4.0f, guideColor);
+            return;
+        }
+        guard light := lantern:::world:::LocalLightFromEntity(entity, worldMatrix) return;
+        if light.kind == lantern:::renderer:::LightKind:::Point {
+            renderWorld->CircleLines(origin, Vec3 { x: 1.0f }, light.range, 32, guideColor);
+            renderWorld->CircleLines(origin, Vec3 { y: 1.0f }, light.range, 32, guideColor);
+            renderWorld->CircleLines(origin, Vec3 { z: 1.0f }, light.range, 32, guideColor);
+            return;
+        }
+        coneEnd: Vec3 = origin + direction * light.range;
+        coneRadius: f32 = (Math:::sin(light.outerConeRadians) / Math:::cos(light.outerConeRadians)) * light.range;
+        renderWorld->CircleLines(coneEnd, direction, coneRadius, 32, guideColor);
+        DrawArrow(renderWorld, origin, coneEnd, guideColor);
+        sideways: Vec3 = lantern:::core:::NormalizeOr3(direction.cross(Vec3 { y: 1.0f }), Vec3 { x: 1.0f });
+        upward: Vec3 = lantern:::core:::NormalizeOr3(sideways.cross(direction), Vec3 { y: 1.0f });
+        renderWorld->Line(origin, coneEnd + sideways * coneRadius, guideColor);
+        renderWorld->Line(origin, coneEnd - sideways * coneRadius, guideColor);
+        renderWorld->Line(origin, coneEnd + upward * coneRadius, guideColor);
+        renderWorld->Line(origin, coneEnd - upward * coneRadius, guideColor);
+    }
+
+    // Builds one frame of the editor's viewport into a render world: the camera, the grid, then every
+    // entity in turn (hidden ones only if shown), as a solid mesh or an outline, with its collider, a
+    // forward arrow for spawn points, its light and the guides and arrows of a selected one. Last come
+    // the level box, the selection box, the gizmo and the view cube. Everything is drawn from the
+    // session's current state each frame; nothing is kept between frames.
     BuildViewport :: (session: EditorSession~*, resources: ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
         renderWorld->Clear();
+        renderWorld->ClearLights();
+        renderWorld->light = lantern:::renderer:::DirectionalLight:::Default();
         renderWorld->camera = session->camera.RenderCamera();
         renderWorld->clearColor = EditorSkyColor();
         renderWorld->fogStart = 150.0f;
         renderWorld->fogEnd = 500.0f;
         view: ViewOptions = session->view;
+        renderWorld->post.bloomEnabled = view.bloom;
+        renderWorld->post.ambientOcclusionEnabled = view.ambientOcclusion;
+        renderWorld->post.antiAliasingEnabled = view.antiAliasing;
+        renderWorld->atmosphere.lightShaftsEnabled = view.lightShafts;
+        renderWorld->shadows = renderWorld->shadows.WithQuality(view.shadowQuality);
         if view.showGrid {
             DrawGrid(renderWorld, session->camera.target, view.gridSpacing);
         }
         session->RefreshGeometry();
         geometry: SceneGeometry* = session->geometry;
         hoveredKey: u64? = session->hoveredEntity;
-        for entity in session->document->world->entities {
+        for entity in session->document->documentWorldFile->entities {
             placedFound: EntityGeometry*? = geometry->Find(entity->id);
             guard placed := placedFound continue;
             hidden: bool = session->IsHidden(entity->id);
@@ -214,6 +299,9 @@ lantern:::editor :: namespace {
             }
             if entity->shape == null && !view.showMarkers {
                 continue;
+            }
+            if !hidden {
+                AddPreviewLight(renderWorld, entity, placed->worldMatrix);
             }
             selected: bool = session->IsSelected(entity->id);
             hovered: bool = SameOptionalU64(hoveredKey, entity->id);
@@ -263,6 +351,7 @@ lantern:::editor :: namespace {
                 }
             }
             if selected {
+                DrawLightGuides(renderWorld, entity, placed->worldMatrix);
                 for value in entity->propertyValues {
                     if value.kind == lantern:::world:::PropertyKind:::Vector {
                         start: Vec3 = placed->Origin();

@@ -3,23 +3,41 @@ Sdl :: import Sdl;
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
 
+    /**
+     * The compiled shader formats Lantern ships. Each GLSL shader is compiled ahead of time
+     * (engine/tools/build-shaders.sh), since SDL GPU takes compiled code, not source.
+     */
     ShaderFormat :: enum {
+        /** SPIR-V bytecode, for Vulkan. */
         Spirv,
+        /** Metal Shading Language source, cross-compiled from the SPIR-V, for Metal. */
         Msl
     }
 
+    /** Which stage of the pipeline a shader runs in. */
     ShaderStageKind :: enum {
+        /** Per vertex: transforms positions to clip space. */
         Vertex,
+        /** Per pixel: computes colour. */
         Fragment
     }
 
+    /**
+     * Which shader to load and the resources it declares. SDL GPU needs the counts up front to build the pipeline's
+     * binding layout.
+     */
     ShaderDescription :: struct {
+        /** The shader's base name: `lit`, `lines` or `overlay`. */
         name~ string = "";
+        /** Vertex or fragment. */
         stage~ ShaderStageKind = ShaderStageKind:::Vertex;
+        /** How many texture-and-sampler pairs the shader reads. */
         samplerCount~ u32 = 0;
+        /** How many uniform blocks the shader declares. */
         uniformBufferCount~ u32 = 0;
     }
 
+    /** SPIR-V when the device takes it, else MSL. */
     ChooseShaderFormat :: (device: raw Sdl:::SDL_GPUDevice~*) -> ShaderFormat {
         supported~ u32 = 0;
         unsafe {
@@ -31,6 +49,7 @@ lantern:::gpu :: namespace {
         return ShaderFormat:::Msl;
     }
 
+    /** The format's name for the start-up log. */
     ShaderFormatName :: (format: ShaderFormat) -> string {
         if format == ShaderFormat:::Spirv {
             return "SPIR-V";
@@ -38,6 +57,10 @@ lantern:::gpu :: namespace {
         return "MSL";
     }
 
+    /**
+     * Where compiled shaders are: LANTERN_SHADER_DIRECTORY when set (tests and `nox test`), else `../shaders/compiled/`
+     * beside the executable.
+     */
     CompiledShaderDirectory :: () -> string! {
         overrideText: string!? = environmentVariable("LANTERN_SHADER_DIRECTORY");
         if text := overrideText {
@@ -58,6 +81,7 @@ lantern:::gpu :: namespace {
         return directory!;
     }
 
+    /** The file for one shader, `<name>.<vert|frag>.<spv|msl>`. */
     CompiledShaderPath :: (shader: ShaderDescription, format: ShaderFormat) -> string! {
         directory: string! = CompiledShaderDirectory();
         extension~ string = "spv";
@@ -73,6 +97,10 @@ lantern:::gpu :: namespace {
         return path!;
     }
 
+    /**
+     * Loads one compiled shader and creates it on the device. SPIR-V's entry point is `main`; spirv-cross renames it
+     * `main0` in MSL, since `main` is reserved in Metal's C++-based language.
+     */
     CreateShader :: (device: raw Sdl:::SDL_GPUDevice~*, shader: ShaderDescription, format: ShaderFormat) -> Result<raw Sdl:::SDL_GPUShader~*, string!> {
         path: string! = CompiledShaderPath(shader, format);
         sdlFormat~ Sdl:::SDL_GPUShaderFormat = Sdl:::SDL_GPU_SHADERFORMAT_SPIRV;
@@ -118,6 +146,7 @@ lantern:::gpu :: namespace {
         return Result<raw Sdl:::SDL_GPUShader~*, string!>:::Ok(created);
     }
 
+    /** Releases a shader, if there is one. */
     ReleaseShader :: (device: raw Sdl:::SDL_GPUDevice~*, shader: raw Sdl:::SDL_GPUShader~*) -> void {
         unsafe {
             if shader != null {

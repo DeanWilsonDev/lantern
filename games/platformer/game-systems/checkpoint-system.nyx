@@ -1,0 +1,27 @@
+Checkpoint :: import Checkpoint;
+GameEvent :: import GameEvent;
+GameEvents :: import GameEvents;
+TriggerTest :: import TriggerTest;
+
+// Finds the checkpoint the player has just reached. Like every system it only reports the fact
+// as an event; GameRules decides that reaching one means "remember this respawn point".
+CheckpointSystem :: class {
+public:
+    static TRIGGER_RADIUS :: 0.9f;    // metres from the checkpoint to the capsule's surface
+
+    // A checkpoint counts once: after it is reached it is ignored until the level restarts. That
+    // makes "which touches happen" a plain per-checkpoint flag, with no entering and leaving to
+    // track as GemSystem needs.
+    DetectReached~: (checkpoints: Array<Checkpoint>, capsuleCenter: lantern:::math:::Vec3, halfSegment: f32, capsuleRadius: f32, events~ GameEvents) -> void {
+        for checkpoint: Checkpoint in checkpoints {
+            guard !checkpoint.isReached continue;
+            // The checkpoint's position is at the feet; the trigger sphere is centred a metre
+            // above, about where the player's body is when standing on it.
+            lift: lantern:::math:::Vec3 = { y: 1.0f };
+            center := lantern:::world:::Position(checkpoint.entity) + lift;
+            if TriggerTest:::Overlaps(center, TRIGGER_RADIUS, capsuleCenter, halfSegment, capsuleRadius) {
+                events.Push(GameEvent:::CheckpointReached(checkpoint.entity));
+            }
+        }
+    }
+}

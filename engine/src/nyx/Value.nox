@@ -1,6 +1,9 @@
 NyxC :: import NyxC;
 
 lantern:::nyx :: namespace {
+    /**
+     * What a Nyx value is, from the C API's kind code.
+     */
     ValueKind :: enum {
         Null,
         Bool,
@@ -17,6 +20,9 @@ lantern:::nyx :: namespace {
         Module
     }
 
+    /**
+     * Converts the C API's kind number to a ValueKind. Anything unknown is Null.
+     */
     KindFromRaw :: (raw: NyxC:::nyx_kind) -> ValueKind {
         return when raw {
             1 -> ValueKind:::Bool,
@@ -35,6 +41,11 @@ lantern:::nyx :: namespace {
         };
     }
 
+    /**
+     * A reference-counted handle to a Nyx value that lives inside the runtime. Deleting it releases the handle. It
+     * tells the runtime's ledger on creation and on delete, so a runtime can find out if values outlive it. The `Get`
+     * style readers (Bool, I32, Text and so on) return a Result, because asking for the wrong kind is an error.
+     */
     Value :: class {
     public:
         handle~ raw NyxC:::nyx_value~* = null;
@@ -63,22 +74,34 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * A second Value for the same underlying value, with its own reference. Delete both.
+         */
         Retained :: () -> Value*! {
             unsafe {
                 return new Value(NyxC:::nyx_value_retain(handle), ledger);
             }
         }
 
+        /**
+         * The kind of this value.
+         */
         Kind :: () -> ValueKind {
             unsafe {
                 return KindFromRaw(NyxC:::nyx_value_kind(handle));
             }
         }
 
+        /**
+         * True for Nyx's `null`.
+         */
         IsNull :: () -> bool {
             return Kind() == ValueKind:::Null;
         }
 
+        /**
+         * The value as a bool, or an error when it isn't one. I32, I64, F32 and F64 do the same for numbers.
+         */
         Bool :: () -> Result<bool, NyxError*!> {
             read~ bool = false;
             status~ NyxC:::nyx_status = 0;
@@ -134,6 +157,9 @@ lantern:::nyx :: namespace {
             return Result<f64, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * The value as a string, copied out of the runtime, or an error when it isn't text.
+         */
         Text :: () -> Result<string!, NyxError*!> {
             read~ NyxC:::nyx_str = NyxC:::nyx_str { };
             status~ NyxC:::nyx_status = 0;
@@ -145,6 +171,9 @@ lantern:::nyx :: namespace {
             return Result<string!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * The number of items, or an error when the value isn't an array.
+         */
         ArrayLength :: () -> Result<usize, NyxError*!> {
             read~ usize = 0;
             status~ NyxC:::nyx_status = 0;
@@ -156,6 +185,9 @@ lantern:::nyx :: namespace {
             return Result<usize, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * The item at an index, or an error when out of range or not an array.
+         */
         ArrayGet :: (index: usize) -> Result<Value*!, NyxError*!> {
             element~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -167,6 +199,9 @@ lantern:::nyx :: namespace {
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * For a Nyx error value, the name of its variant ("Error::NotFound").
+         */
         ErrorVariant :: () -> Result<string!, NyxError*!> {
             read~ NyxC:::nyx_str = NyxC:::nyx_str { };
             status~ NyxC:::nyx_status = 0;
@@ -178,6 +213,9 @@ lantern:::nyx :: namespace {
             return Result<string!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * For a Nyx error value, its message.
+         */
         ErrorMessage :: () -> Result<string!, NyxError*!> {
             read~ NyxC:::nyx_str = NyxC:::nyx_str { };
             status~ NyxC:::nyx_status = 0;
@@ -189,6 +227,9 @@ lantern:::nyx :: namespace {
             return Result<string!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * For a Nyx error value, the stack where it was thrown.
+         */
         ErrorStack :: () -> Array<StackFrame*!>! {
             frames~ Array<StackFrame*!>! = [];
             count~ usize = 0;

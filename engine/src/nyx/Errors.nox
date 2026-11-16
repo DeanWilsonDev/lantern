@@ -1,12 +1,18 @@
 NyxC :: import NyxC;
 
 lantern:::nyx :: namespace {
+    /**
+     * The name of a C API status code, such as "NYX_ERROR_FAILURE", for messages.
+     */
     StatusName :: (status: NyxC:::nyx_status) -> string! {
         unsafe {
             return copyCString(NyxC:::nyx_status_name(status));
         }
     }
 
+    /**
+     * One line of a Nyx call stack: a function, the file and the line and column in it.
+     */
     StackFrame :: class {
     public:
         function~ string! = "";
@@ -33,6 +39,11 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * What a failed C API call returns: the status code, Nyx's message, and the stack at the point it failed. For a
+     * script's own `throw` (status NYX_ERROR_FAILURE) it also holds the error value that was thrown. Nothing in the
+     * bridge throws a Nox exception; every fallible call returns one of these inside a `Result`.
+     */
     NyxError :: class {
     public:
         status~ NyxC:::nyx_status = 0;
@@ -51,15 +62,24 @@ lantern:::nyx :: namespace {
             stack.freeAll();
         }
 
+        /**
+         * Replaces the stack with `frames`, taking ownership of them.
+         */
         TakeStack~: (frames: Array<StackFrame*!>!) -> void {
             stack.freeAll();
             stack = frames!;
         }
 
+        /**
+         * True when the script itself threw (a Nyx `throw`), as opposed to the call being refused or invalid.
+         */
         IsFailure :: () -> bool {
             return status == NyxC:::NYX_ERROR_FAILURE;
         }
 
+        /**
+         * The innermost frame, where the error happened, or null when there is no stack.
+         */
         Location :: () -> StackFrame*? {
             if stack.length() == 0 {
                 return null;
@@ -80,6 +100,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * Reads the stack the runtime recorded for its last error.
+     */
     LastErrorStack :: (runtime: raw NyxC:::nyx_runtime~*) -> Array<StackFrame*!>! {
         frames~ Array<StackFrame*!>! = [];
         unsafe {
@@ -94,6 +117,9 @@ lantern:::nyx :: namespace {
         return frames!;
     }
 
+    /**
+     * Reads the message the runtime recorded for its last error.
+     */
     LastErrorMessage :: (runtime: raw NyxC:::nyx_runtime~*) -> string! {
         message~ NyxC:::nyx_str = NyxC:::nyx_str { };
         unsafe {
@@ -102,6 +128,10 @@ lantern:::nyx :: namespace {
         return ReadText(message);
     }
 
+    /**
+     * Turns a status code into null (success) or a NyxError carrying the runtime's message and stack. Every C API call
+     * in this layer ends with it.
+     */
     CheckStatus :: (runtime: raw NyxC:::nyx_runtime~*, status: NyxC:::nyx_status) -> NyxError*!? {
         if status == NyxC:::NYX_OK {
             return null;
@@ -113,6 +143,9 @@ lantern:::nyx :: namespace {
         return error!;
     }
 
+    /**
+     * How serious a diagnostic is.
+     */
     Severity :: enum {
         Error,
         Warning,
@@ -120,6 +153,9 @@ lantern:::nyx :: namespace {
         Help
     }
 
+    /**
+     * The C API's severity code as a Severity. Unknown codes count as errors.
+     */
     SeverityFromRaw :: (raw: NyxC:::nyx_severity) -> Severity {
         if raw == NyxC:::NYX_SEVERITY_WARNING {
             return Severity:::Warning;
@@ -133,6 +169,10 @@ lantern:::nyx :: namespace {
         return Severity:::Error;
     }
 
+    /**
+     * One message from Nyx's checker about a script: a code ("NYX0123"), the text, and where in which file it points
+     * (line and column, and byte offsets).
+     */
     Diagnostic :: class {
     public:
         severity~ Severity = Severity:::Error;

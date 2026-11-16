@@ -1,19 +1,28 @@
 NyxC :: import NyxC;
 
+// C's `strdup` and `free`, for text that Nyx's C API reads as a pointer and a length and must stay valid
+// until the call returns.
 lantern:::nyxtext :: foreign "c" {
     strdup :: (text: string) -> raw u8~*;
     free :: (memory: raw u8~*) -> void;
 }
 
+// C's `write`, for printing a fatal message when a Nyx runtime is dropped wrongly.
 lantern:::nyxoutput :: foreign "c" {
     write :: (fileDescriptor: i32, text: string, length: usize) -> isize;
 }
 
+// C's `memcpy`, to copy bytes between a Nox array and memory that Nyx owns.
 lantern:::nyxbytes :: foreign "c" {
     memcpy :: (destination: Array<u8~>, source: raw u8*, byteCount: usize) -> raw u8~*;
 }
 
 lantern:::nyx :: namespace {
+    /**
+     * A copy of a Nox string in C memory (null-terminated by `strdup`), freed when the CText is deleted. The Nyx C
+     * API takes text as a `nyx_str` (pointer and length), so any string passed in is wrapped in one of these, used
+     * for the call and deleted straight after.
+     */
     CText :: class {
     public:
         bytes~ raw u8~* = null;
@@ -32,11 +41,19 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * The `nyx_str` view of the text, for passing to the C API. It points into this object, so keep the CText alive
+         * until the call has returned.
+         */
         Str :: () -> NyxC:::nyx_str {
             return NyxC:::nyx_str { data_: bytes, length: length };
         }
     }
 
+    /**
+     * Copies the text of a `nyx_str` (which Nyx owns and may free) into a new Nox string. A null or empty one gives
+     * "".
+     */
     ReadText :: (text: NyxC:::nyx_str) -> string! {
         built~ string! = "";
         if text.length == 0 || text.data_ == null {

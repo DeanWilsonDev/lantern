@@ -1,0 +1,163 @@
+// Shadows on the GPU: the two depth textures shadow maps are drawn into, and the uniform block the lit shader reads them
+// with.
+//
+// A shadow map is a picture of the scene from a light, made of depths instead of colours. The renderer draws two
+// of them each frame, both before the main pass:
+//
+//   sun map    three tiles side by side, one per cascade: the sun's shadow near the camera, a bit farther, and far
+//   local map  a grid of tiles, 6 across and 2 down: one for each shadowed spot light and six for each shadowed
+//              point light
+//
+// Each map is one texture drawn in one render pass, with the viewport moved to each tile in turn. One texture and one pass
+// per map is far less to manage than a texture for every tile, and the shader finds a tile with a little arithmetic.
+//
+// What goes in each tile is ShadowPlan's job (renderer/ShadowPlan.nox, pure data); this file is the GPU's side of it.
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    /**
+     * The sun's and the local lights' shadow textures and the size of one tile in each. They are recreated when the
+     * `ShadowSettings` ask for other sizes, and released with the rest of the renderer's resources.
+     */
+    ShadowTargets :: struct {
+        /** The sun's map: `SHADOW_CASCADE_COUNT` tiles wide and one tall. Null until `EnsureShadowTargets` runs. */
+        sunTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** The local lights' map: `LOCAL_SHADOW_COLUMNS` tiles wide and `LOCAL_SHADOW_ROWS` tall. */
+        localTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /**
+         * A 1 by 1 depth texture the lit shader reads in place of a map the GPU refused to create. The shadow
+         * uniforms say nothing is shadowed in that frame, so what it holds never matters; it only has to be there,
+         * because binding a null texture is an error. Created once, the first time `EnsureShadowTargets` runs.
+         */
+        fallbackTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** Width and height in pixels of one sun tile. */
+        sunTileSize~ u32 = 0;
+        /** Width and height in pixels of one local tile. */
+        localTileSize~ u32 = 0;
+
+        /** Releases both textures. SDL frees them once any frame still reading them is done. */
+        Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if sunTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, sunTexture);
+                }
+                if localTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, localTexture);
+                }
+            }
+        }
+    }
+
+    /** The texture to bind for the sun's map: the map itself, or the fallback when there isn't one. */
+    SunTextureOrFallback :: (targets: ShadowTargets*) -> raw Sdl:::SDL_GPUTexture~* {
+        return targets->sunTexture != null ? targets->sunTexture : targets->fallbackTexture;
+    }
+
+    /** The texture to bind for the local lights' map: the map itself, or the fallback when there isn't one. */
+    LocalTextureOrFallback :: (targets: ShadowTargets*) -> raw Sdl:::SDL_GPUTexture~* {
+        return targets->localTexture != null ? targets->localTexture : targets->fallbackTexture;
+    }
+
+    /** Releases the fallback texture too, at shutdown. */
+    ReleaseShadowTargets :: (device: raw Sdl:::SDL_GPUDevice~*, targets: ShadowTargets~*) -> void {
+        targets->Release(device);
+        unsafe {
+            if targets->fallbackTexture != null {
+                Sdl:::SDL_ReleaseGPUTexture(device, targets->fallbackTexture);
+            }
+        }
+        targets->fallbackTexture = null;
+    }
+
+    /**
+     * Makes the two maps the sizes asked for, or leaves them if they already are. Returns false when the GPU
+     * refuses a texture, with both released, so the caller draws the frame without shadows.
+     */
+    EnsureShadowTargets :: (device: raw Sdl:::SDL_GPUDevice~*, depthFormat: Sdl:::SDL_GPUTextureFormat, targets: ShadowTargets~*, sunTileSize: u32, localTileSize: u32) -> bool {
+        if targets->fallbackTexture == null {
+            targets->fallbackTexture = CreateShadowTexture(device, depthFormat, 1, 1);
+        }
+        if targets->sunTexture != null && targets->sunTileSize == sunTileSize && targets->localTileSize == localTileSize {
+            return true;
+        }
+        targets->Release(device);
+        targets->sunTexture = CreateShadowTexture(device, depthFormat, sunTileSize * lantern:::renderer:::SHADOW_CASCADE_COUNT, sunTileSize);
+        targets->localTexture = CreateShadowTexture(device, depthFormat, localTileSize * lantern:::renderer:::LOCAL_SHADOW_COLUMNS, localTileSize * lantern:::renderer:::LOCAL_SHADOW_ROWS);
+        targets->sunTileSize = sunTileSize;
+        targets->localTileSize = localTileSize;
+        if targets->sunTexture == null || targets->localTexture == null {
+            targets->Release(device);
+            targets->sunTexture = null;
+            targets->localTexture = null;
+            targets->sunTileSize = 0;
+            targets->localTileSize = 0;
+            return false;
+        }
+        message: string! = `shadow maps: sun ${sunTileSize}px x ${lantern:::renderer:::SHADOW_CASCADE_COUNT}, local lights ${localTileSize}px tiles`;
+        lantern:::core:::LogDebug("renderer", message);
+        delete message;
+        return true;
+    }
+
+    /** One 4x4 matrix: the shadow vertex shader's per-tile block (the light's view-projection) and per-draw block (the model). 64 bytes. */
+    MatrixUniforms :: struct {
+        /** Column-major, as GLSL's `mat4` expects. */
+        matrix~ f32[16] = filled<f32, 16>(0.0f);
+    }
+
+    /** Floats in `ShadowUniforms`: twelve local tile matrices, three cascade matrices and four vec4s. */
+    SHADOW_UNIFORM_FLOATS: usize : 256;
+
+    /**
+     * The lit fragment shader's shadow block, 1024 bytes, as `ShadowUniforms` in lit.frag lays it out: the twelve local
+     * tiles' matrices (floats 0 to 191), the three cascades' matrices (192 to 239), where each cascade ends and whether
+     * the sun casts (240 to 243), the world size of each cascade's texel and the normal push (244 to 247), and the
+     * camera's forward vector and the sun's depth bias (248 to 251), and the filter: its radius in texels, its sample count and
+     * the fraction of a cascade over which neighbours blend (252 to 255). 1024 bytes in all.
+     */
+    ShadowUniforms :: struct {
+        /** Every float of the block in order. */
+        values~ f32[256] = filled<f32, 256>(0.0f);
+
+        /** Copies a matrix's sixteen floats into the block from float `start`. */
+        SetMatrix ~: (start: usize, matrix: Mat4) -> void {
+            for element~ usize = 0; element < 16; element++ {
+                values[start + element] = matrix.elements[element];
+            }
+        }
+    }
+
+    /** How many texels the shader moves a surface along its normal before looking it up in a sun cascade. */
+    SUN_NORMAL_PUSH_TEXELS: f32 : 1.5f;
+    /** The last part of each cascade, as a fraction of its end distance, over which it fades into the next. */
+    CASCADE_BLEND_FRACTION: f32 : 0.12f;
+    /** How much nearer than the map's depth a sun pixel must be to count as lit, in the cascade's depth units (0 to 1). */
+    SUN_DEPTH_BIAS: f32 : 0.0004f;
+
+    /** Fills the block from the frame's plan and camera. */
+    PackShadowUniforms :: (plan: lantern:::renderer:::ShadowPlan*, cameraForward: Vec3, settings: lantern:::renderer:::ShadowSettings) -> ShadowUniforms {
+        packed~ ShadowUniforms = ShadowUniforms { };
+        for tile~ usize = 0; tile < plan->localTiles.length(); tile++ {
+            packed.SetMatrix(tile * 16, plan->localTiles[tile].viewProjection);
+        }
+        if plan->sunEnabled {
+            for cascade~ usize = 0; cascade < plan->sunTiles.length(); cascade++ {
+                packed.SetMatrix(192 + cascade * 16, plan->sunTiles[cascade].viewProjection);
+                packed.values[244 + cascade] = plan->sunTiles[cascade].texelWorldSize;
+                packed.values[240 + cascade] = plan->cascadeEnds[cascade];
+            }
+            packed.values[243] = 1.0f;
+        }
+        packed.values[247] = SUN_NORMAL_PUSH_TEXELS;
+        packed.values[248] = cameraForward.x;
+        packed.values[249] = cameraForward.y;
+        packed.values[250] = cameraForward.z;
+        packed.values[251] = SUN_DEPTH_BIAS;
+        packed.values[252] = Math:::clamp(settings.softness, 0.5f, 6.0f);
+        packed.values[253] = f32(Math:::clamp(i32(settings.filterSamples), 1, 32));
+        packed.values[254] = settings.blendCascades ? CASCADE_BLEND_FRACTION : 0.0f;
+        return packed;
+    }
+}

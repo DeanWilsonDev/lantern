@@ -1,6 +1,14 @@
 lantern:::host :: namespace {
+    /**
+     * How many hooks a game's application class can define.
+     */
     GAME_HOOK_COUNT: usize : 5;
 
+    /**
+     * The five hooks the engine calls on a game's application class: OnStart once after loading, OnFixedUpdate each physics
+     * step, OnUpdate and OnRender each frame, and OnExit at shutdown. A game defines the ones it wants and the rest are
+     * skipped.
+     */
     GameHook :: enum {
         OnStart,
         OnFixedUpdate,
@@ -9,6 +17,9 @@ lantern:::host :: namespace {
         OnExit
     }
 
+    /**
+     * The hook with a number, for looping over them all.
+     */
     GameHookAt :: (index: usize) -> GameHook {
         return when index {
             0 -> GameHook:::OnStart,
@@ -19,6 +30,9 @@ lantern:::host :: namespace {
         };
     }
 
+    /**
+     * A hook's number.
+     */
     GameHookIndex :: (hook: GameHook) -> usize {
         return when hook {
             GameHook:::OnStart -> 0,
@@ -29,6 +43,9 @@ lantern:::host :: namespace {
         };
     }
 
+    /**
+     * The method name the hook calls in Nyx.
+     */
     GameHookName :: (hook: GameHook) -> string {
         return when hook {
             GameHook:::OnStart -> "OnStart",
@@ -39,27 +56,43 @@ lantern:::host :: namespace {
         };
     }
 
+    /**
+     * How long a hook has taken in total and how many times it was called, which the debug HUD shows.
+     */
     HookTotal :: struct {
         seconds~ f64 = 0.0f;
         calls~ u64 = 0;
     }
 
+    /**
+     * Seconds elapsed since a monotonic time.
+     */
     SecondsSince :: (startNanoseconds: u64) -> f64 {
         return f64(monotonicNanoseconds() - startNanoseconds) / 1000000000.0f;
     }
 
+    /**
+     * The text of a Nyx error, prefixed `nyx: `, deleting the error.
+     */
     NyxFailure :: (error: lantern:::nyx:::NyxError*!) -> string! {
         failure: string! = NyxFailureText(error);
         delete error;
         return failure!;
     }
 
+    /**
+     * The text of a Nyx error, prefixed `nyx: `.
+     */
     NyxFailureText :: (error: lantern:::nyx:::NyxError*) -> string! {
         text: string! = error->Text();
         defer delete text;
         return `nyx: ${text}`;
     }
 
+    /**
+     * A script error as one message naming the hook, where the script failed, and what it said. This is what the screen's
+     * "script error" text shows.
+     */
     DescribeHookError :: (hook: GameHook, error: lantern:::nyx:::NyxError*) -> string! {
         errorText: string! = error->Text();
         description~ string! = `${GameHookName(hook)}: ${errorText}`;
@@ -73,6 +106,10 @@ lantern:::host :: namespace {
         return description!;
     }
 
+    /**
+     * One loaded game script: a Nyx runtime with all the engine APIs registered, the mounted program, which hooks the game
+     * defines, the UI, and how long each hook took. It is deleted and rebuilt on reload (F5).
+     */
     ScriptSession :: class {
     public:
         program~ lantern:::nyx:::Program*!? = null;
@@ -105,6 +142,10 @@ lantern:::host :: namespace {
             delete hookTotals;
         }
 
+        /**
+         * Creates the runtime, registers every engine API, points imports at the game's folder and mounts the entry file. Any
+         * failure comes back as a message and nothing is left behind.
+         */
         static Load :: (scriptsDirectory: string, entryFile: string, applicationClass: string, state: raw EngineState~*) -> Result<ScriptSession*!, string!> {
             entryPath: string! = `${scriptsDirectory}/${entryFile}`;
             runtime := new lantern:::nyx:::Runtime();
@@ -199,11 +240,14 @@ lantern:::host :: namespace {
             return `${entryPath}: ${errorText}`;
         }
 
+        /**
+         * After a load, finds the application instance and records which hooks it defines.
+         */
         FindHooks~: () -> string!? {
             guard mountedProgram ~= program return OwnedText("nyx: the program isn't mounted");
             found~ lantern:::nyx:::Value*!? = null;
-            application := mountedProgram->Application();
-            when application! {
+            mountedApplication := mountedProgram->Application();
+            when mountedApplication! {
                 Result:::Ok(instance) -> {
                     found = instance!;
                 },
@@ -223,19 +267,29 @@ lantern:::host :: namespace {
                     }
                 }
             }
-            delete gameUi->application;
-            gameUi->application = found!;
+            delete gameUi->applicationValue;
+            gameUi->applicationValue = found!;
             return null;
         }
 
+        /**
+         * The path of the entry file, for messages.
+         */
         EntryPath :: () -> string {
             return entryPath;
         }
 
+        /**
+         * True when the game defines this hook.
+         */
         Defines :: (hook: GameHook) -> bool {
             return definedHooks[GameHookIndex(hook)];
         }
 
+        /**
+         * Calls a hook with float arguments (the time step, for example), adding the time it took to the totals. Returns null on
+         * success or a description of the script error. A hook the game doesn't define is skipped.
+         */
         Call~: (hook: GameHook, arguments: Array<f32>) -> string!? {
             if !Defines(hook) {
                 return null;
@@ -273,10 +327,16 @@ lantern:::host :: namespace {
             }
         }
 
+        /**
+         * The action names the game chose for UI navigation, or null.
+         */
         UiNavigationActions :: () -> NavigationActions*? {
             return gameUi->navigation;
         }
 
+        /**
+         * Gives this frame's input to the UI.
+         */
         NavigateUi~: (navigation: lantern:::chaosui:::Navigation) -> void {
             guard chaos ~= gameUi->chaos return;
             started: u64 = monotonicNanoseconds();
@@ -284,6 +344,9 @@ lantern:::host :: namespace {
             scriptSeconds += SecondsSince(started);
         }
 
+        /**
+         * Ticks the UI.
+         */
         UpdateUi~: () -> void {
             guard chaos ~= gameUi->chaos return;
             started: u64 = monotonicNanoseconds();
@@ -291,25 +354,40 @@ lantern:::host :: namespace {
             scriptSeconds += SecondsSince(started);
         }
 
+        /**
+         * Draws the UI into the overlay.
+         */
         DrawUi~: (overlay: lantern:::renderer:::Overlay~*, screen: Vec2, scale: f32) -> void {
             guard chaos ~= gameUi->chaos return;
             chaos->Draw(overlay, screen, scale);
         }
 
+        /**
+         * Where each UI button was drawn, for tests.
+         */
         UiButtonRects :: () -> Array<lantern:::chaosui:::ButtonRect>! {
             guard chaos := gameUi->chaos return [];
             return chaos->ButtonRects();
         }
 
+        /**
+         * The messages Chaos has reported since last asked.
+         */
         TakeUiMessages~: () -> Array<string!>! {
             guard chaos ~= gameUi->chaos return [];
             return chaos->TakeMessages();
         }
 
+        /**
+         * The totals for a hook.
+         */
         HookTotalOf :: (hook: GameHook) -> HookTotal {
             return hookTotals[GameHookIndex(hook)];
         }
 
+        /**
+         * The time scripts have used since last asked, which becomes the frame's script time on the HUD.
+         */
         TakeScriptSeconds~: () -> f64 {
             taken: f64 = scriptSeconds;
             scriptSeconds = 0.0f;
@@ -317,6 +395,12 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * The engine's host surface as JSON text: it starts a headless engine, registers every API and asks Nyx to write what
+     * it registered. The test `the-engine-api-matches-the-committed-host-surface` compares it with
+     * `games/platformer/engine-host-surface.json` and rewrites that file when `LANTERN_UPDATE_HOST_SURFACE` is set (see
+     * game-api.md). The language server and checker read the file to know the engine's names.
+     */
     EngineHostSurface :: () -> Result<string!, string!> {
         created := EngineState:::Create(new lantern:::renderer:::HeadlessRenderer(), new lantern:::engine:::AudioSystem(null), null);
         when created! {

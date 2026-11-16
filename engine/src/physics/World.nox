@@ -1,35 +1,71 @@
 lantern:::physics :: namespace {
+    /**
+     * The side, in metres, of one cell of the grid that sorts static triangles by position.
+     */
     GRID_CELL_SIZE: f32 : 4.0f;
+    /**
+     * How much the box around a moving shape is grown, so a triangle exactly at its edge is still tested.
+     */
     CAST_TOLERANCE: f32 : 0.0001f;
+    /**
+     * How many times a cast against one triangle may step forward before it stops. It converges in a few steps.
+     */
     MAX_CAST_ITERATIONS: u32 : 24;
+    /**
+     * The "end of the list" value for the grid's linked lists (the largest u32).
+     */
     NO_GRID_ENTRY: u32 : 4294967295;
 
+    /**
+     * A swept sphere: every point within `radius` of a vertical line segment `halfSegment` long on each side of the
+     * centre. It is the character's collision shape. With `halfSegment` 0 it is a sphere.
+     */
     Capsule :: struct {
         radius~ f32 = 0.0f;
         halfSegment~ f32 = 0.0f;
 
+        /**
+         * A capsule of total `height` whose rounded ends have `radius`, so the straight part is `height - 2 * radius`.
+         */
         static Upright :: (radius: f32, height: f32) -> Capsule {
             return Capsule { radius: radius, halfSegment: Math:::max(height * 0.5f - radius, 0.0f) };
         }
 
+        /**
+         * A capsule with no straight part.
+         */
         static Sphere :: (radius: f32) -> Capsule {
             return Capsule { radius: radius, halfSegment: 0.0f };
         }
 
+        /**
+         * The bottom end of the capsule's axis.
+         */
         SegmentStart :: (center: Vec3) -> Vec3 {
             return center - lantern:::core:::WorldUp() * halfSegment;
         }
 
+        /**
+         * The top end of the capsule's axis.
+         */
         SegmentEnd :: (center: Vec3) -> Vec3 {
             return center + lantern:::core:::WorldUp() * halfSegment;
         }
 
+        /**
+         * The smallest axis-aligned box around the capsule.
+         */
         Bounds :: (center: Vec3) -> lantern:::core:::Aabb {
             half: Vec3 = Vec3 { x: radius, y: radius + halfSegment, z: radius };
             return lantern:::core:::Aabb:::Create(center - half, center + half);
         }
     }
 
+    /**
+     * A moving collider, such as a lift or a swinging platform. It owns a run of triangles (`firstTriangle`, count) in
+     * the world's body arrays, kept in the body's own space and moved by `transform`. `previousTransform` is last
+     * step's, so the difference tells how far the body moved and carries whatever stands on it.
+     */
     KinematicBody :: struct {
         firstTriangle~ usize = 0;
         triangleCount~ usize = 0;
@@ -42,6 +78,9 @@ lantern:::physics :: namespace {
         }
     }
 
+    /**
+     * Says what a hit hit: the static level, or a particular moving body.
+     */
     ColliderId :: struct {
         isStatic~ bool = true;
         body~ lantern:::core:::Handle<KinematicBody> = lantern:::core:::Handle<KinematicBody> { };
@@ -62,6 +101,10 @@ lantern:::physics :: namespace {
         }
     }
 
+    /**
+     * The result of sweeping a shape: how far along the movement it got (`fraction`, 0 to 1), the surface normal there,
+     * the contact point and what was hit.
+     */
     ShapeHit :: struct {
         fraction~ f32 = 0.0f;
         normal~ Vec3 = Vec3 { };
@@ -69,6 +112,9 @@ lantern:::physics :: namespace {
         collider~ ColliderId = ColliderId { };
     }
 
+    /**
+     * A shape already overlapping something: the direction to push out, how deep it is, where, and with what.
+     */
     Contact :: struct {
         normal~ Vec3 = Vec3 { };
         depth~ f32 = 0.0f;
@@ -76,6 +122,9 @@ lantern:::physics :: namespace {
         collider~ ColliderId = ColliderId { };
     }
 
+    /**
+     * The result of a ray: distance along it, the point, the surface normal and what was hit.
+     */
     RayHit :: struct {
         distance~ f32 = 0.0f;
         point~ Vec3 = Vec3 { };
@@ -83,17 +132,27 @@ lantern:::physics :: namespace {
         collider~ ColliderId = ColliderId { };
     }
 
+    /**
+     * A triangle found near a query, with the collider it belongs to.
+     */
     NearTriangle :: struct {
         triangle~ Triangle = Triangle { };
         collider~ ColliderId = ColliderId { };
     }
 
+    /**
+     * The result of sweeping a shape against one triangle.
+     */
     TriangleCast :: struct {
         fraction~ f32 = 0.0f;
         normal~ Vec3 = Vec3 { };
         point~ Vec3 = Vec3 { };
     }
 
+    /**
+     * A cell of the grid. Containing finds the cell of a point; Key packs a cell's three coordinates into one u64
+     * (21 bits each) so it can be the key of a hash map.
+     */
     GridCell :: struct {
         x~ i64 = 0;
         y~ i64 = 0;
@@ -113,10 +172,16 @@ lantern:::physics :: namespace {
         }
     }
 
+    /**
+     * A corner of a box: the centre plus the half extents scaled by -1 or 1 on each axis.
+     */
     BoxCorner :: (center: Vec3, halfExtents: Vec3, x: f32, y: f32, z: f32) -> Vec3 {
         return center + Vec3 { x: halfExtents.x * x, y: halfExtents.y * y, z: halfExtents.z * z };
     }
 
+    /**
+     * Adds a quad (a, b, c, d) as two triangles.
+     */
     PushBoxFace :: (triangles: Array<Triangle>!, a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Array<Triangle>! {
         grown~ Array<Triangle>! = triangles!;
         grown.push(Triangle:::Create(a, b, c));
@@ -124,6 +189,9 @@ lantern:::physics :: namespace {
         return grown!;
     }
 
+    /**
+     * A box as 12 triangles, two for each face.
+     */
     BoxTriangles :: (center: Vec3, halfExtents: Vec3) -> Array<Triangle>! {
         triangles~ Array<Triangle>! = [];
         triangles = PushBoxFace(triangles!, BoxCorner(center, halfExtents, 1.0f, -1.0f, 1.0f), BoxCorner(center, halfExtents, 1.0f, -1.0f, -1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, -1.0f), BoxCorner(center, halfExtents, 1.0f, 1.0f, 1.0f));
@@ -135,10 +203,19 @@ lantern:::physics :: namespace {
         return triangles!;
     }
 
+    /**
+     * The box around a triangle.
+     */
     TriangleBounds :: (triangle: Triangle) -> lantern:::core:::Aabb {
         return lantern:::core:::Aabb:::Create(triangle.a, triangle.b).GrownTo(triangle.c);
     }
 
+    /**
+     * Sweeps a capsule's axis (segmentStart to segmentEnd, plus `radius`) along `displacement` against one triangle.
+     * It is a conservative advance: measure the gap to the triangle; if it is more than the radius, move forward by the
+     * excess divided by the speed the shape is closing in; repeat until the gap is the radius (a hit, with the
+     * fraction reached), or the shape is moving away or the movement is used up (null). It stops after MAX_CAST_ITERATIONS steps.
+     */
     CastAgainstTriangle :: (segmentStart: Vec3, segmentEnd: Vec3, radius: f32, displacement: Vec3, triangle: Triangle) -> TriangleCast? {
         fraction~ f32 = 0.0f;
         for iteration~ u32 = 0; iteration < MAX_CAST_ITERATIONS; iteration++ {
@@ -177,6 +254,9 @@ lantern:::physics :: namespace {
         return TriangleCast { fraction: fraction, normal: lantern:::core:::NormalizeOr3(closest.first - closest.second, lantern:::core:::WorldUp()), point: closest.second };
     }
 
+    /**
+     * The contacts ordered by depth, deepest first, by insertion sort (there are only a handful).
+     */
     SortedDeepestFirst :: (contacts: Array<Contact>) -> Array<Contact>! {
         sorted~ Array<Contact>! = [];
         for contact in contacts {
@@ -191,10 +271,20 @@ lantern:::physics :: namespace {
         return sorted!;
     }
 
+    /**
+     * True when two triangles have identical corners.
+     */
     SameTriangle :: (first: Triangle, second: Triangle) -> bool {
         return first.a == second.a && first.b == second.b && first.c == second.c;
     }
 
+    /**
+     * Everything a character or a ray can hit. Static triangles (the level) go into a grid of 4 m cells: each triangle is
+     * listed in every cell its box touches, so a query looks only in the cells near it. `gridHeads` maps a cell to the
+     * first entry of a linked list that lives in `gridEntryTriangles` and `gridEntryNext`. Moving bodies are few, so
+     * they are just checked by their bounding box. Queries are CapsuleCast (sweep), CapsuleContacts (overlap) and
+     * Raycast.
+     */
     CollisionWorld :: class {
     public:
         staticTriangles~ Array<Triangle>! = [];
@@ -220,6 +310,9 @@ lantern:::physics :: namespace {
             delete bodyWorldTriangles;
         }
 
+        /**
+         * Adds one triangle of level geometry to the grid. A degenerate triangle (zero area) is ignored.
+         */
         AddStaticTriangle~: (triangle: Triangle) -> void {
             if triangle.IsDegenerate() {
                 return;
@@ -242,18 +335,27 @@ lantern:::physics :: namespace {
             staticTriangles.push(triangle);
         }
 
+        /**
+         * Adds each triangle in the array.
+         */
         AddStaticTriangles~: (triangles: Array<Triangle>) -> void {
             for triangle in triangles {
                 AddStaticTriangle(triangle);
             }
         }
 
+        /**
+         * Adds a box as 12 static triangles.
+         */
         AddStaticBox~: (center: Vec3, halfExtents: Vec3) -> void {
             triangles: Array<Triangle>! = BoxTriangles(center, halfExtents);
             AddStaticTriangles(triangles);
             delete triangles;
         }
 
+        /**
+         * How many static triangles the world holds.
+         */
         StaticTriangleCount :: () -> usize {
             return staticTriangles.length();
         }
@@ -268,14 +370,23 @@ lantern:::physics :: namespace {
             return bodies->Insert(body);
         }
 
+        /**
+         * Removes a moving body. Its handle stops working.
+         */
         RemoveBody~: (body: lantern:::core:::Handle<KinematicBody>) -> void {
             bodies->Remove(body);
         }
 
+        /**
+         * The body for a handle, or null when it was removed.
+         */
         Body :: (body: lantern:::core:::Handle<KinematicBody>) -> KinematicBody? {
             return bodies->Get(body);
         }
 
+        /**
+         * Recomputes a body's triangles in world space and its bounding box from its transform, and returns the updated body.
+         */
         RefreshBody~: (body: KinematicBody) -> KinematicBody {
             refreshed~ KinematicBody = body;
             bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
@@ -289,6 +400,9 @@ lantern:::physics :: namespace {
             return refreshed;
         }
 
+        /**
+         * Starts a physics step: every body's current transform becomes its `previousTransform`.
+         */
         BeginStep~: () -> void {
             handles: Array<lantern:::core:::Handle<KinematicBody>>! = bodies->LiveHandles();
             for handle in handles {
@@ -299,6 +413,9 @@ lantern:::physics :: namespace {
             delete handles;
         }
 
+        /**
+         * Moves a body to a new transform (a lift's position this step) and updates its world triangles.
+         */
         SetBodyTransform~: (handle: lantern:::core:::Handle<KinematicBody>, transform: Mat4) -> void {
             if found := bodies->Get(handle) {
                 moved~ KinematicBody = found;
@@ -311,6 +428,10 @@ lantern:::physics :: namespace {
             }
         }
 
+        /**
+         * The movement a body made since BeginStep, as a matrix (new transform times the inverse of the old one). The
+         * controller applies it to a character standing on the body.
+         */
         BodyStepMotion :: (handle: lantern:::core:::Handle<KinematicBody>) -> Mat4 {
             if body := bodies->Get(handle) {
                 if inverse := body.previousTransform.inverse() {
@@ -320,6 +441,10 @@ lantern:::physics :: namespace {
             return Mat4 { };
         }
 
+        /**
+         * All triangles that might touch `bounds`: static ones from the grid cells it covers, and those of each body whose
+         * box overlaps it. A collider given as `ignore` is left out.
+         */
         TrianglesNear :: (bounds: lantern:::core:::Aabb, ignore: ColliderId?) -> Array<NearTriangle>! {
             near~ Array<NearTriangle>! = [];
             ignoreStatic~ bool = false;
@@ -364,6 +489,10 @@ lantern:::physics :: namespace {
             return near!;
         }
 
+        /**
+         * Sweeps a capsule from `center` along `displacement` and returns the first thing it hits, or null. When two
+         * triangles are hit at the same distance the one more directly facing the movement wins.
+         */
         CapsuleCast :: (capsule: Capsule, center: Vec3, displacement: Vec3, ignore: ColliderId?) -> ShapeHit? {
             startBounds: lantern:::core:::Aabb = capsule.Bounds(center);
             sweptBounds: lantern:::core:::Aabb = startBounds.Union(capsule.Bounds(center + displacement)).Expanded(CAST_TOLERANCE * 2.0f);
@@ -395,6 +524,10 @@ lantern:::physics :: namespace {
             return best;
         }
 
+        /**
+         * Everything a capsule at `center` overlaps, deepest first. The depth is how far inside the radius the nearest
+         * point of the triangle is.
+         */
         CapsuleContacts :: (capsule: Capsule, center: Vec3, ignore: ColliderId?) -> Array<Contact>! {
             segmentStart: Vec3 = capsule.SegmentStart(center);
             segmentEnd: Vec3 = capsule.SegmentEnd(center);
@@ -418,6 +551,10 @@ lantern:::physics :: namespace {
             return SortedDeepestFirst(contacts);
         }
 
+        /**
+         * The first triangle a ray hits within `maximumDistance`, or null. `direction` should be a unit vector. The
+         * normal is flipped to face the ray.
+         */
         Raycast :: (origin: Vec3, direction: Vec3, maximumDistance: f32) -> RayHit? {
             end: Vec3 = origin + direction * maximumDistance;
             near: Array<NearTriangle>! = TrianglesNear(lantern:::core:::Aabb:::Create(origin, end), null);
@@ -444,6 +581,9 @@ lantern:::physics :: namespace {
             return best;
         }
 
+        /**
+         * The distinct triangles near `bounds`, for drawing collision as wire lines in the debug view.
+         */
         DebugTrianglesNear :: (bounds: lantern:::core:::Aabb) -> Array<Triangle>! {
             near: Array<NearTriangle>! = TrianglesNear(bounds, null);
             defer delete near;

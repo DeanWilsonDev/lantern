@@ -3,6 +3,24 @@
 How `engine/src/` is organised, and why. This is the map to read before the code. The renderer has its own
 walkthrough in `renderer.md`, and the application and game loop in `application-and-game-loop.md`.
 
+## Where the engine sits in the repository
+
+```text
+engine/
+  src/               the engine, laid out below
+  tests/             one folder per domain; each test is a small program with a main.nox, a nox.json and an expected.txt
+  shaders/           the GLSL source; shaders/compiled/ holds the SPIR-V and Metal Shading Language builds (committed)
+  native/            lantern-native: Nyx's C API, the Chaos UI bridge and penumbra-bridge's C API in one library
+  editor-backend/    the world editor's backend built as a static library with a C header
+  benchmarks/        the headless platformer timed against the Rust build
+  tools/             build-shaders.sh, run-tests.sh and check-window.sh (run through `mist run`)
+games/platformer/    a game: Nyx code, Chaos UI, and game.json naming its entry file, class and assets
+apps/world-editor/   the editor: Chaos UI in src/ui, its Nox host in nox/
+assets/              textures, models, sounds, music, worlds and the editor palette
+```
+
+`mist.json` at the root names the dependencies and the scripts (`running.md`).
+
 ## The rules
 
 1. **One folder per domain.** A folder holds one part of the engine (rendering, platform, physics, audio...), and its
@@ -32,15 +50,19 @@ engine/src/
   platform/                    the platform vocabulary: WindowConfig, WindowMetrics, PlatformEvent, and the
                                PlatformBackend and AudioSink interfaces
   renderer/                    the backend-neutral renderer: the RenderBackend interface, RenderWorld (one frame's
-                               draw list), Camera, Frustum, meshes, textures, primitives, glTF and PNG loading,
-                               the bitmap font, and HeadlessRenderer for tests
+                               draw list, its lights, materials, sky, fog and post-processing
+                               settings), ShadowPlan (which shadow maps a frame needs), Camera, Frustum,
+                               meshes, textures, primitives, glTF and PNG loading, the bitmap font, the
+                               particle system, and HeadlessRenderer for tests
   sdl-facade/                  everything SDL
     core/                      SdlContext: SDL's start and shutdown
     window/                    SdlWindow
     platform/                  SdlPlatform and SdlEvents: events, the clock, gamepad, mouse capture
     audio/                     SdlAudioOutput, an AudioSink
     renderer/                  GpuRenderer, the RenderBackend over SDL GPU, and its device, pipeline, shader,
-                               resource, uniform and draw-list files
+                               resource, uniform and draw-list files, GpuShadows (the shadow atlases and the shadow pass), GpuSky
+                               (the sky's uniforms) and GpuPost (the HDR scene, bloom, occlusion and FXAA
+                               passes)
   engine/
     loop/                      the Game interface and the GameLoop (events, fixed steps, frame update, render)
     input/                     InputRouter: platform events to each step's action snapshot
@@ -49,13 +71,16 @@ engine/src/
   audio/                       WAV decoding and the software mixer
   physics/                     collision world and the character controller
   debug/                       the debug HUD and debug-line shapes
-  world/                       the .world.json format
+  world/                       the .world.json format, and WorldLights: how a light entity becomes a light
   nyx/                         the Nyx runtime wrapper
   chaosui/                     the game's Chaos and Cosmos UI
-  host/                        the game host: EngineState, the engine API for Nyx, GameHost (a Game)
+  host/                        the game host: EngineState, GameHost (a Game), the script session and the engine
+                               API for Nyx, one file per namespace (MathApi, EngineApi, InputApi, WorldApi,
+                               AssetsApi, PhysicsApi, LightsApi, GraphicsApi, SkyApi, AtmosphereApi,
+                               ParticlesApi, GameUiApi, DebugApi; `game-api.md` lists the calls)
   editor/                      the world editor's logic
   editorbackend/               the editor's off-screen viewport and session
-  stub/                        the stub game `lantern` runs with no game directory
+  stub/                        the stub game `lantern --stub` runs
 ```
 
 ## Who depends on whom

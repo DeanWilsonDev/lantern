@@ -1,0 +1,101 @@
+Math :: import standard:::Math;
+
+// A world-file entity of kind "swing_arc": the Anchor, the third ability of the design. It is two
+// posts and a fixed arc between them. Jump beside the start post and the player swings to the
+// far post like a pendulum, with no steering, so there is nothing to miss and no way to fall.
+//
+// Properties, all optional but `end`:
+// - `end` (vector): the far post's position. The entity's own position is the start post.
+// - `sag` (number): how far the arc dips below the posts, in metres; 2 when missing.
+// - `seconds` (number): how long the swing takes; 1.8 when missing.
+// - `needs_companion` (number): 1 when the swing only works while the companion stands by the
+//   start post (the cooperative form), 0 when the player can do it alone (the solo form).
+//
+// The arc is a piece of a circle hanging from a point above the middle, which is what a rope
+// swing is. Its angle follows -cos, so the swing starts and ends slowly and is fastest at the
+// bottom, as a pendulum is.
+Anchor :: class {
+public:
+    entity: i64;
+    start: lantern:::math:::Vec3;
+    end: lantern:::math:::Vec3;
+    seconds: f32;
+    needsCompanion: bool;
+    // False when the world file gave no `end`, or one straight above the start. LevelScene skips
+    // such a swing_arc with a log line instead of building an arc out of nothing.
+    isValid: bool;
+    startCap~ i64 = 0;
+
+    Anchor~: (entity: i64) : entity(entity), start(lantern:::world:::Position(entity)),
+        end(lantern:::world:::VectorProperty(entity, "end")),
+        seconds(lantern:::world:::HasProperty(entity, "seconds") ? lantern:::world:::NumberProperty(entity, "seconds") : 1.8f),
+        needsCompanion(lantern:::world:::HasProperty(entity, "needs_companion") ? lantern:::world:::NumberProperty(entity, "needs_companion") > 0.5f : false),
+        isValid(lantern:::world:::HasProperty(entity, "end")
+            && (lantern:::world:::VectorProperty(entity, "end") - lantern:::world:::Position(entity)).Horizontal().Length() > MINIMUM_SPAN) {
+        sag = lantern:::world:::HasProperty(entity, "sag") ? lantern:::world:::NumberProperty(entity, "sag") : 2.0f;
+    }
+
+    // The player's feet `progress` (0 at the start post, 1 at the far post) of the way along.
+    PointAt :: (progress: f32) -> lantern:::math:::Vec3 {
+        chord := (end - start).Horizontal();
+        halfChord := chord.Length() * 0.5f;
+        radius := (halfChord * halfChord + sag * sag) / (2.0f * sag);
+        pivotDepth := radius - sag;
+        maximumAngle := Math:::atan2(halfChord, pivotDepth);
+        angle := -maximumAngle * Math:::cos(progress * 3.14159265f);
+        alongChord := Math:::sin(angle) * radius;
+        dip := pivotDepth - Math:::cos(angle) * radius;
+        middle := start.Lerp(end, 0.5f);
+        direction := chord.Normalized();
+        lift: lantern:::math:::Vec3 = { y: dip };
+        return middle + direction * alongChord + lift;
+    }
+
+    // Two posts, each with a bright cap, and beads along the arc so the path reads before anyone
+    // swings. `cubeMesh` is the unit cube the game assets make.
+    Place~: (cubeMesh: i64) -> void {
+        PlacePost(cubeMesh, start);
+        PlacePost(cubeMesh, end);
+        startCap = lantern:::world:::Spawn("anchor_cap", start + CapLift());
+        lantern:::world:::SetMesh(startCap, cubeMesh, IDLE_TINT);
+        lantern:::world:::SetScale(startCap, { x: 0.3f, y: 0.3f, z: 0.3f });
+        beadIndex~ i32 = 1;
+        while beadIndex < BEAD_COUNT {
+            bead := lantern:::world:::Spawn("anchor_bead", PointAt(f32(beadIndex) / f32(BEAD_COUNT)) + BeadLift());
+            lantern:::world:::SetMesh(bead, cubeMesh, BEAD_TINT);
+            lantern:::world:::SetScale(bead, { x: 0.14f, y: 0.14f, z: 0.14f });
+            beadIndex++;
+        }
+    }
+
+    // The start cap shows whether a jump here would swing: warm when ready, grey when not.
+    ShowReady :: (isReady: bool) -> void {
+        lantern:::world:::SetTint(startCap, isReady ? READY_TINT : IDLE_TINT);
+    }
+
+private:
+    static MINIMUM_SPAN :: 0.5f;       // metres between the posts, along the ground, for an arc to exist
+    static BEAD_COUNT :: 14;
+    static POST_HEIGHT :: 2.2f;
+    static IDLE_TINT :: "8A8A8A";
+    static READY_TINT :: "FFC27A";
+    static BEAD_TINT :: "D8C9A8";
+    sag~ f32 = 2.0f;
+
+    CapLift :: () -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: POST_HEIGHT };
+        return lift;
+    }
+
+    BeadLift :: () -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: 0.9f };
+        return lift;
+    }
+
+    PlacePost :: (cubeMesh: i64, at: lantern:::math:::Vec3) -> void {
+        lift: lantern:::math:::Vec3 = { y: POST_HEIGHT * 0.5f };
+        post := lantern:::world:::Spawn("anchor_post", at + lift);
+        lantern:::world:::SetMesh(post, cubeMesh, "5E5246");
+        lantern:::world:::SetScale(post, { x: 0.18f, y: POST_HEIGHT, z: 0.18f });
+    }
+}

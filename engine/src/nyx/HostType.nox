@@ -1,5 +1,8 @@
 NyxC :: import NyxC;
 
+// C's `memset`, declared once for each record array it fills (`nyxdefaults`, `nyxfields`, `nyxmethods`,
+// `nyxoperators`): a foreign function's parameter types are fixed, so each array type needs its own declaration.
+// The calls only use it to get a pointer to the array's memory.
 lantern:::nyxdefaults :: foreign "c" {
     memset :: (destination: Array<u8~>, value: i32, byteCount: usize) -> raw u8~*;
 }
@@ -17,6 +20,10 @@ lantern:::nyxoperators :: foreign "c" {
 }
 
 lantern:::nyx :: namespace {
+    /**
+     * Turns an object id into the pointer-shaped value the C API stores. Nyx doesn't look at it; the id is just a
+     * number (slot + 1) that it hands back.
+     */
     ObjectIdToInstance :: (objectId: u64) -> raw u8~* {
         unsafe {
             viewed := reinterpret<raw u8~*>(objectId);
@@ -24,6 +31,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * The reverse: the id stored in an instance pointer.
+     */
     InstanceToObjectId :: (instance: raw u8~*) -> u64 {
         unsafe {
             viewed := reinterpret<u64>(instance);
@@ -31,6 +41,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * A field of a host value type that scripts can read and write directly: its name, kind and byte offset.
+     */
     HostField :: class {
     public:
         nameText~ CText*!;
@@ -48,6 +61,13 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * A type defined in Nox that scripts can use. There are two shapes. A *value type* is plain bytes with a layout (size,
+     * alignment, defaults and named fields), copied by the script like a struct (`Vec3`). An *object type* has no layout:
+     * scripts hold a handle, and the Nox object stays in the `objects` array, found again by its id. Methods, static
+     * methods, operators and a constructor are added with the functions below, then `Register` builds the C API's
+     * table of records for it.
+     */
     HostType :: class {
     public:
         name~ string! = "";
@@ -95,6 +115,9 @@ lantern:::nyx :: namespace {
             delete layoutError;
         }
 
+        /**
+         * Makes this a value type of `size` bytes and `alignment`, with the bytes of a default value.
+         */
         ValueLayout~: (size: usize, alignment: usize, defaultBytes: raw u8*) -> void {
             isValueType = true;
             valueSize = size;
@@ -107,6 +130,10 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * Declares a field at a byte offset. A layout error (a field outside the value, or on an object type) is kept in
+         * `layoutError` and reported when the type is registered.
+         */
         Field~: (fieldName: string, kind: NyxC:::nyx_kind, offset: usize, width: usize) -> void {
             if !isValueType {
                 if layoutError.length() == 0 {
@@ -123,6 +150,9 @@ lantern:::nyx :: namespace {
             fields.push(new HostField(fieldName, kind, offset));
         }
 
+        /**
+         * Adds a call of the given kind to the right list.
+         */
         Add~: (kind: HostCallKind, callName: string, signature: string, receiverMutable: bool, body: ((context: CallContext~*) -> void)!) -> void {
             entry := new HostCall(kind, callName, signature, body!);
             entry->receiverMutable = receiverMutable;
@@ -137,18 +167,30 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * Adds a method. `receiverMutable` says whether it may change the receiver.
+         */
         Method~: (callName: string, signature: string, receiverMutable: bool, body: ((context: CallContext~*) -> void)!) -> void {
             Add(HostCallKind:::Method, callName, signature, receiverMutable, body!);
         }
 
+        /**
+         * Adds a static method.
+         */
         StaticMethod~: (callName: string, signature: string, body: ((context: CallContext~*) -> void)!) -> void {
             Add(HostCallKind:::StaticMethod, callName, signature, false, body!);
         }
 
+        /**
+         * Adds an operator, named by its symbol (`+`).
+         */
         Operator~: (symbol: string, signature: string, body: ((context: CallContext~*) -> void)!) -> void {
             Add(HostCallKind:::Operator, symbol, signature, false, body!);
         }
 
+        /**
+         * Adds the constructor scripts call as `TypeName(...)`.
+         */
         Constructor~: (signature: string, body: ((context: CallContext~*) -> void)!) -> void {
             Add(HostCallKind:::Constructor, "constructor", signature, false, body!);
         }
@@ -157,6 +199,9 @@ lantern:::nyx :: namespace {
             return userdata;
         }
 
+        /**
+         * Builds the C API's array of method records from the HostCalls (`statics` chooses static or instance).
+         */
         MethodRecords :: (statics: bool) -> Array<NyxC:::nyx_host_method>! {
             records~ Array<NyxC:::nyx_host_method>! = [];
             calls~ Array<HostCall*>! = [];
@@ -189,6 +234,10 @@ lantern:::nyx :: namespace {
             return records!;
         }
 
+        /**
+         * Registers the type with the runtime: builds the records and layout, and hands Nyx the table. Nothing is
+         * registered if there is a layout error.
+         */
         Register~: (owningLedger: raw RuntimeLedger~*) -> NyxError*!? {
             ledger = owningLedger;
             unsafe {
@@ -261,6 +310,9 @@ lantern:::nyx :: namespace {
             return CheckStatus(runtime, status);
         }
 
+        /**
+         * Gives an object a slot (reusing a free one) and makes the Nyx value that refers to it.
+         */
         WrapHandle~: (object: HostObject*!, outValue: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status {
             slot~ usize = objects.length();
             if freed := freeSlots.pop() {
@@ -282,6 +334,9 @@ lantern:::nyx :: namespace {
             return status;
         }
 
+        /**
+         * WrapHandle that returns a Value.
+         */
         Wrap~: (object: HostObject*!) -> Result<Value*!, NyxError*!> {
             made~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -293,6 +348,9 @@ lantern:::nyx :: namespace {
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * Wraps a value type's bytes as a Nyx value.
+         */
         WrapBytes :: (bytes: raw u8~*) -> Result<Value*!, NyxError*!> {
             made~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -304,6 +362,9 @@ lantern:::nyx :: namespace {
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * The instance id inside a Nyx value of this type.
+         */
         InstanceOf :: (value: Value*) -> Result<u64, NyxError*!> {
             if value->runtime != runtime {
                 return Result<u64, NyxError*!>:::Err(new NyxError(NyxC:::NYX_ERROR_INVALID_ARGUMENT, "the value belongs to another runtime"));
@@ -318,6 +379,9 @@ lantern:::nyx :: namespace {
             return Result<u64, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * The raw bytes inside a Nyx value of this type.
+         */
         BytesOf :: (value: Value*) -> raw u8~* {
             instance~ raw u8~* = null;
             if value->runtime != runtime {
@@ -329,6 +393,9 @@ lantern:::nyx :: namespace {
             return instance;
         }
 
+        /**
+         * The Nox object in the slot an instance points to, or null for a bad id.
+         */
         ObjectAt~: (instance: raw u8~*) -> HostObject~*? {
             objectId: u64 = InstanceToObjectId(instance);
             if objectId == 0 || objectId > u64(objects.length()) {
@@ -337,6 +404,9 @@ lantern:::nyx :: namespace {
             return objects[usize(objectId - 1)];
         }
 
+        /**
+         * The Nox object behind a Nyx value of this type.
+         */
         ObjectOf~: (value: Value*) -> HostObject~*? {
             instance: raw u8~* = BytesOf(value);
             if instance == null {
@@ -345,6 +415,9 @@ lantern:::nyx :: namespace {
             return ObjectAt(instance);
         }
 
+        /**
+         * Deletes the object in a slot and leaves a ReleasedHostObject there, so later lookups are safe.
+         */
         ReleaseSlot~: (slot: usize) -> void {
             releasedObject := objects.remove(slot);
             delete releasedObject;
@@ -353,6 +426,9 @@ lantern:::nyx :: namespace {
             liveObjectCount -= 1;
         }
 
+        /**
+         * Releases an instance's slot unless it was already released.
+         */
         Release~: (instance: raw u8~*) -> void {
             objectId: u64 = InstanceToObjectId(instance);
             if objectId == 0 || objectId > u64(objects.length()) {

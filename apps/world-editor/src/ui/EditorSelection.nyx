@@ -1,5 +1,9 @@
 EditorOverlays :: import EditorOverlays;
 
+// What the interface does with the mouse over entities: select (adding with shift or the shortcut key),
+// remember which entity the mouse is over, open the right click menu, and place a template dropped
+// onto the viewport. The viewport itself handles clicks in the 3D view; this is for the outliner rows
+// and the drop target.
 EditorSelection :: class {
 public:
     overlays~ EditorOverlays;
@@ -10,18 +14,23 @@ public:
         this.overlays = overlays;
     }
 
+    // Selects an entity, adding to the selection when `additive` is set by the keyboard.
     Select~: (id: i64) -> void {
         editorSelect(id, this.additive);
     }
 
+    // Remembers the entity under the mouse.
     Hover~: (id: i64) -> void { this.hoveredEntity = id; }
 
+    // Forgets it, unless the mouse has already moved onto another entity.
     Unhover~: (id: i64) -> void {
         if this.hoveredEntity == id {
             this.hoveredEntity = 0;
         }
     }
 
+    // Opens the right click menu on the hovered entity when the right button was pressed this frame. The
+    // entity is selected first unless it already is, so the menu acts on what it was opened on.
     PollContextMenu~: () -> void {
         guard penumbra:::wasSecondaryMouseButtonPressed() && this.hoveredEntity != 0 return;
         if !editorIsSelected(this.hoveredEntity) {
@@ -30,6 +39,8 @@ public:
         this.overlays.OpenContextMenu(this.hoveredEntity);
     }
 
+    // A drag from the palette was dropped on the viewport: its payload "template:ID" says which template to
+    // place, and it is placed where the mouse is.
     DropOnViewport:: (payload: string) -> void {
         guard payload.startsWith("template:") return;
         editorAddEntityAtCursor(payload.substring(9, payload.length() - 9));

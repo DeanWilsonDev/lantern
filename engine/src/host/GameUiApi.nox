@@ -1,7 +1,17 @@
 lantern:::host :: namespace {
+    /**
+     * The error a UI function gives when Chaos didn't start, so a game without UI files still runs.
+     */
     CHAOS_MISSING_MESSAGE: string : "GameUi isn't available: Chaos didn't start";
+    /**
+     * The error for mounting UI before the game's application exists.
+     */
     APPLICATION_MISSING_MESSAGE: string : "lantern:::ui:::Mount needs the game to be loaded; call it from OnStart";
 
+    /**
+     * The names of the game's actions for moving through the UI: previous, next and confirm. A game picks them with
+     * `lantern:::ui:::SetNavigation`, so the menu reads the game's own bindings.
+     */
     NavigationActions :: class {
     public:
         previous~ string!;
@@ -21,10 +31,14 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * What the `lantern:::ui` functions share: the running Chaos UI, the game's application object (handed to a mounted
+     * component so its handlers can call back into the game), and the navigation action names.
+     */
     GameUiState :: class {
     public:
         chaos~ lantern:::chaosui:::ChaosUi*!? = null;
-        application~ lantern:::nyx:::Value*!? = null;
+        applicationValue~ lantern:::nyx:::Value*!? = null;
         navigation~ NavigationActions*!? = null;
 
         GameUiState~: () { }
@@ -33,30 +47,38 @@ lantern:::host :: namespace {
             Release();
         }
 
+        /**
+         * Frees the UI, the application value and the navigation names. The UI goes first, so Chaos is gone before the
+         * runtime it uses.
+         */
         Release~: () -> void {
             delete chaos;
             chaos = null;
-            delete application;
-            application = null;
+            delete applicationValue;
+            applicationValue = null;
             delete navigation;
             navigation = null;
         }
     }
 
+    /**
+     * Mounts a component with the game's application as its argument, failing the call with Chaos's messages when it
+     * can't.
+     */
     MountOnChaos :: (context: lantern:::nyx:::CallContext~*, ui: raw GameUiState~*, file: string, component: string) -> void {
         unsafe {
             if ui->chaos == null {
                 Invalid(context, CHAOS_MISSING_MESSAGE);
                 return;
             }
-            if ui->application == null {
+            if ui->applicationValue == null {
                 Invalid(context, APPLICATION_MISSING_MESSAGE);
                 return;
             }
             guard chaos ~= ui->chaos return;
-            guard application := ui->application return;
+            guard applicationValue := ui->applicationValue return;
             arguments~ Array<lantern:::nyx:::Value*>! = [];
-            arguments.push(application);
+            arguments.push(applicationValue);
             mounted := chaos->Mount(file, component, arguments);
             when mounted! {
                 Result:::Ok(number) -> {
@@ -71,6 +93,10 @@ lantern:::host :: namespace {
         }
     }
 
+    /**
+     * Registers the `lantern:::ui` functions: `Mount`, `Unmount` and `SetNavigation`. See
+     * game-api.md.
+     */
     RegisterGameUiApi :: (runtime: lantern:::nyx:::Runtime~*, ui: raw GameUiState~*) -> lantern:::nyx:::NyxError*!? {
         uiNamespace := new HostNamespace(runtime, "lantern::ui");
         uiNamespace->Function("Mount", "(file: string, component: string) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [ui] {

@@ -1,0 +1,231 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+#pragma clang diagnostic ignored "-Wmissing-braces"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+template<typename T, size_t Num>
+struct spvUnsafeArray
+{
+    T elements[Num ? Num : 1];
+    
+    thread T& operator [] (size_t pos) thread
+    {
+        return elements[pos];
+    }
+    constexpr const thread T& operator [] (size_t pos) const thread
+    {
+        return elements[pos];
+    }
+    
+    device T& operator [] (size_t pos) device
+    {
+        return elements[pos];
+    }
+    constexpr const device T& operator [] (size_t pos) const device
+    {
+        return elements[pos];
+    }
+    
+    constexpr const constant T& operator [] (size_t pos) const constant
+    {
+        return elements[pos];
+    }
+    
+    threadgroup T& operator [] (size_t pos) threadgroup
+    {
+        return elements[pos];
+    }
+    constexpr const threadgroup T& operator [] (size_t pos) const threadgroup
+    {
+        return elements[pos];
+    }
+};
+
+struct AmbientOcclusionUniforms
+{
+    float4 projection_terms;
+    float4 look;
+    float4 texel;
+};
+
+constant spvUnsafeArray<float, 16> _149 = spvUnsafeArray<float, 16>({ 0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0 });
+
+struct main0_out
+{
+    float4 output_occlusion [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 source_uv [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+bool IsBackground(thread const float& depth)
+{
+    return depth > 0.999989986419677734375;
+}
+
+static inline __attribute__((always_inline))
+float LinearDistance(thread const float& depth, constant AmbientOcclusionUniforms& settings)
+{
+    float depth_range = settings.projection_terms.w;
+    return (depth_range * settings.projection_terms.z) / (depth + depth_range);
+}
+
+static inline __attribute__((always_inline))
+float3 ViewPosition(thread const float2& uv, thread const float& depth, constant AmbientOcclusionUniforms& settings)
+{
+    float param = depth;
+    float distance_ahead = LinearDistance(param, settings);
+    float2 ndc = float2((uv.x * 2.0) - 1.0, 1.0 - (uv.y * 2.0));
+    return float3((ndc.x * settings.projection_terms.x) * distance_ahead, (ndc.y * settings.projection_terms.y) * distance_ahead, -distance_ahead);
+}
+
+static inline __attribute__((always_inline))
+float TurnAmount(thread const int2& pixel)
+{
+    return _149[((pixel.y & 3) * 4) + (pixel.x & 3)] / 16.0;
+}
+
+static inline __attribute__((always_inline))
+float2 ProjectToUv(thread const float3& view_position, constant AmbientOcclusionUniforms& settings)
+{
+    float distance_ahead = -view_position.z;
+    float2 ndc = float2(view_position.x / (settings.projection_terms.x * distance_ahead), view_position.y / (settings.projection_terms.y * distance_ahead));
+    return float2((ndc.x * 0.5) + 0.5, 0.5 - (ndc.y * 0.5));
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant AmbientOcclusionUniforms& settings [[buffer(0)]], texture2d<float> depth_image [[texture(0)]], sampler depth_imageSmplr [[sampler(0)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float center_depth = depth_image.sample(depth_imageSmplr, in.source_uv).x;
+    float param = center_depth;
+    if (IsBackground(param))
+    {
+        out.output_occlusion = float4(1.0);
+        return out;
+    }
+    float2 texel = settings.texel.xy;
+    float2 param_1 = in.source_uv;
+    float param_2 = center_depth;
+    float3 center = ViewPosition(param_1, param_2, settings);
+    float2 right_uv = in.source_uv + float2(texel.x, 0.0);
+    float2 left_uv = in.source_uv - float2(texel.x, 0.0);
+    float2 down_uv = in.source_uv + float2(0.0, texel.y);
+    float2 up_uv = in.source_uv - float2(0.0, texel.y);
+    float2 param_3 = right_uv;
+    float param_4 = depth_image.sample(depth_imageSmplr, right_uv).x;
+    float3 right = ViewPosition(param_3, param_4, settings);
+    float2 param_5 = left_uv;
+    float param_6 = depth_image.sample(depth_imageSmplr, left_uv).x;
+    float3 left = ViewPosition(param_5, param_6, settings);
+    float2 param_7 = down_uv;
+    float param_8 = depth_image.sample(depth_imageSmplr, down_uv).x;
+    float3 down = ViewPosition(param_7, param_8, settings);
+    float2 param_9 = up_uv;
+    float param_10 = depth_image.sample(depth_imageSmplr, up_uv).x;
+    float3 up = ViewPosition(param_9, param_10, settings);
+    float3 _275;
+    if (abs(right.z - center.z) < abs(left.z - center.z))
+    {
+        _275 = right - center;
+    }
+    else
+    {
+        _275 = center - left;
+    }
+    float3 across = _275;
+    float3 _300;
+    if (abs(down.z - center.z) < abs(up.z - center.z))
+    {
+        _300 = center - down;
+    }
+    else
+    {
+        _300 = up - center;
+    }
+    float3 along = _300;
+    float3 normal = fast::normalize(cross(across, along));
+    if (dot(normal, center) > 0.0)
+    {
+        normal = -normal;
+    }
+    float radius = settings.look.x;
+    float bias0 = settings.look.z;
+    int2 param_11 = int2(gl_FragCoord.xy);
+    float turn = TurnAmount(param_11) * 6.283185482025146484375;
+    float3 turned = float3(cos(turn), sin(turn), 0.0);
+    float3 tangent = fast::normalize(turned - (normal * dot(turned, normal)));
+    float3 bitangent = cross(normal, tangent);
+    float blocked = 0.0;
+    float _463;
+    for (int sample_index = 0; sample_index < 12; sample_index++)
+    {
+        float fraction = (float(sample_index) + 0.5) / 12.0;
+        float ring = sqrt(fraction);
+        float angle = float(sample_index) * 2.3999631404876708984375;
+        float3 direction = float3(ring * cos(angle), ring * sin(angle), sqrt(1.0 - fraction));
+        float reach = mix(0.100000001490116119384765625, 1.0, fraction * fraction) * radius;
+        float3 sample_position = center + ((((tangent * direction.x) + (bitangent * direction.y)) + (normal * direction.z)) * reach);
+        float3 param_12 = sample_position;
+        float2 sample_uv = ProjectToUv(param_12, settings);
+        bool _429 = sample_uv.x < 0.0;
+        bool _436;
+        if (!_429)
+        {
+            _436 = sample_uv.x > 1.0;
+        }
+        else
+        {
+            _436 = _429;
+        }
+        bool _443;
+        if (!_436)
+        {
+            _443 = sample_uv.y < 0.0;
+        }
+        else
+        {
+            _443 = _436;
+        }
+        bool _450;
+        if (!_443)
+        {
+            _450 = sample_uv.y > 1.0;
+        }
+        else
+        {
+            _450 = _443;
+        }
+        if (_450)
+        {
+            continue;
+        }
+        float stored_depth = depth_image.sample(depth_imageSmplr, sample_uv).x;
+        float param_13 = stored_depth;
+        if (IsBackground(param_13))
+        {
+            _463 = 1000000.0;
+        }
+        else
+        {
+            float param_14 = stored_depth;
+            _463 = LinearDistance(param_14, settings);
+        }
+        float stored_distance = _463;
+        float sample_distance = -sample_position.z;
+        float range_check = smoothstep(0.0, 1.0, radius / fast::max(abs((-center.z) - stored_distance), 9.9999997473787516355514526367188e-05));
+        if (stored_distance < (sample_distance - bias0))
+        {
+            blocked += range_check;
+        }
+    }
+    float occlusion = fast::clamp((blocked / 12.0) * 1.7999999523162841796875, 0.0, 1.0);
+    out.output_occlusion = float4(1.0 - (occlusion * settings.look.y));
+    return out;
+}
+

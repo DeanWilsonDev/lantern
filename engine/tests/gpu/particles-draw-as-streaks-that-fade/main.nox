@@ -1,0 +1,114 @@
+// A dark floor with a fan of orange sparks thrown up from the middle. Each spark is a streak drawn as a line, so the picture
+// has bright pixels above the floor where the sparks are, and none in the same place before they are emitted.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+BrightPixels :: (pixels: Array<u8>, width: u32, height: u32) -> u32 {
+    count~ u32 = 0;
+    for y~ u32 = 0; y < height; y++ {
+        for x~ u32 = 0; x < width; x++ {
+            pixel: u8[4] = PixelAt(pixels, width, x, y);
+            if pixel[0] > 150 && pixel[1] > 60 && pixel[2] < 120 {
+                count += 1;
+            }
+        }
+    }
+    return count;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(40.0f, 40.0f);
+            defer delete floorData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            world := new lantern:::renderer:::RenderWorld();
+            defer delete world;
+            world->sky.enabled = false;
+            world->atmosphere.heightFogEnabled = false;
+            world->atmosphere.lightShaftsEnabled = false;
+            world->post.bloomEnabled = false;
+            world->post.ambientOcclusionEnabled = false;
+            world->post.antiAliasingEnabled = false;
+            world->clearColor = lantern:::core:::Color:::Black();
+            world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 3.0f, z: 8.0f }, Vec3 { x: 0.0f, y: 1.5f, z: 0.0f });
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 256;
+
+            world->Draw(floor, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.2f, 0.2f, 0.2f));
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(BrightPixels(pixels, size, size) == 0, "no sparks, no bright streaks");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            orange := lantern:::core:::Color:::Rgb(1.0f, 0.55f, 0.1f);
+            for index~ u32 = 0; index < 24; index++ {
+                spread: f32 = (f32(index) - 11.5f) * 0.25f;
+                world->particles->Emit(Vec3 { x: 0.0f, y: 0.2f, z: 0.0f }, Vec3 { x: spread, y: 6.0f, z: 0.0f }, orange, 1.0f, 0.2f, 9.0f);
+            }
+            world->Clear();
+            world->Draw(floor, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.2f, 0.2f, 0.2f));
+            world->StepParticles(0.25f);
+            when renderer->Capture(world, 512, 512) {
+                Result:::Ok(image) -> {
+                    capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+                    if path := capturePath {
+                        bytes: Array<u8>! = image->ToPngBytes();
+                        assert(lantern:::core:::WriteBytes(path, bytes), "the capture is written");
+                        delete bytes;
+                    }
+                    delete capturePath;
+                    delete image;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    bright: u32 = BrightPixels(pixels, size, size);
+                    if bright < 30 {
+                        print(`bright streak pixels: ${bright}`);
+                    }
+                    assert(bright >= 30, "the sparks draw as bright streaks");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("particles draw as streaks that fade");
+    return 0;
+}

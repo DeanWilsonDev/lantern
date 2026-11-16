@@ -1,6 +1,14 @@
 lantern:::world :: namespace {
+    /**
+     * The file format this build reads and writes. A file with a higher `format_version` is refused.
+     */
     CURRENT_FORMAT_VERSION: u32 : 1;
 
+    /**
+     * The entity `kind` strings the engine and the platformer know. A world file is plain data, so a kind is just text:
+     * BlockKind, RampKind, MovingPlatformKind, GemKind, SpawnKind and KillPlaneKind name the six the platformer uses,
+     * and the code that reads a level decides what each means.
+     */
     BlockKind :: () -> string {
         return "block";
     }
@@ -25,10 +33,17 @@ lantern:::world :: namespace {
         return "kill_plane";
     }
 
+    /**
+     * An entity id as text for messages (`#12`).
+     */
     KeyText :: (key: u64) -> string! {
         return `#${key}`;
     }
 
+    /**
+     * Where an entity is: position, rotation as degrees about each axis, and scale. Matrix builds the transform in the
+     * order scale, rotate, then move.
+     */
     TransformData :: struct {
         position~ Vec3 = Vec3 { };
         rotationDegrees~ Vec3 = Vec3 { };
@@ -48,11 +63,17 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * The two shapes a world file can describe.
+     */
     ShapeKind :: enum {
         Box,
         Ramp
     }
 
+    /**
+     * A shape: a box (by its half sizes), or a ramp (by width, height and length).
+     */
     Shape :: struct {
         kind~ ShapeKind = ShapeKind:::Box;
         halfExtents~ Vec3 = Vec3 { };
@@ -76,15 +97,25 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * True for a size greater than zero. A shape with a zero or negative size is invalid.
+     */
     IsPositiveSize :: (value: f32) -> bool {
         return value > 0.0f && lantern:::core:::IsFinite(value);
     }
 
+    /**
+     * Whether an entity blocks the player, and how: Static never moves, Kinematic is moved by the game (a moving
+     * platform). An entity with no collider is only drawn.
+     */
     ColliderKind :: enum {
         Static,
         Kinematic
     }
 
+    /**
+     * The four kinds of value a free-form property can hold.
+     */
     PropertyKind :: enum {
         Boolean,
         Number,
@@ -92,6 +123,9 @@ lantern:::world :: namespace {
         Vector
     }
 
+    /**
+     * One property value: a flag, a number, some text or a vector. Text is kept apart, in the entity's `propertyTexts`.
+     */
     PropertyValue :: struct {
         kind~ PropertyKind = PropertyKind:::Boolean;
         boolean~ bool = false;
@@ -115,6 +149,10 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * True when `left` sorts before `right` byte by byte. It gives properties a fixed order in the file so a save
+     * makes the same text every time.
+     */
     TextBefore :: (left: string, right: string) -> bool {
         shared~ usize = left.length();
         if right.length() < shared {
@@ -130,6 +168,9 @@ lantern:::world :: namespace {
         return left.length() < right.length();
     }
 
+    /**
+     * Reads `#RRGGBB` as a colour, or null for anything else.
+     */
     ParseHexColor :: (text: string) -> lantern:::core:::Color? {
         if !text.startsWith("#") || text.length() != 7 {
             return null;
@@ -147,6 +188,11 @@ lantern:::world :: namespace {
         return lantern:::core:::Color:::FromHex(value);
     }
 
+    /**
+     * One thing in a level: an id (unique in the file), a name, an optional parent id, a `kind` string, a transform,
+     * an optional shape, material, tint and collider, and a set of free-form properties (`speed`, `radius` and so on)
+     * that the game reads by key. Properties are how a level gives a gem or a moving platform its numbers.
+     */
     WorldEntity :: class {
     public:
         id~ u64 = 0;
@@ -178,16 +224,25 @@ lantern:::world :: namespace {
             propertyTexts.freeAll();
         }
 
+        /**
+         * Sets the material name.
+         */
         SetMaterial~: (text: string) -> void {
             delete material;
             material = `${text}`;
         }
 
+        /**
+         * Sets the tint, which should be `#RRGGBB`.
+         */
         SetTint~: (text: string) -> void {
             delete tint;
             tint = `${text}`;
         }
 
+        /**
+         * Where a property is in the entity's lists, or null.
+         */
         PropertyIndex :: (key: string) -> usize? {
             for index~ usize = 0; index < propertyKeys.length(); index++ {
                 if propertyKeys[index] == key {
@@ -259,10 +314,17 @@ lantern:::world :: namespace {
             tint = null;
         }
 
+        /**
+         * How many properties the entity has.
+         */
         PropertyCount :: () -> usize {
             return propertyKeys.length();
         }
 
+        /**
+         * The property as a number, or null when it is missing or is a different kind. BooleanProperty, VectorProperty and
+         * TextProperty are the same for their kinds.
+         */
         NumberProperty :: (key: string) -> f32? {
             if index := PropertyIndex(key) {
                 value: PropertyValue = propertyValues[index];
@@ -302,6 +364,9 @@ lantern:::world :: namespace {
             return null;
         }
 
+        /**
+         * The tint as a colour, white when there is none.
+         */
         TintColor :: () -> lantern:::core:::Color {
             if text := tint {
                 if color := ParseHexColor(text) {
@@ -311,10 +376,16 @@ lantern:::world :: namespace {
             return lantern:::core:::Color:::White();
         }
 
+        /**
+         * The entity named for a message: name and id.
+         */
         Label :: () -> string! {
             return `entity #${id} '${name}'`;
         }
 
+        /**
+         * A new entity equal to this one.
+         */
         Copy :: () -> WorldEntity*! {
             copied := new WorldEntity(id, name, kind);
             copied->parent = parent;
@@ -333,6 +404,9 @@ lantern:::world :: namespace {
             return copied!;
         }
 
+        /**
+         * True when every field of both entities is equal. The editor uses it to know whether anything changed.
+         */
         SameAs :: (other: WorldEntity*) -> bool {
             if id != other->id || name != other->name || kind != other->kind || !SameOptionalKey(parent, other->parent) {
                 return false;
@@ -370,10 +444,16 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * True when two transforms are equal.
+     */
     SameTransform :: (left: TransformData, right: TransformData) -> bool {
         return left.position == right.position && left.rotationDegrees == right.rotationDegrees && left.scale == right.scale;
     }
 
+    /**
+     * True when both have no shape or equal shapes.
+     */
     SameShape :: (left: Shape?, right: Shape?) -> bool {
         guard leftShape := left return right == null;
         guard rightShape := right return false;
@@ -386,18 +466,27 @@ lantern:::world :: namespace {
         return leftShape.width == rightShape.width && leftShape.height == rightShape.height && leftShape.length == rightShape.length;
     }
 
+    /**
+     * True when both ids are missing or equal.
+     */
     SameOptionalKey :: (left: u64?, right: u64?) -> bool {
         guard leftKey := left return right == null;
         guard rightKey := right return false;
         return leftKey == rightKey;
     }
 
+    /**
+     * True when both colliders are missing or equal.
+     */
     SameCollider :: (left: ColliderKind?, right: ColliderKind?) -> bool {
         guard leftKind := left return right == null;
         guard rightKind := right return false;
         return leftKind == rightKind;
     }
 
+    /**
+     * True when two property values are equal.
+     */
     SamePropertyValue :: (left: PropertyValue, right: PropertyValue) -> bool {
         if left.kind != right.kind {
             return false;
@@ -410,6 +499,10 @@ lantern:::world :: namespace {
         };
     }
 
+    /**
+     * A whole level: a format version, a name and the list of entities, in the order they appear in the JSON file. The
+     * same class is read by the game, written by the editor and checked by Validate.
+     */
     WorldFile :: class {
     public:
         formatVersion~ u32 = CURRENT_FORMAT_VERSION;
@@ -425,10 +518,16 @@ lantern:::world :: namespace {
             entities.freeAll();
         }
 
+        /**
+         * Appends an entity.
+         */
         Add~: (entity: WorldEntity*!) -> void {
             entities.push(entity!);
         }
 
+        /**
+         * The position of the entity with an id, or null.
+         */
         IndexOf :: (id: u64) -> usize? {
             for index~ usize = 0; index < entities.length(); index++ {
                 if entities[index]->id == id {
@@ -438,6 +537,9 @@ lantern:::world :: namespace {
             return null;
         }
 
+        /**
+         * The positions of every entity of a kind.
+         */
         IndicesOfKind :: (kind: string) -> Array<usize>! {
             indices~ Array<usize>! = [];
             for index~ usize = 0; index < entities.length(); index++ {
@@ -448,6 +550,9 @@ lantern:::world :: namespace {
             return indices!;
         }
 
+        /**
+         * How many entities there are of a kind.
+         */
         CountOfKind :: (kind: string) -> usize {
             count~ usize = 0;
             for index~ usize = 0; index < entities.length(); index++ {
@@ -458,6 +563,9 @@ lantern:::world :: namespace {
             return count;
         }
 
+        /**
+         * The position of the first entity of a kind, or null.
+         */
         FirstOfKind :: (kind: string) -> usize? {
             for index~ usize = 0; index < entities.length(); index++ {
                 if entities[index]->kind == kind {
@@ -467,6 +575,9 @@ lantern:::world :: namespace {
             return null;
         }
 
+        /**
+         * An id no entity uses yet (one more than the largest).
+         */
         NextEntityKey :: () -> u64 {
             largest~ u64 = 0;
             for index~ usize = 0; index < entities.length(); index++ {
@@ -477,6 +588,9 @@ lantern:::world :: namespace {
             return largest + 1;
         }
 
+        /**
+         * The parent id of an entity, or null.
+         */
         ParentOf :: (id: u64) -> u64? {
             if index := IndexOf(id) {
                 return entities[index]->parent;
@@ -484,6 +598,11 @@ lantern:::world :: namespace {
             return null;
         }
 
+        /**
+         * Lists everything wrong with the file, as messages: a version that is too new, a repeated id, an empty kind, a
+         * transform that isn't finite or has a zero scale, a shape with a non-positive size, a bad tint, and so on. An
+         * empty list means the file is sound. Loading and saving both refuse a file with problems.
+         */
         Validate :: () -> Array<string!>! {
             problems~ Array<string!>! = [];
             if formatVersion > CURRENT_FORMAT_VERSION {
@@ -545,6 +664,9 @@ lantern:::world :: namespace {
             return problems!;
         }
 
+        /**
+         * The world as a JSON document, ready to write.
+         */
         ToDocument :: () -> lantern:::json:::JsonDocument*! {
             document := new lantern:::json:::JsonDocument();
             root: u32 = document->NewObject();
@@ -559,6 +681,9 @@ lantern:::world :: namespace {
             return document!;
         }
 
+        /**
+         * The world as JSON text.
+         */
         ToJson :: () -> string! {
             document := ToDocument();
             text~ string! = document->Write(document->root);
@@ -567,6 +692,11 @@ lantern:::world :: namespace {
             return text!;
         }
 
+        /**
+         * Writes the world to a file. It validates first and writes nothing if there are problems. It writes to a temporary
+         * file beside the target and renames it over the target, so a crash can't leave a half-written level. Returns null on
+         * success, else a message.
+         */
         Save :: (path: string) -> string!? {
             problems~ Array<string!>! = Validate();
             if problems.length() > 0 {
@@ -599,6 +729,9 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * The temporary name used while saving: `world.json` is written as `world.json.saving` first.
+     */
     SavingPath :: (path: string) -> string! {
         if path.endsWith(".json") {
             return `${path.substring(0, path.length() - 5)}.json.saving`;
@@ -606,6 +739,9 @@ lantern:::world :: namespace {
         return `${path}.json.saving`;
     }
 
+    /**
+     * One message that lists a file's problems.
+     */
     InvalidMessage :: (path: string, problems: Array<string!>) -> string! {
         message~ string! = `${path}: ${problems.length()} problem(s): `;
         for index~ usize = 0; index < problems.length(); index++ {
@@ -617,6 +753,10 @@ lantern:::world :: namespace {
         return message!;
     }
 
+    /**
+     * Adds an entity to a JSON document as an object. ColliderText, ShapeNode and PropertiesNode do the same for
+     * the parts of an entity.
+     */
     EntityNode :: (document: lantern:::json:::JsonDocument~*, entity: WorldEntity*) -> u32 {
         node: u32 = document->NewObject();
         document->Set(node, "id", document->NewInteger(i64(entity->id)));
@@ -688,6 +828,9 @@ lantern:::world :: namespace {
         return properties;
     }
 
+    /**
+     * Reads a world from JSON text, then validates it. `path` is only used to start the error messages.
+     */
     FromJson :: (text: string, path: string) -> Result<WorldFile*!, string!> {
         when lantern:::json:::Parse(text) {
             Result:::Ok(document) -> {
@@ -714,6 +857,9 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * Turns a reader's first problem into an error message.
+     */
     ReaderFailure :: (reader: WorldReader*!, path: string) -> Result<WorldFile*!, string!> {
         failure~ string! = `${path}: `;
         if problem := reader->problem {
@@ -723,18 +869,24 @@ lantern:::world :: namespace {
         return Result<WorldFile*!, string!>:::Err(failure!);
     }
 
-    DiscardWorld :: (world: WorldFile*!) -> WorldFile*!? {
-        delete world;
+    /**
+     * Deletes a world and returns null, so a variable that held it can be cleared in one line.
+     */
+    DiscardWorld :: (worldFile: WorldFile*!) -> WorldFile*!? {
+        delete worldFile;
         return null;
     }
 
+    /**
+     * Reads a world file from disk. An error message names the file and what was wrong.
+     */
     Load :: (path: string) -> Result<WorldFile*!, string!> {
         when readTextFile(path) {
             Result:::Ok(text) -> {
                 when FromJson(text, path) {
-                    Result:::Ok(world) -> {
+                    Result:::Ok(worldFile) -> {
                         delete text;
-                        return Result<WorldFile*!, string!>:::Ok(world!);
+                        return Result<WorldFile*!, string!>:::Ok(worldFile!);
                     },
                     Result:::Err(message) -> {
                         delete text;
@@ -750,6 +902,10 @@ lantern:::world :: namespace {
         }
     }
 
+    /**
+     * Reads a WorldFile out of a parsed JSON document. It keeps only the first problem it finds (`problem`) and stops
+     * building after it, so the message points at the first mistake in the file.
+     */
     WorldReader :: class {
     public:
         problem~ string!? = null;
@@ -766,6 +922,9 @@ lantern:::world :: namespace {
             }
         }
 
+        /**
+         * The member of an object, or records "missing field" and returns null.
+         */
         Required~: (document: lantern:::json:::JsonDocument*, object: u32, key: string) -> u32? {
             if member := document->Member(object, key) {
                 return member;
@@ -776,6 +935,9 @@ lantern:::world :: namespace {
             return null;
         }
 
+        /**
+         * The member of an object, or null when it is missing or JSON null (for optional fields).
+         */
         Present :: (document: lantern:::json:::JsonDocument*, object: u32, key: string) -> u32? {
             if member := document->Member(object, key) {
                 if document->Kind(member) != lantern:::json:::JsonKind:::Null {
@@ -829,6 +991,9 @@ lantern:::world :: namespace {
             return Vec3 { x: f32(document->Node(first).number), y: f32(document->Node(second).number), z: f32(document->Node(third).number) };
         }
 
+        /**
+         * Reads the whole file: format version, name and every entity.
+         */
         ReadWorld~: (document: lantern:::json:::JsonDocument*) -> WorldFile*!? {
             root: u32 = document->root;
             if document->Kind(root) != lantern:::json:::JsonKind:::Object {
@@ -850,18 +1015,21 @@ lantern:::world :: namespace {
                 Fail("invalid type for entities, expected a sequence");
                 return null;
             }
-            world := new WorldFile(document->Text(nameAt));
-            world->formatVersion = u32(version);
+            worldFile := new WorldFile(document->Text(nameAt));
+            worldFile->formatVersion = u32(version);
             child~ u32 = document->FirstChild(entitiesAt);
             while child != lantern:::json:::NO_NODE {
                 parsedEntity: WorldEntity*!? = ReadEntity(document, child);
-                guard parsedEntity return DiscardWorld(world!);
-                world->Add(parsedEntity!);
+                guard parsedEntity return DiscardWorld(worldFile!);
+                worldFile->Add(parsedEntity!);
                 child = document->NextSibling(child);
             }
-            return world!;
+            return worldFile!;
         }
 
+        /**
+         * Reads one entity and its parts.
+         */
         ReadEntity~: (document: lantern:::json:::JsonDocument*, node: u32) -> WorldEntity*!? {
             if document->Kind(node) != lantern:::json:::JsonKind:::Object {
                 Fail("invalid type, expected struct WorldEntity");
@@ -932,6 +1100,9 @@ lantern:::world :: namespace {
             return entity!;
         }
 
+        /**
+         * Reads a transform's position, rotation and scale.
+         */
         ReadTransform~: (document: lantern:::json:::JsonDocument*, node: u32) -> TransformData? {
             if document->Kind(node) != lantern:::json:::JsonKind:::Object {
                 Fail("invalid type, expected struct TransformData");
@@ -956,6 +1127,9 @@ lantern:::world :: namespace {
             return transform;
         }
 
+        /**
+         * Reads a shape: a box (its `half_extents`) or a ramp (width, height and length).
+         */
         ReadShape~: (document: lantern:::json:::JsonDocument*, node: u32) -> Shape? {
             if document->Kind(node) != lantern:::json:::JsonKind:::Object {
                 Fail("invalid type, expected internally tagged enum Shape");
@@ -995,6 +1169,9 @@ lantern:::world :: namespace {
             return null;
         }
 
+        /**
+         * Reads an entity's free-form properties.
+         */
         ReadProperties~: (document: lantern:::json:::JsonDocument*, node: u32, entity: WorldEntity~*) -> void {
             if document->Kind(node) != lantern:::json:::JsonKind:::Object {
                 Fail("invalid type for properties, expected a map");

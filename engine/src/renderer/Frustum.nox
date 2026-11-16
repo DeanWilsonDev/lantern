@@ -1,16 +1,35 @@
 lantern:::renderer :: namespace {
+    /** Row `row` of a column-major matrix. */
     MatrixRow :: (matrix: Mat4, row: usize) -> Vec4 {
         return Vec4 { x: matrix.elements[row], y: matrix.elements[4 + row], z: matrix.elements[8 + row], w: matrix.elements[12 + row] };
     }
 
+    /**
+     * A plane `(a, b, c, d)` scaled so its normal `(a, b, c)` is unit length, so `dot(normal, point) + d` is a true
+     * distance.
+     */
     NormalizedPlane :: (plane: Vec4) -> Vec4 {
         length: f32 = Math:::max(Vec3 { x: plane.x, y: plane.y, z: plane.z }.length(), 0.000001f);
         return Vec4 { x: plane.x / length, y: plane.y / length, z: plane.z / length, w: plane.w / length };
     }
 
+    /**
+     * The camera's view volume: a truncated pyramid (a box, for an orthographic camera) bounded by six planes. Anything
+     * wholly outside it can't appear on screen, so the renderer skips it without any GPU work (frustum culling).
+     */
     Frustum :: struct {
+        /**
+         * Left, right, bottom, top, near, far. Each normal points inwards, so a point is inside when its distance to
+         * every plane is positive.
+         */
         planes~ Vec4[6] = filled<Vec4, 6>(Vec4 { });
 
+        /**
+         * The six planes straight from the view-projection matrix (the Gribb and Hartmann method). A point is visible
+         * when its clip coordinates satisfy -w <= x <= w, -w <= y <= w and 0 <= z <= w; each inequality, written in
+         * terms of the matrix's rows, is one plane in world space: row3 + row0 is the left plane, row3 - row0 the
+         * right, and so on. Near is row2 alone because depth runs 0 to 1, not -1 to 1.
+         */
         static FromViewProjection :: (matrix: Mat4) -> Frustum {
             row0: Vec4 = MatrixRow(matrix, 0);
             row1: Vec4 = MatrixRow(matrix, 1);
@@ -28,6 +47,12 @@ lantern:::renderer :: namespace {
             };
         }
 
+        /**
+         * Whether a world-space box might be visible. For each plane, take the box corner farthest along the plane's
+         * normal (the "positive vertex"); if even that corner is outside, the whole box is, and it can be culled.
+         * Conservative: a box near a corner of the frustum can pass while still being off-screen, which only costs a
+         * wasted draw.
+         */
         Intersects :: (bounds: lantern:::core:::Aabb) -> bool {
             for plane in planes {
                 farthest~ Vec3 = bounds.min;

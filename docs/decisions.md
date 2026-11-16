@@ -3,6 +3,89 @@
 Dean handed over the decisions for the overnight build on 2026-10-26. Each entry says what was
 decided, why, and how to undo it. Newest entries go at the bottom.
 
+## Index
+
+Decisions are numbered in the order they were made, without gaps. A new decision takes the next number, and a pull
+request that adds one to a branch that has since gained another renumbers its own. This table lists D-001 to D-073; a
+later decision is in the log below and is added here when someone next tidies it. `grep '^## D-' docs/decisions.md` lists
+every entry.
+
+| Number | Decision |
+| --- | --- |
+| D-001 | Work on a branch based on `proto` |
+| D-002 | Nyx C ABI comes from the `nyx-capi` pull request branch |
+| D-003 | SDL3 through `sdl3-sys`, bundled by default |
+| D-004 | Shaders: WGSL compiled to SPIR-V and MSL by naga at build time (superseded: shaders are GLSL, built with `glslangValidator` and `spirv-cross`; see `running.md`) |
+| D-005 | Text: embedded 8×8 bitmap font |
+| D-006 | Audio: WAV only, mixed on the main thread |
+| D-007 | Collision: our own kinematic collision, no physics crate |
+| D-008 | Assets are generated and committed |
+| D-009 | Windows renders through Vulkan |
+| D-010 | One rustfmt configuration for the whole workspace |
+| D-011 | The frame loop is a struct driven one frame at a time |
+| D-012 | Minimised windows pause the simulation |
+| D-013 | Rendering details chosen for M2 |
+| D-014 | Scene, assets and audio wiring (M3) |
+| D-015 | Collision and character controller (M4) |
+| D-016 | Platformer slice details (M5) |
+| D-017 | Nyx scripting layer (M6) |
+| D-018 | The world file is the seam between the game and the editor |
+| D-019 | The game describes itself to the editor with a palette |
+| D-020 | The editor's split: Rust logic and viewport, Nyx/Chaos/Cosmos panels |
+| D-021 | The viewport renders off-screen and is copied into a Penumbra texture |
+| D-022 | The editor links the system SDL3, and the C API's rules |
+| D-023 | All game code is Nyx; engine code is Rust (2026-10-27) |
+| D-024 | Direct calls replace the snapshot and command queue |
+| D-025 | One generic runner: `lantern` and `game.json` |
+| D-026 | The level is the editor's world file |
+| D-027 | The engine keeps F5 and F1 |
+| D-028 | Reload restarts the whole game |
+| D-029 | Vectors are host value types |
+| D-030 | Nyx gaps go on the Game Engine epic |
+| D-031 | The viewport is a Chaos primitive, not a native widget |
+| D-032 | Editor UI state lives in one Nyx `Application` |
+| D-033 | Menus, popups, tooltips and dialogs are portals built from frames |
+| D-034 | Shortcuts are split between Nyx and the viewport |
+| D-035 | Preferences are a flat JSON file |
+| D-036 | Play in editor runs the real game on a scratch level |
+| D-037 | The stack is pinned by branch, overridable per checkout |
+| D-038 | Editing operations are editor-core methods with one undo entry each |
+| D-039 | Thumbnails and previews are rendered by the backend |
+| D-040 | Penumbra's closed dropdown draws its label |
+| D-041 | The hosts describe their names to nyx-lsp |
+| D-042 | The game code reads as a tutorial |
+| D-043 | The game's UI is Chaos and Cosmos |
+| D-044 | Mouse in the in-game UI; Ui::: removed; elements are lantern:::ui:::Element |
+| D-045 | Every engine name is under lantern::: |
+| D-046 | The Nox engine links Nyx and the Chaos bridge as one library |
+| D-047 | The Nox game host keeps the game's UI in a GameUiState the session owns |
+| D-048 | The Nox editor model keeps the Rust shapes, with sorted arrays for maps |
+| D-049 | Nox gizmo handles are a struct, and the viewport build waits for the session |
+| D-050 | The Nox editor session takes its drag out of the session while it works on it |
+| D-051 | The Nox editor backend is a static library behind the same C header |
+| D-052 | The view cube is drawn by the Nox editor into the viewport's overlay |
+| D-053 | Clicking the same spot again selects the next entity behind |
+| D-054 | Outliner rows reorder by dropping on the line between them |
+| D-055 | EditorApplication only sets up the application; behaviour lives in services and components |
+| D-056 | The Nox host is the world editor's only host |
+| D-057 | The engine is laid out one folder per domain, with SDL behind a facade folder |
+| D-058 | Lights are plain data in RenderWorld: one sun, up to eight local lights, a PBR-lite material |
+| D-059 | Shadows come from depth maps in two atlases, filtered with PCF |
+| D-060 | The platformer grows by slices of the Crimson and Thorn mechanics |
+| D-061 | Slice 1 of the Crimson and Thorn mechanics: the streets |
+| D-062 | Lights in a world file are ordinary entities, found by kind |
+| D-063 | Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters |
+| D-064 | The scene is drawn in high dynamic range, then tone mapped, with bloom as an optional pass |
+| D-065 | A procedural sky that lights the scene |
+| D-066 | FXAA, not MSAA or TAA |
+| D-067 | Screen-space ambient occlusion over the depth buffer |
+| D-068 | Height fog and light shafts in the composite pass |
+| D-069 | A spiral shadow filter and cascade blending, not contact-hardening shadows |
+| D-070 | Blob shadows darken surfaces by distance to a point, in the composite pass |
+| D-071 | The colour grade is applied after tone mapping, in the composite pass |
+| D-072 | Particles are simulated in the engine and drawn as fading line streaks |
+| D-073 | Normal maps use a cotangent frame from screen-space derivatives |
+
 ## D-001 Work on a branch based on `proto`
 
 All work is on `claude/project-thread-mxbapl`, branched from `proto` and opened as a pull request
@@ -23,6 +106,8 @@ Raw bindings plus our own thin wrappers keep every `unsafe` block in two crates
 a system SDL3 instead, build with `--no-default-features --features system-sdl` on the game.
 
 ## D-004 Shaders: WGSL compiled to SPIR-V and MSL by naga at build time
+
+**Superseded.** This is the Rust engine's shader workflow. The Nox engine writes shaders in GLSL and builds them with `glslangValidator` and `spirv-cross` (`mist run build-shaders`; see `running.md`). The reasoning below is kept as history.
 
 - One source per shader, readable, and no external SDK needed.
 - SPIR-V is used by the Vulkan backend (Linux, Windows) and MSL by Metal (macOS).
@@ -392,7 +477,7 @@ about 150 µs, `OnUpdate` 40 µs and `OnRender` 50 µs per call.
 
 The 3D view, the template thumbnails and the turntable preview are all `<viewport renderer="…">`
 elements in `.chaos` files. The primitive is new in Penumbra and penumbra-ui-backend; a renderer
-is anything that implements `Umbra::IViewportRenderer` (from the umbra-interfaces library): it fills an RGBA
+is anything that implements the interface library's `IViewportRenderer`: it fills an RGBA
 buffer each frame and gets pointer, wheel, key and hover events in its own coordinates. The
 editor registers three renderers by name (`level`, `preview`, `thumbnail:<template>`) from
 `EditorHost::RegisterViewportRenderers` before the UI runs, and the Chaos tree picks them by
@@ -518,8 +603,8 @@ Cards: `platformer-game/in-game-ui-with-chaos-and-cosmos` on the lantern board, 
 (GAME-F04), Chaos and Cosmos boards (epic `lantern-in-game-ui-gaps`).
 
 - **Backend shape.** Chaos and Cosmos are C++, so a small C++ bridge (`crates/chaos-ui/native`)
-  is the Chaos backend: each element is a plain node implementing `Umbra::IWidget` (from the
-  umbra-interfaces library), the contract Chaos reconciles against, and `Cosmos::IStyleTarget`. The bridge
+  is the Chaos backend: each element is a plain node implementing the interface library's `IWidget`,
+  the contract Chaos reconciles against, and `Cosmos::IStyleTarget`. The bridge
   hands Rust a flat snapshot of nodes with resolved styles over a C API; layout, drawing and
   focus are Rust (`lantern-chaos-ui`). That keeps the engine's drawing in one language and the
   C++ surface small. Penumbra isn't used: it is a desktop widget toolkit with its own renderer.
@@ -619,17 +704,16 @@ copy of Nyx with the C API the engine calls.
   commits and its own copy of the bridge.
 - **One call added.** `lantern_chaos_ui_snapshot_node` copies one node of the last snapshot, since
   Nox can't index a C array through a raw pointer.
-- **Chaos's target.** The bridge still sets `ChaosBuildTarget::UmbraEngine`, the only Umbra name
-  in `engine/` (the Rust crates keep theirs until they're retired), until Chaos has a target named for game engines (Nyx board,
-  `proto-a-chaos-build-target-for-game-engines-that-doesn-t-say-umbra`).
+- **Chaos's target.** The bridge sets `ChaosBuildTarget::GameEngine`, the name Chaos gives a game
+  engine's target. `UmbraEngine` stays in Chaos as an alias of it.
 
 Story: `engine-on-nox/l7-game-ui/port-chaos-ui-the-native-library-its-binding-nodes-styles-layout-and-drawing`.
 
 ## D-047 The Nox game host keeps the game's UI in a GameUiState the session owns
 
 The Rust host shares its Chaos UI, the game's application value and the navigation actions with the
-`lantern::ui` functions through an `Rc<RefCell<GameUiState>>`. Nox has no shared ownership, so the
-Nox `ScriptSession` owns one `GameUiState` and the `lantern::ui` functions reach it through a raw
+`lantern:::ui` functions through an `Rc<RefCell<GameUiState>>`. Nox has no shared ownership, so the
+Nox `ScriptSession` owns one `GameUiState` and the `lantern:::ui` functions reach it through a raw
 pointer captured when they're registered, the way the other APIs reach `EngineState`.
 
 - **Order.** The session deletes the `GameUiState` first (the Chaos UI, then the application value),
@@ -905,3 +989,383 @@ and the editor run as before.
 - **Tutorial comments** in the renderer, the application and the loop, as the game code has (D-042).
 
 Card: `engine-follow-ups/engine-structure-and-a-renderer-to-learn-from`.
+
+## D-058 Lights are plain data in RenderWorld: one sun, up to eight local lights, a PBR-lite material
+
+Dean asked for proper lighting and shadows so a full 3D platformer can be built on the engine. The light model stays
+data in the `RenderWorld`, like everything else the renderer reads, and nothing above `renderer/` touches the GPU.
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+- **One sun plus local lights.** `DirectionalLight` stays the sun and the ambient term. A new `Light` struct covers
+  point and spot lights (position, direction, colour times intensity, range, cone angles, a shadow flag).
+  `RenderWorld.lights` holds them; the shader takes the eight that matter most to the camera
+  (`MAX_LOCAL_LIGHTS`). Many lights would need clustered or deferred shading, which this tutorial renderer leaves out.
+- **Forward shading, PBR-lite.** Cook-Torrance with GGX, Smith visibility and Schlick Fresnel, driven by a metallic
+  and a roughness value, plus an emissive colour. Chosen over Blinn-Phong because it is a few more lines and
+  behaves under any light, and over full PBR because there are no image-based lights, normal maps or clear coat.
+- **Material on the draw.** `DrawItem` gets a `Material` (metallic, roughness, emissive) with defaults that look
+  like the old matte surfaces, so existing games and tests don't change. The tint stays on the draw.
+- **Ambient is a sky and ground colour pair**, blended by the normal's height, instead of one colour times a fixed
+  hemisphere factor. The old single `ambient` stays valid and is used for both.
+- **Nyx sees it as `lantern:::lights`**, with handles for local lights, so game code sets the sun, adds, moves and
+  removes lights and sets a material; the engine remains Nox.
+
+Card: `lighting-and-shadows/light-model-and-materials`.
+
+## D-059 Shadows come from depth maps in two atlases, filtered with PCF
+
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+- **A depth-only pass before the main pass.** Casting draws are rendered from the light into a depth texture that the
+  lit shader then samples with a comparison sampler.
+- **Atlases, not texture arrays.** Cascades, spot lights and point-light faces are tiles of one depth texture each,
+  drawn by setting the viewport per tile inside a single render pass. One texture and one pass per atlas keeps the
+  code short and the resource count low.
+- **Sun: three cascades** fitted to slices of the camera's view, with texel snapping so edges don't shimmer.
+- **Local lights:** the shadowed spot lights use one tile each; a shadowed point light uses six (a cube laid out as
+  tiles, face picked by the larger axis of the light-to-pixel vector). The local atlas has 12 tiles (`MAX_LOCAL_SHADOW_TILES`), so a frame shadows at most twelve spot lights, or two point lights.
+- **Filtering and bias.** Hardware 2x2 comparison filtering plus a 3x3 PCF loop. Acne is handled by a rasteriser
+  constant and slope bias in the shadow pipeline, plus a normal-offset push and a small fixed depth bias in the shader.
+- **Opt-out per draw.** `DrawItem.castsShadows` and `ShadowSettings` on the `RenderWorld` (map size, distance, on or off).
+- **Left out:** soft shadows from area lights (PCSS), shadow caching, translucent shadows and cascade blending.
+
+Card: `lighting-and-shadows/shadow-maps`.
+
+## D-060 The platformer grows by slices of the Crimson and Thorn mechanics
+
+Dean (2026-11-16) wants the platformer to become a full 3D platformer, starting with mechanics from the Crimson and
+Thorn design documents. `crimson-and-thorn-slice.md` maps every mechanic to now, later or not for the demo.
+
+- **Design source only.** The demo takes mechanics and pacing, not story, art or audio, and Lantern's code and docs name
+  nothing but Lantern.
+- **Slice 1 is the streets**: checkpoints, a scripted companion, the Boost in its solo and cooperative forms, and one
+  short level that teaches them in that order. Slice 2 adds the Guide Light, chapter looks and thorns.
+- **Never punish.** The design's gentleness is a rule for the demo: no health and no lives. A fall returns the player to
+  the latest checkpoint with their gems.
+- **The Anchor waits.** Its 3D form is open in the design, so it is a question for Dean on its card, not a guess.
+- **The game stays on the seam.** New world kinds are labels the game gives meaning to. A missing engine call is a card
+  on `engine-follow-ups` before it is worked around.
+
+Cards: `platformer-game/crimson-and-thorn-slice`.
+
+## D-061 Slice 1 of the Crimson and Thorn mechanics: the streets
+
+The first slice (`crimson-and-thorn-slice.md`) is playable from the main menu's "The streets" button.
+
+- **The Boost is a taller take-off, not a new move.** The controller works the take-off speed out from its jump height
+  when the jump starts, so `Player.Move` sets `BOOST_JUMP_HEIGHT` (3.6 m) for the one step that starts a boosted jump and
+  puts the normal 1.5 m back. Gravity and the variable-height rule are untouched. 3.6 m is a first guess for Dean to feel:
+  the level's ledges (2.2 m with a crate, 3.2 m with the boost) leave 0.4 m of margin.
+- **The companion is data and a few lines.** Her route is a list of `companion_stop` entities sorted by `order`. She walks
+  when the player is within 4 m along the ground, waits at a `boost` stop until the boost is used, and climbs a stop that is
+  straight above the last one at the stop's `speed`. There is no pathfinding, as the design says.
+- **A fall costs a walk.** Checkpoints keep gems and send the companion back to the stop the checkpoint names. `R` still
+  restarts the whole level.
+- **No `boost_spot` kind.** The boost stop already says where she crouches, so a second marker would only repeat it.
+- **The autopilot has a script per level.** `LANTERN_AUTOPLAY=1` on the streets plays the level through (it is open-loop,
+  a function of the simulation clock), which gives smoke runs and screenshots. The engine test drives the same route
+  with the keyboard.
+- **The menu picks the level.** `Play` loads the course (or the editor's level), `The streets` loads the streets;
+  choosing the one already loaded just resumes.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (checkpoints, companion and the Boost complete).
+
+## D-062 Lights in a world file are ordinary entities, found by kind
+
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+Dean asked for lights that can be placed in the world editor. A light is a world entity of kind `point_light`,
+`spot_light` or `sun`, and its colour, strength, range, cone and shadow switch are the entity's properties, so the
+file format, the editor's placement, move, rotate, hide and undo tools and its property inspector all work on lights
+unchanged.
+
+- **No new format.** The world file already carries a kind and typed properties per entity. A new top-level `lights`
+  list would have needed a format version, a second editing path and its own selection rules.
+- **Direction is rotation.** A spot light and the sun point straight down with no rotation, and rotating the entity
+  turns them, which the editor's rotate gizmo already does. Scale is ignored.
+- **One conversion, two users.** `lantern:::world:::LocalLightFromEntity` and `SunFromEntity` turn an entity into the
+  renderer's `Light` or `DirectionalLight`. The game's world load and the editor's viewport both call them, so the
+  editor shows what the game draws.
+- **Load adds, clear removes.** `lantern:::world:::Load` adds the file's lights to the render world and remembers
+  their ids, and `lantern:::world:::Clear` removes exactly those, so lights a game adds itself stay. A `sun` entity
+  replaces the sun and ambient light; the last one in the file wins. Clearing the world does not put the old sun back, so a game that loads more than one level sets its own sun before each load, as the platformer does.
+- **A parent's transform is not applied in the game.** The editor places a light through its parents, the game load
+  by the light's own transform. Keep lights unparented until the game load composes parents.
+- **Left out:** a light that follows another entity, lights switched on and off by game events from the file alone
+  (a script can `FindByKind` the entity and use the `lights` API), and a viewport toggle that turns the editor's
+  light preview off.
+
+Card: `lighting-and-shadows/lights-in-the-world-editor`.
+
+## D-063 Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters
+
+The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter looks and thorns to the streets.
+
+- **The Guide Light is a point light with a reveal radius.** `GuideLight` adds a light (`lantern:::lights:::AddPoint`),
+  moves it with its carrier each step and removes it on reload. Hidden `glow_platform` pieces are lit when they are
+  within any light's radius (8 m for the companion, 5 m for the lantern) and stay for 4 s, which covers a player a few
+  metres behind the light. The radius is the rule and the light is only how it looks, so the two can be tuned apart.
+- **Hiding a platform moves it.** There is no engine call to switch collision off, so a hidden piece is teleported
+  1000 m down and its mesh hidden, as the engine card says. A static collider doesn't follow a teleport, so these pieces
+  are `kinematic` in the world file. `SetSolid` on the card replaces this.
+- **The lantern is what the second gap is for.** The companion's last stop is before it, so only the lantern's light
+  shows those plates: her form of the puzzle first, then the player's own.
+- **The level says its chapter.** The spawn's `chapter` property picks the sky, fog and sun in `chapter-looks.nyx`.
+  Level lamps stay with `LightingSettings`. The streets are chapter 1; `streets-later` is the same geometry as chapter 3,
+  which is also when thorns appear (`min_chapter`, default 3).
+- **Thorns nudge.** The game remembers the last place the player stood on the ground at least 1.6 m from any thorn and a
+  touch sends them there. Gems, checkpoints and the companion are untouched, so it can't end a run.
+- **The streets autopilot is companion-aware.** It still is a function of the clock, but it waits where the companion
+  needs the player close and walks at 70% speed past the rooftop.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (Guide Light, chapter looks and thorns complete; the Anchor waits for Dean).
+
+
+## D-064 The scene is drawn in high dynamic range, then tone mapped, with bloom as an optional pass
+
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+Dean asked for the renderer to be improved step by step, starting with emissive gems that glow. A glow needs light
+brighter than white, and an 8-bit target throws that away, so the lit pass now draws into a 16-bit float texture and
+three more steps turn it into the picture. `bloom-and-tone-mapping.md` is the guide.
+
+- **Pass order.** Shadows, the scene pass (lit meshes into the HDR texture), bloom (nine small full-screen passes),
+  the composite pass (glow, exposure, tone map, sRGB into the swapchain image), then a last pass for debug lines and
+  the overlay. Lines and overlay stay out of the HDR path, so a HUD colour reaches the screen as written and the
+  editor's gizmo colours don't change.
+- **The default tone mapper is Khronos PBR Neutral, not ACES.** ACES was tried first and washed the platformer out: its
+  curve brightens middle values and desaturates pastels, and the game's colours were tuned for a clamped target. Neutral
+  leaves everything below about 0.8 alone. ACES stays one call away (`SetToneMapper("aces")`), and so does "none".
+- **Bloom is 13-tap shrink and tent-filter grow**, five levels, with a soft-knee threshold and Karis averaging on the
+  first shrink so a single bright pixel can't sparkle. Defaults: threshold 1.5, strength 0.1, so a sunlit wall doesn't
+  glow and a gem does.
+- **`SetGlow(entity, color, strength)`** lets a material's emissive light exceed 1 (the `"RRGGBB"` string can't). The
+  gems glow at 4 times their colour.
+- **`lantern:::graphics`** holds the settings and `SetQuality("low" | "medium" | "high")` is the one switch effects join
+  as they are added. Low turns bloom off. HDR and tone mapping stay on at every level.
+- **A GPU that can't draw into and sample RGBA16F is refused at start-up** with a clear error. SDL GPU's Vulkan and Metal
+  devices all support it, so there is no 8-bit fallback to maintain.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU. The cloud renders with lavapipe, a software
+  Vulkan driver, so the 60 fps goal needs Dean's Mac.
+
+Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
+
+## D-065: A procedural sky that lights the scene
+
+- **The sky is a formula, not a cubemap.** `SkyGradient(direction, zenith, horizon, ground, blur)` in
+  `engine/shaders/sky-common.glsl` is shared by the backdrop shader and the lit shader, so what you see behind the world
+  is exactly what lights it. No bake step, no texture to load.
+- **Image-based lighting is analytic.** Diffuse irradiance is the sky's blurred lookup along the normal; specular is the
+  roughness-blurred lookup along the mirror direction times an approximation of the environment BRDF table.
+- **The sky colours ride in the existing light uniform block** (now 176 bytes). SDL GPU allows four uniform buffers per
+  stage, and a fifth crashed lavapipe, so no new buffer was added.
+- **The sky is drawn after the meshes** at the far depth with a less-or-equal test, so it only shades uncovered pixels.
+  It is skipped for orthographic cameras.
+- **On at every quality level.** It is one fullscreen pass and arithmetic per lit pixel.
+- **`lantern:::sky`** sets colours, the sun disc, the lighting strength and intensity, and turns the sky off.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
+
+## D-066: FXAA, not MSAA or TAA
+
+- **FXAA runs on the tone-mapped picture** as one extra full-screen pass (`fxaa.frag`). The composite writes a texture of
+  the screen's size and format and FXAA reads it into the screen image.
+- **Not MSAA.** The lines and overlay draw after the composite onto a single-sample image and the lines depth-test against
+  the scene's depth, so MSAA would need a depth resolve or lines in the HDR pass (changing their exact colours). It would
+  also complicate ambient occlusion, which reads depth next.
+- **Not TAA.** It needs motion vectors and history, and ghosts on fast movement.
+- **It softens fine texture detail slightly.** Accepted for a game of big shapes. MSAA can be revisited as its own card.
+- **Quality:** low turns it off, medium and high turn it on. `SetAntiAliasing(enabled)` overrides it.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/anti-aliasing`.
+
+## D-067: Screen-space ambient occlusion over the depth buffer
+
+- **Twelve hemisphere samples per pixel** read the scene's depth, with a range check, then a depth-aware 4x4 average
+  removes the 4x4 sample-turning pattern. Two full-screen passes on one-channel textures.
+- **The depth buffer gains the sampler usage.** It was a depth target only; every depth format the renderer picks already
+  supports sampling (the shadow maps use them).
+- **The composite multiplies the scene by it, before bloom.** A single-pass lit shader can't apply it to ambient light
+  alone, so direct light in creases darkens a little too. A depth pre-pass would let AO touch only ambient; not done, to keep
+  the renderer small. The multiplier of 1.8 on the blocked fraction is because samples near the surface rarely count.
+- **Perspective cameras only.** The editor's orthographic views skip it.
+- **Quality:** low off, medium and high on. Defaults: radius 0.6 m, intensity 0.8, bias 0.04 m.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU. This is the most expensive effect so far.
+
+Card: `renderer-visuals/ambient-occlusion`.
+
+## D-068: Height fog and light shafts in the composite pass
+
+- **Both are done in `composite.frag`**, which already reads the scene, so it also reads the depth buffer. Each pixel's
+  distance comes from its stored depth and its ray from the camera basis, as the sky does it.
+- **Height fog is analytic.** Exponential density with height integrates in closed form along a ray, so there is no
+  marching. It adds to the old distance fog, which still hides the far plane; it doesn't replace it.
+- **Light shafts are a screen-space radial walk** towards the sun, counting steps that see the far plane. No shadow-map
+  marching: it needs only the depth buffer and no extra shadow work, but it can't shaft through geometry the depth buffer
+  doesn't contain (so the sun behind the camera, or off one side, gives none).
+- **Quality:** Low turns shafts off; height fog stays (it is arithmetic only). Orthographic cameras skip both.
+- **Defaults are on, and subtle** (density 0.008, shaft strength 0.35), so the platformer gains some haze without nyx edits.
+  A game can set them with `lantern:::atmosphere`; the Crimson and Thorn chapter looks can set their own.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
+
+## D-069: A spiral shadow filter and cascade blending, not contact-hardening shadows
+
+- **The 3x3 filter becomes a spiral of 4, 12 or 20 lookups** over a disc of `softness` texels (default 2), turned by a
+  different angle per pixel, so the edge is softer and the banding becomes fine noise. Quality sets the count.
+- **Cascades fade into each other** over the last 12% of each one, and the last fades to "no shadow", so the seams between
+  cascades and the hard cut at the shadow distance are gone. Snapping the cascades to whole texels was already there.
+- **Not done: a penumbra that widens with distance from the caster.** That needs a blocker search over raw depths, and the
+  renderer reads its shadow maps through a comparison sampler. It would need a second, plain sampler on the same texture
+  and a blocker-search loop; left for a card of its own.
+- **The effect is modest.** Edges are softer and smoother, which is clearest on long shadows; contact points stay tight.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/softer-shadows-and-stable-cascades`.
+
+## D-070: Blob shadows darken surfaces by distance to a point, in the composite pass
+
+- **A blob is a point, a radius and a darkness**, and the composite pass darkens each pixel by how near its world position
+  (rebuilt from the depth buffer) is to the point, as an ellipse that reaches only a short way above and below it. No mesh,
+  no decal projection, and it lies correctly over slopes, steps and walls.
+- **They last one frame**, like draws, so a game adds them every frame in `OnRender`. A frame holds eight; a ninth is ignored.
+- **The platformer's disc is gone.** Its player keeps the floor point and radius from the per-step raycast it already did and
+  hands them to the engine in `OnRender`; the disc entity, its lift off the floor and its hide-and-show are removed.
+  `unitSphereMesh` stays in the assets for other uses. The recorded traces in
+  `tests/host/the-platformer-matches-the-rust-trace` keep the draw count in their last column, which fell by one wherever the
+  disc used to draw, so those two files were re-recorded; every other column is unchanged, so the simulation still matches.
+- **Not decals.** Textured decals (scorch marks, paint) need a texture bound to the pass; blobs use none. Decals are left for
+  a card of their own.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
+
+## D-071: The colour grade is applied after tone mapping, in the composite pass
+
+- **Four controls:** saturation, contrast, tint and vignette, in that order, on the 0 to 1 picture after tone mapping and
+  before the sRGB encode, so each number does the same to what the viewer sees whatever the scene's brightness.
+- **Neutral by default.** Nothing changes for a game that doesn't call it.
+- **The HUD isn't graded.** It is drawn after the composite, as before.
+- **No lookup-table grade.** A 3D colour lookup texture is the usual tool for authored looks, but it needs an asset
+  pipeline for the tables; four numbers are enough for the chapter looks Crimson and Thorn needs and can be blended by hand
+  between chapters. A table is a possible later step.
+- **A game calls it when a chapter changes** (or every frame while easing between looks). The platformer's chapter looks are
+  the other thread's to choose; this adds the hook only.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
+
+## D-072: Particles are simulated in the engine and drawn as fading line streaks
+
+Date: 2026-11-16.
+
+- **The engine moves them, the game emits them.** `lantern:::particles:::Emit` hands over a start, a velocity, a colour, a
+  life, a streak length and a gravity; `RenderWorld.StepParticles` steps and draws them once per frame after `OnRender`. Doing
+  it in Nyx would cost an interpreted loop per particle per frame, which the 60 fps target can't spare.
+- **Drawn with the existing line pipeline.** It needs no new shader, pipeline or vertex layout, and a streak is the right look
+  for sparks and thrown dust. The cost is that particles skip bloom, grading and anti-aliasing and can't be soft or textured.
+  A billboard quad pipeline is the later step and is listed in `particles.md`.
+- **The quality setting is a budget**, 64, 256 or 512 live particles, rather than a switch: the effect thins out instead of
+  disappearing. A hard ceiling of 512 keeps the per-frame line count bounded.
+- **Stepped by display time, not fixed steps**, so they are smooth at any refresh rate and can't affect gameplay.
+- **Platformer:** dust on every jump and landing only (`game-systems/dust.nyx`), kept small. Trails and sparks are available
+  to the game but unused.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
+
+## D-073: Normal maps use a cotangent frame from screen-space derivatives
+
+Date: 2026-11-16.
+
+- **No tangent vertex attribute.** The mesh vertex stays 48 bytes with no tangent; the lit shader derives the tangent frame
+  from the change of world position and uv between pixels. This works on every existing mesh, including glTF ones, and
+  needs no change to the vertex layout, shadow pipeline or tests. The cost is a frame that is constant per triangle and a
+  faint seam where uvs jump; stored tangents are the later step if a game needs perfect maps.
+- **A fourth sampler on the lit pipeline** (set 2, binding 3), bound for every draw (the white texture when there is no map),
+  with the strength in `material.surface.z`: 0 means "never read it", so a draw without a map pays nothing.
+- **One strength control, 0 to 4,** instead of separate scale per axis. 1 is as authored.
+- **OpenGL convention** (green up the image), since that is what the generated maps and most authoring tools produce.
+- **sRGB re-encode.** Textures upload as sRGB, so the shader encodes the sample back to its stored bytes. A second linear
+  texture format would avoid the maths but needs a second texture path; not worth it yet.
+- **Normal-mapped draws bind their own sampler** per draw, which the sort by texture doesn't group; fine for the handful of
+  detailed surfaces a scene has.
+- **Decals are not built.** A projected decal needs the depth buffer read in the lit pass or a separate pass; a flat quad
+  drawn just above the surface covers the platformer's ground cases. Contact shadows are the blob shadows of D-070.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
+
+## D-074 Slice 3 of the Crimson and Thorn mechanics: the Anchor as a set swing arc
+
+Dean chose a set swing arc for the Anchor, over a physics rope or a grapple (`crimson-and-thorn-slice.md`, slice 3).
+
+- **A fixed arc, driven by the game.** Two posts and a circular arc between them; the player's feet are set along it each
+  step while it runs, with no controller movement and no steering. It is deterministic, so it is easy to author in the
+  editor and to test, and it can't strand the player. A physics rope can come later as a different kind.
+- **A pendulum's timing.** The angle follows `-cos(pi t)` over `seconds`, which gives a slow start, a fast bottom and a
+  soft arrival with no velocity to hand back to the controller.
+- **Cooperative first, then solo.** The first arc works only with the companion beside its start post
+  (`needs_companion`), as the Boost and the Guide Light did, and the second is the player's own.
+- **Authored in the world file.** One `swing_arc` entity per swing: its position is the start post and `end` the far one,
+  so the editor places the arc with its ordinary tools and no new engine call is needed.
+- **Slice 2's review nits.** The guide lights are drawn at the blended positions in `OnRender` while the reveal rule keeps
+  the fixed-step ones, a safe spot is never recorded on a glow plate, and the strength comment is corrected.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the Anchor complete).
+
+
+## D-075: The editor's quality settings are view options on the session
+
+Date: 2026-11-16.
+
+- **View options, not a new host function.** `quality`, `shadow_quality`, `bloom`, `ambient_occlusion`,
+  `anti_aliasing` and `light_shafts` go through `editorSetViewOption` and `editorViewOption` like the grid does, so the
+  committed host surface is unchanged and the choices are saved and restored with the other view options.
+- **A level is a preset, the checkboxes are overrides.** Setting `quality` sets the four effect toggles and the shadow
+  quality the way `SetQuality` does (low turns the four effects off, medium and high turn them on); the toggles and
+  `shadow_quality` can then differ from it. Names are listed with `quality` first, so loading preferences applies the
+  level before the individual choices.
+- **Default medium,** the settings the viewport drew with before, so nothing changes for anyone who doesn't open the tab.
+- **Applied every frame in `BuildViewport`** to the viewport's `RenderWorld`, so a change shows on the next frame.
+- **A Graphics tab,** not more rows on Viewport: the Viewport tab is about what is drawn, the new one about how well.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/editor-quality-settings`.
+
+## D-076: Slice 4 of the Crimson and Thorn mechanics: a goal ends the level and chains to the next
+
+The streets needed an end, and the game needed a loop (`crimson-and-thorn-slice.md`, slice 4).
+
+- **The next level is data.** A `goal` entity's optional `next_level` text property names the world file to load, so a
+  chapter progression is authored in the editor and needs no engine call. Without it the game returns to the main menu.
+- **A pause, then the hand-over.** Reaching the goal shows the gem tally for 4 s while the player can still move, then
+  the level changes. Nothing is saved yet (saving is a later feature), so the gem count starts again with the new level.
+- **Tolerate bad authoring.** A `swing_arc` with no usable `end` is skipped and logged, because a world file edited by
+  hand should not stop the level loading. This has no host test (the host tests cannot choose a level); the log line
+  is the check.
+- **Slice 3's review nits.** The `SwingTo` comment sits above the right method, and the missing `end` is the guard above.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the goal and the swing arc diagnostics complete).
+
+## D-077: Slice 5 of the Crimson and Thorn mechanics: the rooftops, a solo level of moving platforms
+
+The chapter progression had one real level played twice. A second level makes it a progression
+(`crimson-and-thorn-slice.md`, slice 5).
+
+- **Solo, with no companion.** The level lists no companion stops, so no companion appears. The design teaches solo
+  first, and a level without her shows the other kinds working alone; the Anchor's solo arc is used for the same reason.
+- **Moving platforms, not a new kind.** The platforms are the engine's existing `moving_platform`, whose position is a
+  function of time. Timing a crossing needs no new input: the player waits for the platform, which the test does
+  from the debug overlay's `Platform/N` values.
+- **World files are the chain.** streets -> rooftops -> streets-later is two `next_level` properties, so the order is
+  edited in the world files and the menu buttons are shortcuts.
+- **No autopilot for it.** The scripted pilot plays only the streets; with `LANTERN_AUTOPLAY` the rooftops run the
+  course's pilot. The keyboard test is its check.
+- **Moving platform order is the level's.** `Platform/0` is the last platform listed in the world file, found by
+  `FindByKind`; the test relies on that order.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (the rooftops complete).

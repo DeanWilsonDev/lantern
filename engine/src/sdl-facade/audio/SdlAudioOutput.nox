@@ -1,30 +1,49 @@
 Sdl :: import Sdl;
 
 lantern:::sdlaudio :: foreign "SDL3" {
+    /** SDL's call to queue audio, declared here so an `Array<f32>` of samples can be passed to it directly. */
     SDL_PutAudioStreamData :: (stream: raw Sdl:::SDL_AudioStream~*, samples: Array<f32>, byteLength: i32) -> bool;
 }
 
 lantern:::sdl :: namespace {
+    /** Stereo: two samples (left, right) per audio frame. */
     AUDIO_CHANNEL_COUNT: usize : 2;
 
+    /**
+     * The engine's audio sink over an SDL audio stream on the default playback device.
+     *
+     * Audio works on a queue, not a callback: the mixer generates a block of samples on the main thread and pushes it,
+     * and SDL plays queued samples on its own audio thread. The engine keeps a little audio queued ahead
+     * (`QueuedFrames`), so a slow frame doesn't run the queue dry and click.
+     */
     SdlAudioOutput :: class {
         implements:
             lantern:::platform:::AudioSink;
     public:
+        /**
+         * The SDL audio stream bound to the playback device. Owned; destroyed with this object, before SDL shuts down.
+         */
         stream~ raw Sdl:::SDL_AudioStream~* = null;
+        /** Frames per second the stream was opened at; the mixer generates audio at this rate. */
         sampleRate~ u32 = 0;
 
+        /** Takes ownership of an opened stream. Use `Open`. */
         SdlAudioOutput~: (openedStream: raw Sdl:::SDL_AudioStream~*, rate: u32) {
             stream = openedStream;
             sampleRate = rate;
         }
 
+        /** Stops playback and destroys the stream. */
         !SdlAudioOutput~: () {
             unsafe {
                 Sdl:::SDL_DestroyAudioStream(stream);
             }
         }
 
+        /**
+         * Starts SDL's audio subsystem if needed, opens the default playback device as interleaved stereo 32-bit float
+         * at `rate`, and starts it playing (SDL opens devices paused). Null, logged, when there is no device.
+         */
         static Open :: (context: SdlContext~*, rate: u32) -> SdlAudioOutput*!? {
             if !context->InitAudio() {
                 return null;
@@ -56,10 +75,14 @@ lantern:::sdl :: namespace {
             return output!;
         }
 
+        /** The rate the mixer must generate samples at. */
         SampleRate :: () -> u32 {
             return sampleRate;
         }
 
+        /**
+         * How many stereo frames are queued but not yet played; the mixer tops the queue up to its target from this.
+         */
         QueuedFrames :: () -> usize {
             queuedBytes~ i32 = 0;
             unsafe {
@@ -71,6 +94,10 @@ lantern:::sdl :: namespace {
             return usize(queuedBytes) / (AUDIO_CHANNEL_COUNT * 4);
         }
 
+        /**
+         * Queues interleaved stereo samples (left, right, left, right, ...) for playback. SDL copies them, so the array
+         * can be reused.
+         */
         PushFrames~: (interleavedStereo: Array<f32>) -> void {
             byteLength: usize = interleavedStereo.length() * 4;
             pushed~ bool = false;

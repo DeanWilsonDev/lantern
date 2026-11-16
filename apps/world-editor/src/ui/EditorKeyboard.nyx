@@ -3,8 +3,13 @@ EditorDocument :: import EditorDocument;
 EditorOverlays :: import EditorOverlays;
 EditorSelection :: import EditorSelection;
 
+// Turns key presses into commands. Keys with the shortcut modifier (Ctrl, or Cmd on a Mac) run menu
+// commands; Shift and the shortcut key are tracked so a click can add to the selection; Escape closes
+// things in order; every other key goes to the editor's own key handling (tools, camera, deleting)
+// unless a dialog is open.
 EditorKeyboard :: class {
 public:
+    // The bit for each modifier in the number the editor takes.
     static SHIFT_BIT :: 1;
     static SHORTCUT_BIT :: 2;
     static ALT_BIT :: 4;
@@ -24,6 +29,7 @@ public:
         this.selection = selection;
     }
 
+    // A key went down. The key name arrives with its modifiers, such as "Shortcut+Shift+s".
     KeyDown~: (key: string) -> void {
         when key {
             "Shift" -> this.SetShift(true),
@@ -44,6 +50,7 @@ public:
         }
     }
 
+    // A key went up. Only the modifiers matter, plus any key the editor tracks being held (the fly keys).
     KeyUp~: (key: string) -> void {
         when key {
             "Shift" -> this.SetShift(false),
@@ -52,21 +59,27 @@ public:
         }
     }
 
+    // Escape closes a popup, dialog or settings if one is open; otherwise it goes to the editor, which
+    // cancels a drag or clears the selection.
     Escape~: () -> void {
         guard !this.overlays.Escape() return;
         editorKey("Escape", true, 0);
     }
 
+    // Tracks Shift. Shift or the shortcut key makes a click add to the selection.
     SetShift~: (held: bool) -> void {
         this.shiftHeld = held;
         this.selection.additive = this.shiftHeld || this.shortcutHeld;
     }
 
+    // Tracks the shortcut key.
     SetShortcut~: (held: bool) -> void {
         this.shortcutHeld = held;
         this.selection.additive = this.shiftHeld || this.shortcutHeld;
     }
 
+    // Sends a key to the editor with its modifiers packed in a number, unless a dialog is open that should
+    // have the keyboard.
     Forward~: (qualified: string, down: bool) -> void {
         guard !this.overlays.BlocksViewportKeys() return;
         modifierBits~ i32 = 0;
