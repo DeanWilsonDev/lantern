@@ -130,7 +130,7 @@ which stays in `player-tuning.nyx`.
 | Her walk | `WALK_SPEED` | 5.0 m/s | How fast she gets to the next beat |
 | Following | `FOLLOW_DISTANCE`, `CATCH_UP_DISTANCE` | 3.0 m, 28 m | How close she stays; beyond 28 m she is put behind you |
 | Trail | `TRAIL_SPACING`, `TRAIL_MAX_POINTS`, `TRAIL_DROP_POINTS`, `TRAIL_REACHED_DISTANCE` | 1.0 m, 240, 80, 0.6 m | How exactly she retraces your route |
-| Arriving | `ARRIVE_DISTANCE` | 0.35 m | How near a command point she must stand |
+| Arriving | `ARRIVE_DISTANCE` | 0.35 m | How near a beat she must stand |
 | Leading | `LEAD_RANGE`, `AHEAD_MARGIN`, `HURRY_LIMIT`, `HURRY_SPEED_SCALE`, `PAUSE`, `RESUME` | 10, 3, 30 m, 1.6, 16 m, 11 m | How far ahead she goes, when she hurries, and when she waits |
 | Edges | `EDGE_PROBE_DISTANCE`, `EDGE_DROP_LIMIT`, `FALL_RESET_DEPTH` | 0.8 m, 1.2 m, 5 m | When she refuses a step; when a fall is put right |
 | Recovery | `RETRIES_BEFORE_SKIP`, `NUDGE` | 2, 3 s | How patient she is before skipping a beat |
