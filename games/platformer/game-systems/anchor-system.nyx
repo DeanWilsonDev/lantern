@@ -1,0 +1,82 @@
+Anchor :: import Anchor;
+Math :: import standard:::Math;
+
+// Runs the Anchor's swing. Per fixed step the game asks `ShowReady` (so each start post's cap shows
+// whether a jump would swing) and `TryStart` (does this jump begin a swing?). While `isSwinging`
+// the game stops steering the player and asks `Advance` for where their feet are instead.
+AnchorSystem :: class {
+public:
+    isSwinging~ bool = false;
+
+    // True when a jump from `feet` would swing from `anchor`: on the ground beside its start post,
+    // and, for a cooperative anchor, with the companion beside the post too.
+    CanUse :: (anchor: Anchor, feet: lantern:::math:::Vec3, isGrounded: bool, companionPosition: lantern:::math:::Vec3) -> bool {
+        guard isGrounded return false;
+        offset := feet - anchor.start;
+        guard offset.Horizontal().Length() < REACH && Math:::abs(offset.y) < LEVEL_TOLERANCE return false;
+        guard anchor.needsCompanion return true;
+        return (companionPosition - anchor.start).Horizontal().Length() < COMPANION_REACH;
+    }
+
+    IsAnyReady :: (anchors: Array<Anchor>, feet: lantern:::math:::Vec3, isGrounded: bool, companionPosition: lantern:::math:::Vec3) -> bool {
+        guard !isSwinging return false;
+        for anchor: Anchor in anchors {
+            if CanUse(anchor, feet, isGrounded, companionPosition) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    ShowReady :: (anchors: Array<Anchor>, feet: lantern:::math:::Vec3, isGrounded: bool, companionPosition: lantern:::math:::Vec3) -> void {
+        for anchor: Anchor in anchors {
+            anchor.ShowReady(!isSwinging && CanUse(anchor, feet, isGrounded, companionPosition));
+        }
+    }
+
+    // Starts a swing when `jumpPressed` and some anchor can be used. Returns whether one started.
+    TryStart~: (anchors: Array<Anchor>, feet: lantern:::math:::Vec3, isGrounded: bool, companionPosition: lantern:::math:::Vec3, jumpPressed: bool) -> bool {
+        guard jumpPressed && !isSwinging return false;
+        index~ i32 = 0;
+        for anchor: Anchor in anchors {
+            if CanUse(anchor, feet, isGrounded, companionPosition) {
+                activeIndex = index;
+                elapsedSeconds = 0.0f;
+                isSwinging = true;
+                return true;
+            }
+            index++;
+        }
+        return false;
+    }
+
+    // Moves the swing on by `dt` and returns the player's feet. `isSwinging` turns false on the
+    // step that reaches the far post.
+    Advance~: (anchors: Array<Anchor>, dt: f32) -> lantern:::math:::Vec3 {
+        anchor := anchors[activeIndex];
+        elapsedSeconds += dt;
+        progress := Math:::min(elapsedSeconds / anchor.seconds, 1.0f);
+        if progress >= 1.0f {
+            isSwinging = false;
+        }
+        return anchor.PointAt(progress);
+    }
+
+    // The way the active swing faces: from its start post toward its far post.
+    Yaw :: (anchors: Array<Anchor>) -> f32 {
+        anchor := anchors[activeIndex];
+        return (anchor.end - anchor.start).Yaw();
+    }
+
+    // Ends a swing early, when the level is reloaded under it.
+    Cancel~: () -> void {
+        isSwinging = false;
+    }
+
+private:
+    static REACH :: 1.6f;              // metres along the ground from the start post
+    static LEVEL_TOLERANCE :: 0.6f;    // metres above or below the post's foot
+    static COMPANION_REACH :: 3.5f;    // metres from the post for a cooperative anchor
+    activeIndex~ i32 = 0;
+    elapsedSeconds~ f32 = 0.0f;
+}
