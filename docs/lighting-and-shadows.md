@@ -79,7 +79,7 @@ them as you edit, so what you see is what the game draws, hiding a light in the 
 light draws what it reaches: a point light's range, a spot light's cone, the sun's rays.
 
 When the game loads the file (`lantern:::world:::Load`), the point and spot lights are added to the scene and a `sun`
-replaces the sun and ambient light. `lantern:::world:::Clear` removes them again, and lights the game added itself stay.
+replaces the sun and ambient light. `lantern:::world:::Clear` removes the point and spot lights again, and lights the game added itself stay. It does not put the old sun back, so set the game's sun before each load.
 The light entities exist in the world too, so a script can find them with `lantern:::world:::FindByKind("point_light")`.
 Load a level after setting the game's own sun, as the platformer does, because the file's `sun` wins.
 
