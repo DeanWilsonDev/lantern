@@ -71,6 +71,8 @@ lantern:::gpu :: namespace {
         bloomUpsample~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Scene plus glow to the screen: exposure, tone mapping and sRGB encoding. */
         composite~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** FXAA: smooths the composite's picture onto the screen when anti-aliasing is on. */
+        antiAlias~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
 
         /** Releases the pipelines that were created. */
         Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
@@ -98,6 +100,9 @@ lantern:::gpu :: namespace {
                 }
                 if composite != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, composite);
+                }
+                if antiAlias != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, antiAlias);
                 }
             }
         }
@@ -439,6 +444,15 @@ lantern:::gpu :: namespace {
         when CreatePipeline(device, format, colorFormat, depthFormat, FullscreenPipelineDescription("composite", 2, false)) {
             Result:::Ok(pipeline) -> {
                 pipelines.composite = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, colorFormat, depthFormat, FullscreenPipelineDescription("fxaa", 1, false)) {
+            Result:::Ok(pipeline) -> {
+                pipelines.antiAlias = pipeline;
             },
             Result:::Err(message) -> {
                 pipelines.Release(device);

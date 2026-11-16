@@ -10,6 +10,7 @@
 //   scene pass     lit meshes -> `hdrTexture`                (GpuRenderer.RecordFrame)
 //   bloom passes   `hdrTexture` -> level 0 -> level 1 -> ... -> level 4, then back up, adding   (RecordBloom)
 //   composite      `hdrTexture` + level 0 -> the screen: exposure, tone mapping, sRGB            (RecordComposite)
+//   anti-alias     with anti-aliasing on, the composite writes `ldrTexture` and FXAA smooths it onto the screen  (RecordAntiAlias)
 //   overlay pass   debug lines, HUD and menus on top of the screen image, untouched by any of it  (GpuRenderer)
 //
 // Each pass is one render pass. A render pass writes into a fixed set of textures, so "reading the picture a previous pass
@@ -39,6 +40,8 @@ lantern:::gpu :: namespace {
     PostTargets :: struct {
         /** The scene's light, unclamped. The lit pass draws into it and the composite pass reads it. */
         hdrTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /** The composite's picture when anti-aliasing is on, in the screen's format; FXAA reads it. Null when it's off. */
+        ldrTexture~ raw Sdl:::SDL_GPUTexture~* = null;
         /** The bloom chain, largest first. */
         levels~ BloomLevel[5] = filled<BloomLevel, 5>(BloomLevel { });
         /** Width in pixels of `hdrTexture`, to notice a resize. */
@@ -51,6 +54,9 @@ lantern:::gpu :: namespace {
             unsafe {
                 if hdrTexture != null {
                     Sdl:::SDL_ReleaseGPUTexture(device, hdrTexture);
+                }
+                if ldrTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, ldrTexture);
                 }
                 for level in levels {
                     if level.texture != null {
@@ -91,15 +97,16 @@ lantern:::gpu :: namespace {
      * Makes the post textures match the frame's size, or leaves them if they already do. Returns false when the GPU refuses
      * one, with everything released.
      */
-    EnsurePostTargets :: (device: raw Sdl:::SDL_GPUDevice~*, targets: PostTargets~*, width: u32, height: u32) -> bool {
+    EnsurePostTargets :: (device: raw Sdl:::SDL_GPUDevice~*, targets: PostTargets~*, width: u32, height: u32, colorFormat: Sdl:::SDL_GPUTextureFormat) -> bool {
         if targets->hdrTexture != null && targets->width == width && targets->height == height {
             return true;
         }
         targets->Release(device);
+        targets->ldrTexture = CreatePostTexture(device, colorFormat, width, height);
         targets->hdrTexture = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, width, height);
         targets->width = width;
         targets->height = height;
-        failed~ bool = targets->hdrTexture == null;
+        failed~ bool = targets->hdrTexture == null || targets->ldrTexture == null;
         for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
             levelWidth: u32 = width >> u32(levelIndex + 1);
             levelHeight: u32 = height >> u32(levelIndex + 1);
@@ -116,6 +123,7 @@ lantern:::gpu :: namespace {
         if failed {
             targets->Release(device);
             targets->hdrTexture = null;
+            targets->ldrTexture = null;
             targets->width = 0;
             targets->height = 0;
             for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
@@ -218,5 +226,13 @@ lantern:::gpu :: namespace {
             Sdl:::SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
             Sdl:::SDL_EndGPURenderPass(pass);
         }
+    }
+
+    /**
+     * Anti-aliasing: FXAA reads `ldrTexture`, the composite's tone-mapped picture, and writes the screen's colour texture
+     * with its jagged edges smoothed. See `fxaa.frag`.
+     */
+    RecordAntiAlias :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, destination: raw Sdl:::SDL_GPUTexture~*) -> void {
+        RecordFullscreenPass(commandBuffer, pipelines->antiAlias, samplers->linearClamp, targets->ldrTexture, destination, false, [1.0f / f32(targets->width), 1.0f / f32(targets->height), 0.0f, 0.0f]);
     }
 }

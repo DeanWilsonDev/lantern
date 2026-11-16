@@ -169,7 +169,8 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
    buffer, so the fragment shader runs once per pixel of the target.
 8. **Composite pass** (`RecordComposite`): another full-screen pass that reads the scene and the glow, adds them,
    multiplies by the exposure, applies the tone-mapping curve and writes the swapchain image. When the target can't
-   sRGB-encode, the shader does it here. See `bloom-and-tone-mapping.md`.
+   sRGB-encode, the shader does it here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
+   texture of its own and **the FXAA pass** (`RecordAntiAlias`) smooths it onto the screen image; see `anti-aliasing.md`.
 9. **Overlay pass**, only if there are lines or overlay quads: it loads the swapchain image and the scene's depth,
    then **draws the lines** (`DrawLines`), depth-tested against the meshes but not writing depth, and **the overlay**
    (`DrawOverlay`) in screen pixels, with no depth test, so it sits on top. Every overlay vertex samples the font
