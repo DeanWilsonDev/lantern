@@ -138,7 +138,7 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::camera:::LookAt(eye, target)` | this frame's camera |
 | `lantern:::renderer:::SetClearColor(color)`, `lantern:::renderer:::SetFog(start, end)` | |
-| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing and ambient occlusion off; see `bloom-and-tone-mapping.md` |
+| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing, ambient occlusion and light shafts off; see `bloom-and-tone-mapping.md` |
 | `lantern:::graphics:::SetAntiAliasing(enabled)` | smooth jagged edges with FXAA (on by default); see `anti-aliasing.md` |
 | `lantern:::graphics:::SetAmbientOcclusion(enabled, radius, intensity)` | darken creases and contact points from the depth buffer (radius in metres, intensity 0 to 1); see `ambient-occlusion.md` |
 | `lantern:::graphics:::SetBloom(enabled, strength, threshold)` | the glow around bright things: how much is added back and the brightness where it starts (1 is a white wall in full sun) |
@@ -160,6 +160,14 @@ The sky behind the world and the light it gives (guide: `sky-and-image-based-lig
 - `SetSunDisc(radiusDegrees, strength)`: the sun's disc; a strength above 1 blooms.
 - `SetLighting(strength, intensity)`: how much of the ambient light comes from the sky, and how bright it is.
 - `SetEnabled(enabled)`: off brings back the clear colour and the flat ambient pair.
+
+### Atmosphere, `lantern::atmosphere`
+
+Height fog and light shafts (guide: `fog-and-light-shafts.md`).
+
+- `SetHeightFog(enabled, density, heightFalloff, baseHeight)`: fog that thins with height; density is per metre at the base.
+- `SetFogColor(color, sunScattering)`: an `"RRGGBB"` string, and how much brighter fog is looking towards the sun.
+- `SetLightShafts(enabled, strength, decay)`: streaks of sunlight away from the sun where objects block it.
 
 ## UI (Chaos and Cosmos), `lantern:::ui`
 
