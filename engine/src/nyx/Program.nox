@@ -1,5 +1,6 @@
 NyxC :: import NyxC;
 
+// Three C API calls that take arrays, declared here so the arrays are passed as Nox arrays.
 lantern:::nyxcalls :: foreign "lantern-native" {
     nyx_value_new_array :: (runtime: raw NyxC:::nyx_runtime~*, items: Array<raw NyxC:::nyx_value~*>, count: usize, out_value: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status;
     nyx_program_call_function :: (program: raw NyxC:::nyx_program~*, qualified_name: NyxC:::nyx_str, args: Array<raw NyxC:::nyx_value~*>, count: usize, out_result: raw NyxC:::nyx_value~*~*) -> NyxC:::nyx_status;
@@ -7,10 +8,17 @@ lantern:::nyxcalls :: foreign "lantern-native" {
 }
 
 lantern:::nyx :: namespace {
+    /**
+     * The error for passing a value made by one runtime to another.
+     */
     ForeignValueError :: () -> NyxError*! {
         return new NyxError(NyxC:::NYX_ERROR_INVALID_ARGUMENT, "a value from another runtime can't be passed to this one");
     }
 
+    /**
+     * True when every value was made by `runtime`. Calls check it first, because mixing runtimes would hand the C API
+     * a handle it can't interpret.
+     */
     AllBelongTo :: (runtime: raw NyxC:::nyx_runtime~*, values: Array<Value*>) -> bool {
         for value in values {
             if value->runtime != runtime {
@@ -20,6 +28,9 @@ lantern:::nyx :: namespace {
         return true;
     }
 
+    /**
+     * The raw handles of an array of Values, for a C API call.
+     */
     HandlesOf :: (values: Array<Value*>) -> Array<raw NyxC:::nyx_value~*>! {
         handles~ Array<raw NyxC:::nyx_value~*>! = [];
         for value in values {
@@ -28,6 +39,10 @@ lantern:::nyx :: namespace {
         return handles!;
     }
 
+    /**
+     * A mounted script: its source after parsing and checking, ready to call into. It is what `Runtime:::MountFile`
+     * returns. Like Value it counts itself in the runtime's ledger and releases its handle when deleted.
+     */
     Program :: class {
     public:
         handle~ raw NyxC:::nyx_program~* = null;
@@ -56,6 +71,9 @@ lantern:::nyx :: namespace {
             }
         }
 
+        /**
+         * The instance of the script's application class (the one `MountFile` named), which the engine calls hooks on.
+         */
         Application :: () -> Result<Value*!, NyxError*!> {
             instance~ raw NyxC:::nyx_value~* = null;
             status~ NyxC:::nyx_status = 0;
@@ -67,6 +85,9 @@ lantern:::nyx :: namespace {
             return Result<Value*!, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * Calls a script function by its qualified name (`lantern:::game:::Start`) with arguments.
+         */
         CallFunction :: (qualifiedName: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
             if !AllBelongTo(runtime, arguments) {
                 return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
@@ -83,10 +104,16 @@ lantern:::nyx :: namespace {
             return FinishCall(status, result);
         }
 
+        /**
+         * Calls a method on the application instance.
+         */
         CallApplicationMethod :: (method: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
             return CallMethodOn(null, method, arguments);
         }
 
+        /**
+         * Calls a method on any object value.
+         */
         CallMethod :: (receiver: Value*, method: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
             if receiver->runtime != runtime {
                 return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
@@ -94,10 +121,17 @@ lantern:::nyx :: namespace {
             return CallMethodOn(receiver->handle, method, arguments);
         }
 
+        /**
+         * True when the application class has a method of this name. The engine uses it to call a hook only when the game
+         * defined it.
+         */
         DefinesMethod :: (method: string) -> Result<bool, NyxError*!> {
             return DefinesMethodOnHandle(null, method);
         }
 
+        /**
+         * True when the receiver has a method of this name.
+         */
         DefinesMethodOn :: (receiver: Value*, method: string) -> Result<bool, NyxError*!> {
             if receiver->runtime != runtime {
                 return Result<bool, NyxError*!>:::Err(ForeignValueError());
@@ -105,6 +139,9 @@ lantern:::nyx :: namespace {
             return DefinesMethodOnHandle(receiver->handle, method);
         }
 
+        /**
+         * DefinesMethodOn for a raw handle, used when the receiver is a callback argument that has no Value yet.
+         */
         DefinesMethodOnHandle :: (receiver: raw NyxC:::nyx_value~*, method: string) -> Result<bool, NyxError*!> {
             name := new CText(method);
             defined~ bool = false;
@@ -118,6 +155,9 @@ lantern:::nyx :: namespace {
             return Result<bool, NyxError*!>:::Err(failed!);
         }
 
+        /**
+         * CallMethod for a raw handle.
+         */
         CallMethodOn :: (receiver: raw NyxC:::nyx_value~*, method: string, arguments: Array<Value*>) -> Result<Value*!, NyxError*!> {
             if !AllBelongTo(runtime, arguments) {
                 return Result<Value*!, NyxError*!>:::Err(ForeignValueError());
@@ -134,6 +174,9 @@ lantern:::nyx :: namespace {
             return FinishCall(status, result);
         }
 
+        /**
+         * Turns the status and result of a call into a Result: the result wrapped as a Value, or the error with its stack.
+         */
         FinishCall :: (status: NyxC:::nyx_status, result: raw NyxC:::nyx_value~*) -> Result<Value*!, NyxError*!> {
             if status == NyxC:::NYX_ERROR_FAILURE {
                 message~ string! = "";
@@ -165,6 +208,10 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * The text of a result, or `fallback` when it was an error. Used for messages, where failing to read a name must
+     * not hide the original problem.
+     */
     TextOr :: (read: Result<string!, NyxError*!>, fallback: string) -> string! {
         when read! {
             Result:::Ok(text) -> {
@@ -177,6 +224,9 @@ lantern:::nyx :: namespace {
         }
     }
 
+    /**
+     * Wraps a handle in a Value, or makes a Nyx `null` when the handle is null (a call that returned nothing).
+     */
     AdoptOrNull :: (ledger: raw RuntimeLedger~*, handle: raw NyxC:::nyx_value~*) -> Value*! {
         if handle != null {
             return new Value(handle, ledger);

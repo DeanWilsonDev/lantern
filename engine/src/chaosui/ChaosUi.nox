@@ -1,6 +1,9 @@
 ChaosUiC :: import ChaosUiC;
 NyxC :: import NyxC;
 
+// The `lantern-native` functions that mount and read Chaos components. Chaos is the C++ UI framework (`.chaos` files
+// like `main-menu.chaos`), and the game's own Nyx runtime evaluates them, so the engine draws what Chaos produced
+// but doesn't implement Chaos.
 lantern:::chaosuicalls :: foreign "lantern-native" {
     lantern_chaos_ui_create :: (runtime: raw NyxC:::nyx_runtime~*, project_root: string, ui_directory: string, out_ui: raw ChaosUiC:::lantern_chaos_ui~*~*) -> u32;
     lantern_chaos_ui_mount :: (ui: raw ChaosUiC:::lantern_chaos_ui~*, file: string, component: string, args: Array<raw NyxC:::nyx_value~*>, count: usize, out_mount: u32~*) -> u32;
@@ -9,9 +12,13 @@ lantern:::chaosuicalls :: foreign "lantern-native" {
     lantern_chaos_ui_diagnostic :: (ui: raw ChaosUiC:::lantern_chaos_ui~*, index: usize, out_text: raw u8*~*, out_length: usize~*) -> u32;
 }
 
+// True while a ChaosUi exists. Chaos keeps global state, so a process can have only one.
 chaosUiRunning~ bool = false;
 
 lantern:::chaosui :: namespace {
+    /**
+     * The mouse for one frame: where it is and whether the button went down, went up or is held.
+     */
     Pointer :: struct {
         position~ Vec2 = Vec2 { x: 0.0f, y: 0.0f };
         pressed~ bool = false;
@@ -19,6 +26,10 @@ lantern:::chaosui :: namespace {
         held~ bool = false;
     }
 
+    /**
+     * What the player did to the UI this frame: step to the previous or next button, confirm the focused one, and the
+     * pointer if there is a mouse.
+     */
     Navigation :: struct {
         previous~ bool = false;
         next~ bool = false;
@@ -26,16 +37,27 @@ lantern:::chaosui :: namespace {
         pointer~ Pointer? = null;
     }
 
+    /**
+     * An event to tell Chaos about: which element and which kind (focus, press or release).
+     */
     NodeEvent :: struct {
         node~ u64 = 0;
         event~ i32 = 0;
     }
 
+    /**
+     * A button and the rectangle it was drawn in, which the script session and the menu tests use to find where to click.
+     */
     ButtonRect :: struct {
         node~ u64 = 0;
         rect~ Rect = Rect { };
     }
 
+    /**
+     * The game's UI. Each frame: `Navigate` turns input into events for Chaos, `Update` ticks Chaos and copies its
+     * element tree, and `Draw` lays the tree out and draws it to the overlay. Focus (which button the keyboard or pad
+     * is on) and the pressed look are tracked here, not in Chaos; Chaos only gets the events.
+     */
     ChaosUi :: class {
     public:
         handle~ raw ChaosUiC:::lantern_chaos_ui~* = null;
@@ -60,6 +82,10 @@ lantern:::chaosui :: namespace {
             }
         }
 
+        /**
+         * Starts Chaos on a Nyx runtime, with the folder holding the game's `.chaos` and `.cosmos` files. Returns an error
+         * if one is already running.
+         */
         static Create :: (runtime: lantern:::nyx:::Runtime*, projectRoot: string, uiDirectory: string) -> Result<ChaosUi*!, string!> {
             unsafe {
                 if chaosUiRunning {
@@ -75,6 +101,10 @@ lantern:::chaosui :: namespace {
             }
         }
 
+        /**
+         * Shows a component from a `.chaos` file, passing it arguments (a game's menu gets its state this way). Returns
+         * the mount's id, or an error that includes Chaos's own messages.
+         */
         Mount~: (file: string, component: string, arguments: Array<lantern:::nyx:::Value*>) -> Result<u32, string!> {
             handles~ Array<raw NyxC:::nyx_value~*>! = [];
             for argument in arguments {
@@ -101,12 +131,18 @@ lantern:::chaosui :: namespace {
             return Result<u32, string!>:::Ok(mount);
         }
 
+        /**
+         * Removes a mounted component. Returns false when the id isn't mounted.
+         */
         Unmount~: (mount: u32) -> bool {
             unsafe {
                 return ChaosUiC:::lantern_chaos_ui_unmount(handle, mount) == ChaosUiC:::LANTERN_CHAOS_UI_OK;
             }
         }
 
+        /**
+         * Moves focus to a button and queues a focus event, unless it already has it.
+         */
         Focus~: (button: u64, events: Array<NodeEvent>!~*) -> void {
             if current := focused {
                 if current == button {
@@ -117,6 +153,9 @@ lantern:::chaosui :: namespace {
             events->push(NodeEvent { node: button, event: i32(ChaosUiC:::LANTERN_CHAOS_UI_FOCUS) });
         }
 
+        /**
+         * The button under a point, preferring the one drawn last (on top). Null before the first draw.
+         */
         ButtonAt :: (point: Vec2) -> u64? {
             if rects.length() != nodes.length() {
                 return null;
@@ -131,6 +170,10 @@ lantern:::chaosui :: namespace {
             return null;
         }
 
+        /**
+         * Moves focus to the button under the mouse when it moves or clicks, queues a press when the button goes down,
+         * and a release when it goes up over the same button it went down on, so dragging away cancels a click.
+         */
         FollowPointer~: (pointer: Pointer, events: Array<NodeEvent>!~*) -> void {
             underPointer: u64? = ButtonAt(pointer.position);
             moved~ bool = true;
@@ -164,6 +207,11 @@ lantern:::chaosui :: namespace {
             }
         }
 
+        /**
+         * Handles a frame of input. The first focusable button gets focus if nothing has it. Previous and next move
+         * focus around the buttons, wrapping; the mouse follows FollowPointer; confirm presses and releases the focused
+         * button. All the events are then sent to Chaos together.
+         */
         Navigate~: (navigation: Navigation) -> void {
             pressed = false;
             buttons~ Array<u64>! = [];
@@ -224,6 +272,9 @@ lantern:::chaosui :: namespace {
             }
         }
 
+        /**
+         * Ticks Chaos and replaces `nodes` with a fresh copy of its element tree.
+         */
         Update~: () -> void {
             nodes.freeAll();
             nodes = [];
@@ -250,6 +301,9 @@ lantern:::chaosui :: namespace {
             LinkChildren(nodes.borrow().mutable());
         }
 
+        /**
+         * Every button with the rectangle it was last drawn in. Empty before the first draw.
+         */
         ButtonRects :: () -> Array<ButtonRect>! {
             found~ Array<ButtonRect>! = [];
             if rects.length() != nodes.length() {
@@ -263,10 +317,17 @@ lantern:::chaosui :: namespace {
             return found!;
         }
 
+        /**
+         * The id of the focused button, if any.
+         */
         Focused :: () -> u64? {
             return focused;
         }
 
+        /**
+         * The style each node draws with: its base style, replaced by its `:hover` style when it or an ancestor is focused,
+         * and by its `:active` style while a confirm or click is held. Cosmos writes these as rules like `.button:hover`.
+         */
         ChosenStyles :: () -> Array<Style>! {
             inFocus~ Array<bool>! = [];
             defer delete inFocus;
@@ -296,6 +357,10 @@ lantern:::chaosui :: namespace {
             return styles!;
         }
 
+        /**
+         * Lays the tree out for a screen of `screen` pixels at `scale`, remembers the rectangles for ButtonAt, and draws
+         * everything into the overlay.
+         */
         Draw~: (overlay: lantern:::renderer:::Overlay~*, screen: Vec2, scale: f32) -> void {
             styles: Array<Style>! = ChosenStyles();
             laidOut: Array<Rect>! = LayOut(nodes, styles, screen, scale);
@@ -305,6 +370,9 @@ lantern:::chaosui :: namespace {
             delete styles;
         }
 
+        /**
+         * The messages Chaos has reported (style and component errors) from number `first` on.
+         */
         MessagesSince :: (first: usize) -> Array<string!>! {
             messages~ Array<string!>! = [];
             count~ usize = 0;
@@ -325,6 +393,9 @@ lantern:::chaosui :: namespace {
             return messages!;
         }
 
+        /**
+         * The messages Chaos reported since the last call, so each is logged once.
+         */
         TakeMessages~: () -> Array<string!>! {
             messages: Array<string!>! = MessagesSince(reportedMessages);
             reportedMessages += messages.length();
@@ -332,6 +403,9 @@ lantern:::chaosui :: namespace {
         }
     }
 
+    /**
+     * A copy of a string the caller can own.
+     */
     OwnedUiText :: (text: string) -> string! {
         return `${text}`;
     }
