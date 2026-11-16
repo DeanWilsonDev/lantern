@@ -1,7 +1,9 @@
 # Graphics effects and the quality setting
 
 This page is the map of the renderer's visual effects and how `lantern:::graphics:::SetQuality(level)` turns them up and
-down. Each effect has its own guide; this page says which exist and what each quality level does.
+down. Each effect has its own guide; this page says which exist and what each quality level does. `quality-settings.md` is the
+guide to choosing a level, tuning one effect and finding what to turn down; `renderer.md` shows where each effect runs in the
+frame.
 
 ## The effects
 
@@ -10,7 +12,7 @@ down. Each effect has its own guide; this page says which exist and what each qu
 | HDR scene, bloom, tone mapping | `bloom-and-tone-mapping.md` | a few full-screen passes |
 | Procedural sky and sky lighting | `sky-and-image-based-lighting.md` | one draw and a small lookup in the lit shader |
 | Anti-aliasing (FXAA) | `anti-aliasing.md` | one full-screen pass |
-| Ambient occlusion | `ambient-occlusion.md` | two half-cost full-screen passes |
+| Ambient occlusion | `ambient-occlusion.md` | two full-screen passes; the costliest effect |
 | Height fog and light shafts | `fog-and-light-shafts.md` | a few ALU ops; shafts march the sun's direction |
 | Soft shadows and cascade blending | `shadow-softness-and-cascade-blending.md` | more shadow map taps per pixel |
 | Blob shadows | `blob-shadows.md` | a short loop in the composite pass |

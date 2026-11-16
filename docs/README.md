@@ -23,7 +23,8 @@ to be read in order: the first three under "Start here" give you the whole pictu
 ## The renderer's effects
 
 [`graphics-effects.md`](graphics-effects.md) is the map: which effects exist, what each quality level turns on and off,
-and what each costs. Each effect has its own guide.
+and what each costs. [`quality-settings.md`](quality-settings.md) is the guide to choosing a level, tuning one effect and
+finding what to turn down when a frame is slow. Each effect has its own guide.
 
 | Document | Effect |
 | --- | --- |

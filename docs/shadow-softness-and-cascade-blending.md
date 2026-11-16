@@ -43,8 +43,8 @@ texels, so the same world position always lands on the same texel.
 ## Using it from Nyx
 
 ```nyx
-lantern::lights::SetShadowSoftness(2.0, 12, true);
-lantern::graphics::SetQuality("high");
+lantern:::lights:::SetShadowSoftness(2.0f, 12, true);
+lantern:::graphics:::SetQuality("high");
 ```
 
 `SetShadowSoftness(softness, samples, blendCascades)`: softness 0.5 to 6 texels, 1 to 32 samples. `SetQuality` sets the sample

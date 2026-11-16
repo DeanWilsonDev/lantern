@@ -33,7 +33,7 @@ The grade is a few multiplications per pixel and costs nothing noticeable, so qu
 ## Using it from Nyx
 
 ```nyx
-lantern::graphics::SetColorGrade(0.75, 1.15, "FFEBD1", 0.4);
+lantern:::graphics:::SetColorGrade(0.75f, 1.15f, "FFEBD1", 0.4f);
 ```
 
 The arguments are saturation (0 to 3), contrast (0.2 to 3), the tint as an `"RRGGBB"` string, and the vignette (0 to 1).

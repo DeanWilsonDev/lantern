@@ -158,7 +158,7 @@ the game decides what a kind means.
 | `lantern:::screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `lantern:::screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |
 
-### Sky, `lantern::sky`
+### Sky, `lantern:::sky`
 
 The sky behind the world and the light it gives (guide: `sky-and-image-based-lighting.md`).
 
@@ -167,7 +167,7 @@ The sky behind the world and the light it gives (guide: `sky-and-image-based-lig
 - `SetLighting(strength, intensity)`: how much of the ambient light comes from the sky, and how bright it is.
 - `SetEnabled(enabled)`: off brings back the clear colour and the flat ambient pair.
 
-### Atmosphere, `lantern::atmosphere`
+### Atmosphere, `lantern:::atmosphere`
 
 Height fog and light shafts (guide: `fog-and-light-shafts.md`).
 
@@ -175,7 +175,7 @@ Height fog and light shafts (guide: `fog-and-light-shafts.md`).
 - `SetFogColor(color, sunScattering)`: an `"RRGGBB"` string, and how much brighter fog is looking towards the sun.
 - `SetLightShafts(enabled, strength, decay)`: streaks of sunlight away from the sun where objects block it.
 
-### Particles, `lantern::particles`
+### Particles, `lantern:::particles`
 
 Dust, sparks and trails (guide: `particles.md`).
 

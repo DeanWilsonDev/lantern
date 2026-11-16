@@ -42,10 +42,10 @@ an approximation of the standard lookup table (`EnvironmentBrdf`) so grazing ang
 ## Using it from Nyx
 
 ```nyx
-lantern::sky::SetColors("4285E0", "B3CCEB", "57524D");
-lantern::sky::SetSunDisc(1.5, 12.0);
-lantern::sky::SetLighting(1.0, 0.6);
-lantern::sky::SetEnabled(true);
+lantern:::sky:::SetColors("4285E0", "B3CCEB", "57524D");
+lantern:::sky:::SetSunDisc(1.5f, 12.0f);
+lantern:::sky:::SetLighting(1.0f, 0.6f);
+lantern:::sky:::SetEnabled(true);
 ```
 
 - `SetColors(zenith, horizon, ground)` takes `"RRGGBB"` strings.
