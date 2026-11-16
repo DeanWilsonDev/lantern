@@ -1058,3 +1058,17 @@ Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
 - **Not checked in the cloud:** Metal output, and frame times on a real GPU.
 
 Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
+
+## D-065: FXAA, not MSAA or TAA
+
+- **FXAA runs on the tone-mapped picture** as one extra full-screen pass (`fxaa.frag`). The composite writes a texture of
+  the screen's size and format and FXAA reads it into the screen image.
+- **Not MSAA.** The lines and overlay draw after the composite onto a single-sample image and the lines depth-test against
+  the scene's depth, so MSAA would need a depth resolve or lines in the HDR pass (changing their exact colours). It would
+  also complicate ambient occlusion, which reads depth next.
+- **Not TAA.** It needs motion vectors and history, and ghosts on fast movement.
+- **It softens fine texture detail slightly.** Accepted for a game of big shapes. MSAA can be revisited as its own card.
+- **Quality:** low turns it off, medium and high turn it on. `SetAntiAliasing(enabled)` overrides it.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/anti-aliasing`.

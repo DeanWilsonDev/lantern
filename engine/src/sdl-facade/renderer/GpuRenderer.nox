@@ -866,7 +866,8 @@ lantern:::gpu :: namespace {
          *    texture if the previous frame's is still in use, rather than stalling.
          * 3. Bloom, when it's on (`RecordBloom`): the scene's bright parts are shrunk and blurred through a chain of
          *    smaller textures and added back up.
-         * 4. The composite pass (`RecordComposite`): scene plus glow, exposed and tone mapped into `colorTexture`. The
+         * 4. The composite pass (`RecordComposite`): scene plus glow, exposed and tone mapped into `colorTexture` (or, with
+         *    anti-aliasing on, into a texture FXAA then smooths onto it, `RecordAntiAlias`). The
          *    colour is sRGB-encoded there when the target can't do it itself (`encodeFlag`).
          * 5. The overlay pass, only if there are lines or overlay quads: the debug lines (depth-tested against the
          *    scene's depth) and then the 2D overlay, drawn straight onto the screen image. They skip steps 3 and 4 on
@@ -902,7 +903,7 @@ lantern:::gpu :: namespace {
                 shadowPlan->Disable();
             }
             RecordShadowPasses(commandBuffer, renderWorld, shadowPlan, report);
-            if !EnsurePostTargets(device, postTargets, width, height) {
+            if !EnsurePostTargets(device, postTargets, width, height, colorFormat) {
                 lantern:::core:::LogWarn("renderer", "the GPU refused the post-processing textures; skipping this frame");
                 return report;
             }
@@ -936,7 +937,12 @@ lantern:::gpu :: namespace {
             if bloomDrawn {
                 RecordBloom(commandBuffer, pipelines, samplers, postTargets, post.bloomThreshold);
             }
-            RecordComposite(commandBuffer, pipelines, samplers, postTargets, colorTexture, post, bloomDrawn, encodeFlag);
+            if post.antiAliasingEnabled {
+                RecordComposite(commandBuffer, pipelines, samplers, postTargets, postTargets.ldrTexture, post, bloomDrawn, encodeFlag);
+                RecordAntiAlias(commandBuffer, pipelines, samplers, postTargets, colorTexture);
+            } else {
+                RecordComposite(commandBuffer, pipelines, samplers, postTargets, colorTexture, post, bloomDrawn, encodeFlag);
+            }
             if renderWorld->lines.length() > 0 || renderWorld->overlay->vertices.length() > 0 {
                 unsafe {
                     colorTarget := Sdl:::SDL_GPUColorTargetInfo {
