@@ -1,0 +1,36 @@
+lantern:::host :: namespace {
+    /**
+     * Dust, sparks and trails a game can emit from Nyx, as `lantern::particles`. The engine moves and draws them; the
+     * quality setting caps how many live. The guide is `docs/particles.md`.
+     */
+    RegisterParticlesApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        particlesNamespace := new HostNamespace(runtime, "lantern::particles");
+        particlesNamespace->Function("Emit", "(position: lantern:::math:::Vec3, velocity: lantern:::math:::Vec3, color: string, life: f32, length: f32, gravity: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            position: Vec3 = Vec3Argument(context, 0, math);
+            velocity: Vec3 = Vec3Argument(context, 1, math);
+            color: lantern:::core:::Color = ColorArgument(context, 2);
+            life: f32 = context->F32(3);
+            length: f32 = context->F32(4);
+            gravity: f32 = context->F32(5);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->particles->Emit(position, velocity, color, life, length, gravity);
+            }
+        });
+        particlesNamespace->Function("Clear", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                state->renderWorld->particles->Clear();
+            }
+        });
+        particlesNamespace->Function("Count", "() -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI64(i64(state->renderWorld->particles->particles.length()));
+            }
+        });
+        failure := particlesNamespace->Finish();
+        delete particlesNamespace;
+        return failure!;
+    }
+}
