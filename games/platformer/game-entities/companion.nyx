@@ -41,14 +41,17 @@ public:
         isWalking = false;
         waitedSeconds = 0.0f;
         isHoldingForBoost = stops[stopIndex].isBoost;
+        isBoostJumpInFlight = false;
         lantern:::world:::Teleport(root, position);
         ShowCrouch();
     }
 
-    // Called by the rules when the player has jumped off her back.
-    ReleaseAfterBoost~: () -> void {
-        isHoldingForBoost = false;
-        ShowCrouch();
+    // Called by the rules when the player has jumped off her back. She doesn't stand up and walk on
+    // yet: the jump may have failed (the player let go of jump early), and then she has to stay
+    // crouched for the next try. Update decides once it can tell.
+    BoostJumpStarted~: () -> void {
+        isBoostJumpInFlight = true;
+        secondsSinceBoostJump = 0.0f;
     }
 
     // True while she is crouched at a boost stop with the player's boost still unused.
@@ -62,6 +65,9 @@ public:
         if isWalking {
             Walk(dt);
             return;
+        }
+        if isBoostJumpInFlight {
+            JudgeBoostJump(playerFeet, dt);
         }
         waitedSeconds += dt;
         guard stopIndex + 1 < stops.length();
@@ -81,6 +87,22 @@ private:
     static FOLLOW_DISTANCE :: 4.0f;      // metres: how close the player must be for her to walk on
     body~ i64 = 0;
     waitedSeconds~ f32 = 0.0f;
+    isBoostJumpInFlight~ bool = false;
+    secondsSinceBoostJump~ f32 = 0.0f;
+
+    // The boost worked when the player is a metre or more above her (they are on the ledge): she
+    // stands up and is free to follow. It failed when, after a moment in the air, they are back
+    // down at her height: she stays crouched and the offer stands. In between, keep waiting.
+    JudgeBoostJump~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+        secondsSinceBoostJump += dt;
+        if playerFeet.y > position.y + 1.0f {
+            isBoostJumpInFlight = false;
+            isHoldingForBoost = false;
+            ShowCrouch();
+        } else if secondsSinceBoostJump > 0.3f && playerFeet.y < position.y + 0.1f {
+            isBoostJumpInFlight = false;
+        }
+    }
 
     // Moves toward the next stop at that leg's speed. Moving in `speed x dt` steps and snapping
     // to the target when closer than one step means she can't overshoot or jitter around it.
