@@ -1096,7 +1096,7 @@ Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
 
 Card: `renderer-visuals/anti-aliasing`.
 
-## D-066: Screen-space ambient occlusion over the depth buffer
+## D-067: Screen-space ambient occlusion over the depth buffer
 
 - **Twelve hemisphere samples per pixel** read the scene's depth, with a range check, then a depth-aware 4x4 average
   removes the 4x4 sample-turning pattern. Two full-screen passes on one-channel textures.
