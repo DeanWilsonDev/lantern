@@ -180,7 +180,13 @@ void main() {
         if (local.color_and_kind.w > 0.5) {
             // A spot light fades from full strength at the inner cone to nothing at the outer one.
             float cosine_to_axis = dot(-to_light, local.direction_and_outer_cosine.xyz);
-            strength *= smoothstep(local.direction_and_outer_cosine.w, local.cone.x, cosine_to_axis);
+            float outer_cosine = local.direction_and_outer_cosine.w;
+            float inner_cosine = local.cone.x;
+            // smoothstep is undefined when its two edges are equal, so a cone with no soft edge cuts off sharply.
+            float cone_fade = inner_cosine - outer_cosine > 0.0001
+                ? smoothstep(outer_cosine, inner_cosine, cosine_to_axis)
+                : step(outer_cosine, cosine_to_axis);
+            strength *= cone_fade;
         }
         lit += EvaluateLight(normal, view, to_light, local.color_and_kind.rgb * strength, diffuse_color, f0, alpha);
     }
