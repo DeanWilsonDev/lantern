@@ -1,4 +1,7 @@
 lantern:::editor :: namespace {
+    // The editor's saved settings: text keys with text values, kept sorted by key so the file is the
+    // same each time. It is stored as a flat JSON object of strings. A list (such as recent files) is
+    // kept as lines in one value, see List and SetList. Setting an empty value removes the key.
     EditorPreferences :: class {
     public:
         keys~ Array<string!>! = [];
@@ -11,6 +14,8 @@ lantern:::editor :: namespace {
             values.freeAll();
         }
 
+        // Where the file lives: `lantern/world-editor.json` in XDG_CONFIG_HOME, else APPDATA (Windows), else
+        // `.config` under HOME or USERPROFILE. Null when none of these is set.
         static DefaultPath :: () -> string!? {
             configHome: string!? = environmentVariable("XDG_CONFIG_HOME");
             if base := configHome {
@@ -39,6 +44,7 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // Reads the file. Anything that is not an object of strings is an error that names the file.
         static Load :: (path: string) -> Result<EditorPreferences*!, string!> {
             when readTextFile(path) {
                 Result:::Ok(text) -> {
@@ -80,6 +86,7 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Writes the file, creating its folder first. Returns an error message, or null on success.
         Save :: (path: string) -> string!? {
             if separator := LastSeparator(path) {
                 directory: string! = `${path.substring(0, separator)}`;
@@ -115,6 +122,7 @@ lantern:::editor :: namespace {
             return failure!;
         }
 
+        // Where a key sits in the sorted list, or null.
         KeyIndex :: (key: string) -> usize? {
             for index~ usize = 0; index < keys.length(); index++ {
                 if keys[index] == key {
@@ -124,6 +132,7 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // The value for a key, or null.
         Get :: (key: string) -> string? {
             if index := KeyIndex(key) {
                 return values[index];
@@ -131,6 +140,8 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // Sets a value, returning whether anything changed so the caller knows to save. An empty value
+        // removes the key. A new key is inserted at its sorted position.
         Set~: (key: string, value: string) -> bool {
             found: usize? = KeyIndex(key);
             if value.length() == 0 {
@@ -161,6 +172,7 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // A list stored in one value: one item per line, skipping blank lines.
         List :: (key: string) -> Array<string!>! {
             items~ Array<string!>! = [];
             stored: string? = Get(key);
@@ -175,6 +187,7 @@ lantern:::editor :: namespace {
             return items!;
         }
 
+        // Stores a list as lines of one value.
         SetList~: (key: string, items: Array<string!>) -> bool {
             joined~ string! = "";
             for index~ usize = 0; index < items.length(); index++ {
@@ -188,6 +201,8 @@ lantern:::editor :: namespace {
             return changed;
         }
 
+        // True when two sets of preferences hold the same keys and values. The settings dialog uses it to
+        // see whether there is anything to apply.
         SameAs :: (other: EditorPreferences*) -> bool {
             if keys.length() != other->keys.length() {
                 return false;
@@ -201,6 +216,8 @@ lantern:::editor :: namespace {
         }
     }
 
+    // The position of the last `/` or `\` in a path, or null. Used to find the folder part of a path
+    // on any platform.
     LastSeparator :: (path: string) -> usize? {
         found~ usize? = null;
         for index~ usize = 0; index < path.length(); index++ {

@@ -1,18 +1,27 @@
 lantern:::editor :: namespace {
+    // The camera tuning numbers. Dragging the mouse one pixel turns the orbit camera this many radians,
+    // and one scroll notch moves it this fraction of its way to or from the target. The distance and
+    // pitch limits keep the camera from passing through its target or flipping over the poles.
     ORBIT_RADIANS_PER_PIXEL: f32 : 0.006f;
     DOLLY_FRACTION_PER_NOTCH: f32 : 0.12f;
     MIN_CAMERA_DISTANCE: f32 : 0.5f;
     MAX_CAMERA_DISTANCE: f32 : 250.0f;
     MAX_CAMERA_PITCH: f32 : 1.54f;
 
+    // A half line in the world: a start point and a direction. Picking turns a mouse position into a Ray
+    // and tests it against the scene.
     Ray :: struct {
         origin~ Vec3 = Vec3 { };
         direction~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
 
+        // The point `distance` metres along the ray from its origin.
         At :: (distance: f32) -> Vec3 {
             return origin + direction * distance;
         }
 
+        // Where the ray meets the plane through `point` with the given `normal`, or null when the ray runs
+        // parallel to the plane or the plane is behind the origin. The gizmo uses it to turn a mouse
+        // position into a position on the ground or on a drag plane.
         IntersectPlane :: (point: Vec3, normal: Vec3) -> Vec3? {
             denominator: f32 = direction.dot(normal);
             if Math:::abs(denominator) < 0.000001f {
@@ -26,6 +35,9 @@ lantern:::editor :: namespace {
         }
     }
 
+    // The editor's camera. It circles a `target` point at a `distance`, turned by `yaw` (left and right)
+    // and `pitch` (up and down), the way most 3D editors work. Fly mode moves the target instead.
+    // The camera is a pure description: `RenderCamera` turns it into the renderer's camera.
     OrbitCamera :: struct {
         target~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -8.0f };
         yaw~ f32 = 0.35f;
@@ -35,23 +47,31 @@ lantern:::editor :: namespace {
         flySpeed~ f32 = 10.0f;
         orthographic~ bool = false;
 
+        // The unit direction the camera looks in, built from yaw and pitch. A yaw of 0 looks down -z.
         Forward :: () -> Vec3 {
             cosinePitch: f32 = Math:::cos(pitch);
             return Vec3 { x: -Math:::sin(yaw) * cosinePitch, y: -Math:::sin(pitch), z: -Math:::cos(yaw) * cosinePitch };
         }
 
+        // The camera's position: the target, pulled back along the view direction by `distance`.
         Position :: () -> Vec3 {
             return target - Forward() * distance;
         }
 
+        // The unit vector pointing to the camera's right. It falls back to +x when looking straight up or
+        // down, where the cross product with the up direction would be zero.
         Right :: () -> Vec3 {
             return lantern:::core:::NormalizeOr3(Forward().cross(lantern:::core:::WorldUp()), Vec3 { x: 1.0f, y: 0.0f, z: 0.0f });
         }
 
+        // The unit vector pointing up on the camera's screen, perpendicular to the view direction.
         Up :: () -> Vec3 {
             return Right().cross(Forward());
         }
 
+        // The renderer's camera for this view. The near plane scales with the distance so a close camera
+        // still sees nearby things and a far one keeps depth precision. In orthographic mode the field of
+        // view becomes a half height.
         RenderCamera :: () -> lantern:::renderer:::Camera {
             camera~ lantern:::renderer:::Camera = lantern:::renderer:::Camera:::LookAt(Position(), target);
             camera.verticalFieldOfViewRadians = verticalFieldOfViewRadians;
@@ -63,10 +83,14 @@ lantern:::editor :: namespace {
             return camera;
         }
 
+        // The half height of an orthographic view that shows what the perspective view shows at the
+        // target's distance, so switching between them keeps the framing.
         OrthographicHalfHeight :: () -> f32 {
             return distance * Math:::tan(verticalFieldOfViewRadians * 0.5f);
         }
 
+        // Snaps to a named view: "perspective", or one of the six axis views (front, back, left, right,
+        // top, bottom), which are orthographic. Returns false for any other name. The view cube calls it.
         ApplyPreset~: (name: string) -> bool {
             presetYaw~ f32 = 0.0f;
             presetPitch~ f32 = 0.0f;
@@ -96,6 +120,8 @@ lantern:::editor :: namespace {
             return true;
         }
 
+        // Points the camera along `forward` from `position`, keeping the distance, by working out the yaw
+        // and pitch and then moving the target. Used when leaving play in editor to land where the player was.
         LookFrom~: (position: Vec3, forward: Vec3) -> void {
             direction: Vec3 = lantern:::core:::NormalizeOr3(forward, lantern:::core:::WorldForward());
             yaw = Math:::atan2(-direction.x, -direction.z);
@@ -103,26 +129,36 @@ lantern:::editor :: namespace {
             target = position + Forward() * distance;
         }
 
+        // Turns the camera around its target by a mouse movement in pixels. Pitch is clamped short of
+        // straight up or down.
         Orbit~: (mouseDelta: Vec2) -> void {
             yaw -= mouseDelta.x * ORBIT_RADIANS_PER_PIXEL;
             pitch = Math:::clamp(pitch + mouseDelta.y * ORBIT_RADIANS_PER_PIXEL, -MAX_CAMERA_PITCH, MAX_CAMERA_PITCH);
         }
 
+        // Slides the camera and its target sideways and up by a mouse movement. The size of a pixel in
+        // metres depends on the distance and the viewport height, so the scene under the mouse follows it.
         Pan~: (mouseDelta: Vec2, viewportHeight: f32) -> void {
             metresPerPixel: f32 = 2.0f * distance * Math:::tan(verticalFieldOfViewRadians * 0.5f) / Math:::max(viewportHeight, 1.0f);
             target = target + (Right() * -mouseDelta.x + Up() * mouseDelta.y) * metresPerPixel;
         }
 
+        // Moves toward or away from the target by scroll notches. Each notch changes the distance by a
+        // fixed fraction, so zooming feels the same near and far.
         Dolly~: (notches: f32) -> void {
             factor: f32 = Math:::pow(1.0f - DOLLY_FRACTION_PER_NOTCH, notches);
             distance = Math:::clamp(distance * factor, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE);
         }
 
+        // Moves the target by `seconds` of flying in a direction given in camera terms (x right, y up,
+        // z forward), at `flySpeed` metres a second. Up stays the world's up, not the camera's.
         Fly~: (localDirection: Vec3, seconds: f32) -> void {
             direction: Vec3 = Right() * localDirection.x + lantern:::core:::WorldUp() * localDirection.y + Forward() * localDirection.z;
             target = target + lantern:::core:::NormalizeOr3(direction, Vec3 { }) * flySpeed * seconds;
         }
 
+        // Moves to look at a box: centres on it and backs off until its bounding sphere fits the view
+        // (with a little margin). An empty box does nothing.
         Frame~: (bounds: lantern:::core:::Aabb) -> void {
             if bounds.IsEmpty() {
                 return;
@@ -133,24 +169,33 @@ lantern:::editor :: namespace {
         }
     }
 
+    // True when two cameras show the same view. The editor uses it to skip redrawing a viewport
+    // whose camera has not moved.
     SameCameraView :: (first: OrbitCamera, second: OrbitCamera) -> bool {
         return first.target.x == second.target.x && first.target.y == second.target.y && first.target.z == second.target.z
             && first.yaw == second.yaw && first.pitch == second.pitch && first.distance == second.distance
             && first.verticalFieldOfViewRadians == second.verticalFieldOfViewRadians && first.orthographic == second.orthographic;
     }
 
+    // A camera together with the viewport's size in pixels. It converts between screen pixels and
+    // world space, which picking, the gizmo and the selection labels all need.
     ViewportProjection :: struct {
         camera~ lantern:::renderer:::Camera = lantern:::renderer:::Camera { };
         size~ Vec2 = Vec2 { x: 1.0f, y: 1.0f };
 
+        // Builds a projection, keeping the size at least one pixel so the aspect ratio is never a divide
+        // by zero.
         static Create :: (viewCamera: lantern:::renderer:::Camera, viewportSize: Vec2) -> ViewportProjection {
             return ViewportProjection { camera: viewCamera, size: lantern:::core:::ComponentMax2(viewportSize, Vec2 { x: 1.0f, y: 1.0f }) };
         }
 
+        // The matrix that takes a world point to clip space for this viewport's aspect ratio.
         ViewProjectionMatrix :: () -> Mat4 {
             return camera.ViewProjection(size.x / size.y);
         }
 
+        // The world ray under a pixel: the pixel is turned into a point on the near and far planes and the
+        // ray runs through both. If the matrix cannot be inverted it falls back to the camera's own ray.
         RayThrough :: (pixel: Vec2) -> Ray {
             ndcX: f32 = pixel.x / size.x * 2.0f - 1.0f;
             ndcY: f32 = 1.0f - pixel.y / size.y * 2.0f;
@@ -161,6 +206,7 @@ lantern:::editor :: namespace {
             return Ray { origin: near, direction: lantern:::core:::NormalizeOr3(far - near, camera.forward) };
         }
 
+        // The pixel a world point appears at, or null when the point is behind the camera.
         Project :: (point: Vec3) -> Vec2? {
             clip: Vec4 = ViewProjectionMatrix().transform(Vec4 { x: point.x, y: point.y, z: point.z, w: 1.0f });
             if clip.w <= 0.00001f {
@@ -171,6 +217,8 @@ lantern:::editor :: namespace {
             return Vec2 { x: (ndcX + 1.0f) * 0.5f * size.x, y: (1.0f - ndcY) * 0.5f * size.y };
         }
 
+        // How many metres one pixel covers at `point`. The gizmo and handles use it to stay the same size
+        // on screen however far away they are.
         WorldPerPixel :: (point: Vec3) -> f32 {
             if halfHeight := camera.orthographicHalfHeight {
                 return 2.0f * halfHeight / size.y;
@@ -179,6 +227,8 @@ lantern:::editor :: namespace {
             return 2.0f * depth * Math:::tan(camera.verticalFieldOfViewRadians * 0.5f) / size.y;
         }
 
+        // True when a pixel lies inside the rectangle between two corners given in either order. Box
+        // selection uses it.
         static PixelInRect :: (pixel: Vec2, firstCorner: Vec2, secondCorner: Vec2) -> bool {
             minimumX: f32 = Math:::min(firstCorner.x, secondCorner.x);
             maximumX: f32 = Math:::max(firstCorner.x, secondCorner.x);
