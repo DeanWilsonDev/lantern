@@ -41,16 +41,32 @@ public:
         coneDegrees(Number(entity, "cone_degrees", 9.0f)) { }
 
     // Turns the lamp on. The target is only where it starts aiming; Update moves it every step.
-    TurnOn~: () -> void {
+    // Three things make the light easy to read at night. The beam is a strong amber, a colour
+    // nothing else in the purple night uses. The lamp has a glowing housing, so you can see where
+    // it hangs. And a glowing patch on the floor marks where the beam lands, as wide as the
+    // catching cone is at that distance, so the patch is the danger zone.
+    TurnOn~: (cubeMesh: i64) -> void {
         beamDirection = SweepDirection(0.0f);
-        light = lantern:::lights:::AddSpot(lamp, lamp + beamDirection * 10.0f, "FFF0C0", 40.0f, range, 8.0f, 14.0f);
+        light = lantern:::lights:::AddSpot(lamp, lamp + beamDirection * 10.0f, BEAM_COLOR, BEAM_STRENGTH, range, 8.0f, 14.0f);
         lantern:::lights:::SetShadows(light, true);
+        housing = lantern:::world:::Spawn("watcher_housing", lamp);
+        lantern:::world:::SetMesh(housing, cubeMesh, BEAM_COLOR);
+        lantern:::world:::SetScale(housing, { x: 0.7f, y: 0.5f, z: 0.7f });
+        lantern:::world:::SetGlow(housing, BEAM_COLOR, HOUSING_GLOW);
+        lantern:::world:::SetCastsShadows(housing, false);
+        patch = lantern:::world:::Spawn("watcher_patch", lamp);
+        lantern:::world:::SetMesh(patch, cubeMesh, BEAM_COLOR);
+        lantern:::world:::SetGlow(patch, BEAM_COLOR, PATCH_GLOW);
+        lantern:::world:::SetCastsShadows(patch, false);
+        lantern:::world:::SetVisible(patch, false);
         isOn = true;
     }
 
     TurnOff~: () -> void {
         guard isOn;
         lantern:::lights:::Remove(light);
+        housing = 0;
+        patch = 0;
         isOn = false;
     }
 
@@ -74,6 +90,7 @@ public:
             beamDirection = SweepDirection(time);
         }
         lantern:::lights:::Aim(light, lamp + beamDirection * 10.0f);
+        MovePatch();
         guard forgiveSecondsLeft <= 0.0f return false;
         if IsInBeam(playerCenter) && CanSee(playerCenter) {
             forgiveSecondsLeft = PartnerTuning:::WATCHER_FORGIVE_SECONDS;
@@ -83,8 +100,44 @@ public:
     }
 
 private:
+    static BEAM_COLOR :: "FFA23C";    // amber: the one warm hue in a purple night
+    static BEAM_STRENGTH :: 140.0f;   // was 40 in a pale yellow, which the night look swallowed
+    static HOUSING_GLOW :: 6.0f;      // above 1, so the lamp blooms
+    static PATCH_GLOW :: 1.6f;        // a lit floor, not a lamp: bright enough to read, below the bloom
+    static PATCH_LIFT :: 0.04f;       // metres above the floor, so the patch doesn't fight the floor's own surface
+    static FLOOR_NORMAL_Y :: 0.7f;    // a surface this level or flatter takes the patch; a wall doesn't
+
     isOn~ bool = false;
     light~ i64 = 0;
+    housing~ i64 = 0;
+    patch~ i64 = 0;
+
+    // Puts the patch where the beam's middle meets the floor, as wide as the cone is there. A beam
+    // that hits a wall, a pillar or nothing hides it. The ray looks only at what the physics world
+    // holds, which is the same thing CanSee tests, so the patch never shows light the rule ignores.
+    MovePatch~: () -> void {
+        hit := lantern:::physics:::Raycast(lamp, beamDirection, range);
+        when hit {
+            ray: lantern:::physics:::RayHit -> {
+                if ray.Normal().y > FLOOR_NORMAL_Y {
+                    PlacePatch(ray);
+                } else {
+                    lantern:::world:::SetVisible(patch, false);
+                }
+            },
+            null -> {
+                lantern:::world:::SetVisible(patch, false);
+            }
+        }
+    }
+
+    PlacePatch~: (ray: lantern:::physics:::RayHit) -> void {
+        coneRadians := coneDegrees * Math:::TAU / 360.0f;
+        halfWidth := Math:::max(ray.Distance() * Math:::sin(coneRadians) / Math:::cos(coneRadians), 0.5f);
+        lantern:::world:::SetPosition(patch, ray.Point() + lantern:::math:::Vec3 { y: PATCH_LIFT });
+        lantern:::world:::SetScale(patch, { x: halfWidth * 2.0f, y: 0.03f, z: halfWidth * 2.0f });
+        lantern:::world:::SetVisible(patch, true);
+    }
 
     Number :: (entity: i64, key: string, fallback: f32) -> f32 {
         return lantern:::world:::HasProperty(entity, key) ? lantern:::world:::NumberProperty(entity, key) : fallback;

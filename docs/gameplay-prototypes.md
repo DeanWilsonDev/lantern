@@ -114,6 +114,7 @@ which stays in `player-tuning.nyx`.
 | Gates | `GATE_SPEED`, `GATE_BLOCK_MARGIN` | 7.0 m/s, 0.5 m | How fast doors move; a door never shuts on someone within the margin |
 | Crystals | `CRYSTAL_DEFAULT_RANGE`, `CRYSTAL_DEFAULT_HOLD_SECONDS`, `LIGHT_RAY_MARGIN` | 10 m, 4 s, 0.4 m | How far a light opens one, and for how long |
 | Signs | `SIGN_DEFAULT_RADIUS` | 6 m | When a hint appears |
+| Watcher look | `BEAM_COLOR`, `BEAM_STRENGTH`, `PATCH_GLOW` in `watcher.nyx` | amber, 140, 1.6 | Amber beam, glowing lamp housing and a floor patch the width of the catching cone |
 | Watcher | `WATCHER_LURE_SECONDS`, `WATCHER_FORGIVE_SECONDS` | 6 s, 1.5 s | How long the lure holds; grace before being seen counts |
 | Bounce | `BOUNCE_DEFAULT_HEIGHT` | 5 m (a pad's `height` property overrides) | How high a pad throws |
 | Crumble | `CRUMBLE_DELAY_SECONDS`, `CRUMBLE_RETURN_SECONDS` | 0.6 s, 3 s | How long a slab shivers, and when it returns |
