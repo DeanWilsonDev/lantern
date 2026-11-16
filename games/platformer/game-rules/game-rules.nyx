@@ -1,3 +1,5 @@
+Checkpoint :: import Checkpoint;
+Companion :: import Companion;
 GameEvent :: import GameEvent;
 Gem :: import Gem;
 LevelScene :: import LevelScene;
@@ -17,27 +19,40 @@ public:
     statusText~ string = "";
     message~ string = "";
     messageSecondsLeft~ f32 = 0.0f;
+    // Where the player comes back to after a fall: the level's spawn point until a checkpoint is
+    // reached. `respawnCompanionStop` is the stop of her route she goes back to with them.
+    respawnPosition~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    respawnCompanionStop~ i32 = 0;
 
     Start~: (level: LevelScene) -> void {
+        respawnPosition = level.spawnPosition;
+        respawnCompanionStop = 0;
         RestartGems(level);
         ShowMessage("Collect every gem!", 3.0f);
     }
 
     // Called from the fixed step (Platformer.Simulate), once per event, in the order they were
     // queued.
-    Handle~: (event: GameEvent, level: LevelScene, player~ Player, camera~ ThirdPersonCamera) -> void {
+    Handle~: (event: GameEvent, level~ LevelScene, player~ Player, camera~ ThirdPersonCamera, companion~ Companion) -> void {
         when event <GameEvent> {
+            CheckpointReached(entity) -> { Reach(entity, level); },
             GemTouched(entity) -> { Collect(entity, level); },
+            // A fall costs a walk back and nothing else: the gems stay collected, and the
+            // companion is waiting where she was when the checkpoint was reached.
             PlayerFell -> {
                 lantern:::audio:::Play("reset", 1.0f);
                 ResetPlayer(player, camera);
+                companion.SendToStop(respawnCompanionStop);
+            },
+            PlayerBoosted -> {
+                lantern:::audio:::Play("jump", 1.0f);
+                companion.BoostJumpStarted();
             },
             PlayerJumped -> { lantern:::audio:::Play("jump", 0.8f); },
             PlayerLanded(speed) -> { Land(speed); },
             ResetPressed -> {
                 lantern:::audio:::Play("reset", 1.0f);
-                ResetPlayer(player, camera);
-                RestartGems(level);
+                RestartLevel(level, player, camera, companion);
             }
         }
     }
@@ -73,6 +88,33 @@ private:
         }
     }
 
+    Reach~: (entity: i64, level~ LevelScene) -> void {
+        for checkpoint~ Checkpoint in level.checkpoints {
+            guard checkpoint.entity == entity continue;
+            guard !checkpoint.isReached continue;
+            checkpoint.Reach();
+            // A hair above the post's base (5 cm): a checkpoint sits exactly on the floor, and a
+            // capsule that starts touching it can be pushed out sideways instead of just standing.
+            lift: lantern:::math:::Vec3 = { y: 0.05f };
+            respawnPosition = checkpoint.respawnPosition + lift;
+            respawnCompanionStop = checkpoint.companionStop;
+            lantern:::audio:::Play("pickup", 0.6f);
+            ShowMessage("Checkpoint", 2.0f);
+        }
+    }
+
+    // Start over: back at the level's spawn point with every gem and checkpoint as new.
+    RestartLevel~: (level~ LevelScene, player~ Player, camera~ ThirdPersonCamera, companion~ Companion) -> void {
+        respawnPosition = level.spawnPosition;
+        respawnCompanionStop = 0;
+        for checkpoint~ Checkpoint in level.checkpoints {
+            checkpoint.Restore();
+        }
+        ResetPlayer(player, camera);
+        companion.SendToStop(0);
+        RestartGems(level);
+    }
+
     // The landing sound gets louder the harder you land. `speed` is how fast the player was
     // falling (m/s) at touchdown. Below HARD_LANDING_SPEED there is no sound, so hopping down a
     // small drop stays quiet. Above it, volume = speed / LOUDEST_LANDING_SPEED: a linear map from
@@ -83,10 +125,10 @@ private:
         lantern:::audio:::Play("land", Math:::min(speed / LOUDEST_LANDING_SPEED, 1.0f));
     }
 
-    // Falling off or pressing reset puts the player back at the spawn, with the camera behind
-    // them facing the level's forward.
+    // Falling off or pressing reset puts the player back at the respawn point, with the camera
+    // behind them facing the level's forward.
     ResetPlayer :: (player~ Player, camera~ ThirdPersonCamera) -> void {
-        player.Reset();
+        player.RespawnAt(respawnPosition);
         camera.ResetBehind(0.0f);
     }
 

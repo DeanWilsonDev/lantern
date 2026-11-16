@@ -1,0 +1,47 @@
+// A checkpoint: a world-file entity of kind "checkpoint" that marks where the player comes back
+// to after falling. The design this follows says the game never punishes, so a fall costs a walk
+// back from the last checkpoint and nothing else: no lives, and collected gems stay collected.
+//
+// The entity itself is invisible (a world-file entity without a shape draws nothing). The game
+// gives it a visible pole, a thin tall cube, that is grey until the player reaches it and warm
+// afterwards, so a player can see where they are safe.
+//
+// Properties set on the entity in the world editor:
+// - `companion_stop` (number, optional): which stop of the companion's route she goes back to
+//   when the player respawns here, so she is waiting where she was when the checkpoint was
+//   reached instead of being left somewhere the player has already passed.
+Checkpoint :: class {
+public:
+    entity: i64;
+    respawnPosition: lantern:::math:::Vec3;
+    companionStop: i32;
+    pole~ i64 = 0;
+    isReached~ bool = false;
+
+    Checkpoint~: (entity: i64) : entity(entity), respawnPosition(lantern:::world:::Position(entity)),
+        companionStop(lantern:::world:::HasProperty(entity, "companion_stop") ? i32(lantern:::world:::NumberProperty(entity, "companion_stop")) : 0) { }
+
+    // Builds the pole. A child entity: it is parented to the checkpoint so it sits where the
+    // checkpoint does. The cube is 1 m wide, so scaling it to 0.12 x 1.6 x 0.12 makes a slim
+    // post, and lifting it by half its height stands it on the ground instead of in it.
+    Place~: (cubeMesh: i64) -> void {
+        pole = lantern:::world:::Spawn("checkpoint_pole", { y: 0.8f });
+        lantern:::world:::SetMesh(pole, cubeMesh, UNREACHED_TINT);
+        lantern:::world:::SetScale(pole, { x: 0.12f, y: 1.6f, z: 0.12f });
+        lantern:::world:::SetParent(pole, entity);
+    }
+
+    Reach~: () -> void {
+        isReached = true;
+        lantern:::world:::SetTint(pole, REACHED_TINT);
+    }
+
+    Restore~: () -> void {
+        isReached = false;
+        lantern:::world:::SetTint(pole, UNREACHED_TINT);
+    }
+
+private:
+    static UNREACHED_TINT :: "8A8A8A";
+    static REACHED_TINT :: "E8506A";
+}
