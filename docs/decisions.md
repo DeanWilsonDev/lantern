@@ -1214,3 +1214,21 @@ Date: 2026-11-16.
 
 Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
 
+
+## D-074: The editor's quality settings are view options on the session
+
+Date: 2026-11-16.
+
+- **View options, not a new host function.** `quality`, `shadow_quality`, `bloom`, `ambient_occlusion`,
+  `anti_aliasing` and `light_shafts` go through `editorSetViewOption` and `editorViewOption` like the grid does, so the
+  committed host surface is unchanged and the choices are saved and restored with the other view options.
+- **A level is a preset, the checkboxes are overrides.** Setting `quality` sets the four effect toggles and the shadow
+  quality the way `SetQuality` does (low turns the four effects off, medium and high turn them on); the toggles and
+  `shadow_quality` can then differ from it. Names are listed with `quality` first, so loading preferences applies the
+  level before the individual choices.
+- **Default medium,** the settings the viewport drew with before, so nothing changes for anyone who doesn't open the tab.
+- **Applied every frame in `BuildViewport`** to the viewport's `RenderWorld`, so a change shows on the next frame.
+- **A Graphics tab,** not more rows on Viewport: the Viewport tab is about what is drawn, the new one about how well.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/editor-quality-settings`.

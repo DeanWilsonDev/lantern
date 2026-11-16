@@ -171,7 +171,35 @@ lantern:::editor :: namespace {
         return Result<bool, string!>:::Err(`'${trimmed}' is not on or off`);
     }
 
+    ParseQuality :: (value: string) -> Result<lantern:::renderer:::QualityLevel, string!> {
+        trimmed: string = value.trim();
+        if trimmed == "low" {
+            return Result<lantern:::renderer:::QualityLevel, string!>:::Ok(lantern:::renderer:::QualityLevel:::Low);
+        }
+        if trimmed == "medium" {
+            return Result<lantern:::renderer:::QualityLevel, string!>:::Ok(lantern:::renderer:::QualityLevel:::Medium);
+        }
+        if trimmed == "high" {
+            return Result<lantern:::renderer:::QualityLevel, string!>:::Ok(lantern:::renderer:::QualityLevel:::High);
+        }
+        return Result<lantern:::renderer:::QualityLevel, string!>:::Err(`'${trimmed}' is not low, medium or high`);
+    }
+
+    QualityName :: (level: lantern:::renderer:::QualityLevel) -> string {
+        return when level {
+            lantern:::renderer:::QualityLevel:::Low -> "low",
+            lantern:::renderer:::QualityLevel:::Medium -> "medium",
+            lantern:::renderer:::QualityLevel:::High -> "high"
+        };
+    }
+
     ViewOptions :: struct {
+        quality~ lantern:::renderer:::QualityLevel = lantern:::renderer:::QualityLevel:::Medium;
+        shadowQuality~ lantern:::renderer:::QualityLevel = lantern:::renderer:::QualityLevel:::Medium;
+        bloom~ bool = true;
+        ambientOcclusion~ bool = true;
+        antiAliasing~ bool = true;
+        lightShafts~ bool = true;
         showGrid~ bool = true;
         gridSpacing~ f32 = 1.0f;
         showColliders~ bool = false;
@@ -191,6 +219,12 @@ lantern:::editor :: namespace {
             names.push("level_bounds");
             names.push("hidden");
             names.push("stats");
+            names.push("quality");
+            names.push("shadow_quality");
+            names.push("bloom");
+            names.push("ambient_occlusion");
+            names.push("anti_aliasing");
+            names.push("light_shafts");
             return names!;
         }
 
@@ -219,6 +253,24 @@ lantern:::editor :: namespace {
             if name == "stats" {
                 return `${showStats}`;
             }
+            if name == "quality" {
+                return `${QualityName(quality)}`;
+            }
+            if name == "shadow_quality" {
+                return `${QualityName(shadowQuality)}`;
+            }
+            if name == "bloom" {
+                return `${bloom}`;
+            }
+            if name == "ambient_occlusion" {
+                return `${ambientOcclusion}`;
+            }
+            if name == "anti_aliasing" {
+                return `${antiAliasing}`;
+            }
+            if name == "light_shafts" {
+                return `${lightShafts}`;
+            }
             return null;
         }
 
@@ -232,7 +284,29 @@ lantern:::editor :: namespace {
                 gridSpacing = spacing;
                 return null;
             }
-            if name != "grid" && name != "colliders" && name != "markers" && name != "wireframe" && name != "level_bounds" && name != "hidden" && name != "stats" {
+            if name == "quality" || name == "shadow_quality" {
+                level~ lantern:::renderer:::QualityLevel = lantern:::renderer:::QualityLevel:::Medium;
+                when ParseQuality(value) {
+                    Result:::Ok(parsed) -> {
+                        level = parsed;
+                    },
+                    Result:::Err(message) -> {
+                        return message!;
+                    }
+                }
+                if name == "shadow_quality" {
+                    shadowQuality = level;
+                    return null;
+                }
+                quality = level;
+                shadowQuality = level;
+                bloom = level != lantern:::renderer:::QualityLevel:::Low;
+                ambientOcclusion = level != lantern:::renderer:::QualityLevel:::Low;
+                antiAliasing = level != lantern:::renderer:::QualityLevel:::Low;
+                lightShafts = level != lantern:::renderer:::QualityLevel:::Low;
+                return null;
+            }
+            if name != "grid" && name != "colliders" && name != "markers" && name != "wireframe" && name != "level_bounds" && name != "hidden" && name != "stats" && name != "bloom" && name != "ambient_occlusion" && name != "anti_aliasing" && name != "light_shafts" {
                 return `unknown view option '${name}'`;
             }
             flag~ bool = false;
@@ -256,6 +330,14 @@ lantern:::editor :: namespace {
                 showLevelBounds = flag;
             } else if name == "hidden" {
                 showHidden = flag;
+            } else if name == "bloom" {
+                bloom = flag;
+            } else if name == "ambient_occlusion" {
+                ambientOcclusion = flag;
+            } else if name == "anti_aliasing" {
+                antiAliasing = flag;
+            } else if name == "light_shafts" {
+                lightShafts = flag;
             } else {
                 showStats = flag;
             }
