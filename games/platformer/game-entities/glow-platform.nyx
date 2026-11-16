@@ -1,0 +1,52 @@
+// A world-file entity of kind "glow_platform": a solid piece that only exists while a guide light
+// is near. It is shown and solid while lit, and for HOLD_SECONDS after the light leaves, so a
+// player crossing it is not dropped the moment the companion walks on.
+//
+// Hiding a piece has two halves, because `SetVisible` only hides the mesh and the collision body
+// stays: the piece is also moved 1000 m down. Moving an entity moves its collision body (when the
+// world file gives the piece a `kinematic` collider, as it does for these), so a hidden piece
+// can't be stood on. That second half is a workaround for the engine having no way
+// to switch collision off (card engine-follow-ups/game-controlled-collision-for-world-entities);
+// when that exists, `Hide` should call it instead of moving the piece.
+GlowPlatform :: class {
+public:
+    entity: i64;
+    home: lantern:::math:::Vec3;
+    isShown~ bool = true;
+    litSecondsLeft~ f32 = 0.0f;
+
+    GlowPlatform~: (entity: i64) : entity(entity), home(lantern:::world:::Position(entity)) { }
+
+    // Called every fixed step with whether any guide light reaches the platform. A lit platform
+    // restarts its countdown; an unlit one runs it down and hides itself at zero.
+    Update~: (isLit: bool, dt: f32) -> void {
+        if isLit {
+            litSecondsLeft = HOLD_SECONDS;
+        } else {
+            litSecondsLeft = litSecondsLeft - dt;
+        }
+        shouldShow := litSecondsLeft > 0.0f;
+        guard shouldShow != isShown;
+        if shouldShow {
+            Show();
+        } else {
+            Hide();
+        }
+    }
+
+    Show~: () -> void {
+        isShown = true;
+        lantern:::world:::SetVisible(entity, true);
+        lantern:::world:::Teleport(entity, home);
+    }
+
+    Hide~: () -> void {
+        isShown = false;
+        lantern:::world:::SetVisible(entity, false);
+        lift: lantern:::math:::Vec3 = { y: -1000.0f };
+        lantern:::world:::Teleport(entity, home + lift);
+    }
+
+private:
+    static HOLD_SECONDS :: 4.0f;      // how long a platform stays after its light leaves
+}

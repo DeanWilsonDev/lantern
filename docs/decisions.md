@@ -1012,3 +1012,25 @@ unchanged.
 
 Card: `lighting-and-shadows/lights-in-the-world-editor`.
 
+## D-063 Slice 2 of the Crimson and Thorn mechanics: light, thorns, chapters
+
+The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter looks and thorns to the streets.
+
+- **The Guide Light is a point light with a reveal radius.** `GuideLight` adds a light (`lantern:::lights:::AddPoint`),
+  moves it with its carrier each step and removes it on reload. Hidden `glow_platform` pieces are lit when they are
+  within any light's radius (8 m for the companion, 5 m for the lantern) and stay for 4 s, which covers a player a few
+  metres behind the light. The radius is the rule and the light is only how it looks, so the two can be tuned apart.
+- **Hiding a platform moves it.** There is no engine call to switch collision off, so a hidden piece is teleported
+  1000 m down and its mesh hidden, as the engine card says. A static collider doesn't follow a teleport, so these pieces
+  are `kinematic` in the world file. `SetSolid` on the card replaces this.
+- **The lantern is what the second gap is for.** The companion's last stop is before it, so only the lantern's light
+  shows those plates: her form of the puzzle first, then the player's own.
+- **The level says its chapter.** The spawn's `chapter` property picks the sky, fog and sun in `chapter-looks.nyx`.
+  Level lamps stay with `LightingSettings`. The streets are chapter 1; `streets-later` is the same geometry as chapter 3,
+  which is also when thorns appear (`min_chapter`, default 3).
+- **Thorns nudge.** The game remembers the last place the player stood on the ground at least 1.6 m from any thorn and a
+  touch sends them there. Gems, checkpoints and the companion are untouched, so it can't end a run.
+- **The streets autopilot is companion-aware.** It still is a function of the clock, but it waits where the companion
+  needs the player close and walks at 70% speed past the rooftop.
+
+Cards: `platformer-game/crimson-and-thorn-slice` (Guide Light, chapter looks and thorns complete; the Anchor waits for Dean).
