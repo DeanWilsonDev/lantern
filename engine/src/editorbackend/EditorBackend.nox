@@ -3,9 +3,15 @@ Sdl :: import Sdl;
 lantern:::editorbackend :: namespace {
     Sdl :: import Sdl;
 
+    // The editor backend joins the editor logic (lantern:::editor, which knows nothing of the GPU) to the
+    // things an app needs: a GPU renderer that draws into memory, the pixels it produces, the game
+    // process for play in editor, and the saved preferences. The app shows the pixels in its window.
+    // These are the largest viewport and preview sizes it will draw.
     MAXIMUM_VIEWPORT_SIDE: u32 : 8192;
     MAXIMUM_PREVIEW_SIDE: u32 : 4096;
 
+    // Keeps a requested side length between 1 and the maximum, so a window being resized to nothing
+    // never asks for an empty picture.
     ClampSide :: (side: u32, maximum: u32) -> u32 {
         if side < 1 {
             return 1;
@@ -16,6 +22,7 @@ lantern:::editorbackend :: namespace {
         return side;
     }
 
+    // The current time from SDL, in nanoseconds.
     NowNanoseconds :: () -> u64 {
         now~ u64 = 0;
         unsafe {
@@ -24,6 +31,8 @@ lantern:::editorbackend :: namespace {
         return now;
     }
 
+    // The numbers the stats readout shows: how long the last render took, a smoothed frame rate, and
+    // the draw, triangle and line counts the renderer reported.
     RenderStats :: struct {
         lastRenderMilliseconds~ f32 = 0.0f;
         framesPerSecond~ f32 = 0.0f;
@@ -33,6 +42,8 @@ lantern:::editorbackend :: namespace {
         lines~ u32 = 0;
         lastRenderNanoseconds~ u64? = null;
 
+        // Notes a finished render. The frame rate is smoothed by taking nine parts of the old value to one
+        // of the new one, so the readout does not flicker.
         Record~: (startedNanoseconds: u64, report: lantern:::renderer:::RenderReport) -> void {
             now: u64 = NowNanoseconds();
             lastRenderMilliseconds = f32(f64(now - startedNanoseconds) / 1000000.0f);
@@ -52,6 +63,7 @@ lantern:::editorbackend :: namespace {
             lines = report.lineCount;
         }
 
+        // A statistic by name (`render_ms`, `fps`, `draws`, `culled`, `triangles`, `lines`), as text, or null.
         Get :: (name: string) -> string!? {
             if name == "render_ms" {
                 return lantern:::core:::FixedDecimals(f64(lastRenderMilliseconds), 2, 0);
@@ -75,6 +87,8 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // Loads the palette file; if that fails, warns and uses the built-in palette so the editor opens
+    // anyway.
     LoadPaletteOrFallback :: (path: string) -> lantern:::editor:::Palette*! {
         when lantern:::editor:::Palette:::Load(path) {
             Result:::Ok(palette) -> {
@@ -90,6 +104,8 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // Opens the level for a session. If the level cannot be read, the session starts with an empty
+    // level called "untitled" and the problem is shown in the console.
     OpenSession :: (palettePath: string, worldPath: string) -> lantern:::editor:::EditorSession*! {
         when lantern:::editor:::EditorSession:::Open(worldPath, LoadPaletteOrFallback(palettePath)) {
             Result:::Ok(session) -> {
@@ -106,6 +122,8 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // Loads the preferences file. A missing file or a damaged one gives empty preferences (a damaged
+    // one also warns), since preferences are never worth stopping for.
     LoadPreferences :: (path: string!?) -> lantern:::editor:::EditorPreferences*! {
         defer delete path;
         guard file := path return new lantern:::editor:::EditorPreferences();
@@ -126,6 +144,9 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // Everything the editor app owns: the session, the assets folder, the lazily created GPU resources,
+    // the viewport's render world and pixels, the preview and thumbnail pictures, the running game, and
+    // the preferences. The app calls its methods (through the C API) and reads its pixels.
     EditorBackend :: class {
     public:
         session~ lantern:::editor:::EditorSession*!;
@@ -184,6 +205,8 @@ lantern:::editorbackend :: namespace {
             delete assetsDirectory;
         }
 
+        // Copies saved preferences into the session at start: recent files, the snap settings and the View
+        // menu options.
         ApplyPreferences~: () -> void {
             recent~ Array<string!>! = preferences->List("recent_files");
             session->SetRecentFiles(recent);
@@ -213,6 +236,9 @@ lantern:::editorbackend :: namespace {
             delete names;
         }
 
+        // Copies the session's recent files, snap settings and view options into the preferences and writes
+        // the file. Returns false when there is no place to save or the write failed (which is also noted in
+        // the console).
         SavePreferences~: () -> bool {
             recentCopy~ Array<string!>! = [];
             for file in session->recentFiles {
@@ -253,6 +279,8 @@ lantern:::editorbackend :: namespace {
             return true;
         }
 
+        // Makes the GPU renderer the first time it is needed. A failure is remembered and returned each time,
+        // so the app can show it without trying again every frame.
         EnsureGpu~: () -> string!? {
             if gpuResources != null {
                 return null;
@@ -275,6 +303,10 @@ lantern:::editorbackend :: namespace {
             }
         }
 
+        // Draws the viewport at a size: tells the session the size, builds the frame (BuildViewport), has the
+        // GPU draw it into `pixels` and records the statistics. The GPU resources are moved out of the
+        // backend for the call and put back after, which is how Nox lets one function use both the backend
+        // and a part of it. Returns an error message or null.
         Render~: (requestedWidth: u32, requestedHeight: u32) -> string!? {
             started: u64 = NowNanoseconds();
             width: u32 = ClampSide(requestedWidth, MAXIMUM_VIEWPORT_SIDE);
@@ -307,11 +339,13 @@ lantern:::editorbackend :: namespace {
             return outcome!;
         }
 
+        // True while the game process runs. It checks first, so a game that has quit is noticed.
         IsPlaying~: () -> bool {
             PollPlay();
             return play != null;
         }
 
+        // How long the running game has been going.
         PlaySeconds :: () -> f32 {
             if running := play {
                 return running->Seconds();
@@ -319,6 +353,9 @@ lantern:::editorbackend :: namespace {
             return 0.0f;
         }
 
+        // Play in editor: saves the level to a scratch file in the assets folder, finds a game runner
+        // (ChooseRunner) and starts it on that file. Only one game runs at a time. Problems are noted in the
+        // console and the function returns false.
         StartPlay~: () -> bool {
             if IsPlaying() {
                 session->Note(lantern:::editor:::LogLevel:::Warning, "The game is already running");
@@ -373,6 +410,7 @@ lantern:::editorbackend :: namespace {
             return true;
         }
 
+        // Deletes the scratch level and drops the process record.
         ForgetPlay~: () -> void {
             if running := play {
                 when removeFile(running->levelPath) {
@@ -386,6 +424,7 @@ lantern:::editorbackend :: namespace {
             play = null;
         }
 
+        // Kills the running game and cleans up. False when none was running.
         StopPlay~: () -> bool {
             if play == null {
                 return false;
@@ -400,6 +439,8 @@ lantern:::editorbackend :: namespace {
             return true;
         }
 
+        // Checks whether the game has ended and, if so, cleans up and notes the exit in the console: a normal
+        // quit as information, any other exit status as a warning.
         PollPlay~: () -> void {
             exitCode~ i32? = null;
             seconds~ f32 = 0.0f;
@@ -424,6 +465,7 @@ lantern:::editorbackend :: namespace {
             delete shown;
         }
 
+        // Draws one palette template, spinning by `spin`, into the preview pixels.
         RenderTemplatePreview~: (templateId: string, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
             width: u32 = ClampSide(requestedWidth, MAXIMUM_PREVIEW_SIDE);
             height: u32 = ClampSide(requestedHeight, MAXIMUM_PREVIEW_SIDE);
@@ -458,6 +500,7 @@ lantern:::editorbackend :: namespace {
             return outcome!;
         }
 
+        // Where a template's thumbnail is in the list, or null.
         ThumbnailIndex :: (templateId: string) -> usize? {
             for index~ usize = 0; index < thumbnails.length(); index++ {
                 if thumbnails[index]->templateId == templateId {
@@ -467,6 +510,9 @@ lantern:::editorbackend :: namespace {
             return null;
         }
 
+        // Makes the palette thumbnail of a template at a size (8 to 512 pixels). It does nothing if the thumbnail
+        // is already drawn at that size for the current palette revision, so the palette can ask on every
+        // frame.
         RenderThumbnail~: (templateId: string, requestedSize: u32) -> string!? {
             size: u32 = when (requestedSize < 8) { true -> 8, false -> when (requestedSize > 512) { true -> 512, false -> requestedSize } };
             revision: u64 = session->paletteRevision;

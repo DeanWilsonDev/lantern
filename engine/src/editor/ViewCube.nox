@@ -1,4 +1,9 @@
 lantern:::editor :: namespace {
+    // The view cube is the small cube in the corner of the viewport. Clicking a face snaps the camera to
+    // that view (front, back, left, right, top, bottom). The numbers are its size and the gap to the
+    // corner in pixels; the label and visibility numbers are how much a face must point at the camera
+    // before its name is drawn or the face counts as visible at all; BORDER_INSET shrinks the fill
+    // inside the dark border.
     VIEW_CUBE_PIXELS: f32 : 96.0f;
     VIEW_CUBE_MARGIN_PIXELS: f32 : 12.0f;
     VIEW_CUBE_FACE_COUNT: usize : 6;
@@ -7,6 +12,8 @@ lantern:::editor :: namespace {
     VIEW_CUBE_VISIBLE_MIN_FACING: f32 : 0.01f;
     VIEW_CUBE_BORDER_INSET: f32 : 0.88f;
 
+    // The direction each of the six faces points in. Face numbers run front, back, right, left, top,
+    // bottom, matching ViewCubeFacePreset and ViewCubeFaceLabel.
     ViewCubeFaceNormal :: (face: usize) -> Vec3 {
         return when face {
             0 -> Vec3 { x: 0.0f, y: 0.0f, z: 1.0f },
@@ -18,6 +25,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The camera preset name a click on each face applies (see OrbitCamera.ApplyPreset).
     ViewCubeFacePreset :: (face: usize) -> string {
         return when face {
             0 -> "front",
@@ -29,6 +37,7 @@ lantern:::editor :: namespace {
         };
     }
 
+    // The word drawn on each face.
     ViewCubeFaceLabel :: (face: usize) -> string {
         return when face {
             0 -> "FRONT",
@@ -40,6 +49,8 @@ lantern:::editor :: namespace {
         };
     }
 
+    // A direction lying along the face, used to place its corners: world up, except that the top and
+    // bottom faces use +x since up is their normal.
     ViewCubeFaceTangent :: (face: usize) -> Vec3 {
         normal: Vec3 = ViewCubeFaceNormal(face);
         if Math:::abs(normal.y) > 0.5f {
@@ -48,6 +59,8 @@ lantern:::editor :: namespace {
         return Vec3 { x: 0.0f, y: 1.0f, z: 0.0f };
     }
 
+    // One of a face's four corners, as a point of the cube whose sides run from -1 to 1. Corners
+    // are numbered in order around the face.
     ViewCubeFaceCorner :: (face: usize, corner: usize) -> Vec3 {
         normal: Vec3 = ViewCubeFaceNormal(face);
         tangent: Vec3 = ViewCubeFaceTangent(face);
@@ -57,33 +70,44 @@ lantern:::editor :: namespace {
         return normal + tangent * tangentSign + bitangent * bitangentSign;
     }
 
+    // Where the cube's centre is on the screen: the top right corner of the viewport, inside the margin.
     ViewCubeCenter :: (viewportSize: Vec2) -> Vec2 {
         half: f32 = VIEW_CUBE_PIXELS * 0.5f;
         return Vec2 { x: viewportSize.x - VIEW_CUBE_MARGIN_PIXELS - half, y: VIEW_CUBE_MARGIN_PIXELS + half };
     }
 
+    // Draws a cube point on the screen. The cube is always drawn from the camera's own right and up
+    // directions with no perspective, so it turns as the camera does and never shrinks with distance.
     ViewCubeProject :: (camera: OrbitCamera, viewportSize: Vec2, point: Vec3) -> Vec2 {
         pixelsPerUnit: f32 = VIEW_CUBE_PIXELS * 0.5f / Math:::sqrt(3.0f);
         center: Vec2 = ViewCubeCenter(viewportSize);
         return Vec2 { x: center.x + point.dot(camera.Right()) * pixelsPerUnit, y: center.y - point.dot(camera.Up()) * pixelsPerUnit };
     }
 
+    // How directly a face points at the camera, from 1 (straight on) down to 0 and below (edge on or
+    // away).
     ViewCubeFacing :: (camera: OrbitCamera, face: usize) -> f32 {
         return -ViewCubeFaceNormal(face).dot(camera.Forward());
     }
 
+    // True for a face turned towards the camera. Back faces are not drawn or clickable.
     ViewCubeFaceVisible :: (camera: OrbitCamera, face: usize) -> bool {
         return ViewCubeFacing(camera, face) > VIEW_CUBE_VISIBLE_MIN_FACING;
     }
 
+    // The screen position of a face's corner.
     ViewCubeScreenCorner :: (camera: OrbitCamera, viewportSize: Vec2, face: usize, corner: usize) -> Vec2 {
         return ViewCubeProject(camera, viewportSize, ViewCubeFaceCorner(face, corner));
     }
 
+    // Which side of the line from `start` to `end` a point falls on: positive on one side, negative
+    // on the other, zero on the line.
     EdgeSide :: (start: Vec2, end: Vec2, point: Vec2) -> f32 {
         return (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x);
     }
 
+    // True when a point lies inside a face's outline. A point is inside a convex shape when it falls
+    // on the same side of every edge, so this counts the sides.
     ViewCubeFaceContains :: (camera: OrbitCamera, viewportSize: Vec2, face: usize, point: Vec2) -> bool {
         positiveCount~ u32 = 0;
         negativeCount~ u32 = 0;
@@ -100,6 +124,8 @@ lantern:::editor :: namespace {
         return positiveCount == 0 || negativeCount == 0;
     }
 
+    // The face under a mouse position, or null. It rejects points outside the cube's square first,
+    // then tests the visible faces.
     ViewCubeHit :: (camera: OrbitCamera, viewportSize: Vec2, point: Vec2) -> usize? {
         center: Vec2 = ViewCubeCenter(viewportSize);
         half: f32 = VIEW_CUBE_PIXELS * 0.5f;
@@ -114,6 +140,8 @@ lantern:::editor :: namespace {
         return null;
     }
 
+    // A face's fill: the selection colour while hovered, otherwise a bluish grey that is brighter the
+    // more the face points at the camera.
     ViewCubeFaceColor :: (camera: OrbitCamera, face: usize, hovered: bool) -> lantern:::core:::Color {
         if hovered {
             return SelectionColor();
@@ -122,6 +150,7 @@ lantern:::editor :: namespace {
         return lantern:::core:::Color:::Rgb(shade * 0.82f, shade * 0.86f, shade);
     }
 
+    // The colours of the cube's edges and of its labels.
     ViewCubeBorderColor :: () -> lantern:::core:::Color {
         return lantern:::core:::Color:::Rgb(0.12f, 0.13f, 0.16f);
     }
@@ -130,10 +159,14 @@ lantern:::editor :: namespace {
         return lantern:::core:::Color:::Rgb(0.1f, 0.11f, 0.14f);
     }
 
+    // Moves a point part of the way toward a centre. It shrinks a face to make room for its border.
     InsetToward :: (point: Vec2, center: Vec2, fraction: f32) -> Vec2 {
         return center + (point - center) * fraction;
     }
 
+    // Draws one face as two triangles in the border colour, then a smaller pair on top in the fill
+    // colour, then its name when the face points at the camera enough to read it. The name is centred
+    // using the measured text size.
     DrawViewCubeFace :: (overlay: lantern:::renderer:::Overlay~*, camera: OrbitCamera, viewportSize: Vec2, face: usize, hovered: bool) -> void {
         first: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, 0);
         second: Vec2 = ViewCubeScreenCorner(camera, viewportSize, face, 1);
@@ -157,6 +190,7 @@ lantern:::editor :: namespace {
         }
     }
 
+    // Draws every face turned towards the camera, with the hovered one highlighted.
     DrawViewCube :: (overlay: lantern:::renderer:::Overlay~*, camera: OrbitCamera, viewportSize: Vec2, hoveredFace: usize?) -> void {
         for face~ usize = 0; face < VIEW_CUBE_FACE_COUNT; face += 1 {
             if ViewCubeFaceVisible(camera, face) {

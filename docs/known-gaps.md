@@ -55,3 +55,10 @@ cone guide angle (both on `engine-follow-ups`).
 The `engine-follow-ups` epic holds the engine's own leftovers: pool slots that hold `T?` so pools can own meshes and
 textures, renaming names that hide the `lantern:::` namespaces, building `lantern-native` against the current Chaos,
 and editor select handlers that must not return a value. Read the epic with `cairn --root docs/kanban tree`.
+
+## Documentation
+
+Every `.nox` and `.nyx` file outside `tests/` explains itself in comments. Not covered yet: the `.chaos` and `.cosmos` files
+(46 of 54 have no comments, most of them in `apps/world-editor/src/ui/`) and the test programs under `tests/`, which have no
+header saying what each one checks. The convention names only `.nox` and `.nyx` files, so this is a choice for later (card
+`documentation-sweep/comments-in-chaos-cosmos-and-test-files`).

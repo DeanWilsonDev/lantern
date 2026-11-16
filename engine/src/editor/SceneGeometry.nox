@@ -1,7 +1,11 @@
 lantern:::editor :: namespace {
+    // A marker (an entity with no shape, such as a spawn point) has no triangles to click on, so it is
+    // picked as a sphere of this radius. Picking looks no further than MAX_PICK_DISTANCE metres.
     MARKER_PICK_RADIUS: f32 : 0.45f;
     MAX_PICK_DISTANCE: f32 : 2000.0f;
 
+    // What the editor needs to pick one entity: its world matrix, its triangles in world space, the box
+    // around them, and its shape (null for a marker). Built once per document revision, not per click.
     EntityGeometry :: class {
     public:
         key~ u64 = 0;
@@ -16,21 +20,26 @@ lantern:::editor :: namespace {
             delete triangles;
         }
 
+        // The entity's position in the world.
         Origin :: () -> Vec3 {
             return worldMatrix.transformPoint(Vec3 { });
         }
 
+        // True for an entity with no shape.
         IsMarker :: () -> bool {
             return shape == null;
         }
     }
 
+    // The answer to a pick: which entity (by key), how far along the ray, and the point hit.
     PickHit :: struct {
         key~ u64 = 0;
         distance~ f32 = 0.0f;
         point~ Vec3 = Vec3 { };
     }
 
+    // The pickable form of the whole level: one EntityGeometry per piece. It is rebuilt when the
+    // document's revision changes, which is why it remembers the revision it was built for.
     SceneGeometry :: class {
     public:
         entities~ Array<EntityGeometry*!>! = [];
@@ -42,6 +51,8 @@ lantern:::editor :: namespace {
             entities.freeAll();
         }
 
+        // Builds the geometry for a level by laying out its pieces (WorldPiece) and collecting each piece's
+        // triangles and bounding box. A piece with no triangles gets a small box around its origin.
         static Build :: (worldFile: lantern:::world:::WorldFile*, documentRevision: u64) -> SceneGeometry*! {
             scene := new SceneGeometry();
             scene->revision = documentRevision;
@@ -69,6 +80,7 @@ lantern:::editor :: namespace {
             return scene!;
         }
 
+        // The geometry of the entity with this key, or null.
         Find :: (key: u64) -> EntityGeometry*? {
             for entity in entities {
                 if entity->key == key {
@@ -78,6 +90,8 @@ lantern:::editor :: namespace {
             return null;
         }
 
+        // The box around the listed entities together. Empty when none of the keys is found. Used to
+        // frame the selection.
         BoundsOf :: (keys: Array<u64>) -> lantern:::core:::Aabb {
             bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
             for key in keys {
@@ -90,6 +104,7 @@ lantern:::editor :: namespace {
             return bounds;
         }
 
+        // The box around every entity.
         LevelBounds :: () -> lantern:::core:::Aabb {
             bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
             for entity in entities {
@@ -98,6 +113,7 @@ lantern:::editor :: namespace {
             return bounds;
         }
 
+        // The nearest entity under a ray, or null.
         Pick :: (ray: Ray) -> PickHit? {
             nothingExcluded~ Array<u64>! = [];
             hit: PickHit? = PickExcluding(ray, nothingExcluded);
@@ -105,6 +121,9 @@ lantern:::editor :: namespace {
             return hit;
         }
 
+        // The nearest entity under a ray, skipping some keys (the ones being dragged, so they do not
+        // block themselves). Markers are tested as spheres; shapes are tested against their bounding box
+        // first and then triangle by triangle, which keeps clicking cheap in a big level.
         PickExcluding :: (ray: Ray, excluded: Array<u64>) -> PickHit? {
             end: Vec3 = ray.At(MAX_PICK_DISTANCE);
             best~ PickHit? = null;
@@ -130,6 +149,8 @@ lantern:::editor :: namespace {
             return best;
         }
 
+        // Where a new entity should go for a ray: the nearest triangle it hits, or the ground plane (y = 0)
+        // when it hits nothing.
         PlacementPoint :: (ray: Ray) -> Vec3? {
             end: Vec3 = ray.At(MAX_PICK_DISTANCE);
             nearest~ Vec3? = null;
@@ -152,6 +173,7 @@ lantern:::editor :: namespace {
         }
     }
 
+    // True when the list holds the key.
     ContainsKey :: (keys: Array<u64>, key: u64) -> bool {
         for candidate in keys {
             if candidate == key {
@@ -161,6 +183,8 @@ lantern:::editor :: namespace {
         return false;
     }
 
+    // Keeps the nearer of the best hit so far and a new candidate. A candidate behind the ray's origin
+    // is ignored.
     Closer :: (best: PickHit?, ray: Ray, key: u64, point: Vec3) -> PickHit? {
         distance: f32 = (point - ray.origin).dot(ray.direction);
         if distance < 0.0f {
@@ -174,6 +198,8 @@ lantern:::editor :: namespace {
         return PickHit { key: key, distance: distance, point: point };
     }
 
+    // Where along the ray it enters a sphere (zero if it starts inside), or null for a miss or a
+    // sphere behind the ray.
     RaySphere :: (ray: Ray, center: Vec3, radius: f32) -> f32? {
         toCenter: Vec3 = center - ray.origin;
         along: f32 = toCenter.dot(ray.direction);
@@ -191,6 +217,9 @@ lantern:::editor :: namespace {
         return Math:::max(near, 0.0f);
     }
 
+    // The slab test: for each axis, how far along the ray it crosses the box's two faces. The ray is
+    // inside the box between the latest entry and the earliest exit; if that interval is empty it
+    // misses. Returns the entry distance or null.
     RayAabb :: (ray: Ray, bounds: lantern:::core:::Aabb) -> f32? {
         toMinimum: Vec3 = bounds.min - ray.origin;
         toMaximum: Vec3 = bounds.max - ray.origin;

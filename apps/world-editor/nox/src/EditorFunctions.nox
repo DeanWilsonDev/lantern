@@ -6,8 +6,16 @@ NyxError :: import lantern:::nyx:::NyxError;
 HostFunctions :: import lantern:::worldeditor:::hostfunctions;
 
 lantern:::worldeditor:::editorfunctions :: namespace {
+    // Registers the editor's host functions: the Nyx names the interface (apps/world-editor/src/ui) calls to
+    // read and change the editor. Each one is the same shape: a name, a Nyx signature, and a closure
+    // that reads its arguments from the call context, calls the matching function of the editor C API
+    // (Api) and returns the result. They hold a pointer to the editor (`state`). The first failure to
+    // register is kept and returned, so one bad signature is reported and not lost. The functions are
+    // grouped below by what they work on.
     RegisterEditorFunctions :: (runtime: Runtime~*, state: raw Editor~*) -> NyxError*!? {
         failure~ NyxError*!? = null;
+        // State the interface redraws from: a number that changes when anything changes, the status line,
+        // the window title, the file's path and whether there are unsaved changes.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorRevision", "() -> i64", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -44,6 +52,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnBool(Api:::IsDirty(editorInstance));
             }
         }));
+        // Files: open, save, save as, a new level, the recent files list and the assets folder.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorOpen", "(path: string) -> bool", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -98,6 +107,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 delete result;
             }
         }));
+        // Preferences saved between runs.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorPreference", "(name: string) -> string", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -124,6 +134,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnBool(Api:::SavePreferences(editorInstance));
             }
         }));
+        // Tool, snapping, gizmo space, pivot mode and the View menu options.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorSetTool", "(name: string) -> void", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -234,6 +245,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 delete result;
             }
         }));
+        // Keyboard shortcuts from the interface (the viewport gets its own keys directly).
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorKey", "(keyName: string, down: bool, modifiers: i32) -> bool", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -244,6 +256,8 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 delete keyName;
             }
         }));
+        // Camera: framing, presets, orthographic view, bookmarks, and aligning the camera and the
+        // selection to each other.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorFrameSelection", "() -> void", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -321,6 +335,8 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnBool(Api:::AlignSelectionToCamera(editorInstance));
             }
         }));
+        // The outliner: how many rows there are and each row's entity, depth and parent, and names and
+        // kinds; selecting, hiding and locking entities, reparenting and reordering.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorOutlineCount", "() -> i32", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -515,6 +531,8 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnBool(Api:::MoveBefore(editorInstance, child, sibling));
             }
         }));
+        // The inspector: the fields of the selection, their choices, and editing a field of one entity or of
+        // the whole selection.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorFieldCount", "() -> i32", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -586,6 +604,9 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 delete newName;
             }
         }));
+        // The palette and everything that changes the level: placing from a template, deleting,
+        // duplicating, mirroring, grouping, aligning, distributing, snapping to the ground and applying or
+        // reverting a template.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorTemplateCount", "() -> i32", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -688,6 +709,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnBool(Api:::ApplyToTemplate(editorInstance));
             }
         }));
+        // Undo and redo, and the history panel.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorUndo", "() -> bool", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -742,6 +764,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnBool(Api:::JumpHistory(editorInstance, HostFunctions:::ToIndex(position)));
             }
         }));
+        // The console: its lines, their levels, and clearing it.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorLogCount", "() -> i32", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -773,6 +796,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnNull();
             }
         }));
+        // Play in editor: start and stop the game and ask if it is running.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorPlay", "() -> bool", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;
@@ -792,6 +816,7 @@ lantern:::worldeditor:::editorfunctions :: namespace {
                 context->ReturnBool(Api:::IsPlaying(editorInstance));
             }
         }));
+        // One of the render statistics (frame time, draw counts) for the stats readout.
         failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("editorStat", "(name: string) -> string", new (context: CallContext~*) -> void [state] {
             unsafe {
                 editorInstance: Editor~* = state;

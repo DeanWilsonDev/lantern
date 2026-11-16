@@ -1,6 +1,10 @@
 MenuEntry :: import MenuEntry;
 ToolbarState :: import ToolbarState;
 
+// The menus: what each menu bar menu and the right click menu contain. A menu is a list of MenuEntry
+// values (label, command name, shortcut text, and whether it is a checked toggle, disabled, or a
+// separator). The commands are run by EditorCommands. Nothing here draws; App.chaos does that, using the
+// sizes below to place the popup.
 EditorMenus :: namespace {
     BAR_HEIGHT: f32 : 28.0f;
     POPUP_WIDTH: f32 : 250.0f;
@@ -8,6 +12,7 @@ EditorMenus :: namespace {
     SEPARATOR_HEIGHT: f32 : 9.0f;
     POPUP_PADDING: f32 : 12.0f;
 
+    // The height of a menu popup: its padding plus a row for each entry (separators are shorter).
     PopupHeight :: (entries: Array<MenuEntry>) -> f32 {
         height~ f32 = POPUP_PADDING;
         for entry in entries {
@@ -16,26 +21,32 @@ EditorMenus :: namespace {
         return height;
     }
 
+    // The menu bar's menus, left to right.
     Names :: () -> Array<string> {
         return ["File", "Edit", "Selection", "View", "Entity", "Window", "Help"];
     }
 
+    // An ordinary entry.
     Item :: (label: string, command: string, shortcut: string) -> MenuEntry {
         return MenuEntry { label: label, command: command, shortcut: shortcut };
     }
 
+    // An entry with a tick when `checked`.
     Toggle :: (label: string, command: string, shortcut: string, checked: bool) -> MenuEntry {
         return MenuEntry { label: label, command: command, shortcut: shortcut, checked: checked };
     }
 
+    // An entry that is greyed out unless `enabled`, for commands that need a selection or history.
     Needs :: (label: string, command: string, shortcut: string, enabled: bool) -> MenuEntry {
         return MenuEntry { label: label, command: command, shortcut: shortcut, enabled: enabled };
     }
 
+    // A line between groups of entries.
     Separator :: () -> MenuEntry {
         return MenuEntry { label: "", command: "", separator: true };
     }
 
+    // The entries of a named menu. The toolbar state decides what is ticked and what is greyed out.
     Entries :: (menu: string, state: ToolbarState, recentFiles: Array<string>) -> Array<MenuEntry> {
         return when menu {
             "File" -> FileEntries(state, recentFiles),
@@ -49,6 +60,7 @@ EditorMenus :: namespace {
         };
     }
 
+    // File: new, open, save, the six most recent files, play or stop, settings, quit.
     FileEntries :: (state: ToolbarState, recentFiles: Array<string>) -> Array<MenuEntry> {
         entries~ Array<MenuEntry> = [
             Item("New World", "new", "Ctrl+N"),
@@ -71,11 +83,13 @@ EditorMenus :: namespace {
         return entries;
     }
 
+    // The last part of a path, for the recent files list.
     FileName :: (path: string) -> string {
         slash := LastIndexOf(path, "/");
         return slash < 0 ? path : path.substring(slash + 1, path.length() - slash - 1);
     }
 
+    // The position of the last occurrence of a text, or -1.
     LastIndexOf :: (text: string, needle: string) -> i32 {
         found~ i32 = -1;
         from~ i32 = 0;
@@ -88,6 +102,7 @@ EditorMenus :: namespace {
         return found;
     }
 
+    // Edit: undo and redo, duplicate and delete, and the snap, space and pivot toggles.
     EditEntries :: (state: ToolbarState) -> Array<MenuEntry> {
         return [
             Needs("Undo", "undo", "Ctrl+Z", state.canUndo),
@@ -104,6 +119,7 @@ EditorMenus :: namespace {
         ];
     }
 
+    // Selection: select, invert, hide, lock and frame.
     SelectionEntries :: (state: ToolbarState) -> Array<MenuEntry> {
         return [
             Item("Select All", "selectAll", "Ctrl+A"),
@@ -121,6 +137,7 @@ EditorMenus :: namespace {
         ];
     }
 
+    // View: the viewport toggles, the camera presets and aligning the camera and the selection.
     ViewEntries :: (state: ToolbarState) -> Array<MenuEntry> {
         return [
             Toggle("Grid", "toggleGrid", "G", state.showGrid),
@@ -145,6 +162,8 @@ EditorMenus :: namespace {
         ];
     }
 
+    // Entity: group, drop to the ground, and the duplicate, mirror, align and distribute commands for each
+    // axis, and reverting or applying a template.
     EntityEntries :: (state: ToolbarState) -> Array<MenuEntry> {
         has := state.hasSelection;
         return [
@@ -171,6 +190,7 @@ EditorMenus :: namespace {
         ];
     }
 
+    // Window: the bottom panels and the settings.
     WindowEntries :: () -> Array<MenuEntry> {
         return [
             Item("Assets", "panel:assets", ""),
@@ -182,6 +202,7 @@ EditorMenus :: namespace {
         ];
     }
 
+    // Help: the help pages.
     HelpEntries :: () -> Array<MenuEntry> {
         return [
             Item("Viewport Controls", "help:controls", ""),
@@ -190,6 +211,7 @@ EditorMenus :: namespace {
         ];
     }
 
+    // The right click menu of an entity, which shows Show or Hide and Lock or Unlock by the entity's state.
     ContextEntries :: (hidden: bool, locked: bool) -> Array<MenuEntry> {
         return [
             Item("Frame", "frameSelection", "F"),
@@ -208,6 +230,8 @@ EditorMenus :: namespace {
         ];
     }
 
+    // Every menu command as one flat list for the command palette, each labelled with its menu
+    // ("Edit: Undo"), plus the three tools. Separators and entries with no command are left out.
     AllCommands :: (state: ToolbarState) -> Array<MenuEntry> {
         commands~ Array<MenuEntry> = [];
         for menu in Names() {
@@ -228,6 +252,7 @@ EditorMenus :: namespace {
         return commands;
     }
 
+    // The commands whose label contains the query, ignoring case. An empty query matches everything.
     Matching :: (commands: Array<MenuEntry>, query: string) -> Array<MenuEntry> {
         needle := query.trim().toLower();
         guard needle != "" return commands;
