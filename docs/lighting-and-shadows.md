@@ -122,7 +122,7 @@ lantern:::world:::SetSurface(entity, 0.0f, 0.2f, "3FD0FF");
 above 1 is brighter than a white wall in full sun; the renderer keeps that light unclamped, and bloom turns it into a halo
 (see `bloom-and-tone-mapping.md`).
 
-The platformer's gems use it: a smooth non-metal that glows pale blue, at four times its colour.
+The platformer's gems use it: a smooth non-metal that glows pale blue, at four times its colour. Gems cast no shadow: a small spinning mesh left a shimmering speck on the floor.
 
 ## Keeping 60 fps
 
