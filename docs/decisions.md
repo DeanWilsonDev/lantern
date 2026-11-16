@@ -1231,3 +1231,22 @@ Dean chose a set swing arc for the Anchor, over a physics rope or a grapple (`cr
   the fixed-step ones, a safe spot is never recorded on a glow plate, and the strength comment is corrected.
 
 Cards: `platformer-game/crimson-and-thorn-slice` (the Anchor complete).
+
+
+## D-075: The editor's quality settings are view options on the session
+
+Date: 2026-11-16.
+
+- **View options, not a new host function.** `quality`, `shadow_quality`, `bloom`, `ambient_occlusion`,
+  `anti_aliasing` and `light_shafts` go through `editorSetViewOption` and `editorViewOption` like the grid does, so the
+  committed host surface is unchanged and the choices are saved and restored with the other view options.
+- **A level is a preset, the checkboxes are overrides.** Setting `quality` sets the four effect toggles and the shadow
+  quality the way `SetQuality` does (low turns the four effects off, medium and high turn them on); the toggles and
+  `shadow_quality` can then differ from it. Names are listed with `quality` first, so loading preferences applies the
+  level before the individual choices.
+- **Default medium,** the settings the viewport drew with before, so nothing changes for anyone who doesn't open the tab.
+- **Applied every frame in `BuildViewport`** to the viewport's `RenderWorld`, so a change shows on the next frame.
+- **A Graphics tab,** not more rows on Viewport: the Viewport tab is about what is drawn, the new one about how well.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/editor-quality-settings`.
