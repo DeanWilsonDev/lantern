@@ -26,6 +26,12 @@ lantern:::gpu :: namespace {
         sunTexture~ raw Sdl:::SDL_GPUTexture~* = null;
         /** The local lights' map: `LOCAL_SHADOW_COLUMNS` tiles wide and `LOCAL_SHADOW_ROWS` tall. */
         localTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /**
+         * A 1 by 1 depth texture the lit shader reads in place of a map the GPU refused to create. The shadow
+         * uniforms say nothing is shadowed in that frame, so what it holds never matters; it only has to be there,
+         * because binding a null texture is an error. Created once, the first time `EnsureShadowTargets` runs.
+         */
+        fallbackTexture~ raw Sdl:::SDL_GPUTexture~* = null;
         /** Width and height in pixels of one sun tile. */
         sunTileSize~ u32 = 0;
         /** Width and height in pixels of one local tile. */
@@ -44,11 +50,35 @@ lantern:::gpu :: namespace {
         }
     }
 
+    /** The texture to bind for the sun's map: the map itself, or the fallback when there isn't one. */
+    SunTextureOrFallback :: (targets: ShadowTargets*) -> raw Sdl:::SDL_GPUTexture~* {
+        return targets->sunTexture != null ? targets->sunTexture : targets->fallbackTexture;
+    }
+
+    /** The texture to bind for the local lights' map: the map itself, or the fallback when there isn't one. */
+    LocalTextureOrFallback :: (targets: ShadowTargets*) -> raw Sdl:::SDL_GPUTexture~* {
+        return targets->localTexture != null ? targets->localTexture : targets->fallbackTexture;
+    }
+
+    /** Releases the fallback texture too, at shutdown. */
+    ReleaseShadowTargets :: (device: raw Sdl:::SDL_GPUDevice~*, targets: ShadowTargets~*) -> void {
+        targets->Release(device);
+        unsafe {
+            if targets->fallbackTexture != null {
+                Sdl:::SDL_ReleaseGPUTexture(device, targets->fallbackTexture);
+            }
+        }
+        targets->fallbackTexture = null;
+    }
+
     /**
      * Makes the two maps the sizes asked for, or leaves them if they already are. Returns false when the GPU
      * refuses a texture, with both released, so the caller draws the frame without shadows.
      */
     EnsureShadowTargets :: (device: raw Sdl:::SDL_GPUDevice~*, depthFormat: Sdl:::SDL_GPUTextureFormat, targets: ShadowTargets~*, sunTileSize: u32, localTileSize: u32) -> bool {
+        if targets->fallbackTexture == null {
+            targets->fallbackTexture = CreateShadowTexture(device, depthFormat, 1, 1);
+        }
         if targets->sunTexture != null && targets->sunTileSize == sunTileSize && targets->localTileSize == localTileSize {
             return true;
         }
