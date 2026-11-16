@@ -1,0 +1,119 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct DownsampleUniforms
+{
+    float4 texel_threshold_mode;
+};
+
+struct main0_out
+{
+    float4 output_color [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 source_uv [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+float3 Sample(thread const float2& offset_in_texels, texture2d<float> source_image, sampler source_imageSmplr, thread float2& source_uv, constant DownsampleUniforms& settings)
+{
+    return source_image.sample(source_imageSmplr, (source_uv + (offset_in_texels * settings.texel_threshold_mode.xy))).xyz;
+}
+
+static inline __attribute__((always_inline))
+float Brightness(thread const float3& color)
+{
+    return fast::max(fast::max(color.x, color.y), color.z);
+}
+
+static inline __attribute__((always_inline))
+float3 KeepBrightPart(thread const float3& color, thread const float& threshold)
+{
+    float3 param = color;
+    float brightness = Brightness(param);
+    float knee = fast::max(threshold * 0.100000001490116119384765625, 9.9999997473787516355514526367188e-05);
+    float soft = fast::clamp((brightness - threshold) + knee, 0.0, 2.0 * knee);
+    soft = (soft * soft) / (4.0 * knee);
+    float contribution = fast::max(brightness - threshold, soft) / fast::max(brightness, 9.9999997473787516355514526367188e-05);
+    return color * contribution;
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant DownsampleUniforms& settings [[buffer(0)]], texture2d<float> source_image [[texture(0)]], sampler source_imageSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    float2 param = float2(-2.0);
+    float3 a = Sample(param, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_1 = float2(0.0, -2.0);
+    float3 b = Sample(param_1, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_2 = float2(2.0, -2.0);
+    float3 c = Sample(param_2, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_3 = float2(-2.0, 0.0);
+    float3 d = Sample(param_3, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_4 = float2(0.0);
+    float3 e = Sample(param_4, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_5 = float2(2.0, 0.0);
+    float3 f = Sample(param_5, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_6 = float2(-2.0, 2.0);
+    float3 g = Sample(param_6, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_7 = float2(0.0, 2.0);
+    float3 h = Sample(param_7, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_8 = float2(2.0);
+    float3 i = Sample(param_8, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_9 = float2(-1.0);
+    float3 j = Sample(param_9, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_10 = float2(1.0, -1.0);
+    float3 k = Sample(param_10, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_11 = float2(-1.0, 1.0);
+    float3 l = Sample(param_11, source_image, source_imageSmplr, in.source_uv, settings);
+    float2 param_12 = float2(1.0);
+    float3 m = Sample(param_12, source_image, source_imageSmplr, in.source_uv, settings);
+    float3 result;
+    if (settings.texel_threshold_mode.w > 0.5)
+    {
+        float threshold = settings.texel_threshold_mode.z;
+        float3 centre = (((j + k) + l) + m) * 0.25;
+        float3 top_left = (((a + b) + d) + e) * 0.25;
+        float3 top_right = (((b + c) + e) + f) * 0.25;
+        float3 bottom_left = (((d + e) + g) + h) * 0.25;
+        float3 bottom_right = (((e + f) + h) + i) * 0.25;
+        float3 param_13 = centre;
+        float param_14 = threshold;
+        centre = KeepBrightPart(param_13, param_14);
+        float3 param_15 = top_left;
+        float param_16 = threshold;
+        top_left = KeepBrightPart(param_15, param_16);
+        float3 param_17 = top_right;
+        float param_18 = threshold;
+        top_right = KeepBrightPart(param_17, param_18);
+        float3 param_19 = bottom_left;
+        float param_20 = threshold;
+        bottom_left = KeepBrightPart(param_19, param_20);
+        float3 param_21 = bottom_right;
+        float param_22 = threshold;
+        bottom_right = KeepBrightPart(param_21, param_22);
+        float3 param_23 = centre;
+        float centre_weight = 0.5 / (1.0 + Brightness(param_23));
+        float3 param_24 = top_left;
+        float top_left_weight = 0.125 / (1.0 + Brightness(param_24));
+        float3 param_25 = top_right;
+        float top_right_weight = 0.125 / (1.0 + Brightness(param_25));
+        float3 param_26 = bottom_left;
+        float bottom_left_weight = 0.125 / (1.0 + Brightness(param_26));
+        float3 param_27 = bottom_right;
+        float bottom_right_weight = 0.125 / (1.0 + Brightness(param_27));
+        result = (((((centre * centre_weight) + (top_left * top_left_weight)) + (top_right * top_right_weight)) + (bottom_left * bottom_left_weight)) + (bottom_right * bottom_right_weight)) / float3((((centre_weight + top_left_weight) + top_right_weight) + bottom_left_weight) + bottom_right_weight);
+    }
+    else
+    {
+        result = ((((((j + k) + l) + m) * 0.125) + ((((a + c) + g) + i) * 0.03125)) + ((((b + d) + f) + h) * 0.0625)) + (e * 0.125);
+    }
+    out.output_color = float4(result, 1.0);
+    return out;
+}
+

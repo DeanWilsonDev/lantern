@@ -1,0 +1,91 @@
+// A red sphere on a blue background, rendered with and without anti-aliasing. A pixel the sphere's edge cuts in half would
+// be drawn as red or as blue with no in-between, so the unsmoothed picture has almost no pixels that are part blue. The
+// smoothed one has many: the pixels along the silhouette. Counting them is the test.
+lantern :: import lantern;
+
+BluePartly :: (pixels: Array<u8>, pixelCount: usize) -> u32 {
+    partlyBlue~ u32 = 0;
+    for pixelIndex~ usize = 0; pixelIndex < pixelCount; pixelIndex++ {
+        blue: u8 = pixels[pixelIndex * 4 + 2];
+        if blue > 40 && blue < 200 {
+            partlyBlue++;
+        }
+    }
+    return partlyBlue;
+}
+
+SphereWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->clearColor = lantern:::core:::Color:::Rgb(0.0f, 0.0f, 1.0f);
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 0.0f, z: 4.0f }, Vec3 { });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            sphereData := lantern:::renderer:::Sphere(1.0f, 32, 16);
+            defer delete sphereData;
+            sphere~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(sphereData) {
+                Result:::Ok(handle) -> {
+                    sphere = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+            world := SphereWorld();
+            defer delete world;
+            world->Draw(sphere, null, Mat4 { }, lantern:::core:::Color:::Rgb(1.0f, 0.0f, 0.0f));
+
+            world->post.antiAliasingEnabled = false;
+            partlyBlueWithout~ u32 = 0;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    partlyBlueWithout = BluePartly(pixels, usize(size * size));
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            world->post.antiAliasingEnabled = true;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    partlyBlueWith: u32 = BluePartly(pixels, usize(size * size));
+                    if !(partlyBlueWith > partlyBlueWithout + 30) {
+                        print(`partly blue pixels: without ${partlyBlueWithout}, with ${partlyBlueWith}`);
+                    }
+                    assert(partlyBlueWith > partlyBlueWithout + 30, "anti-aliasing blends the sphere's silhouette into the background");
+                    centre: usize = usize((64 * size + 64) * 4);
+                    assert(pixels[centre] > 60 && pixels[centre + 2] < 40, "the middle of the sphere is still red");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("fxaa smooths jagged edges");
+    return 0;
+}

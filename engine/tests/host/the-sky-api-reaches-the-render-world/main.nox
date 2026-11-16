@@ -1,0 +1,64 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Colors :: () -> void { lantern:::sky:::SetColors(\"102030\", \"405060\", \"708090\"); }\nSun :: () -> void { lantern:::sky:::SetSunDisc(2.0f, 20.0f); }\nLighting :: () -> void { lantern:::sky:::SetLighting(0.5f, 0.8f); }\nOff :: () -> void { lantern:::sky:::SetEnabled(false); }";
+
+BoolResult :: (program: lantern:::nyx:::Program*, name: string) -> bool {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: bool = lantern:::testing:::BoolOrFail(value->Bool());
+    delete value;
+    return result;
+}
+
+TextResult :: (program: lantern:::nyx:::Program*, name: string) -> string! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: string! = lantern:::testing:::TextOrFail(value->Text());
+    delete value;
+    return result!;
+}
+
+ExpectFailure :: (program: lantern:::nyx:::Program*, name: string, expected: string) -> void {
+    failure: string! = TextResult(program, name);
+    if failure != expected {
+        print(`${name} failed with '${failure}'`);
+    }
+    assert(failure == expected, "the call fails with the engine's message");
+    delete failure;
+}
+
+
+IntegerResult :: (program: lantern:::nyx:::Program*, name: string) -> i64 {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: i64 = lantern:::testing:::I64OrFail(value->I64());
+    delete value;
+    return result;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    gameUi := lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    assert(state->renderWorld->sky.enabled, "the sky starts on");
+    lantern:::testing:::CallOrFail(program, "Colors");
+    assert(state->renderWorld->sky.horizon.r > 0.2f && state->renderWorld->sky.horizon.r < 0.3f, "the horizon colour is set from text");
+    lantern:::testing:::CallOrFail(program, "Sun");
+    assert(state->renderWorld->sky.sunDiscStrength == 20.0f, "the sun disc strength is set");
+    lantern:::testing:::CallOrFail(program, "Lighting");
+    assert(state->renderWorld->sky.lightingStrength == 0.5f && state->renderWorld->sky.lightingIntensity == 0.8f, "the sky's light is set");
+    lantern:::testing:::CallOrFail(program, "Off");
+    assert(!state->renderWorld->sky.enabled, "the sky switches off");
+    delete program;
+    delete runtime;
+    delete gameUi;
+    delete state;
+    print("the sky API reaches the render world");
+    return 0;
+}

@@ -25,6 +25,8 @@ lantern:::renderer :: namespace {
         mesh~ lantern:::core:::Handle<MeshTag> = lantern:::core:::Handle<MeshTag> { };
         /** The texture, or null to draw untextured (the white texture, so only the vertex colour and tint show). */
         texture~ lantern:::core:::Handle<TextureTag>? = null;
+        /** The normal map that adds fine bumps to the surface, or null for a smooth one. Used when `material.normalStrength` is above 0. */
+        normalTexture~ lantern:::core:::Handle<TextureTag>? = null;
         /**
          * The model matrix: places the mesh's local coordinates in the world (scale, then rotate, then translate). For
          * entities, `ExtractDraws` has already interpolated it by the frame's `alpha`.
@@ -59,6 +61,11 @@ lantern:::renderer :: namespace {
         roughness~ f32 = 0.8f;
         /** Light the surface gives off by itself, in linear RGB, added after the lighting. Not a light for other things. */
         emissive~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+        /**
+         * How strongly the draw's `normalTexture` bends the surface: 0 ignores it, 1 follows it as authored, above 1
+         * exaggerates the bumps. Only meaningful when the draw has a normal map.
+         */
+        normalStrength~ f32 = 0.0f;
 
         /** Painted wood or stone: not metal, and rough. The default. */
         static Matte :: () -> Material {
@@ -237,6 +244,215 @@ lantern:::renderer :: namespace {
          * shadowed them. A shorter distance gives sharper shadows near the camera.
          */
         distance~ f32 = 60.0f;
+        /**
+         * How wide a shadow's edge is, as a filter radius in shadow-map texels. 1 is nearly as sharp as the map allows;
+         * 3 gives a soft penumbra, at the price of blurrier contact points.
+         */
+        softness~ f32 = 2.0f;
+        /** How many lookups the filter makes per pixel and light. More is smoother; 4, 8 and 16 are the quality levels. */
+        filterSamples~ u32 = 12;
+        /** Fade between the sun's cascades near each one's end, instead of switching with a visible line. */
+        blendCascades~ bool = true;
+
+        /** These settings with the filter's sample count set for `level`. The map sizes and distance stay as the game set them. */
+        WithQuality :: (level: QualityLevel) -> ShadowSettings {
+            return ShadowSettings {
+                enabled: enabled,
+                sunMapSize: sunMapSize,
+                localTileSize: localTileSize,
+                distance: distance,
+                softness: softness,
+                filterSamples: when level {
+                    QualityLevel:::Low -> 4,
+                    QualityLevel:::Medium -> 12,
+                    QualityLevel:::High -> 20
+                },
+                blendCascades: blendCascades
+            };
+        }
+    }
+
+    /**
+     * The sky: what the camera sees where no mesh covers the screen, and the light the scene receives from it. It is three
+     * colours blended by direction (see `engine/shaders/sky-common.glsl`) plus a sun disc, with no picture. Light from the
+     * sky is image-based lighting: surfaces take their ambient light and their reflections from it, so a metal facing the
+     * sky shows the sky.
+     */
+    SkySettings :: struct {
+        /** Draw the sky and light the scene with it. Off, the frame clears to `clearColor` and the flat ambient pair lights it. */
+        enabled~ bool = true;
+        /** The colour straight up, in linear RGB. */
+        zenith~ lantern:::core:::Color = lantern:::core:::Color { r: 0.26f, g: 0.48f, b: 0.88f };
+        /** The colour all the way round at eye level. Fog fades into it, so distant things dissolve into the sky. */
+        horizon~ lantern:::core:::Color = lantern:::core:::Color { r: 0.7f, g: 0.8f, b: 0.92f };
+        /** The colour straight down, which the lower half of the view and the light from below use. */
+        ground~ lantern:::core:::Color = lantern:::core:::Color { r: 0.34f, g: 0.32f, b: 0.3f };
+        /** The sun disc's angular radius in radians. About 0.0047 is the real sun; a larger disc is friendlier. */
+        sunDiscRadiusRadians~ f32 = 0.02f;
+        /** How bright the disc is, in scene light units. Well above 1 so that it blooms. */
+        sunDiscStrength~ f32 = 12.0f;
+        /** How much of the scene's ambient light comes from the sky: 0 keeps the flat sky and ground pair, 1 replaces it. */
+        lightingStrength~ f32 = 1.0f;
+        /** How bright the sky's light is. */
+        lightingIntensity~ f32 = 0.6f;
+    }
+
+    /**
+     * The look a chapter or a place wants, applied to the finished picture after tone mapping. The defaults change nothing.
+     * The guide is `docs/colour-grade.md`.
+     */
+    ColorGrade :: struct {
+        /** 1 leaves colours as they are, 0 is black and white, above 1 is more vivid. */
+        saturation~ f32 = 1.0f;
+        /** 1 leaves contrast as it is; above 1 pushes darks darker and lights lighter, below 1 flattens them. */
+        contrast~ f32 = 1.0f;
+        /** The picture is multiplied by this colour: warm to warm it up, cool to cool it down. White changes nothing. */
+        tint~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f };
+        /** How much the corners darken, 0 (not at all) to 1. */
+        vignette~ f32 = 0.0f;
+    }
+
+    /** How many blob shadows a frame can hold. A ninth is ignored. */
+    MAX_BLOB_SHADOWS: usize : 8;
+
+    /**
+     * A soft dark ellipse on whatever surface is near a point: the cheap shadow that makes a character look planted. Like
+     * the frame's draws it lasts one frame, so the game adds it again every frame. The guide is
+     * `docs/blob-shadows.md`.
+     */
+    BlobShadow :: struct {
+        /** The point on the ground it sits on, in world space. */
+        center~ Vec3 = Vec3 { };
+        /** How far across the ground it reaches, in metres. */
+        radius~ f32 = 1.0f;
+        /** How dark it is at the centre, 0 to 1. */
+        strength~ f32 = 0.5f;
+        /** How far above and below `center` a surface can be and still darken, in metres. Keeps it off a character's body. */
+        reach~ f32 = 0.6f;
+    }
+
+    /**
+     * The air between the camera and what it looks at: fog that is thicker low down than high up, and shafts of sunlight
+     * through it. The guide is `docs/fog-and-light-shafts.md`. The older `fogStart` and `fogEnd` on the world still fade
+     * distant things to the horizon colour; this adds to that.
+     */
+    AtmosphereSettings :: struct {
+        /** Fog that thins with height: ground mist in valleys, haze that clears above the rooftops. */
+        heightFogEnabled~ bool = true;
+        /** How thick the fog is at the base height: the fraction of light lost per metre travelled through it. 0.01 is a light haze. */
+        fogDensity~ f32 = 0.008f;
+        /** How fast the fog thins as you go up, per metre. 0.1 halves it about every 7 metres. */
+        fogHeightFalloff~ f32 = 0.1f;
+        /** The height in metres where the fog is at its full density. */
+        fogBaseHeight~ f32 = 0.0f;
+        /** The fog's colour, in linear RGB. */
+        fogColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.62f, g: 0.72f, b: 0.85f };
+        /** How much brighter the fog is when you look towards the sun. 0 for none. */
+        fogSunScattering~ f32 = 0.5f;
+        /** Shafts of sunlight: bright streaks away from the sun where objects block it. Costs 24 depth reads per pixel. */
+        lightShaftsEnabled~ bool = true;
+        /** How bright the shafts are. */
+        lightShaftStrength~ f32 = 0.35f;
+        /** How much of a shaft survives each step towards the sun, 0 to 1; closer to 1 gives longer shafts. */
+        lightShaftDecay~ f32 = 0.95f;
+
+        /** These settings with every quality-dependent effect set for `level`. Height fog is cheap and stays; shafts go at Low. */
+        WithQuality :: (level: QualityLevel) -> AtmosphereSettings {
+            return AtmosphereSettings {
+                heightFogEnabled: heightFogEnabled,
+                fogDensity: fogDensity,
+                fogHeightFalloff: fogHeightFalloff,
+                fogBaseHeight: fogBaseHeight,
+                fogColor: fogColor,
+                fogSunScattering: fogSunScattering,
+                lightShaftsEnabled: level != QualityLevel:::Low,
+                lightShaftStrength: lightShaftStrength,
+                lightShaftDecay: lightShaftDecay
+            };
+        }
+    }
+
+    /**
+     * How much the renderer spends on looks. Each effect that costs frame time picks its setting from the level, so one
+     * call turns a whole set of effects up or down. The game sets it with `lantern:::graphics:::SetQuality`.
+     */
+    QualityLevel :: enum {
+        /** The cheapest: only what the picture needs to be correct. No bloom. */
+        Low,
+        /** Bloom on, at its default strength. */
+        Medium,
+        /** Everything Medium has; later effects join here. */
+        High
+    }
+
+    /**
+     * The curve that squeezes the scene's light (any brightness) into the 0 to 1 a display shows. Each keeps dark and
+     * middle colours close to how they were and treats bright ones differently.
+     */
+    ToneMapper :: enum {
+        /** No curve: values above 1 are cut off flat. The look of a renderer with no high dynamic range. */
+        Clamp,
+        /**
+         * Colours below about 0.8 are left exactly as they are, and only brighter light is rolled off towards white,
+         * losing a little saturation as it goes (Khronos PBR Neutral). The least change to a scene lit for a clamped
+         * target, so it's the default.
+         */
+        Neutral,
+        /**
+         * A filmic S-curve (an ACES fit): a lifted toe, a contrasty middle and a long shoulder. More dramatic, and it
+         * brightens and desaturates pastels, so lights and colours tuned without it need re-balancing.
+         */
+        Aces
+    }
+
+    /**
+     * How the finished frame is processed before it reaches the screen. The scene is drawn as light in a high dynamic
+     * range target, where values can go far above 1; these settings say how that light becomes the 0 to 1 colours a
+     * display shows, and whether the bright parts bloom.
+     */
+    PostSettings :: struct {
+        /** Glow around bright surfaces: the bright parts are blurred and added back. Costs nine small full-screen passes. */
+        bloomEnabled~ bool = true;
+        /** How much of the blurred glow is added back. 0.04 is a faint halo; 0.2 is a hazy one. */
+        bloomStrength~ f32 = 0.1f;
+        /** The brightness (in the scene's light units, 1 being a white wall in full sun) where glow starts. */
+        bloomThreshold~ f32 = 1.5f;
+        /** The chapter's look: saturation, contrast, tint and vignette; see `ColorGrade`. */
+        grade~ ColorGrade = ColorGrade { };
+        /** Draw the frame's blob shadows. Cheap, so quality doesn't change it. */
+        blobShadowsEnabled~ bool = true;
+        /** Smooth jagged edges with FXAA, one extra full-screen pass over the tone-mapped picture; see `docs/anti-aliasing.md`. */
+        antiAliasingEnabled~ bool = true;
+        /** Darken creases and contact points using the depth buffer; see `docs/ambient-occlusion.md`. Two extra passes. */
+        ambientOcclusionEnabled~ bool = true;
+        /** How far from a surface, in metres, geometry can block its light. A bigger radius darkens wider areas. */
+        ambientOcclusionRadius~ f32 = 0.6f;
+        /** How dark a fully blocked point gets, 0 (not at all) to 1 (black). */
+        ambientOcclusionIntensity~ f32 = 0.8f;
+        /** How far in front of a sample a surface must be, in metres, to count as blocking it. Stops flat walls shading themselves. */
+        ambientOcclusionBias~ f32 = 0.04f;
+        /** A brightness knob applied before tone mapping: 2 shows the scene twice as bright. */
+        exposure~ f32 = 1.0f;
+        /** The curve that maps light to colour; see `ToneMapper`. */
+        toneMapper~ ToneMapper = ToneMapper:::Neutral;
+
+        /** These settings with every quality-dependent effect set for `level`. The look settings (exposure, curve) stay. */
+        WithQuality :: (level: QualityLevel) -> PostSettings {
+            return PostSettings {
+                bloomEnabled: level != QualityLevel:::Low,
+                antiAliasingEnabled: level != QualityLevel:::Low,
+                blobShadowsEnabled: blobShadowsEnabled,
+                grade: grade,
+                ambientOcclusionEnabled: level != QualityLevel:::Low,
+                ambientOcclusionRadius: ambientOcclusionRadius,
+                ambientOcclusionIntensity: ambientOcclusionIntensity,
+                ambientOcclusionBias: ambientOcclusionBias,
+                bloomStrength: bloomStrength,
+                bloomThreshold: bloomThreshold,
+                exposure: exposure,
+                toneMapper: toneMapper
+            };
+        }
     }
 
     /** One end of a debug line, laid out exactly as the GPU reads it (28 bytes). */
@@ -339,6 +555,12 @@ lantern:::renderer :: namespace {
         lights~ Array<Light>! = [];
         /** How shadows are drawn; see `ShadowSettings`. */
         shadows~ ShadowSettings = ShadowSettings { };
+        /** The sky and the light it gives; see `SkySettings`. */
+        sky~ SkySettings = SkySettings { };
+        /** Height fog and light shafts; see `AtmosphereSettings`. */
+        atmosphere~ AtmosphereSettings = AtmosphereSettings { };
+        /** How the frame is tone mapped and bloomed; see `PostSettings`. */
+        post~ PostSettings = PostSettings { };
         /** The next id `AddLight` hands out. Starts at 1 so 0 can mean "no light". */
         nextLightId~ u32 = 1;
         /** The colour the frame starts as before anything is drawn (the sky), in linear RGB. Fog fades to it too. */
@@ -347,8 +569,12 @@ lantern:::renderer :: namespace {
         fogStart~ f32 = 60.0f;
         /** The distance where fog is total. Keeping it inside the camera's far plane hides the far plane's cut. */
         fogEnd~ f32 = 160.0f;
+        /** The dust, sparks and trails; they live across frames and draw as lines each frame. See `ParticleSystem`. */
+        particles~ ParticleSystem*!;
         /** The meshes to draw this frame. */
         draws~ Array<DrawItem>! = [];
+        /** The blob shadows to draw this frame; see `BlobShadow`. */
+        blobShadows~ Array<BlobShadow>! = [];
         /** Debug line vertices this frame, two per line. */
         lines~ Array<LineVertex>! = [];
         /** The 2D overlay this frame. Owned. */
@@ -361,11 +587,14 @@ lantern:::renderer :: namespace {
             camera = Camera:::Default();
             light = DirectionalLight:::Default();
             overlay = new Overlay();
+            particles = new ParticleSystem();
         }
 
         /** Frees the lists and the overlay. */
         !RenderWorld~: () {
+            delete particles;
             delete draws;
+            delete blobShadows;
             delete lines;
             delete lights;
             delete overlay;
@@ -412,8 +641,31 @@ lantern:::renderer :: namespace {
          */
         Clear~: () -> void {
             draws.clear();
+            blobShadows.clear();
             lines.clear();
             overlay->Clear();
+        }
+
+        /** Moves the particles on by `seconds` and adds a streak for each to this frame's lines, fading out as it ages. */
+        StepParticles~: (seconds: f32) -> void {
+            particles->Step(seconds);
+            for index~ usize = 0; index < particles->particles.length(); index++ {
+                particle: Particle = particles->particles[index];
+                fade: f32 = 1.0f - particle.age / particle.life;
+                tail: Vec3 = Vec3 {
+                    x: particle.position.x - particle.velocity.x * particle.length,
+                    y: particle.position.y - particle.velocity.y * particle.length,
+                    z: particle.position.z - particle.velocity.z * particle.length
+                };
+                Line(particle.position, tail, lantern:::core:::Color { r: particle.color.r, g: particle.color.g, b: particle.color.b, a: fade });
+            }
+        }
+
+        /** Adds a blob shadow for this frame: soft darkness on the surface around `center`. Past `MAX_BLOB_SHADOWS` it is ignored. */
+        AddBlobShadow~: (center: Vec3, radius: f32, strength: f32) -> void {
+            if blobShadows.length() < MAX_BLOB_SHADOWS {
+                blobShadows.push(BlobShadow { center: center, radius: Math:::max(radius, 0.01f), strength: strength, reach: Math:::max(radius * 0.6f, 0.3f) });
+            }
         }
 
         /** Adds one mesh draw with the default matte material. */

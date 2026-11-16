@@ -105,6 +105,40 @@ lantern:::renderer :: namespace {
             return texture!;
         }
 
+        /**
+         * A normal map of round bumps, like rivets or cobbles: `cells` bumps a side, each a dome whose slope grows
+         * towards its rim, `steepness` (0 flat, 1 steep) setting how sharply. The bytes are plain tangent-space
+         * normals, (0.5, 0.5, 1) being flat, with the green channel pointing up the image. Use it as a draw's normal
+         * map, not as a colour texture.
+         */
+        static Bumps :: (size: u32, cells: u32, steepness: f32) -> TextureData*! {
+            cellSize~ u32 = size / cells;
+            if cellSize < 1 {
+                cellSize = 1;
+            }
+            texture := new TextureData(size, size, TextureFilter:::Linear, TextureWrap:::Repeat);
+            for y~ u32 = 0; y < size; y += 1 {
+                for x~ u32 = 0; x < size; x += 1 {
+                    across: f32 = (f32(x % cellSize) + 0.5f) / f32(cellSize) * 2.0f - 1.0f;
+                    down: f32 = (f32(y % cellSize) + 0.5f) / f32(cellSize) * 2.0f - 1.0f;
+                    radiusSquared: f32 = across * across + down * down;
+                    slopeX~ f32 = 0.0f;
+                    slopeY~ f32 = 0.0f;
+                    if radiusSquared < 0.9f {
+                        lift: f32 = steepness / Math:::sqrt(1.0f - radiusSquared);
+                        slopeX = -across * lift;
+                        slopeY = down * lift;
+                    }
+                    length: f32 = Math:::sqrt(slopeX * slopeX + slopeY * slopeY + 1.0f);
+                    texture->rgba8.push(u8((slopeX / length * 0.5f + 0.5f) * 255.0f));
+                    texture->rgba8.push(u8((slopeY / length * 0.5f + 0.5f) * 255.0f));
+                    texture->rgba8.push(u8((1.0f / length * 0.5f + 0.5f) * 255.0f));
+                    texture->rgba8.push(255);
+                }
+            }
+            return texture!;
+        }
+
         /** Copies pixels stb_image decoded into a new texture and frees stb_image's buffer. */
         static FromStbPixels :: (pixels: raw u8~*, width: i32, height: i32) -> TextureData*! {
             texture := new TextureData(u32(width), u32(height), TextureFilter:::Linear, TextureWrap:::Repeat);

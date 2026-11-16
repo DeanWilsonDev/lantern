@@ -1,0 +1,156 @@
+// Two checks on the air between the camera and the world.
+//
+// Height fog: a red wall 60 metres away is seen from near the ground and from 80 metres up. The fog is thick near the base
+// height and almost gone far above it, so the low view's wall is washed towards the fog's blue and the high view's wall
+// stays red.
+//
+// Light shafts: with the sun ahead of the camera over an empty sky, turning shafts on adds sunlight to sky pixels near the
+// sun, so they get brighter.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+WallWorld :: (cameraHeight: f32) -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->post.bloomEnabled = false;
+    world->post.ambientOcclusionEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->atmosphere.heightFogEnabled = true;
+    world->atmosphere.fogDensity = 0.03f;
+    world->atmosphere.fogHeightFalloff = 0.1f;
+    world->atmosphere.fogBaseHeight = 0.0f;
+    world->atmosphere.fogColor = lantern:::core:::Color:::Rgb(0.0f, 0.0f, 1.0f);
+    world->atmosphere.fogSunScattering = 0.0f;
+    world->fogStart = 10000.0f;
+    world->fogEnd = 20000.0f;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+        color: lantern:::core:::Color:::Black(),
+        ambient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: cameraHeight, z: 0.0f }, Vec3 { x: 0.0f, y: cameraHeight, z: -60.0f });
+    world->camera.farPlane = 500.0f;
+    return world!;
+}
+
+SunWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->post.bloomEnabled = false;
+    world->post.ambientOcclusionEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: lantern:::core:::Normalize3(Vec3 { x: 0.0f, y: -0.3f, z: 1.0f }),
+        color: lantern:::core:::Color:::White(),
+        ambient: lantern:::core:::Color:::Rgb(0.3f, 0.3f, 0.3f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.3f, 0.3f, 0.3f)
+    };
+    world->sky.sunDiscStrength = 0.0f;
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 0.0f, z: 0.0f }, Vec3 { x: 0.0f, y: 0.0f, z: -10.0f });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            wallData := lantern:::renderer:::Plane(400.0f, 400.0f);
+            defer delete wallData;
+            wall~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(wallData) {
+                Result:::Ok(handle) -> {
+                    wall = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+            wallPlacement: Mat4 = lantern:::core:::MatrixFromScaleRotationTranslation(Vec3 { x: 1.0f, y: 1.0f, z: 1.0f }, lantern:::core:::QuaternionFromAxisAngle(Vec3 { x: 1.0f, y: 0.0f, z: 0.0f }, 1.5707964f), Vec3 { x: 0.0f, y: 0.0f, z: -60.0f });
+
+            lowBlue~ u8 = 0;
+            lowRed~ u8 = 0;
+            lowWorld := WallWorld(1.0f);
+            defer delete lowWorld;
+            lowWorld->DrawWithMaterial(wall, null, wallPlacement, lantern:::core:::Color:::Rgb(1.0f, 0.0f, 0.0f), lantern:::renderer:::Material { metallic: 0.0f, roughness: 1.0f });
+            when renderer->RenderOffscreen(lowWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    lowBlue = PixelAt(pixels, size, 64, 64)[2];
+                    lowRed = PixelAt(pixels, size, 64, 64)[0];
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            highWorld := WallWorld(80.0f);
+            defer delete highWorld;
+            highWorld->DrawWithMaterial(wall, null, wallPlacement, lantern:::core:::Color:::Rgb(1.0f, 0.0f, 0.0f), lantern:::renderer:::Material { metallic: 0.0f, roughness: 1.0f });
+            when renderer->RenderOffscreen(highWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    highBlue: u8 = PixelAt(pixels, size, 64, 64)[2];
+                    highRed: u8 = PixelAt(pixels, size, 64, 64)[0];
+                    if !(lowBlue > highBlue + 60 && highRed > lowRed + 30) {
+                        print(`low view: red ${lowRed} blue ${lowBlue}; high view: red ${highRed} blue ${highBlue}`);
+                    }
+                    assert(lowBlue > highBlue + 60, "near the ground the distant wall is washed towards the fog colour");
+                    assert(highRed > lowRed + 30, "high above the base height the wall stays red");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            sunWorld := SunWorld();
+            defer delete sunWorld;
+            sunWorld->atmosphere.lightShaftsEnabled = false;
+            shaftsOffRed~ u8 = 0;
+            when renderer->RenderOffscreen(sunWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    shaftsOffRed = PixelAt(pixels, size, 84, 50)[0];
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            sunWorld->atmosphere.lightShaftsEnabled = true;
+            when renderer->RenderOffscreen(sunWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    shaftsOnRed: u8 = PixelAt(pixels, size, 84, 50)[0];
+                    if !(shaftsOnRed > shaftsOffRed + 15) {
+                        print(`sky near the sun: shafts off ${shaftsOffRed}, on ${shaftsOnRed}`);
+                    }
+                    assert(shaftsOnRed > shaftsOffRed + 15, "light shafts brighten the sky near the sun");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("height fog and light shafts add air to the frame");
+    return 0;
+}

@@ -53,7 +53,7 @@ Two ideas carry the whole design:
 | `sdl-facade/renderer/GpuResources.nox` | GPU meshes and textures, samplers, uploads, mipmaps, growable vertex buffers |
 | `sdl-facade/renderer/GpuUniforms.nox` | The uniform blocks, laid out exactly as the shaders declare them |
 | `sdl-facade/renderer/GpuDrawList.nox` | The order meshes are drawn in |
-| `engine/shaders/*.vert`, `*.frag` | The GLSL shaders; `engine/shaders/compiled/` holds them built for Vulkan and Metal |
+| `engine/shaders/*.vert`, `*.frag` | The GLSL shaders; `engine/shaders/compiled/` holds them built for Vulkan and Metal (`engine/tools/build-shaders.sh` rebuilds them) |
 
 Every type, field and function in these files, the shaders, the game loop (`engine/loop/`), the application
 (`application/`) and the rest of `sdl-facade/` has a `/** */` doc comment saying what it does and why: the frame order,
@@ -68,7 +68,7 @@ completion and in signature help. The shaders explain themselves with `//` comme
    are the two compiled forms it ships, so SDL GPU chooses Vulkan or Metal for the platform. Direct3D 12 would need
    DXIL shaders as well.
 2. **Claim the window** for the device, which gives it a swapchain: the images the window shows.
-3. **Pick formats** (`GpuDevice.nox`). Colour comes from the swapchain. The swapchain is set to SDR_LINEAR where the
+3. **Pick formats** (`GpuDevice.nox`, `GpuPost.nox`). Colour comes from the swapchain. The swapchain is set to SDR_LINEAR where the
    window supports it, so the hardware converts linear colour to sRGB as pixels are written; otherwise the shaders
    do the conversion themselves. Depth takes the most precise format the card has (32-bit float first).
 4. **Build four pipelines** (`GpuPipelines.nox`). A pipeline fixes everything about how one kind of geometry is
@@ -80,6 +80,11 @@ completion and in signature help. The shaders explain themselves with `//` comme
    | `lines` | debug lines | 28 bytes: position, colour | lines | no | yes / no | alpha |
    | `overlay` | HUD, menus, text | 32 bytes: 2D position, uv, colour | triangles | no | no / no | alpha |
    | `shadow` | casters, into a depth texture | the lit vertex (only the position is read) | triangles | no | yes / yes, no colour target | off |
+
+   Beside these there is the `shadow` pipeline (depth only; see "Shadows") and four full-screen post pipelines
+   (bloom shrink, bloom grow, composite; see `bloom-and-tone-mapping.md`) that take no vertex buffer. The `lit`
+   pipeline draws into the 16-bit float scene texture, so it is built for that format; the lines, the overlay and the
+   composite draw into the window's own format.
 
    Each pipeline's shaders are loaded from `engine/shaders/compiled/` (`GpuShaders.nox`): `.spv` for Vulkan, `.msl`
    for Metal.
@@ -146,17 +151,37 @@ A `RenderWorld` holds only plain values and handles, never GPU objects. That is 
 3. **Sort** (`GpuDrawList.nox`). The visible draws are sorted by texture, then mesh, then submission order, so
    consecutive draws share bindings.
 4. **Draw the shadow maps** (`RecordShadowPasses`, see "Shadows" below), in passes of their own before the main one.
-5. **Begin one render pass** with the colour image cleared to the world's clear colour and depth cleared to 1.0, the
-   far plane.
-6. **Draw the meshes** (`DrawMeshes`). Push the per-frame uniforms once: the view-projection matrix and camera
-   position for the vertex shader, and the sun, the ambient light, fog and the chosen local lights for the fragment
-   shader. Then for each draw, bind its mesh's buffers and its texture only if they differ from the previous draw's,
-   push the per-draw uniforms (the model matrix and its normal matrix, then the tint and material) and issue one
-   indexed draw.
-7. **Draw the lines** (`DrawLines`), depth-tested against the meshes but not writing depth.
-8. **Draw the overlay** (`DrawOverlay`) in screen pixels, with no depth test, so it sits on top. Every overlay
-   vertex samples the font atlas; solid boxes use the atlas's white cell.
-9. **End the pass.**
+5. **Make sure the post targets match** the frame's size (`EnsurePostTargets`): the high dynamic range scene texture
+   and the bloom chain.
+6. **Scene pass.** One render pass with the scene texture cleared to the world's clear colour and depth cleared to
+   1.0, the far plane. The scene texture is 16-bit float per channel (RGBA16F, which the GPU must be able to render to; see `graphics-effects.md`), so light brighter than 1 is kept as it is and
+   not cut off. Then **draw the meshes** (`DrawMeshes`). Push the per-frame uniforms once: the view-projection
+   matrix and camera position for the vertex shader, and the sun, the ambient light, fog and the chosen local lights
+   for the fragment shader. Then for each draw, bind its mesh's buffers and its texture only if they differ from the
+   previous draw's, push the per-draw uniforms (the model matrix and its normal matrix, then the tint and material)
+   and issue one indexed draw. The pass keeps its depth, because the lines test against it next. After the meshes,
+   **draw the sky** (`DrawSky`, if the sky is on and the camera is perspective): a fullscreen triangle at the far
+   depth that fills only the pixels no mesh covered. The same sky function lights the meshes. See
+   `sky-and-image-based-lighting.md`.
+7. **Ambient occlusion passes** (`RecordAmbientOcclusion`), if it's on and the camera is perspective: read the scene's depth
+   buffer to estimate how blocked each pixel is, then average that over 4x4 pixels. See `ambient-occlusion.md`.
+8. **Bloom passes** (`RecordBloom`), if bloom is on: shrink the scene through five textures, each half the size of
+   the last, keeping only its bright part in the first shrink, then grow them back one at a time adding each to the
+   next larger. Every step is a full-screen pass: one oversized triangle drawn by `fullscreen.vert`, with no vertex
+   buffer, so the fragment shader runs once per pixel of the target.
+9. **Composite pass** (`RecordComposite`): another full-screen pass that reads the scene, the glow and the depth buffer. It
+   multiplies in the ambient occlusion, darkens under blob shadows (`blob-shadows.md`), adds height fog and light shafts
+   (`fog-and-light-shafts.md`), adds the glow,
+   multiplies by the exposure, applies the tone-mapping curve and writes the swapchain image. When the target can't
+   applies the colour grade (`colour-grade.md`), and, when the target can't sRGB-encode, does that here. See `bloom-and-tone-mapping.md`. With anti-aliasing on, the composite writes a
+   texture of its own and **the FXAA pass** (`RecordAntiAlias`) smooths it onto the screen image; see `anti-aliasing.md`.
+    A draw's normal map (`normal-maps.md`) is bound beside its texture and bends the normal in the lit shader.
+    Particles (`particles.md`) are added as lines each frame before this pass.
+10. **Overlay pass**, only if there are lines or overlay quads: it loads the swapchain image and the scene's depth,
+   then **draws the lines** (`DrawLines`), depth-tested against the meshes but not writing depth, and **the overlay**
+   (`DrawOverlay`) in screen pixels, with no depth test, so it sits on top. Every overlay vertex samples the font
+   atlas; solid boxes use the atlas's white cell. Lines and overlay come after the composite on purpose: a HUD colour
+   or a debug line's colour reaches the screen exactly as written, not tone mapped.
 
 ### The uniforms
 
@@ -192,7 +217,8 @@ colour  += emissive
 colour   = mix(colour, fogColour, fog)                                fog fades into the clear colour, hiding the far plane
 ```
 
-and encodes to sRGB itself when the swapchain can't. `lines` passes colours through. `overlay.vert` turns pixel
+and writes the result as linear light, unclamped, into the scene texture; `composite.frag` tone maps it and encodes it
+to sRGB afterwards. `lines` passes colours through. `overlay.vert` turns pixel
 positions into clip space (`x / width * 2 - 1`, `1 - y / height * 2`).
 
 `EvaluateLight` is the Cook-Torrance model, the usual "PBR-lite" shading:
@@ -302,7 +328,7 @@ memory and synchronisation underneath. These are the usual next features, and wh
 | Richer materials | `Material` has metallic, roughness and emissive values. Normal, roughness and emissive *textures*, and per-material shaders, would need a material handle on `DrawItem` instead of one texture, and a draw list that sorts by pipeline, then material, then mesh. |
 | Many lights | Eight lights in a loop is the limit of a forward renderer with a uniform block. A storage buffer and a clustered or deferred approach go past it. |
 | Transparency | A second list in `RenderWorld` for blended draws, sorted back to front and drawn after the opaque meshes with depth writes off. |
-| Post-processing | Render the scene into an off-screen colour texture (as `Capture` does), then draw a full-screen triangle that samples it (tone mapping, bloom, anti-aliasing) into the swapchain. |
+| More post-processing | The scene already renders into a texture that full-screen passes read (`GpuPost.nox`). Anti-aliasing, ambient occlusion, colour grading and depth of field would each be another pass between the scene pass and the composite, or a step inside the composite. |
 | Instancing | Group draws that share a mesh and material, put their transforms in a buffer, and issue one draw with an instance count. `GpuDrawList.nox` already sorts them together. |
 | A render graph | Once there are several passes, describe each pass's inputs and outputs and let a small scheduler order them and manage their textures, instead of a hand-written `RecordFrame`. |
 

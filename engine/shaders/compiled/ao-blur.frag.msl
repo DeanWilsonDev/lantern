@@ -1,0 +1,82 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct AmbientOcclusionUniforms
+{
+    float4 projection_terms;
+    float4 look;
+    float4 texel;
+};
+
+struct main0_out
+{
+    float4 output_occlusion [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 source_uv [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+bool IsBackground(thread const float& depth)
+{
+    return depth > 0.999989986419677734375;
+}
+
+static inline __attribute__((always_inline))
+float LinearDistance(thread const float& depth, constant AmbientOcclusionUniforms& settings)
+{
+    float depth_range = settings.projection_terms.w;
+    return (depth_range * settings.projection_terms.z) / (depth + depth_range);
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant AmbientOcclusionUniforms& settings [[buffer(0)]], texture2d<float> occlusion_image [[texture(0)]], texture2d<float> depth_image [[texture(1)]], sampler occlusion_imageSmplr [[sampler(0)]], sampler depth_imageSmplr [[sampler(1)]])
+{
+    main0_out out = {};
+    float center_depth = depth_image.sample(depth_imageSmplr, in.source_uv).x;
+    float param = center_depth;
+    if (IsBackground(param))
+    {
+        out.output_occlusion = float4(1.0);
+        return out;
+    }
+    float param_1 = center_depth;
+    float center_distance = LinearDistance(param_1, settings);
+    float total = 0.0;
+    float total_weight = 0.0;
+    for (int row = -2; row < 2; row++)
+    {
+        for (int column = -2; column < 2; column++)
+        {
+            float2 tap_uv = in.source_uv + ((float2(float(column), float(row)) + float2(0.5)) * settings.texel.xy);
+            float tap_depth = depth_image.sample(depth_imageSmplr, tap_uv).x;
+            float param_2 = tap_depth;
+            if (IsBackground(param_2))
+            {
+                continue;
+            }
+            float param_3 = tap_depth;
+            float difference = abs(LinearDistance(param_3, settings) - center_distance) / center_distance;
+            float weight = fast::max(0.0, 1.0 - (difference * 10.0));
+            total += (occlusion_image.sample(occlusion_imageSmplr, tap_uv).x * weight);
+            total_weight += weight;
+        }
+    }
+    float _156;
+    if (total_weight > 0.0)
+    {
+        _156 = total / total_weight;
+    }
+    else
+    {
+        _156 = 1.0;
+    }
+    out.output_occlusion = float4(_156);
+    return out;
+}
+

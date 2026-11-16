@@ -1035,7 +1035,186 @@ The second slice (`crimson-and-thorn-slice.md`) adds the Guide Light, chapter lo
 
 Cards: `platformer-game/crimson-and-thorn-slice` (Guide Light, chapter looks and thorns complete; the Anchor waits for Dean).
 
-## D-064 Slice 3 of the Crimson and Thorn mechanics: the Anchor as a set swing arc
+
+## D-064 The scene is drawn in high dynamic range, then tone mapped, with bloom as an optional pass
+
+(Provisional, 2026-11-16, not yet reviewed by Dean.)
+
+Dean asked for the renderer to be improved step by step, starting with emissive gems that glow. A glow needs light
+brighter than white, and an 8-bit target throws that away, so the lit pass now draws into a 16-bit float texture and
+three more steps turn it into the picture. `bloom-and-tone-mapping.md` is the guide.
+
+- **Pass order.** Shadows, the scene pass (lit meshes into the HDR texture), bloom (nine small full-screen passes),
+  the composite pass (glow, exposure, tone map, sRGB into the swapchain image), then a last pass for debug lines and
+  the overlay. Lines and overlay stay out of the HDR path, so a HUD colour reaches the screen as written and the
+  editor's gizmo colours don't change.
+- **The default tone mapper is Khronos PBR Neutral, not ACES.** ACES was tried first and washed the platformer out: its
+  curve brightens middle values and desaturates pastels, and the game's colours were tuned for a clamped target. Neutral
+  leaves everything below about 0.8 alone. ACES stays one call away (`SetToneMapper("aces")`), and so does "none".
+- **Bloom is 13-tap shrink and tent-filter grow**, five levels, with a soft-knee threshold and Karis averaging on the
+  first shrink so a single bright pixel can't sparkle. Defaults: threshold 1.5, strength 0.1, so a sunlit wall doesn't
+  glow and a gem does.
+- **`SetGlow(entity, color, strength)`** lets a material's emissive light exceed 1 (the `"RRGGBB"` string can't). The
+  gems glow at 4 times their colour.
+- **`lantern:::graphics`** holds the settings and `SetQuality("low" | "medium" | "high")` is the one switch effects join
+  as they are added. Low turns bloom off. HDR and tone mapping stay on at every level.
+- **A GPU that can't draw into and sample RGBA16F is refused at start-up** with a clear error. SDL GPU's Vulkan and Metal
+  devices all support it, so there is no 8-bit fallback to maintain.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU. The cloud renders with lavapipe, a software
+  Vulkan driver, so the 60 fps goal needs Dean's Mac.
+
+Card: `renderer-visuals/hdr-rendering-tone-mapping-and-bloom`.
+
+## D-065: A procedural sky that lights the scene
+
+- **The sky is a formula, not a cubemap.** `SkyGradient(direction, zenith, horizon, ground, blur)` in
+  `engine/shaders/sky-common.glsl` is shared by the backdrop shader and the lit shader, so what you see behind the world
+  is exactly what lights it. No bake step, no texture to load.
+- **Image-based lighting is analytic.** Diffuse irradiance is the sky's blurred lookup along the normal; specular is the
+  roughness-blurred lookup along the mirror direction times an approximation of the environment BRDF table.
+- **The sky colours ride in the existing light uniform block** (now 176 bytes). SDL GPU allows four uniform buffers per
+  stage, and a fifth crashed lavapipe, so no new buffer was added.
+- **The sky is drawn after the meshes** at the far depth with a less-or-equal test, so it only shades uncovered pixels.
+  It is skipped for orthographic cameras.
+- **On at every quality level.** It is one fullscreen pass and arithmetic per lit pixel.
+- **`lantern::sky`** sets colours, the sun disc, the lighting strength and intensity, and turns the sky off.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/procedural-sky-and-image-based-lighting`.
+
+## D-066: FXAA, not MSAA or TAA
+
+- **FXAA runs on the tone-mapped picture** as one extra full-screen pass (`fxaa.frag`). The composite writes a texture of
+  the screen's size and format and FXAA reads it into the screen image.
+- **Not MSAA.** The lines and overlay draw after the composite onto a single-sample image and the lines depth-test against
+  the scene's depth, so MSAA would need a depth resolve or lines in the HDR pass (changing their exact colours). It would
+  also complicate ambient occlusion, which reads depth next.
+- **Not TAA.** It needs motion vectors and history, and ghosts on fast movement.
+- **It softens fine texture detail slightly.** Accepted for a game of big shapes. MSAA can be revisited as its own card.
+- **Quality:** low turns it off, medium and high turn it on. `SetAntiAliasing(enabled)` overrides it.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/anti-aliasing`.
+
+## D-067: Screen-space ambient occlusion over the depth buffer
+
+- **Twelve hemisphere samples per pixel** read the scene's depth, with a range check, then a depth-aware 4x4 average
+  removes the 4x4 sample-turning pattern. Two full-screen passes on one-channel textures.
+- **The depth buffer gains the sampler usage.** It was a depth target only; every depth format the renderer picks already
+  supports sampling (the shadow maps use them).
+- **The composite multiplies the scene by it, before bloom.** A single-pass lit shader can't apply it to ambient light
+  alone, so direct light in creases darkens a little too. A depth pre-pass would let AO touch only ambient; not done, to keep
+  the renderer small. The multiplier of 1.8 on the blocked fraction is because samples near the surface rarely count.
+- **Perspective cameras only.** The editor's orthographic views skip it.
+- **Quality:** low off, medium and high on. Defaults: radius 0.6 m, intensity 0.8, bias 0.04 m.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU. This is the most expensive effect so far.
+
+Card: `renderer-visuals/ambient-occlusion`.
+
+## D-068: Height fog and light shafts in the composite pass
+
+- **Both are done in `composite.frag`**, which already reads the scene, so it also reads the depth buffer. Each pixel's
+  distance comes from its stored depth and its ray from the camera basis, as the sky does it.
+- **Height fog is analytic.** Exponential density with height integrates in closed form along a ray, so there is no
+  marching. It adds to the old distance fog, which still hides the far plane; it doesn't replace it.
+- **Light shafts are a screen-space radial walk** towards the sun, counting steps that see the far plane. No shadow-map
+  marching: it needs only the depth buffer and no extra shadow work, but it can't shaft through geometry the depth buffer
+  doesn't contain (so the sun behind the camera, or off one side, gives none).
+- **Quality:** Low turns shafts off; height fog stays (it is arithmetic only). Orthographic cameras skip both.
+- **Defaults are on, and subtle** (density 0.008, shaft strength 0.35), so the platformer gains some haze without nyx edits.
+  A game can set them with `lantern::atmosphere`; the Crimson and Thorn chapter looks can set their own.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/fog-height-fog-and-sun-light-shafts`.
+
+## D-069: A spiral shadow filter and cascade blending, not contact-hardening shadows
+
+- **The 3x3 filter becomes a spiral of 4, 12 or 20 lookups** over a disc of `softness` texels (default 2), turned by a
+  different angle per pixel, so the edge is softer and the banding becomes fine noise. Quality sets the count.
+- **Cascades fade into each other** over the last 12% of each one, and the last fades to "no shadow", so the seams between
+  cascades and the hard cut at the shadow distance are gone. Snapping the cascades to whole texels was already there.
+- **Not done: a penumbra that widens with distance from the caster.** That needs a blocker search over raw depths, and the
+  renderer reads its shadow maps through a comparison sampler. It would need a second, plain sampler on the same texture
+  and a blocker-search loop; left for a card of its own.
+- **The effect is modest.** Edges are softer and smoother, which is clearest on long shadows; contact points stay tight.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/softer-shadows-and-stable-cascades`.
+
+## D-070: Blob shadows darken surfaces by distance to a point, in the composite pass
+
+- **A blob is a point, a radius and a darkness**, and the composite pass darkens each pixel by how near its world position
+  (rebuilt from the depth buffer) is to the point, as an ellipse that reaches only a short way above and below it. No mesh,
+  no decal projection, and it lies correctly over slopes, steps and walls.
+- **They last one frame**, like draws, so a game adds them every frame in `OnRender`. A frame holds eight; a ninth is ignored.
+- **The platformer's disc is gone.** Its player keeps the floor point and radius from the per-step raycast it already did and
+  hands them to the engine in `OnRender`; the disc entity, its lift off the floor and its hide-and-show are removed.
+  `unitSphereMesh` stays in the assets for other uses. The recorded traces in
+  `tests/host/the-platformer-matches-the-rust-trace` keep the draw count in their last column, which fell by one wherever the
+  disc used to draw, so those two files were re-recorded; every other column is unchanged, so the simulation still matches.
+- **Not decals.** Textured decals (scorch marks, paint) need a texture bound to the pass; blobs use none. Decals are left for
+  a card of their own.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
+
+## D-071: The colour grade is applied after tone mapping, in the composite pass
+
+- **Four controls:** saturation, contrast, tint and vignette, in that order, on the 0 to 1 picture after tone mapping and
+  before the sRGB encode, so each number does the same to what the viewer sees whatever the scene's brightness.
+- **Neutral by default.** Nothing changes for a game that doesn't call it.
+- **The HUD isn't graded.** It is drawn after the composite, as before.
+- **No lookup-table grade.** A 3D colour lookup texture is the usual tool for authored looks, but it needs an asset
+  pipeline for the tables; four numbers are enough for the chapter looks Crimson and Thorn needs and can be blended by hand
+  between chapters. A table is a possible later step.
+- **A game calls it when a chapter changes** (or every frame while easing between looks). The platformer's chapter looks are
+  the other thread's to choose; this adds the hook only.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
+
+## D-072: Particles are simulated in the engine and drawn as fading line streaks
+
+Date: 2026-11-16.
+
+- **The engine moves them, the game emits them.** `lantern:::particles:::Emit` hands over a start, a velocity, a colour, a
+  life, a streak length and a gravity; `RenderWorld.StepParticles` steps and draws them once per frame after `OnRender`. Doing
+  it in Nyx would cost an interpreted loop per particle per frame, which the 60 fps target can't spare.
+- **Drawn with the existing line pipeline.** It needs no new shader, pipeline or vertex layout, and a streak is the right look
+  for sparks and thrown dust. The cost is that particles skip bloom, grading and anti-aliasing and can't be soft or textured.
+  A billboard quad pipeline is the later step and is listed in `particles.md`.
+- **The quality setting is a budget**, 64, 256 or 512 live particles, rather than a switch: the effect thins out instead of
+  disappearing. A hard ceiling of 512 keeps the per-frame line count bounded.
+- **Stepped by display time, not fixed steps**, so they are smooth at any refresh rate and can't affect gameplay.
+- **Platformer:** dust on every jump and landing only (`game-systems/dust.nyx`), kept small. Trails and sparks are available
+  to the game but unused.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/particles-and-a-colour-grade-hook`.
+
+## D-073: Normal maps use a cotangent frame from screen-space derivatives
+
+Date: 2026-11-16.
+
+- **No tangent vertex attribute.** The mesh vertex stays 48 bytes with no tangent; the lit shader derives the tangent frame
+  from the change of world position and uv between pixels. This works on every existing mesh, including glTF ones, and
+  needs no change to the vertex layout, shadow pipeline or tests. The cost is a frame that is constant per triangle and a
+  faint seam where uvs jump; stored tangents are the later step if a game needs perfect maps.
+- **A fourth sampler on the lit pipeline** (set 2, binding 3), bound for every draw (the white texture when there is no map),
+  with the strength in `material.surface.z`: 0 means "never read it", so a draw without a map pays nothing.
+- **One strength control, 0 to 4,** instead of separate scale per axis. 1 is as authored.
+- **OpenGL convention** (green up the image), since that is what the generated maps and most authoring tools produce.
+- **sRGB re-encode.** Textures upload as sRGB, so the shader encodes the sample back to its stored bytes. A second linear
+  texture format would avoid the maths but needs a second texture path; not worth it yet.
+- **Normal-mapped draws bind their own sampler** per draw, which the sort by texture doesn't group; fine for the handful of
+  detailed surfaces a scene has.
+- **Decals are not built.** A projected decal needs the depth buffer read in the lit pass or a separate pass; a flat quad
+  drawn just above the surface covers the platformer's ground cases. Contact shadows are the blob shadows of D-070.
+- **Not checked in the cloud:** Metal output, and frame times on a real GPU.
+
+Card: `renderer-visuals/surface-detail-normal-maps-decals-and-contact-shadows`.
+
+## D-074 Slice 3 of the Crimson and Thorn mechanics: the Anchor as a set swing arc
 
 Dean chose a set swing arc for the Anchor, over a physics rope or a grapple (`crimson-and-thorn-slice.md`, slice 3).
 
@@ -1052,4 +1231,3 @@ Dean chose a set swing arc for the Anchor, over a physics rope or a grapple (`cr
   the fixed-step ones, a safe spot is never recorded on a glow plate, and the strength comment is corrected.
 
 Cards: `platformer-game/crimson-and-thorn-slice` (the Anchor complete).
-

@@ -107,18 +107,19 @@ lantern:::gpu :: namespace {
         matrix~ f32[16] = filled<f32, 16>(0.0f);
     }
 
-    /** Floats in `ShadowUniforms`: twelve local tile matrices, three cascade matrices and three vec4s. */
-    SHADOW_UNIFORM_FLOATS: usize : 252;
+    /** Floats in `ShadowUniforms`: twelve local tile matrices, three cascade matrices and four vec4s. */
+    SHADOW_UNIFORM_FLOATS: usize : 256;
 
     /**
-     * The lit fragment shader's shadow block, 1008 bytes, as `ShadowUniforms` in lit.frag lays it out: the twelve local
+     * The lit fragment shader's shadow block, 1024 bytes, as `ShadowUniforms` in lit.frag lays it out: the twelve local
      * tiles' matrices (floats 0 to 191), the three cascades' matrices (192 to 239), where each cascade ends and whether
      * the sun casts (240 to 243), the world size of each cascade's texel and the normal push (244 to 247), and the
-     * camera's forward vector and the sun's depth bias (248 to 251).
+     * camera's forward vector and the sun's depth bias (248 to 251), and the filter: its radius in texels, its sample count and
+     * the fraction of a cascade over which neighbours blend (252 to 255). 1024 bytes in all.
      */
     ShadowUniforms :: struct {
         /** Every float of the block in order. */
-        values~ f32[252] = filled<f32, 252>(0.0f);
+        values~ f32[256] = filled<f32, 256>(0.0f);
 
         /** Copies a matrix's sixteen floats into the block from float `start`. */
         SetMatrix ~: (start: usize, matrix: Mat4) -> void {
@@ -130,11 +131,13 @@ lantern:::gpu :: namespace {
 
     /** How many texels the shader moves a surface along its normal before looking it up in a sun cascade. */
     SUN_NORMAL_PUSH_TEXELS: f32 : 1.5f;
+    /** The last part of each cascade, as a fraction of its end distance, over which it fades into the next. */
+    CASCADE_BLEND_FRACTION: f32 : 0.12f;
     /** How much nearer than the map's depth a sun pixel must be to count as lit, in the cascade's depth units (0 to 1). */
     SUN_DEPTH_BIAS: f32 : 0.0004f;
 
     /** Fills the block from the frame's plan and camera. */
-    PackShadowUniforms :: (plan: lantern:::renderer:::ShadowPlan*, cameraForward: Vec3) -> ShadowUniforms {
+    PackShadowUniforms :: (plan: lantern:::renderer:::ShadowPlan*, cameraForward: Vec3, settings: lantern:::renderer:::ShadowSettings) -> ShadowUniforms {
         packed~ ShadowUniforms = ShadowUniforms { };
         for tile~ usize = 0; tile < plan->localTiles.length(); tile++ {
             packed.SetMatrix(tile * 16, plan->localTiles[tile].viewProjection);
@@ -152,6 +155,9 @@ lantern:::gpu :: namespace {
         packed.values[249] = cameraForward.y;
         packed.values[250] = cameraForward.z;
         packed.values[251] = SUN_DEPTH_BIAS;
+        packed.values[252] = Math:::clamp(settings.softness, 0.5f, 6.0f);
+        packed.values[253] = f32(Math:::clamp(i32(settings.filterSamples), 1, 32));
+        packed.values[254] = settings.blendCascades ? CASCADE_BLEND_FRACTION : 0.0f;
         return packed;
     }
 }

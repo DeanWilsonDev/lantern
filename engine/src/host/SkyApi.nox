@@ -1,0 +1,59 @@
+lantern:::host :: namespace {
+    /**
+     * The sky a game can set from Nyx, as `lantern::sky`: the three colours it blends between, the sun disc, and how much
+     * of the scene's ambient light comes from it. It lives in the frame's `RenderWorld` like the lights do. The guide is
+     * `docs/sky-and-image-based-lighting.md`.
+     */
+    RegisterSkyApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+        skyNamespace := new HostNamespace(runtime, "lantern::sky");
+        skyNamespace->Function("SetColors", "(zenith: string, horizon: string, ground: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            zenith: lantern:::core:::Color = ColorArgument(context, 0);
+            horizon: lantern:::core:::Color = ColorArgument(context, 1);
+            ground: lantern:::core:::Color = ColorArgument(context, 2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                sky~ lantern:::renderer:::SkySettings = state->renderWorld->sky;
+                sky.zenith = zenith;
+                sky.horizon = horizon;
+                sky.ground = ground;
+                state->renderWorld->sky = sky;
+            }
+        });
+        skyNamespace->Function("SetSunDisc", "(radiusDegrees: f32, strength: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            radiusDegrees: f32 = context->F32(0);
+            strength: f32 = context->F32(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->sky.sunDiscRadiusRadians = DegreesToRadians(radiusDegrees > 0.0f ? radiusDegrees : 0.0f);
+                state->renderWorld->sky.sunDiscStrength = strength > 0.0f ? strength : 0.0f;
+            }
+        });
+        skyNamespace->Function("SetLighting", "(strength: f32, intensity: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            strength: f32 = context->F32(0);
+            intensity: f32 = context->F32(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->sky.lightingStrength = Math:::clamp(strength, 0.0f, 1.0f);
+                state->renderWorld->sky.lightingIntensity = intensity > 0.0f ? intensity : 0.0f;
+            }
+        });
+        skyNamespace->Function("SetEnabled", "(enabled: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            enabled: bool = context->Bool(0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->sky.enabled = enabled;
+            }
+        });
+        failure := skyNamespace->Finish();
+        delete skyNamespace;
+        return failure!;
+    }
+}

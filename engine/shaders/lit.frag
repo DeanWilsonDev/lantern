@@ -5,9 +5,14 @@
 //
 //   colour = ambient + sun + every local light + emissive, then faded into the fog colour with distance
 //
+// where the ambient comes from the sky (see below), or from the flat sky and ground colours when the sky's lighting is off
+//
 // - albedo: the surface's own colour, the texture times the vertex colour times the draw's tint.
 // - ambient: sky light from above blended with ground light from below by which way the surface faces, standing in for
-//   all the light that bounces around the scene.
+//   all the light that bounces around the scene. With the procedural sky on, the ambient is image-based instead: the
+//   sky's colour averaged around the surface's normal lights its diffuse colour, and the sky seen in the mirror direction
+//   (blurred by roughness) is its reflection, scaled by an approximation of how the surface responds (EnvironmentBrdf).
+//   The sky is the function in sky-common.glsl, the same one sky.frag draws.
 // - the sun and each local light go through one function, EvaluateLight, with a direction to the light and the light's
 //   colour at this pixel. A point or spot light first loses brightness with distance (its attenuation) and a spot light
 //   loses more outside its cone.
@@ -26,12 +31,14 @@
 // everything by pi to cancel that, so the numbers an artist writes mean what they look like.
 //
 // All of this is in linear colour, where adding and multiplying light is physically meaningful. Textures are sRGB
-// formats, so sampling decodes them to linear. Output is encoded back to sRGB either by the swapchain (SDR_LINEAR)
-// or, when the target can't, by EncodeSrgb below.
+// formats, so sampling decodes them to linear. The output stays linear and unclamped, in a high dynamic range target;
+// composite.frag tone maps it and encodes it to sRGB later (see GpuPost.nox).
 //
 // SDL GPU fixes where resources live in SPIR-V for a fragment shader: texture-sampler pairs are set 2, uniform blocks
 // are set 3, binding n for push slot n.
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "sky-common.glsl"
 
 const float PI = 3.14159265359;
 // Must match MAX_LOCAL_LIGHTS in RenderWorld.nox.
@@ -45,8 +52,11 @@ layout(set = 2, binding = 0) uniform sampler2D albedo_texture;
 layout(set = 2, binding = 1) uniform sampler2DShadow sun_shadow_map;
 // The local lights' shadow map: tiles in a grid, one per spot light and six per point light.
 layout(set = 2, binding = 2) uniform sampler2DShadow local_shadow_map;
+// The draw's normal map: tangent-space normals stored as colours (0.5, 0.5, 1 is flat). Bound for every draw; the white
+// texture stands in when there is none, and material.surface.z (the strength) is 0 so it is never read.
+layout(set = 2, binding = 3) uniform sampler2D normal_texture;
 
-// Slot 0, pushed once per frame: LightUniforms in GpuUniforms.nox (112 bytes).
+// Slot 0, pushed once per frame: LightUniforms in GpuUniforms.nox (176 bytes).
 layout(set = 3, binding = 0) uniform LightUniforms {
     // Unit vector from the surface towards the sun.
     vec4 direction_to_light;
@@ -56,15 +66,22 @@ layout(set = 3, binding = 0) uniform LightUniforms {
     // Ground light, for surfaces facing down.
     vec4 ground_ambient_color;
     vec4 fog_color;
-    // x: fog start distance, y: fog end distance, w: 1 when this shader must sRGB-encode its output.
+    // x: fog start distance, y: fog end distance.
     vec4 fog_and_output;
+    // The sky that lights the scene: its colour straight up, at the horizon and straight down.
+    vec4 sky_zenith;
+    vec4 sky_horizon;
+    vec4 sky_ground;
+    // x: how much of the ambient light comes from the sky instead of the flat sky and ground pair (0 to 1), y: how
+    // bright that sky light is.
+    vec4 sky_strength_and_intensity;
     vec4 camera_position;
 } light;
 
 // Slot 1, pushed once per draw: the draw's tint and material (MaterialUniforms in GpuUniforms.nox, 48 bytes).
 layout(set = 3, binding = 1) uniform MaterialUniforms {
     vec4 color;
-    // x: metallic, y: roughness.
+    // x: metallic, y: roughness, z: normal map strength (0 when the draw has no normal map).
     vec4 surface;
     // Light the surface gives off.
     vec4 emissive;
@@ -90,7 +107,7 @@ layout(set = 3, binding = 2) uniform LocalLightUniforms {
     LocalLight lights[MAX_LOCAL_LIGHTS];
 } locals;
 
-// Slot 3, pushed once per frame: where the shadow maps came from (ShadowUniforms in GpuShadows.nox, 1008 bytes).
+// Slot 3, pushed once per frame: where the shadow maps came from (ShadowUniforms in GpuShadows.nox, 1024 bytes).
 layout(set = 3, binding = 3) uniform ShadowUniforms {
     // The light view-projection matrix of each tile of the local shadow map.
     mat4 local_tile_matrices[12];
@@ -102,6 +119,9 @@ layout(set = 3, binding = 3) uniform ShadowUniforms {
     vec4 cascade_texels;
     // xyz: the way the camera looks. w: the depth bias, in the light's depth units.
     vec4 camera_forward_and_bias;
+    // x: the filter's radius in texels, y: how many lookups it makes, z: the fraction of a cascade, from its end, over which it
+    // blends into the next (0 for a hard switch).
+    vec4 filter_radius_samples_blend;
 } shadows;
 
 // Interpolated from lit.vert's outputs.
@@ -112,14 +132,6 @@ layout(location = 3) in vec4 surface_color;
 
 // The colour written to the colour target.
 layout(location = 0) out vec4 output_color;
-
-// The exact sRGB transfer function: linear light to the encoded values screens expect. A straight line near black,
-// a 1/2.4 power curve above.
-vec3 EncodeSrgb(vec3 linear_color) {
-    vec3 low = linear_color * 12.92;
-    vec3 high = 1.055 * pow(linear_color, vec3(1.0 / 2.4)) - 0.055;
-    return mix(high, low, lessThanEqual(linear_color, vec3(0.0031308)));
-}
 
 // The GGX normal distribution: how much of the surface's microscopic mirrors face along the half vector. Rougher
 // surfaces (larger alpha) spread it out, giving a broad dim highlight.
@@ -175,24 +187,52 @@ const float SUN_CASCADE_COUNT = 3.0;
 const float LOCAL_COLUMNS = 6.0;
 const float LOCAL_ROWS = 2.0;
 
-// Reads a shadow map around `uv` with a 3x3 filter: nine lookups, each already smoothed over four texels by the shadow
-// sampler, so an edge fades over about three texels. `tile_minimum` and `tile_maximum` fence the lookups inside the
-// pixel's own tile, so they never read a neighbouring tile's depths.
-float FilteredShadow(sampler2DShadow shadow_map, vec2 uv, float reference_depth, vec2 texel, vec2 tile_minimum, vec2 tile_maximum) {
-    float lit_amount = 0.0;
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            vec2 sample_uv = clamp(uv + vec2(float(x), float(y)) * texel, tile_minimum + texel * 0.5, tile_maximum - texel * 0.5);
-            lit_amount += texture(shadow_map, vec3(sample_uv, reference_depth));
-        }
-    }
-    return lit_amount / 9.0;
+// Reads a shadow map around `uv` with a soft filter. The shadow sampler already smooths a lookup over four texels, so one
+// lookup is a little soft. This takes many, spread over a disc `filter_radius` texels wide, and averages them: the edge of
+// a shadow fades across the disc, which is what a penumbra is. The lookups are placed on a sunflower spiral (each one
+// turned by the golden angle from the last, so they cover the disc evenly), and the whole spiral is turned by a different
+// angle in every pixel. That trades the regular banding a fixed pattern leaves for a fine noise the eye ignores.
+// `tile_minimum` and `tile_maximum` fence the lookups inside the pixel's own tile, so they never read a neighbouring
+// tile's depths.
+float InterleavedGradientNoise(vec2 pixel) {
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
 }
 
-// How much of the sun reaches this pixel: 1 fully lit, 0 fully shadowed. Picks the cascade by how far the pixel is from
-// the camera, and moves the pixel a little way along its normal first. Without that push a surface can shadow itself,
-// speckling it with "acne", because the map's texels are coarser than the surface. Past the last cascade there is
-// no shadow.
+float FilteredShadow(sampler2DShadow shadow_map, vec2 uv, float reference_depth, vec2 texel, vec2 tile_minimum, vec2 tile_maximum) {
+    float radius = shadows.filter_radius_samples_blend.x;
+    int sample_count = int(shadows.filter_radius_samples_blend.y);
+    float turn = InterleavedGradientNoise(gl_FragCoord.xy) * 6.2831853;
+    float lit_amount = 0.0;
+    for (int sample_index = 0; sample_index < sample_count; sample_index++) {
+        float ring = sqrt((float(sample_index) + 0.5) / float(sample_count)) * radius;
+        float angle = float(sample_index) * 2.3999632 + turn;
+        vec2 sample_uv = clamp(uv + vec2(cos(angle), sin(angle)) * ring * texel, tile_minimum + texel * 0.5, tile_maximum - texel * 0.5);
+        lit_amount += texture(shadow_map, vec3(sample_uv, reference_depth));
+    }
+    return lit_amount / float(sample_count);
+}
+
+// How much of the sun reaches this pixel through one cascade: 1 fully lit, 0 fully shadowed. The pixel is moved a little way
+// along its normal first. Without that push a surface can shadow itself, speckling it with "acne", because the map's
+// texels are coarser than the surface. A pixel outside the cascade's picture is lit.
+float CascadeShadow(int cascade, vec3 position, vec3 normal) {
+    vec3 pushed = position + normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w);
+    vec4 clip = shadows.cascade_matrices[cascade] * vec4(pushed, 1.0);
+    // Clip space has +y up and texture space has +y down.
+    vec2 tile_uv = vec2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    if (clip.z > 1.0 || tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0) {
+        return 1.0;
+    }
+    vec2 atlas_uv = vec2((float(cascade) + tile_uv.x) / SUN_CASCADE_COUNT, tile_uv.y);
+    vec2 texel = 1.0 / vec2(textureSize(sun_shadow_map, 0));
+    vec2 tile_minimum = vec2(float(cascade) / SUN_CASCADE_COUNT, 0.0);
+    vec2 tile_maximum = vec2(float(cascade + 1) / SUN_CASCADE_COUNT, 1.0);
+    return FilteredShadow(sun_shadow_map, atlas_uv, clip.z - shadows.camera_forward_and_bias.w, texel, tile_minimum, tile_maximum);
+}
+
+// How much of the sun reaches this pixel: 1 fully lit, 0 fully shadowed. Picks the cascade by how far the pixel is from the
+// camera. Near the end of a cascade it also looks the pixel up in the next one and blends the two, so the switch isn't a
+// visible line; the last cascade fades out to "no shadow" the same way instead of stopping at its edge.
 float SunShadow(vec3 position, vec3 normal) {
     if (shadows.cascade_ends.w < 0.5) {
         return 1.0;
@@ -209,18 +249,17 @@ float SunShadow(vec3 position, vec3 normal) {
     if (cascade > 2) {
         return 1.0;
     }
-    vec3 pushed = position + normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w);
-    vec4 clip = shadows.cascade_matrices[cascade] * vec4(pushed, 1.0);
-    // Clip space has +y up and texture space has +y down.
-    vec2 tile_uv = vec2(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
-    if (clip.z > 1.0 || tile_uv.x < 0.0 || tile_uv.x > 1.0 || tile_uv.y < 0.0 || tile_uv.y > 1.0) {
-        return 1.0;
+    float shadow = CascadeShadow(cascade, position, normal);
+    float blend_fraction = shadows.filter_radius_samples_blend.z;
+    if (blend_fraction > 0.0) {
+        float cascade_end = shadows.cascade_ends[cascade];
+        float blend = smoothstep(cascade_end * (1.0 - blend_fraction), cascade_end, view_depth);
+        if (blend > 0.0) {
+            float neighbour = cascade < 2 ? CascadeShadow(cascade + 1, position, normal) : 1.0;
+            shadow = mix(shadow, neighbour, blend);
+        }
     }
-    vec2 atlas_uv = vec2((float(cascade) + tile_uv.x) / SUN_CASCADE_COUNT, tile_uv.y);
-    vec2 texel = 1.0 / vec2(textureSize(sun_shadow_map, 0));
-    vec2 tile_minimum = vec2(float(cascade) / SUN_CASCADE_COUNT, 0.0);
-    vec2 tile_maximum = vec2(float(cascade + 1) / SUN_CASCADE_COUNT, 1.0);
-    return FilteredShadow(sun_shadow_map, atlas_uv, clip.z - shadows.camera_forward_and_bias.w, texel, tile_minimum, tile_maximum);
+    return shadow;
 }
 
 // How much of a local light reaches this pixel. A spot light has one tile. A point light has six, one per face of a cube
@@ -259,10 +298,50 @@ float LocalShadow(LocalLight local, vec3 position, vec3 normal, vec3 light_to_po
     return FilteredShadow(local_shadow_map, atlas_uv, reference_depth - 0.0001, texel, tile_minimum, tile_maximum);
 }
 
+// The split-sum approximation of a surface's response to light arriving from every direction (Karis, "Physically Based
+// Shading on Mobile"): how much of a distant light the specular colour keeps, as a scale and a bias that depend on the
+// roughness and the angle to the viewer. A fit to numbers that would otherwise need a lookup texture.
+vec3 EnvironmentBrdf(vec3 specular_color, float roughness, float normal_dot_view) {
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * normal_dot_view)) * r.x + r.y;
+    vec2 scale_and_bias = vec2(-1.04, 1.04) * a004 + r.zw;
+    return specular_color * scale_and_bias.x + scale_and_bias.y;
+}
+
+// A texture holds its normals as plain bytes, but the albedo-style upload decodes them as sRGB. Encoding again returns the
+// bytes the file held.
+vec3 LinearToSrgbExact(vec3 linear) {
+    vec3 low = linear * 12.92;
+    vec3 high = 1.055 * pow(max(linear, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+    return mix(high, low, lessThanEqual(linear, vec3(0.0031308)));
+}
+
+// Bends the surface normal by a tangent-space normal from a map. The mesh has no tangents, so the tangent frame comes from
+// how position and uv change from pixel to pixel (a "cotangent frame"). The map's green channel points up the image.
+vec3 PerturbNormal(vec3 surface_normal, vec3 position, vec2 uv, vec3 tangent_space, float strength) {
+    vec3 position_dx = dFdx(position);
+    vec3 position_dy = dFdy(position);
+    vec2 uv_dx = dFdx(uv);
+    vec2 uv_dy = dFdy(uv);
+    vec3 perpendicular_y = cross(position_dy, surface_normal);
+    vec3 perpendicular_x = cross(surface_normal, position_dx);
+    vec3 tangent = perpendicular_y * uv_dx.x + perpendicular_x * uv_dy.x;
+    vec3 bitangent = -(perpendicular_y * uv_dx.y + perpendicular_x * uv_dy.y);
+    float scale = inversesqrt(max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-12));
+    vec3 bent = normalize(vec3(tangent_space.xy * strength, tangent_space.z));
+    return normalize(tangent * scale * bent.x + bitangent * scale * bent.y + surface_normal * bent.z);
+}
+
 void main() {
     vec4 albedo = texture(albedo_texture, surface_uv) * surface_color * material.color;
     // Interpolating unit normals across a triangle shortens them, so normalise again per pixel.
     vec3 normal = normalize(world_normal);
+    if (material.surface.z > 0.0) {
+        vec3 stored = LinearToSrgbExact(texture(normal_texture, surface_uv).rgb) * 2.0 - 1.0;
+        normal = PerturbNormal(normal, world_position, surface_uv, stored, material.surface.z);
+    }
     vec3 view = normalize(light.camera_position.xyz - world_position);
 
     float metallic = clamp(material.surface.x, 0.0, 1.0);
@@ -277,7 +356,15 @@ void main() {
 
     float up_amount = 0.5 + 0.5 * normal.y;
     vec3 ambient = mix(light.ground_ambient_color.rgb, light.ambient_color.rgb, up_amount);
-    vec3 lit = ambient * (diffuse_color + f0 * (1.0 - roughness));
+    vec3 flat_ambient = ambient * (diffuse_color + f0 * (1.0 - roughness));
+    // Image-based lighting from the sky: a rough average of the sky around the normal lights diffuse colour, and the sky
+    // in the mirror direction, blurred by roughness, shows in the specular. It replaces the flat pair above by the
+    // strength the game sets.
+    vec3 sky_diffuse = SkyGradient(normal, light.sky_zenith.rgb, light.sky_horizon.rgb, light.sky_ground.rgb, 1.0) * diffuse_color;
+    vec3 sky_reflection = SkyGradient(reflect(-view, normal), light.sky_zenith.rgb, light.sky_horizon.rgb, light.sky_ground.rgb, roughness);
+    vec3 sky_specular = sky_reflection * EnvironmentBrdf(f0, roughness, max(dot(normal, view), 0.0001));
+    vec3 sky_ambient = (sky_diffuse + sky_specular) * light.sky_strength_and_intensity.y;
+    vec3 lit = mix(flat_ambient, sky_ambient, light.sky_strength_and_intensity.x);
 
     float sun_visibility = SunShadow(world_position, normal);
     lit += EvaluateLight(normal, view, light.direction_to_light.xyz, light.light_color.rgb * sun_visibility, diffuse_color, f0, alpha);
@@ -314,9 +401,8 @@ void main() {
     float fog = clamp((distance_to_camera - light.fog_and_output.x) / fog_range, 0.0, 1.0);
     lit = mix(lit, light.fog_color.rgb, fog);
 
-    if (light.fog_and_output.w > 0.5) {
-        lit = EncodeSrgb(lit);
-    }
+    // The value goes out as linear light, which can be far above 1: the target is a 16-bit float texture, and
+    // composite.frag tone maps it to the screen's range and encodes it to sRGB.
     // Meshes are opaque: the lit pipeline doesn't blend, so alpha is written as 1.
     output_color = vec4(lit, 1.0);
 }

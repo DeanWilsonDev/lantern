@@ -114,7 +114,7 @@ How it plays, in order:
 | `game-entities/glow-platform.nyx`, `game-systems/glow-system.nyx` | a piece that hides itself, and the rule that lights it |
 | `game-entities/lantern-pickup.nyx`, `game-systems/lantern-system.nyx` | the lantern in the world and its pickup event |
 | `game-entities/thorns.nyx`, `game-systems/thorn-system.nyx` | the patches and the touch tests |
-| `settings/chapter-looks.nyx` | sky, fog and sun for a chapter |
+| `settings/chapter-looks.nyx` | sky (zenith, horizon, ground), fog and sun for a chapter; the horizon colour also clears the screen and colours the fog so the distance blends into the sky |
 
 The glow platforms use the workaround the engine card `engine-follow-ups/game-controlled-collision-for-world-entities`
 names: a hidden piece is moved 1000 m down, and because a `static` collider doesn't move, these pieces are `kinematic` in

@@ -1,0 +1,55 @@
+lantern:::host :: namespace {
+    /**
+     * The air a game can set from Nyx, as `lantern::atmosphere`: height fog and light shafts. They live in the frame's
+     * `RenderWorld` like the sky does. The guide is `docs/fog-and-light-shafts.md`.
+     */
+    RegisterAtmosphereApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*) -> lantern:::nyx:::NyxError*!? {
+        atmosphereNamespace := new HostNamespace(runtime, "lantern::atmosphere");
+        atmosphereNamespace->Function("SetHeightFog", "(enabled: bool, density: f32, heightFalloff: f32, baseHeight: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            enabled: bool = context->Bool(0);
+            density: f32 = context->F32(1);
+            heightFalloff: f32 = context->F32(2);
+            baseHeight: f32 = context->F32(3);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                atmosphere~ lantern:::renderer:::AtmosphereSettings = state->renderWorld->atmosphere;
+                atmosphere.heightFogEnabled = enabled;
+                atmosphere.fogDensity = density > 0.0f ? density : 0.0f;
+                atmosphere.fogHeightFalloff = heightFalloff > 0.0f ? heightFalloff : 0.0f;
+                atmosphere.fogBaseHeight = baseHeight;
+                state->renderWorld->atmosphere = atmosphere;
+            }
+        });
+        atmosphereNamespace->Function("SetFogColor", "(color: string, sunScattering: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            color: lantern:::core:::Color = ColorArgument(context, 0);
+            sunScattering: f32 = context->F32(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->atmosphere.fogColor = color;
+                state->renderWorld->atmosphere.fogSunScattering = sunScattering > 0.0f ? sunScattering : 0.0f;
+            }
+        });
+        atmosphereNamespace->Function("SetLightShafts", "(enabled: bool, strength: f32, decay: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            enabled: bool = context->Bool(0);
+            strength: f32 = context->F32(1);
+            decay: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                atmosphere~ lantern:::renderer:::AtmosphereSettings = state->renderWorld->atmosphere;
+                atmosphere.lightShaftsEnabled = enabled;
+                atmosphere.lightShaftStrength = strength > 0.0f ? strength : 0.0f;
+                atmosphere.lightShaftDecay = Math:::clamp(decay, 0.0f, 0.999f);
+                state->renderWorld->atmosphere = atmosphere;
+            }
+        });
+        failure := atmosphereNamespace->Finish();
+        delete atmosphereNamespace;
+        return failure!;
+    }
+}

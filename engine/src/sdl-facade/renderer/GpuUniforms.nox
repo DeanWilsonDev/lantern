@@ -26,7 +26,7 @@ lantern:::gpu :: namespace {
         vector~ f32[4] = filled<f32, 4>(0.0f);
     }
 
-    /** The lit fragment shader's per-frame block: the sun, ambient light and fog. 112 bytes. */
+    /** The lit fragment shader's per-frame block: the sun, ambient light, fog and the sky's colours. 176 bytes. (SDL GPU allows four uniform blocks per stage, so the sky shares this one.) */
     LightUniforms :: struct {
         /**
          * The unit direction from a surface towards the light. `DirectionalLight` stores the direction light travels,
@@ -50,6 +50,14 @@ lantern:::gpu :: namespace {
          * x: the distance fog starts, y: the distance it is total, w: 1 when the shader must sRGB-encode its output.
          */
         fogAndOutput~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sky's colour straight up, as in `SkyLightUniforms`. */
+        skyZenith~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sky's colour at the horizon. */
+        skyHorizon~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sky's colour straight down. */
+        skyGround~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: how much ambient comes from the sky (0 to 1), y: how bright it is. */
+        skyStrengthAndIntensity~ f32[4] = filled<f32, 4>(0.0f);
         /** The camera's world position, to measure each fragment's distance for fog. */
         cameraPosition~ f32[4] = filled<f32, 4>(0.0f);
     }
@@ -69,7 +77,7 @@ lantern:::gpu :: namespace {
     MaterialUniforms :: struct {
         /** The draw's tint, linear RGBA. */
         tint~ f32[4] = filled<f32, 4>(0.0f);
-        /** x: metallic, y: roughness. */
+        /** x: metallic, y: roughness, z: normal map strength (0 for none). */
         surface~ f32[4] = filled<f32, 4>(0.0f);
         /** Light the surface gives off, linear RGB. */
         emissive~ f32[4] = filled<f32, 4>(0.0f);
@@ -176,5 +184,50 @@ lantern:::gpu :: namespace {
         unsafe {
             Sdl:::SDL_PushGPUFragmentUniformData(commandBuffer, slot, bytes, byteCount);
         }
+    }
+
+    /**
+     * The composite shader's block, 464 bytes, as `CompositeUniforms` in composite.frag lays it out: its settings, flags for
+     * the optional effects, and what height fog and light shafts need to rebuild each pixel's ray.
+     */
+    CompositeUniforms :: struct {
+        /** x: exposure, y: bloom strength (0 when bloom is off), z: the tone mapper, w: 1 to sRGB-encode. */
+        exposureGlowToneMapEncode~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: 1 when the ambient-occlusion picture is drawn, y: 1 for height fog, z: 1 for light shafts, w: how many blob shadows. */
+        flags~ f32[4] = filled<f32, 4>(0.0f);
+        /** tan(half the horizontal field of view), tan(half the vertical), the near plane, the projection's depth range. */
+        projectionTerms~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's unit right vector. */
+        cameraRight~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's unit up vector. */
+        cameraUp~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's unit forward vector. */
+        cameraForward~ f32[4] = filled<f32, 4>(0.0f);
+        /** The camera's position, and how fast fog thins with height. */
+        cameraPositionAndFalloff~ f32[4] = filled<f32, 4>(0.0f);
+        /** The fog's colour and its density at the base height. */
+        fogColorAndDensity~ f32[4] = filled<f32, 4>(0.0f);
+        /** The unit direction towards the sun, and how much it brightens fog looked at towards it. */
+        sunDirectionAndScattering~ f32[4] = filled<f32, 4>(0.0f);
+        /** The sun's colour, and the light shafts' strength. */
+        sunColorAndShaftStrength~ f32[4] = filled<f32, 4>(0.0f);
+        /** The height where fog is fullest, and how much light survives each step of a shaft. */
+        fogBaseAndShaftDecay~ f32[4] = filled<f32, 4>(0.0f);
+        /** x: saturation, y: contrast, z: vignette strength. */
+        gradeSaturationContrastVignette~ f32[4] = filled<f32, 4>(0.0f);
+        /** The colour the picture is multiplied by after grading. */
+        gradeTint~ f32[4] = filled<f32, 4>(0.0f);
+        /** Up to eight blob shadows, two vec4s each: where and how big, then how dark and how far up and down it reaches. */
+        blobs~ f32[64] = filled<f32, 64>(0.0f);
+    }
+
+    /** The ambient-occlusion shaders' block, 48 bytes, as `AmbientOcclusionUniforms` in ao-common.glsl lays it out. */
+    OcclusionUniforms :: struct {
+        /** tan(half the horizontal field of view), tan(half the vertical), the near plane, and the projection's depth range. */
+        projectionTerms~ f32[4] = filled<f32, 4>(0.0f);
+        /** Sampling radius in metres, how dark full occlusion gets, and the bias in metres. */
+        look~ f32[4] = filled<f32, 4>(0.0f);
+        /** The size of one pixel in uv units. */
+        texel~ f32[4] = filled<f32, 4>(0.0f);
     }
 }

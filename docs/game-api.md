@@ -97,7 +97,9 @@ Keys are `A`..`Z`, `Digit0`..`Digit9`, `Up`, `Down`, `Left`, `Right`, `Space`, `
 | `lantern:::world:::SetMaterial(material, texture: i64)` | the texture world-file pieces with that material use (set before `Load`) |
 | `lantern:::world:::SetMesh(entity, mesh, tint)`, `SetTexturedMesh(entity, mesh, texture, tint)` | |
 | `lantern:::world:::SetTint(entity, tint)`, `SetVisible(entity, visible)`, `IsVisible(entity) -> bool` | |
+| `lantern:::world:::SetNormalMap(entity, texture, strength)` | fine surface bumps from a normal map, strength 0 to 4; see `normal-maps.md` |
 | `lantern:::world:::SetSurface(entity, metallic, roughness, emissive)` | the entity's material: 0 to 1 metallic and roughness, an "RRGGBB" emissive glow; see `lighting-and-shadows.md` |
+| `lantern:::world:::SetGlow(entity, color, strength)` | the entity's emissive light as `color` times `strength`; a strength above 1 is brighter than white, so it blooms. Keeps metallic and roughness |
 | `lantern:::world:::SetCastsShadows(entity, castsShadows)` | whether the entity blocks light |
 | `lantern:::world:::SetParent(child, parent)` | transforms become relative to the parent |
 | `lantern:::world:::Position(entity) -> Vec3` | local position |
@@ -116,6 +118,7 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::textures:::Load(path) -> i64` | a PNG; throws `NotFound` |
 | `lantern:::textures:::Checker(size, cells, first, second) -> i64`, `lantern:::textures:::Solid(color) -> i64` | generated |
+| `lantern:::textures:::Bumps(size, cells, steepness) -> i64` | a generated normal map of round bumps; see `normal-maps.md` |
 | `lantern:::meshes:::Load(path) -> i64` | a glTF/GLB mesh; throws `NotFound` |
 | `lantern:::meshes:::Capsule(radius, halfHeight, segments, rings)`, `Sphere(radius, segments, rings)`, `Cube(size)`, `Gem(radius, height)` | generated, `-> i64` |
 
@@ -137,14 +140,48 @@ the game decides what a kind means.
 |---|---|
 | `lantern:::camera:::LookAt(eye, target)` | this frame's camera |
 | `lantern:::renderer:::SetClearColor(color)`, `lantern:::renderer:::SetFog(start, end)` | |
+| `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing, ambient occlusion and light shafts off and uses fewer shadow lookups; see `bloom-and-tone-mapping.md` |
+| `lantern:::graphics:::SetAntiAliasing(enabled)` | smooth jagged edges with FXAA (on by default); see `anti-aliasing.md` |
+| `lantern:::graphics:::SetAmbientOcclusion(enabled, radius, intensity)` | darken creases and contact points from the depth buffer (radius in metres, intensity 0 to 1); see `ambient-occlusion.md` |
+| `lantern:::graphics:::AddBlobShadow(center, radius, strength)` | this frame only: a soft dark patch on the surface around `center` (up to eight); see `blob-shadows.md` |
+| `lantern:::graphics:::SetBlobShadows(enabled)` | switch the frame's blob shadows on or off |
+| `lantern:::graphics:::SetColorGrade(saturation, contrast, tint, vignette)` | the look of the finished picture: saturation 0 to 3, contrast 0.2 to 3, an `"RRGGBB"` tint and a vignette 0 to 1; `1, 1, "FFFFFF", 0` is neutral; see `colour-grade.md` |
+| `lantern:::graphics:::SetBloom(enabled, strength, threshold)` | the glow around bright things: how much is added back and the brightness where it starts (1 is a white wall in full sun) |
+| `lantern:::graphics:::SetExposure(exposure)`, `lantern:::graphics:::SetToneMapper(name)` | a brightness knob applied before the curve, and the curve itself: `"none"`, `"neutral"` or `"aces"` |
 | `lantern:::lights:::SetSun(direction, color, skyAmbient, groundAmbient)` | the sun and the ambient light; colours are `"RRGGBB"` |
 | `lantern:::lights:::SetSunShadows(enabled)`, `lantern:::lights:::SetShadowQuality(enabled, sunMapSize, localTileSize, distance)` | whether the sun casts shadows; the shadow master switch, map sizes in pixels (256 to 4096) and how far the sun's shadows reach |
+| `lantern:::lights:::SetShadowSoftness(softness, samples, blendCascades)` | how soft shadow edges are (filter radius in map texels, 0.5 to 6), how many lookups the filter makes (1 to 32) and whether cascades fade into each other; see `shadow-softness-and-cascade-blending.md` |
 | `lantern:::lights:::AddPoint(position, color, strength, range) -> i64` | a point light; the id names it from now on |
 | `lantern:::lights:::AddSpot(position, target, color, strength, range, innerDegrees, outerDegrees) -> i64` | a spot light |
 | `lantern:::lights:::Move(light, position)`, `Aim(light, target)`, `SetColor(light, color, strength)`, `SetShadows(light, enabled)`, `Remove(light)`, `Count() -> i64` | change a light by id; lights stay until removed or the game reloads |
 | `lantern:::screen:::Width() / Height() -> f32` | pixels |
 | `lantern:::screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `lantern:::screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |
+
+### Sky, `lantern::sky`
+
+The sky behind the world and the light it gives (guide: `sky-and-image-based-lighting.md`).
+
+- `SetColors(zenith, horizon, ground)`: three `"RRGGBB"` strings.
+- `SetSunDisc(radiusDegrees, strength)`: the sun's disc; a strength above 1 blooms.
+- `SetLighting(strength, intensity)`: how much of the ambient light comes from the sky, and how bright it is.
+- `SetEnabled(enabled)`: off brings back the clear colour and the flat ambient pair.
+
+### Atmosphere, `lantern::atmosphere`
+
+Height fog and light shafts (guide: `fog-and-light-shafts.md`).
+
+- `SetHeightFog(enabled, density, heightFalloff, baseHeight)`: fog that thins with height; density is per metre at the base.
+- `SetFogColor(color, sunScattering)`: an `"RRGGBB"` string, and how much brighter fog is looking towards the sun.
+- `SetLightShafts(enabled, strength, decay)`: streaks of sunlight away from the sun where objects block it.
+
+### Particles, `lantern::particles`
+
+Dust, sparks and trails (guide: `particles.md`).
+
+- `Emit(position, velocity, color, life, length, gravity)`: one particle; `color` is an `"RRGGBB"` string, `life` is seconds, `length` is the streak's length in seconds of travel and `gravity` is metres per second squared. Dropped when the quality budget is full.
+- `Clear()`: removes every particle.
+- `Count()`: how many are alive, as an i64.
 
 ## UI (Chaos and Cosmos), `lantern:::ui`
 

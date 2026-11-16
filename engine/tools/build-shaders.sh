@@ -6,13 +6,20 @@ shader_directory="$engine_directory/shaders"
 compiled_directory="$shader_directory/compiled"
 mkdir -p "$compiled_directory"
 
-for shader_name in lit lines overlay shadow; do
-    for shader_stage in vert frag; do
-        source_file="$shader_directory/$shader_name.$shader_stage"
-        spirv_file="$compiled_directory/$shader_name.$shader_stage.spv"
-        msl_file="$compiled_directory/$shader_name.$shader_stage.msl"
-        glslangValidator -V "$source_file" -o "$spirv_file" > /dev/null
-        spirv-cross "$spirv_file" --msl --msl-version 20100 --msl-decoration-binding --output "$msl_file"
-    done
+shader_files=(
+    lit.vert lit.frag
+    lines.vert lines.frag
+    overlay.vert overlay.frag
+    shadow.vert shadow.frag
+    fullscreen.vert sky.vert sky.frag
+    bloom-downsample.frag bloom-upsample.frag composite.frag fxaa.frag
+    ao.frag ao-blur.frag
+)
+for shader_file in "${shader_files[@]}"; do
+    source_file="$shader_directory/$shader_file"
+    spirv_file="$compiled_directory/$shader_file.spv"
+    msl_file="$compiled_directory/$shader_file.msl"
+    glslangValidator -I"$shader_directory" -V "$source_file" -o "$spirv_file" > /dev/null
+    spirv-cross "$spirv_file" --msl --msl-version 20100 --msl-decoration-binding --output "$msl_file"
 done
 echo "wrote shaders/compiled/"
