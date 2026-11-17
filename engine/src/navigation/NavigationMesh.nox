@@ -1,0 +1,803 @@
+lantern:::navigation :: namespace {
+    /**
+     * The kinds of link between two nodes. A walk link is ordinary walking (steps and slopes included), a drop link walks
+     * off an edge and falls to the ground below, and a jump link needs the jump button: a gap, or a ledge too high to step
+     * up. There is no climb link: the partner can't climb, so a way that needs climbing has no path.
+     */
+    LINK_WALK: i32 : 0;
+    LINK_DROP: i32 : 1;
+    LINK_JUMP: i32 : 2;
+
+    /**
+     * The "no node" index, and the cost of an unreached node.
+     */
+    NO_NODE: i32 : -1;
+    UNREACHED_COST: f32 : 1000000000.0f;
+
+    /**
+     * How many floors one column of the grid may hold (a street, a bridge over it, a roof over that).
+     */
+    MAX_FLOORS_PER_COLUMN: i32 : 6;
+    /**
+     * Surfaces closer than this in height count as one floor.
+     */
+    SAME_FLOOR_TOLERANCE: f32 : 0.04f;
+    /**
+     * A wall closer to a node than this fraction of the agent's radius rules the node out. The agent's real body is wider,
+     * so a slot just wider than it still has nodes inside it; the controller slides the rest.
+     */
+    CLEARANCE_FRACTION: f32 : 0.5f;
+    /**
+     * A contact shallower than this is a touch, not a wall.
+     */
+    CLEARANCE_TOLERANCE: f32 : 0.03f;
+    /**
+     * A contact whose normal points up at least this much is ground, not a wall.
+     */
+    GROUND_CONTACT_NORMAL_Y: f32 : 0.65f;
+    /**
+     * How far a drop link may reach sideways, in metres. A longer fall away from the edge is a jump.
+     */
+    DROP_REACH: f32 : 1.5f;
+    /**
+     * How far sideways a jump up onto a ledge may reach, in metres.
+     */
+    LEDGE_JUMP_REACH: f32 : 1.5f;
+    /**
+     * Added to the cost of a drop and of a jump so a path prefers walking, and to a jump so it prefers a drop.
+     */
+    DROP_COST_PENALTY: f32 : 1.0f;
+    JUMP_COST_PENALTY: f32 : 4.0f;
+    /**
+     * How far apart the samples are when a straight line is checked, and the longest straight line the smoother tries.
+     */
+    STRAIGHT_SAMPLE_SPACING: f32 : 0.25f;
+    SMOOTH_LOOKAHEAD_POINTS: i32 : 24;
+    /**
+     * How many cells around a point the nearest node is looked for, and how far above or below the point it may be.
+     */
+    SNAP_CELL_RADIUS: i32 : 4;
+    SNAP_HEIGHT: f32 : 1.6f;
+
+    /**
+     * What kind of body walks the mesh, in metres and degrees. The defaults are the partner's.
+     */
+    NavigationAgent :: struct {
+        radius~ f32 = 0.24f;
+        height~ f32 = 1.5f;
+        stepHeight~ f32 = 0.3f;
+        maxSlopeDegrees~ f32 = 46.0f;
+        maxDrop~ f32 = 3.0f;
+        maxJumpUp~ f32 = 1.0f;
+        maxJumpAcross~ f32 = 2.5f;
+        cellSize~ f32 = 0.5f;
+
+        /**
+         * The radius used to keep nodes off walls.
+         */
+        ClearanceRadius :: () -> f32 {
+            return radius * CLEARANCE_FRACTION;
+        }
+
+        /**
+         * The steepest slope as a rise over a run.
+         */
+        MaxSlopeRise :: () -> f32 {
+            return Math:::tan(maxSlopeDegrees * (Math:::PI / 180.0f));
+        }
+
+        /**
+         * The smallest upward component of a surface normal that is still floor.
+         */
+        MinGroundNormalY :: () -> f32 {
+            return Math:::cos(maxSlopeDegrees * (Math:::PI / 180.0f));
+        }
+
+        /**
+         * The body with its feet at `feet`, from the top of a step up: low obstacles are stepped over, so they don't
+         * count. The same shape the character controller moves with.
+         */
+        ClearanceCapsule :: () -> lantern:::physics:::Capsule {
+            return lantern:::physics:::Capsule:::Upright(ClearanceRadius(), height - stepHeight);
+        }
+
+        /**
+         * Where the clearance capsule's centre is when the feet are at `feet`.
+         */
+        ClearanceCenter :: (feet: Vec3) -> Vec3 {
+            return feet + Vec3 { x: 0.0f, y: stepHeight + (height - stepHeight) * 0.5f + 0.02f, z: 0.0f };
+        }
+    }
+
+    /**
+     * A route: the places to walk to in order, how each is reached (a link kind) and whether the route gets all the way
+     * to where it was asked to go. An incomplete route ends at the reachable place nearest the goal.
+     */
+    NavigationPath :: class {
+    public:
+        points~ Array<Vec3>! = [];
+        kinds~ Array<i32>! = [];
+        isComplete~ bool = false;
+
+        NavigationPath~: () { }
+
+        !NavigationPath~: () {
+            delete points;
+            delete kinds;
+        }
+
+        Length :: () -> i32 {
+            return i32(points.length());
+        }
+    }
+
+    /**
+     * The open list of the search: a binary heap of (node, estimated total cost), smallest first. A node can be in it more
+     * than once, and the search skips the stale entries.
+     */
+    OpenList :: class {
+    public:
+        nodes~ Array<i32>! = [];
+        costs~ Array<f32>! = [];
+
+        OpenList~: () { }
+
+        !OpenList~: () {
+            delete nodes;
+            delete costs;
+        }
+
+        IsEmpty :: () -> bool {
+            return nodes.length() == 0;
+        }
+
+        Push~: (node: i32, cost: f32) -> void {
+            nodes.push(node);
+            costs.push(cost);
+            child~ usize = nodes.length() - 1;
+            while child > 0 {
+                parent: usize = (child - 1) / 2;
+                if costs[parent] <= costs[child] {
+                    break;
+                }
+                Swap(parent, child);
+                child = parent;
+            }
+        }
+
+        PopNode~: () -> i32 {
+            top: i32 = nodes[0];
+            lastIndex: usize = nodes.length() - 1;
+            nodes[0] = nodes[lastIndex];
+            costs[0] = costs[lastIndex];
+            nodes.pop();
+            costs.pop();
+            count: usize = nodes.length();
+            parent~ usize = 0;
+            while true {
+                left: usize = parent * 2 + 1;
+                right: usize = left + 1;
+                smallest~ usize = parent;
+                if left < count && costs[left] < costs[smallest] {
+                    smallest = left;
+                }
+                if right < count && costs[right] < costs[smallest] {
+                    smallest = right;
+                }
+                if smallest == parent {
+                    break;
+                }
+                Swap(parent, smallest);
+                parent = smallest;
+            }
+            return top;
+        }
+
+        Swap~: (first: usize, second: usize) -> void {
+            node: i32 = nodes[first];
+            cost: f32 = costs[first];
+            nodes[first] = nodes[second];
+            costs[first] = costs[second];
+            nodes[second] = node;
+            costs[second] = cost;
+        }
+    }
+
+    /**
+     * The floor of the level as a graph the partner can find routes over. The static collision world is sampled on a grid
+     * of columns; every standable floor in a column is a node; neighbouring nodes are joined by walk links, and nodes at an
+     * edge by drop and jump links. Moving bodies are not in it, so a route ignores a door, a lift or a crumbling slab.
+     */
+    NavigationMesh :: class {
+    public:
+        agent~ NavigationAgent = NavigationAgent { };
+        originX~ f32 = 0.0f;
+        originZ~ f32 = 0.0f;
+        columnsX~ i32 = 0;
+        columnsZ~ i32 = 0;
+        lowestY~ f32 = 0.0f;
+        highestY~ f32 = 0.0f;
+        columnHeads~ Array<i32>! = [];
+        nodePositions~ Array<Vec3>! = [];
+        nodeNextInColumn~ Array<i32>! = [];
+        nodeFirstLink~ Array<i32>! = [];
+        nodeWalkLinks~ Array<i32>! = [];
+        linkTarget~ Array<i32>! = [];
+        linkKind~ Array<i32>! = [];
+        linkCost~ Array<f32>! = [];
+        linkNext~ Array<i32>! = [];
+
+        NavigationMesh~: () { }
+
+        !NavigationMesh~: () {
+            delete columnHeads;
+            delete nodePositions;
+            delete nodeNextInColumn;
+            delete nodeFirstLink;
+            delete nodeWalkLinks;
+            delete linkTarget;
+            delete linkKind;
+            delete linkCost;
+            delete linkNext;
+        }
+
+        NodeCount :: () -> i32 {
+            return i32(nodePositions.length());
+        }
+
+        LinkCount :: () -> i32 {
+            return i32(linkTarget.length());
+        }
+
+        /**
+         * Samples the static level and builds the graph for `settings`, replacing any earlier one. Returns the node count; an
+         * empty world gives 0.
+         */
+        Build~: (collisionWorld: lantern:::physics:::CollisionWorld*, settings: NavigationAgent) -> i32 {
+            Clear();
+            agent = settings;
+            bounds: lantern:::core:::Aabb = collisionWorld->StaticBounds();
+            if bounds.IsEmpty() {
+                return 0;
+            }
+            originX = bounds.min.x;
+            originZ = bounds.min.z;
+            lowestY = bounds.min.y - 0.5f;
+            highestY = bounds.max.y + 0.5f;
+            columnsX = i32(Math:::ceil((bounds.max.x - bounds.min.x) / agent.cellSize)) + 1;
+            columnsZ = i32(Math:::ceil((bounds.max.z - bounds.min.z) / agent.cellSize)) + 1;
+            columnCount: i32 = columnsX * columnsZ;
+            for column~ i32 = 0; column < columnCount; column++ {
+                columnHeads.push(NO_NODE);
+            }
+            for columnZ~ i32 = 0; columnZ < columnsZ; columnZ++ {
+                for columnX~ i32 = 0; columnX < columnsX; columnX++ {
+                    SampleColumn(collisionWorld, columnX, columnZ);
+                }
+            }
+            nodeTotal: i32 = NodeCount();
+            for node~ i32 = 0; node < nodeTotal; node++ {
+                LinkWalkNeighbours(collisionWorld, node);
+            }
+            for node~ i32 = 0; node < nodeTotal; node++ {
+                if nodeWalkLinks[usize(node)] < 4 {
+                    LinkEdgeNode(collisionWorld, node);
+                }
+            }
+            return nodeTotal;
+        }
+
+        /**
+         * Removes every node and link.
+         */
+        Clear~: () -> void {
+            columnHeads.clear();
+            nodePositions.clear();
+            nodeNextInColumn.clear();
+            nodeFirstLink.clear();
+            nodeWalkLinks.clear();
+            linkTarget.clear();
+            linkKind.clear();
+            linkCost.clear();
+            linkNext.clear();
+            columnsX = 0;
+            columnsZ = 0;
+        }
+
+        /**
+         * The node nearest `point` (flat distance, with height counting double), or NO_NODE when none is within a few cells
+         * and a body's height of it.
+         */
+        NearestNode :: (point: Vec3) -> i32 {
+            if columnsX == 0 {
+                return NO_NODE;
+            }
+            centerX: i32 = i32(Math:::floor((point.x - originX) / agent.cellSize));
+            centerZ: i32 = i32(Math:::floor((point.z - originZ) / agent.cellSize));
+            best~ i32 = NO_NODE;
+            bestScore~ f32 = UNREACHED_COST;
+            for columnZ~ i32 = centerZ - SNAP_CELL_RADIUS; columnZ <= centerZ + SNAP_CELL_RADIUS; columnZ++ {
+                for columnX~ i32 = centerX - SNAP_CELL_RADIUS; columnX <= centerX + SNAP_CELL_RADIUS; columnX++ {
+                    if !InColumns(columnX, columnZ) {
+                        continue;
+                    }
+                    node~ i32 = columnHeads[ColumnIndex(columnX, columnZ)];
+                    while node != NO_NODE {
+                        position: Vec3 = nodePositions[usize(node)];
+                        rise: f32 = Math:::abs(position.y - point.y);
+                        if rise <= SNAP_HEIGHT {
+                            flatX: f32 = position.x - point.x;
+                            flatZ: f32 = position.z - point.z;
+                            score: f32 = Math:::sqrt(flatX * flatX + flatZ * flatZ) + rise * 2.0f;
+                            if score < bestScore {
+                                bestScore = score;
+                                best = node;
+                            }
+                        }
+                        node = nodeNextInColumn[usize(node)];
+                    }
+                }
+            }
+            return best;
+        }
+
+        /**
+         * A route from `from` to `to`. Both are snapped to the nearest node. When `to` can't be reached the route goes to
+         * the reachable node nearest it and says so (`isComplete` false); when `from` is not near any node the route is
+         * empty.
+         */
+        FindPath :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> NavigationPath*! {
+            path := new NavigationPath();
+            startNode: i32 = NearestNode(from);
+            goalNode: i32 = NearestNode(to);
+            if startNode == NO_NODE {
+                return path!;
+            }
+            nodeTotal: usize = nodePositions.length();
+            cost~ Array<f32>! = [];
+            cameFrom~ Array<i32>! = [];
+            cameByLink~ Array<i32>! = [];
+            settled~ Array<bool>! = [];
+            for index~ usize = 0; index < nodeTotal; index++ {
+                cost.push(UNREACHED_COST);
+                cameFrom.push(NO_NODE);
+                cameByLink.push(LINK_WALK);
+                settled.push(false);
+            }
+            defer delete cost;
+            defer delete cameFrom;
+            defer delete cameByLink;
+            defer delete settled;
+            open := new OpenList();
+            defer delete open;
+            cost[usize(startNode)] = 0.0f;
+            open->Push(startNode, 0.0f);
+            closest~ i32 = startNode;
+            closestDistance~ f32 = UNREACHED_COST;
+            reached~ bool = false;
+            while !open->IsEmpty() {
+                current: i32 = open->PopNode();
+                if settled[usize(current)] {
+                    continue;
+                }
+                settled[usize(current)] = true;
+                currentPosition: Vec3 = nodePositions[usize(current)];
+                toGoal: f32 = (currentPosition - to).length();
+                if toGoal < closestDistance {
+                    closestDistance = toGoal;
+                    closest = current;
+                }
+                if current == goalNode {
+                    reached = true;
+                    break;
+                }
+                link~ i32 = nodeFirstLink[usize(current)];
+                while link != NO_NODE {
+                    target: i32 = linkTarget[usize(link)];
+                    total: f32 = cost[usize(current)] + linkCost[usize(link)];
+                    if !settled[usize(target)] && total < cost[usize(target)] {
+                        cost[usize(target)] = total;
+                        cameFrom[usize(target)] = current;
+                        cameByLink[usize(target)] = linkKind[usize(link)];
+                        open->Push(target, total + (nodePositions[usize(target)] - to).length());
+                    }
+                    link = linkNext[usize(link)];
+                }
+            }
+            endNode: i32 = reached ? goalNode : closest;
+            chainPoints~ Array<Vec3>! = [];
+            chainKinds~ Array<i32>! = [];
+            defer delete chainPoints;
+            defer delete chainKinds;
+            walking~ i32 = endNode;
+            while walking != NO_NODE {
+                chainPoints.push(nodePositions[usize(walking)]);
+                chainKinds.push(cameByLink[usize(walking)]);
+                walking = cameFrom[usize(walking)];
+            }
+            orderedPoints~ Array<Vec3>! = [];
+            orderedKinds~ Array<i32>! = [];
+            defer delete orderedPoints;
+            defer delete orderedKinds;
+            for index~ usize = chainPoints.length(); index > 0; index-- {
+                orderedPoints.push(chainPoints[index - 1]);
+                orderedKinds.push(chainKinds[index - 1]);
+            }
+            first~ usize = 0;
+            if orderedPoints.length() > 1 {
+                lead: Vec3 = orderedPoints[0] - from;
+                if Math:::sqrt(lead.x * lead.x + lead.z * lead.z) < agent.cellSize * 1.5f {
+                    first = 1;
+                }
+            }
+            Smooth(collisionWorld, orderedPoints, orderedKinds, first, path);
+            path->isComplete = reached;
+            if reached && path->points.length() > 0 {
+                lastPoint: Vec3 = path->points[path->points.length() - 1];
+                gap: Vec3 = Vec3 { x: to.x - lastPoint.x, y: 0.0f, z: to.z - lastPoint.z };
+                if gap.length() > 0.05f && gap.length() < agent.cellSize * 3.0f && Math:::abs(to.y - lastPoint.y) < SNAP_HEIGHT {
+                    path->points.push(Vec3 { x: to.x, y: lastPoint.y, z: to.z });
+                    path->kinds.push(LINK_WALK);
+                }
+            }
+            return path!;
+        }
+
+        /**
+         * Whether a route exists from `from` to `to`.
+         */
+        IsReachable :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+            path := FindPath(collisionWorld, from, to);
+            defer delete path;
+            return path->isComplete;
+        }
+
+        ColumnIndex :: (columnX: i32, columnZ: i32) -> usize {
+            return usize(columnZ * columnsX + columnX);
+        }
+
+        InColumns :: (columnX: i32, columnZ: i32) -> bool {
+            return columnX >= 0 && columnZ >= 0 && columnX < columnsX && columnZ < columnsZ;
+        }
+
+        ColumnCenter :: (columnX: i32, columnZ: i32) -> Vec3 {
+            return Vec3 { x: originX + (f32(columnX) + 0.5f) * agent.cellSize, y: 0.0f, z: originZ + (f32(columnZ) + 0.5f) * agent.cellSize };
+        }
+
+        /**
+         * Finds the standable floors in one column. Every triangle the vertical line through the column's centre crosses is
+         * collected; a crossing of an upward-facing triangle is a floor candidate, and any crossing within a body's height
+         * above it takes the headroom away.
+         */
+        SampleColumn~: (collisionWorld: lantern:::physics:::CollisionWorld*, columnX: i32, columnZ: i32) -> void {
+            center: Vec3 = ColumnCenter(columnX, columnZ);
+            bottom: Vec3 = Vec3 { x: center.x, y: lowestY, z: center.z };
+            top: Vec3 = Vec3 { x: center.x, y: highestY, z: center.z };
+            lineBounds: lantern:::core:::Aabb = lantern:::core:::Aabb:::Create(bottom - Vec3 { x: 0.01f, y: 0.0f, z: 0.01f }, top + Vec3 { x: 0.01f, y: 0.0f, z: 0.01f });
+            near: Array<lantern:::physics:::NearTriangle>! = collisionWorld->NearTriangles(lineBounds, null, false);
+            defer delete near;
+            floors~ Array<f32>! = [];
+            crossings~ Array<f32>! = [];
+            defer delete floors;
+            defer delete crossings;
+            minimumNormalY: f32 = agent.MinGroundNormalY();
+            for candidate in near {
+                if hit := lantern:::physics:::SegmentTriangleIntersection(top, bottom, candidate.triangle) {
+                    crossings.push(hit.y);
+                    if candidate.triangle.Normal().y >= minimumNormalY {
+                        floors.push(hit.y);
+                    }
+                }
+            }
+            SortDescending(floors);
+            head~ i32 = NO_NODE;
+            tail~ i32 = NO_NODE;
+            floorCount~ i32 = 0;
+            lastFloor~ f32 = highestY + 10.0f;
+            for floorHeight in floors {
+                if lastFloor - floorHeight < SAME_FLOOR_TOLERANCE {
+                    continue;
+                }
+                lastFloor = floorHeight;
+                if floorCount >= MAX_FLOORS_PER_COLUMN {
+                    break;
+                }
+                if !HasHeadroom(crossings, floorHeight) {
+                    continue;
+                }
+                feet: Vec3 = Vec3 { x: center.x, y: floorHeight, z: center.z };
+                if !HasClearance(collisionWorld, feet) {
+                    continue;
+                }
+                node: i32 = NodeCount();
+                nodePositions.push(feet);
+                nodeNextInColumn.push(NO_NODE);
+                nodeFirstLink.push(NO_NODE);
+                nodeWalkLinks.push(0);
+                if tail == NO_NODE {
+                    head = node;
+                } else {
+                    nodeNextInColumn[usize(tail)] = node;
+                }
+                tail = node;
+                floorCount += 1;
+            }
+            columnHeads[ColumnIndex(columnX, columnZ)] = head;
+        }
+
+        /**
+         * No surface crosses the column between a little above the floor and a body's height above it.
+         */
+        HasHeadroom :: (crossings: Array<f32>, floorHeight: f32) -> bool {
+            for crossing in crossings {
+                if crossing > floorHeight + SAME_FLOOR_TOLERANCE * 2.0f && crossing < floorHeight + agent.height {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * The body with its feet at `feet` touches no wall or ceiling (ground contacts are ignored).
+         */
+        HasClearance :: (collisionWorld: lantern:::physics:::CollisionWorld*, feet: Vec3) -> bool {
+            contacts: Array<lantern:::physics:::Contact>! = collisionWorld->StaticCapsuleContacts(agent.ClearanceCapsule(), agent.ClearanceCenter(feet));
+            defer delete contacts;
+            for contact in contacts {
+                if contact.depth > CLEARANCE_TOLERANCE && contact.normal.y < GROUND_CONTACT_NORMAL_Y {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Whether the clearance body can move from standing at `from` to standing at `to` along the straight line between
+         * them without touching the static level.
+         */
+        IsSweepClear :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+            displacement: Vec3 = to - from;
+            if displacement.length() < 0.0001f {
+                return true;
+            }
+            hit: lantern:::physics:::ShapeHit? = collisionWorld->StaticCapsuleCast(agent.ClearanceCapsule(), agent.ClearanceCenter(from), displacement);
+            return hit == null;
+        }
+
+        /**
+         * Joins `node` to the nodes in the four neighbouring columns ahead of it (east, south, and the two diagonals), both
+         * ways, wherever walking between them works.
+         */
+        LinkWalkNeighbours~: (collisionWorld: lantern:::physics:::CollisionWorld*, node: i32) -> void {
+            position: Vec3 = nodePositions[usize(node)];
+            columnX: i32 = i32(Math:::floor((position.x - originX) / agent.cellSize));
+            columnZ: i32 = i32(Math:::floor((position.z - originZ) / agent.cellSize));
+            offsetsX: i32[4] = [1, 0, 1, -1];
+            offsetsZ: i32[4] = [0, 1, 1, 1];
+            for offset~ usize = 0; offset < 4; offset++ {
+                neighbourX: i32 = columnX + offsetsX[offset];
+                neighbourZ: i32 = columnZ + offsetsZ[offset];
+                if !InColumns(neighbourX, neighbourZ) {
+                    continue;
+                }
+                isDiagonal: bool = offsetsX[offset] != 0 && offsetsZ[offset] != 0;
+                neighbour~ i32 = columnHeads[ColumnIndex(neighbourX, neighbourZ)];
+                while neighbour != NO_NODE {
+                    if CanWalkBetween(collisionWorld, position, nodePositions[usize(neighbour)]) {
+                        distance: f32 = (nodePositions[usize(neighbour)] - position).length();
+                        AddLink(node, neighbour, LINK_WALK, distance);
+                        AddLink(neighbour, node, LINK_WALK, distance);
+                        if !isDiagonal {
+                            nodeWalkLinks[usize(node)] += 1;
+                            nodeWalkLinks[usize(neighbour)] += 1;
+                        }
+                    }
+                    neighbour = nodeNextInColumn[usize(neighbour)];
+                }
+            }
+        }
+
+        /**
+         * Walking from `from` to the neighbouring `to` works when the height change is a step, or is a slope the ground
+         * really follows, and the body fits along the way.
+         */
+        CanWalkBetween :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+            rise: f32 = Math:::abs(to.y - from.y);
+            flat: Vec3 = Vec3 { x: to.x - from.x, y: 0.0f, z: to.z - from.z };
+            run: f32 = flat.length();
+            if rise > agent.stepHeight + 0.02f {
+                if rise > run * agent.MaxSlopeRise() * 1.05f + 0.02f {
+                    return false;
+                }
+                if !GroundFollows(collisionWorld, from, to) {
+                    return false;
+                }
+            }
+            return IsSweepClear(collisionWorld, from, to);
+        }
+
+        /**
+         * The ground half way between two points is about as high as the line between them.
+         */
+        GroundFollows :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+            middle: Vec3 = (from + to) * 0.5f;
+            origin: Vec3 = Vec3 { x: middle.x, y: Math:::max(from.y, to.y) + 0.4f, z: middle.z };
+            hit: lantern:::physics:::RayHit? = collisionWorld->StaticRaycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, Math:::abs(to.y - from.y) + 1.0f);
+            if found := hit {
+                return Math:::abs(found.point.y - middle.y) < 0.15f;
+            }
+            return false;
+        }
+
+        /**
+         * From a node at an edge, looks in each of eight directions for the first ground that can't be walked to and can be
+         * reached by dropping or jumping, and links it one way.
+         */
+        LinkEdgeNode~: (collisionWorld: lantern:::physics:::CollisionWorld*, node: i32) -> void {
+            position: Vec3 = nodePositions[usize(node)];
+            columnX: i32 = i32(Math:::floor((position.x - originX) / agent.cellSize));
+            columnZ: i32 = i32(Math:::floor((position.z - originZ) / agent.cellSize));
+            directionsX: i32[8] = [1, -1, 0, 0, 1, 1, -1, -1];
+            directionsZ: i32[8] = [0, 0, 1, -1, 1, -1, 1, -1];
+            reachCells: i32 = i32(Math:::ceil(agent.maxJumpAcross / agent.cellSize));
+            for direction~ usize = 0; direction < 8; direction++ {
+                stepLength: f32 = Math:::sqrt(f32(directionsX[direction] * directionsX[direction] + directionsZ[direction] * directionsZ[direction])) * agent.cellSize;
+                linked~ bool = false;
+                walkable~ bool = false;
+                for cells~ i32 = 1; cells <= reachCells && !linked && !walkable; cells++ {
+                    targetX: i32 = columnX + directionsX[direction] * cells;
+                    targetZ: i32 = columnZ + directionsZ[direction] * cells;
+                    if !InColumns(targetX, targetZ) {
+                        break;
+                    }
+                    run: f32 = stepLength * f32(cells);
+                    candidate~ i32 = columnHeads[ColumnIndex(targetX, targetZ)];
+                    while candidate != NO_NODE && !linked {
+                        target: Vec3 = nodePositions[usize(candidate)];
+                        rise: f32 = target.y - position.y;
+                        if cells == 1 && Math:::abs(rise) <= agent.stepHeight + 0.02f {
+                            walkable = true;
+                        } else if TryEdgeLink(collisionWorld, node, candidate, position, target, rise, run) {
+                            linked = true;
+                        }
+                        candidate = nodeNextInColumn[usize(candidate)];
+                    }
+                }
+            }
+        }
+
+        /**
+         * Adds a drop or jump link from `node` to `candidate` if the move fits the agent and the way is clear.
+         */
+        TryEdgeLink~: (collisionWorld: lantern:::physics:::CollisionWorld*, node: i32, candidate: i32, position: Vec3, target: Vec3, rise: f32, run: f32) -> bool {
+            if rise < -agent.stepHeight && rise >= -agent.maxDrop && run <= DROP_REACH {
+                if IsDropClear(collisionWorld, position, target) {
+                    AddLink(node, candidate, LINK_DROP, run + DROP_COST_PENALTY + Math:::abs(rise) * 0.5f);
+                    return true;
+                }
+                return false;
+            }
+            if rise > agent.maxJumpUp || rise < -agent.maxDrop {
+                return false;
+            }
+            if rise > agent.stepHeight && run > LEDGE_JUMP_REACH {
+                return false;
+            }
+            if IsJumpClear(collisionWorld, position, target) {
+                AddLink(node, candidate, LINK_JUMP, run + JUMP_COST_PENALTY + Math:::abs(rise));
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * A drop: sideways off the edge at the starting height, then straight down.
+         */
+        IsDropClear :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+            above: Vec3 = Vec3 { x: to.x, y: from.y, z: to.z };
+            return IsSweepClear(collisionWorld, from, above) && IsSweepClear(collisionWorld, above, to);
+        }
+
+        /**
+         * A jump: up to the higher of the two heights, across, then down to the landing.
+         */
+        IsJumpClear :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+            topHeight: f32 = Math:::max(from.y, to.y);
+            leaving: Vec3 = Vec3 { x: from.x, y: topHeight, z: from.z };
+            arriving: Vec3 = Vec3 { x: to.x, y: topHeight, z: to.z };
+            return IsSweepClear(collisionWorld, from, leaving) && IsSweepClear(collisionWorld, leaving, arriving) && IsSweepClear(collisionWorld, arriving, to);
+        }
+
+        AddLink~: (from: i32, to: i32, kind: i32, cost: f32) -> void {
+            link: i32 = i32(linkTarget.length());
+            linkTarget.push(to);
+            linkKind.push(kind);
+            linkCost.push(cost);
+            linkNext.push(nodeFirstLink[usize(from)]);
+            nodeFirstLink[usize(from)] = link;
+        }
+
+        /**
+         * Replaces runs of walk points by the longest straight lines the body can walk, starting from point `first`, and puts
+         * the result in `path`. A drop or jump point stays, with the point before it, so the game knows where to leave
+         * from.
+         */
+        Smooth :: (collisionWorld: lantern:::physics:::CollisionWorld*, points: Array<Vec3>, kinds: Array<i32>, first: usize, path: NavigationPath~*) -> void {
+            count: usize = points.length();
+            if first >= count {
+                return;
+            }
+            index~ usize = first;
+            path->points.push(points[index]);
+            path->kinds.push(LINK_WALK);
+            while index + 1 < count {
+                best~ usize = index + 1;
+                limit~ usize = index + usize(SMOOTH_LOOKAHEAD_POINTS);
+                if limit > count - 1 {
+                    limit = count - 1;
+                }
+                for candidate~ usize = index + 2; candidate <= limit; candidate++ {
+                    if kinds[candidate] != LINK_WALK || kinds[candidate - 1] != LINK_WALK && candidate - 1 > index {
+                        break;
+                    }
+                    if kinds[index + 1] != LINK_WALK {
+                        break;
+                    }
+                    if !IsStraightWalkable(collisionWorld, points[index], points[candidate]) {
+                        break;
+                    }
+                    best = candidate;
+                }
+                path->points.push(points[best]);
+                path->kinds.push(kinds[best]);
+                index = best;
+            }
+        }
+
+        /**
+         * A straight walk from `from` to `to`: the body fits all the way and the ground never changes by more than a step
+         * between samples.
+         */
+        IsStraightWalkable :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+            if !IsSweepClear(collisionWorld, from, to) {
+                return false;
+            }
+            span: Vec3 = to - from;
+            flat: f32 = Math:::sqrt(span.x * span.x + span.z * span.z);
+            samples: i32 = i32(Math:::ceil(flat / STRAIGHT_SAMPLE_SPACING));
+            previousHeight~ f32 = from.y;
+            for sample~ i32 = 1; sample <= samples; sample++ {
+                fraction: f32 = f32(sample) / f32(samples);
+                point: Vec3 = from + span * fraction;
+                origin: Vec3 = Vec3 { x: point.x, y: Math:::max(previousHeight, point.y) + agent.stepHeight + 0.2f, z: point.z };
+                hit: lantern:::physics:::RayHit? = collisionWorld->StaticRaycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, agent.stepHeight * 2.0f + 0.6f);
+                found := hit;
+                if found == null {
+                    return false;
+                }
+                if hitPoint := found {
+                    if Math:::abs(hitPoint.point.y - previousHeight) > agent.stepHeight + 0.03f {
+                        return false;
+                    }
+                    previousHeight = hitPoint.point.y;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Sorts the heights from highest to lowest.
+         */
+        SortDescending :: (values: Array<f32~>) -> void {
+            for index~ usize = 1; index < values.length(); index++ {
+                held: f32 = values[index];
+                slot~ usize = index;
+                while slot > 0 && values[slot - 1] < held {
+                    values[slot] = values[slot - 1];
+                    slot -= 1;
+                }
+                values[slot] = held;
+            }
+        }
+    }
+}

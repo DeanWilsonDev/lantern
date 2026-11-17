@@ -360,6 +360,17 @@ lantern:::physics :: namespace {
             return staticTriangles.length();
         }
 
+        /**
+         * The box around every static triangle, or an empty (inside-out) box when there are none.
+         */
+        StaticBounds :: () -> lantern:::core:::Aabb {
+            bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
+            for triangle in staticTriangles {
+                bounds = bounds.GrownTo(triangle.a).GrownTo(triangle.b).GrownTo(triangle.c);
+            }
+            return bounds;
+        }
+
         AddBody~: (localTriangles: Array<Triangle>, transform: Mat4) -> lantern:::core:::Handle<KinematicBody> {
             body~ KinematicBody = KinematicBody { firstTriangle: bodyLocalTriangles.length(), triangleCount: localTriangles.length(), transform: transform, previousTransform: transform };
             for triangle in localTriangles {
@@ -446,6 +457,14 @@ lantern:::physics :: namespace {
          * box overlaps it. A collider given as `ignore` is left out.
          */
         TrianglesNear :: (bounds: lantern:::core:::Aabb, ignore: ColliderId?) -> Array<NearTriangle>! {
+            return NearTriangles(bounds, ignore, true);
+        }
+
+        /**
+         * The same as TrianglesNear, with `includeBodies` false for the static level only: what the navigation mesh is built
+         * from, since a moving body is not where it was when the mesh was made.
+         */
+        NearTriangles :: (bounds: lantern:::core:::Aabb, ignore: ColliderId?, includeBodies: bool) -> Array<NearTriangle>! {
             near~ Array<NearTriangle>! = [];
             ignoreStatic~ bool = false;
             if ignored := ignore {
@@ -465,6 +484,9 @@ lantern:::physics :: namespace {
                         }
                     }
                 }
+            }
+            if !includeBodies {
+                return near!;
             }
             handles: Array<lantern:::core:::Handle<KinematicBody>>! = bodies->LiveHandles();
             for handle in handles {
@@ -494,11 +516,25 @@ lantern:::physics :: namespace {
          * triangles are hit at the same distance the one more directly facing the movement wins.
          */
         CapsuleCast :: (capsule: Capsule, center: Vec3, displacement: Vec3, ignore: ColliderId?) -> ShapeHit? {
+            return CapsuleCastWith(capsule, center, displacement, ignore, true);
+        }
+
+        /**
+         * CapsuleCast against the static level only.
+         */
+        StaticCapsuleCast :: (capsule: Capsule, center: Vec3, displacement: Vec3) -> ShapeHit? {
+            return CapsuleCastWith(capsule, center, displacement, null, false);
+        }
+
+        /**
+         * CapsuleCast, with `includeBodies` choosing whether moving bodies count.
+         */
+        CapsuleCastWith :: (capsule: Capsule, center: Vec3, displacement: Vec3, ignore: ColliderId?, includeBodies: bool) -> ShapeHit? {
             startBounds: lantern:::core:::Aabb = capsule.Bounds(center);
             sweptBounds: lantern:::core:::Aabb = startBounds.Union(capsule.Bounds(center + displacement)).Expanded(CAST_TOLERANCE * 2.0f);
             segmentStart: Vec3 = capsule.SegmentStart(center);
             segmentEnd: Vec3 = capsule.SegmentEnd(center);
-            near: Array<NearTriangle>! = TrianglesNear(sweptBounds, ignore);
+            near: Array<NearTriangle>! = NearTriangles(sweptBounds, ignore, includeBodies);
             defer delete near;
             found~ bool = false;
             best~ ShapeHit = ShapeHit { };
@@ -529,9 +565,23 @@ lantern:::physics :: namespace {
          * point of the triangle is.
          */
         CapsuleContacts :: (capsule: Capsule, center: Vec3, ignore: ColliderId?) -> Array<Contact>! {
+            return CapsuleContactsWith(capsule, center, ignore, true);
+        }
+
+        /**
+         * CapsuleContacts against the static level only.
+         */
+        StaticCapsuleContacts :: (capsule: Capsule, center: Vec3) -> Array<Contact>! {
+            return CapsuleContactsWith(capsule, center, null, false);
+        }
+
+        /**
+         * CapsuleContacts, with `includeBodies` choosing whether moving bodies count.
+         */
+        CapsuleContactsWith :: (capsule: Capsule, center: Vec3, ignore: ColliderId?, includeBodies: bool) -> Array<Contact>! {
             segmentStart: Vec3 = capsule.SegmentStart(center);
             segmentEnd: Vec3 = capsule.SegmentEnd(center);
-            near: Array<NearTriangle>! = TrianglesNear(capsule.Bounds(center), ignore);
+            near: Array<NearTriangle>! = NearTriangles(capsule.Bounds(center), ignore, includeBodies);
             defer delete near;
             contacts~ Array<Contact>! = [];
             defer delete contacts;
@@ -556,8 +606,22 @@ lantern:::physics :: namespace {
          * normal is flipped to face the ray.
          */
         Raycast :: (origin: Vec3, direction: Vec3, maximumDistance: f32) -> RayHit? {
+            return RaycastWith(origin, direction, maximumDistance, true);
+        }
+
+        /**
+         * Raycast against the static level only.
+         */
+        StaticRaycast :: (origin: Vec3, direction: Vec3, maximumDistance: f32) -> RayHit? {
+            return RaycastWith(origin, direction, maximumDistance, false);
+        }
+
+        /**
+         * Raycast, with `includeBodies` choosing whether moving bodies count.
+         */
+        RaycastWith :: (origin: Vec3, direction: Vec3, maximumDistance: f32, includeBodies: bool) -> RayHit? {
             end: Vec3 = origin + direction * maximumDistance;
-            near: Array<NearTriangle>! = TrianglesNear(lantern:::core:::Aabb:::Create(origin, end), null);
+            near: Array<NearTriangle>! = NearTriangles(lantern:::core:::Aabb:::Create(origin, end), null, includeBodies);
             defer delete near;
             found~ bool = false;
             best~ RayHit = RayHit { };

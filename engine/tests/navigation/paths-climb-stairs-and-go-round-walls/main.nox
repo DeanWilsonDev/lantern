@@ -1,0 +1,48 @@
+lantern :: import lantern;
+
+PointInsideWall :: (point: Vec3) -> bool {
+    return Math:::abs(point.x) < 4.0f && Math:::abs(point.z + 3.0f) < 0.25f;
+}
+
+main :: () -> i32 {
+    world := lantern:::physicsrig:::FloorWorld(10.0f);
+    defer delete world;
+    stairTops: f32[4] = [0.25f, 0.5f, 0.75f, 1.0f];
+    for index~ usize = 0; index < 4; index++ {
+        frontZ: f32 = -2.0f - f32(index) * 0.5f;
+        backZ: f32 = -10.0f;
+        world->AddStaticBox(Vec3 { x: -6.0f, y: stairTops[index] * 0.5f, z: (frontZ + backZ) * 0.5f }, Vec3 { x: 1.5f, y: stairTops[index] * 0.5f, z: (frontZ - backZ) * 0.5f });
+    }
+    world->AddStaticBox(Vec3 { x: 0.0f, y: 1.5f, z: -3.0f }, Vec3 { x: 4.0f, y: 1.5f, z: 0.25f });
+    mesh := new lantern:::navigation:::NavigationMesh();
+    defer delete mesh;
+    nodeCount := mesh->Build(world, lantern:::navigation:::NavigationAgent { });
+    assert(nodeCount > 500, "the floor and the stairs become nodes");
+
+    stairsPath := mesh->FindPath(world, Vec3 { x: -6.0f, y: 0.0f, z: 2.0f }, Vec3 { x: -6.0f, y: 1.0f, z: -7.0f });
+    defer delete stairsPath;
+    assert(stairsPath->isComplete, "four 0.25 m stairs are a way up");
+    assert(Math:::abs(stairsPath->points[stairsPath->points.length() - 1].y - 1.0f) < 0.05f, "and the path ends at the top");
+    assert(stairsPath->Length() < 8, "a straight run of stairs is smoothed to a few points");
+
+    aroundPath := mesh->FindPath(world, Vec3 { x: 0.0f, y: 0.0f, z: 2.0f }, Vec3 { x: 0.0f, y: 0.0f, z: -6.0f });
+    defer delete aroundPath;
+    assert(aroundPath->isComplete, "the wall has an end to go round");
+    for index~ usize = 1; index < aroundPath->points.length(); index++ {
+        from: Vec3 = aroundPath->points[index - 1];
+        to: Vec3 = aroundPath->points[index];
+        for sample~ i32 = 0; sample <= 20; sample++ {
+            point: Vec3 = from + (to - from) * (f32(sample) / 20.0f);
+            assert(!PointInsideWall(point), "no part of the path goes through the wall");
+        }
+    }
+    reachedEdge~ bool = false;
+    for point in aroundPath->points {
+        if Math:::abs(point.x) > 4.0f {
+            reachedEdge = true;
+        }
+    }
+    assert(reachedEdge, "the path goes round the end of the wall");
+    print("paths climb stairs and go round walls");
+    return 0;
+}
