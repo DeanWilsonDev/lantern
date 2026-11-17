@@ -7,9 +7,10 @@
 // into a 16-bit float texture (RGBA16F) that keeps the real values, and a few extra passes afterwards decide how that light
 // becomes a picture:
 //
-//   scene pass     lit meshes -> `hdrTexture`                (GpuRenderer.RecordFrame)
-//   bloom passes   `hdrTexture` -> level 0 -> level 1 -> ... -> level 4, then back up, adding   (RecordBloom)
-//   composite      `hdrTexture` + level 0 -> the screen: exposure, tone mapping, sRGB            (RecordComposite)
+//   scene pass     lit meshes -> `hdrTexture`, and each pixel's normal and roughness -> `surfaceTexture`   (GpuRenderer.RecordFrame)
+//   reflections    `hdrTexture` + depth + `surfaceTexture` -> `reflectedTexture`, the scene with reflections   (GpuReflections.nox)
+//   bloom passes   the scene (`reflectedTexture` when reflections are on, else `hdrTexture`) -> level 0 -> ... -> level 4, then back up   (RecordBloom)
+//   composite      the scene + level 0 -> the screen: exposure, tone mapping, sRGB            (RecordComposite)
 //   ambient occ.   the scene's depth -> `occlusionRaw` -> `occlusionBlurred`, read by the composite            (RecordAmbientOcclusion)
 //   anti-alias     with anti-aliasing on, the composite writes `ldrTexture` and FXAA smooths it onto the screen  (RecordAntiAlias)
 //   overlay pass   debug lines, HUD and menus on top of the screen image, untouched by any of it  (GpuRenderer)
@@ -20,6 +21,12 @@ Sdl :: import Sdl;
 
 lantern:::gpu :: namespace {
     Sdl :: import Sdl;
+
+    /**
+     * The surface buffer's format: a normal, a roughness and a reflectance in four 8-bit channels (`surface-common.glsl`).
+     * Every GPU can render to it.
+     */
+    SURFACE_FORMAT: Sdl:::SDL_GPUTextureFormat : Sdl:::SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 
     /** How many shrinking pictures bloom makes. Level 0 is half the frame's size and each level after is half the one before. */
     BLOOM_LEVELS: usize : 5;
@@ -41,6 +48,16 @@ lantern:::gpu :: namespace {
     PostTargets :: struct {
         /** The scene's light, unclamped. The lit pass draws into it and the composite pass reads it. */
         hdrTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /**
+         * The scene pass's second colour target: each pixel's normal, roughness and reflectance, which the reflection pass
+         * reads. Frame-sized. Cleared to "not reflective" every frame, and only kept when reflections are drawn.
+         */
+        surfaceTexture~ raw Sdl:::SDL_GPUTexture~* = null;
+        /**
+         * The scene with reflections added, which bloom and the composite read when reflections are on. Same format and size as
+         * `hdrTexture`. Made the first time a frame draws reflections, so a game that never does pays no memory for it.
+         */
+        reflectedTexture~ raw Sdl:::SDL_GPUTexture~* = null;
         /** Ambient occlusion before and after its blur: one 8-bit channel, 1 where nothing is blocked. Frame-sized. */
         occlusionRaw~ raw Sdl:::SDL_GPUTexture~* = null;
         /** The blurred occlusion the composite pass multiplies the scene by. */
@@ -59,6 +76,12 @@ lantern:::gpu :: namespace {
             unsafe {
                 if hdrTexture != null {
                     Sdl:::SDL_ReleaseGPUTexture(device, hdrTexture);
+                }
+                if surfaceTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, surfaceTexture);
+                }
+                if reflectedTexture != null {
+                    Sdl:::SDL_ReleaseGPUTexture(device, reflectedTexture);
                 }
                 if occlusionRaw != null {
                     Sdl:::SDL_ReleaseGPUTexture(device, occlusionRaw);
@@ -113,13 +136,15 @@ lantern:::gpu :: namespace {
             return true;
         }
         targets->Release(device);
+        targets->reflectedTexture = null;
+        targets->surfaceTexture = CreatePostTexture(device, SURFACE_FORMAT, width, height);
         targets->ldrTexture = CreatePostTexture(device, colorFormat, width, height);
         targets->occlusionRaw = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R8_UNORM, width, height);
         targets->occlusionBlurred = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R8_UNORM, width, height);
         targets->hdrTexture = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, width, height);
         targets->width = width;
         targets->height = height;
-        failed~ bool = targets->hdrTexture == null || targets->ldrTexture == null || targets->occlusionRaw == null || targets->occlusionBlurred == null;
+        failed~ bool = targets->surfaceTexture == null || targets->hdrTexture == null || targets->ldrTexture == null || targets->occlusionRaw == null || targets->occlusionBlurred == null;
         for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
             levelWidth: u32 = width >> u32(levelIndex + 1);
             levelHeight: u32 = height >> u32(levelIndex + 1);
@@ -136,6 +161,7 @@ lantern:::gpu :: namespace {
         if failed {
             targets->Release(device);
             targets->hdrTexture = null;
+            targets->surfaceTexture = null;
             targets->ldrTexture = null;
             targets->occlusionRaw = null;
             targets->occlusionBlurred = null;
@@ -150,6 +176,17 @@ lantern:::gpu :: namespace {
         lantern:::core:::LogDebug("renderer", message);
         delete message;
         return true;
+    }
+
+    /**
+     * Makes `reflectedTexture` the frame's size when a frame is going to draw reflections, if it isn't already. Returns false
+     * when the GPU refuses, in which case the frame draws without reflections.
+     */
+    EnsureReflectedTexture :: (device: raw Sdl:::SDL_GPUDevice~*, targets: PostTargets~*) -> bool {
+        if targets->reflectedTexture == null {
+            targets->reflectedTexture = CreatePostTexture(device, Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, targets->width, targets->height);
+        }
+        return targets->reflectedTexture != null;
     }
 
     /**
@@ -181,9 +218,9 @@ lantern:::gpu :: namespace {
      * grow it back one level at a time, adding each blurrier picture to the next larger. Afterwards `levels[0]` holds the
      * glow, ready for the composite pass. That is `BLOOM_LEVELS` shrinks and `BLOOM_LEVELS - 1` growths.
      */
-    RecordBloom :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, threshold: f32) -> void {
+    RecordBloom :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, sceneTexture: raw Sdl:::SDL_GPUTexture~*, threshold: f32) -> void {
         for levelIndex~ usize = 0; levelIndex < BLOOM_LEVELS; levelIndex++ {
-            sourceTexture~ raw Sdl:::SDL_GPUTexture~* = targets->hdrTexture;
+            sourceTexture~ raw Sdl:::SDL_GPUTexture~* = sceneTexture;
             sourceWidth~ u32 = targets->width;
             sourceHeight~ u32 = targets->height;
             if levelIndex > 0 {
@@ -206,7 +243,7 @@ lantern:::gpu :: namespace {
      * the screen's colour texture. With bloom off the glow texture bound is the scene itself and its strength is 0, so the
      * shader skips it; a shader can't have a texture slot unbound.
      */
-    RecordComposite :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, destination: raw Sdl:::SDL_GPUTexture~*, renderWorld: lantern:::renderer:::RenderWorld*, depthTexture: raw Sdl:::SDL_GPUTexture~*, aspect: f32, bloomDrawn: bool, occlusionDrawn: bool, encodeFlag: f32) -> void {
+    RecordComposite :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, sceneTexture: raw Sdl:::SDL_GPUTexture~*, destination: raw Sdl:::SDL_GPUTexture~*, renderWorld: lantern:::renderer:::RenderWorld*, depthTexture: raw Sdl:::SDL_GPUTexture~*, aspect: f32, bloomDrawn: bool, occlusionDrawn: bool, encodeFlag: f32) -> void {
         post: lantern:::renderer:::PostSettings = renderWorld->post;
         unsafe {
             colorTarget := Sdl:::SDL_GPUColorTargetInfo {
@@ -217,7 +254,7 @@ lantern:::gpu :: namespace {
             };
             pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, null);
             Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines->composite);
-            glowTexture: raw Sdl:::SDL_GPUTexture~* = bloomDrawn ? targets->levels[0].texture : targets->hdrTexture;
+            glowTexture: raw Sdl:::SDL_GPUTexture~* = bloomDrawn ? targets->levels[0].texture : sceneTexture;
             glowStrength: f32 = bloomDrawn ? post.bloomStrength : 0.0f;
             toneMappingFlag~ f32 = 0.0f;
             when post.toneMapper {
@@ -231,12 +268,12 @@ lantern:::gpu :: namespace {
                     toneMappingFlag = 2.0f;
                 }
             }
-            occlusionTexture: raw Sdl:::SDL_GPUTexture~* = occlusionDrawn ? targets->occlusionBlurred : targets->hdrTexture;
+            occlusionTexture: raw Sdl:::SDL_GPUTexture~* = occlusionDrawn ? targets->occlusionBlurred : sceneTexture;
             occlusionFlag: f32 = occlusionDrawn ? 1.0f : 0.0f;
             settings := PackCompositeUniforms(renderWorld, aspect, [post.exposure, glowStrength, toneMappingFlag, encodeFlag], occlusionFlag);
             PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(settings), 464);
             bindings: Sdl:::SDL_GPUTextureSamplerBinding[4] = [
-                Sdl:::SDL_GPUTextureSamplerBinding { texture: targets->hdrTexture, sampler: samplers->linearClamp },
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: sceneTexture, sampler: samplers->linearClamp },
                 Sdl:::SDL_GPUTextureSamplerBinding { texture: glowTexture, sampler: samplers->linearClamp },
                 Sdl:::SDL_GPUTextureSamplerBinding { texture: occlusionTexture, sampler: samplers->linearClamp },
                 Sdl:::SDL_GPUTextureSamplerBinding { texture: depthTexture, sampler: samplers->nearestClamp }

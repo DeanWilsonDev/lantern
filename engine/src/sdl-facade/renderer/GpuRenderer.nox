@@ -127,6 +127,8 @@ lantern:::gpu :: namespace {
         encodeSrgbInShader~ bool = false;
         /** Whether the driver's validation layer is on (LANTERN_GPU_DEBUG). */
         debugEnabled~ bool = false;
+        /** LANTERN_SSR: 0 draws no screen-space reflections, 1 always draws them, -1 follows the game's `PostSettings`. */
+        reflectionOverride~ i32 = -1;
         /**
          * The driver SDL chose: `vulkan` or `metal`. Direct3D 12 needs DXIL shaders, which Lantern doesn't ship, so
          * Windows uses Vulkan.
@@ -175,6 +177,7 @@ lantern:::gpu :: namespace {
          */
         OpenDevice~: (options: GpuOptions) -> string!? {
             debugEnabled = options.debugEnabled;
+            reflectionOverride = options.reflections;
             driverText: string!? = environmentVariable("LANTERN_GPU_DRIVER");
             defer delete driverText;
             requestedDriver~ string? = null;
@@ -911,13 +914,28 @@ lantern:::gpu :: namespace {
             skyDrawn: bool = SkyIsDrawn(renderWorld);
             backdrop: lantern:::core:::Color = skyDrawn ? renderWorld->sky.horizon : renderWorld->clearColor;
             bloomDrawn: bool = post.bloomEnabled && post.bloomStrength > 0.0f;
+            reflectionSteps~ u32 = ReflectionStepsFor(post, renderWorld->camera, reflectionOverride);
+            if reflectionSteps > 0 && !EnsureReflectedTexture(device, postTargets) {
+                lantern:::core:::LogWarn("renderer", "the GPU refused the reflection texture; drawing this frame without reflections");
+                reflectionSteps = 0;
+            }
+            reflectionsDrawn: bool = reflectionSteps > 0;
             unsafe {
-                sceneTarget := Sdl:::SDL_GPUColorTargetInfo {
-                    texture: postTargets.hdrTexture,
-                    clear_color: Sdl:::SDL_FColor { r: backdrop.r, g: backdrop.g, b: backdrop.b, a: 1.0f },
-                    load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
-                    store_op: Sdl:::SDL_GPU_STOREOP_STORE
-                };
+                sceneTargets: Sdl:::SDL_GPUColorTargetInfo[2] = [
+                    Sdl:::SDL_GPUColorTargetInfo {
+                        texture: postTargets.hdrTexture,
+                        clear_color: Sdl:::SDL_FColor { r: backdrop.r, g: backdrop.g, b: backdrop.b, a: 1.0f },
+                        load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
+                        store_op: Sdl:::SDL_GPU_STOREOP_STORE
+                    },
+                    Sdl:::SDL_GPUColorTargetInfo {
+                        texture: postTargets.surfaceTexture,
+                        clear_color: Sdl:::SDL_FColor { r: 0.5f, g: 0.5f, b: 1.0f, a: 0.0f },
+                        load_op: Sdl:::SDL_GPU_LOADOP_CLEAR,
+                        store_op: reflectionsDrawn ? Sdl:::SDL_GPU_STOREOP_STORE : Sdl:::SDL_GPU_STOREOP_DONT_CARE
+                    }
+                ];
+                firstSceneTarget: Sdl:::SDL_GPUColorTargetInfo* = reinterpret<Sdl:::SDL_GPUColorTargetInfo>(sceneTargets);
                 depthTargetInfo := Sdl:::SDL_GPUDepthStencilTargetInfo {
                     texture: depthTarget,
                     clear_depth: 1.0f,
@@ -927,25 +945,30 @@ lantern:::gpu :: namespace {
                     stencil_store_op: Sdl:::SDL_GPU_STOREOP_DONT_CARE,
                     cycle: true
                 };
-                scenePass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, sceneTarget, 1, depthTargetInfo);
+                scenePass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, firstSceneTarget, 2, depthTargetInfo);
                 DrawMeshes(commandBuffer, scenePass, renderWorld, visibleDraws, chosenLights, shadowPlan, viewProjection, backdrop, encodeFlag, report);
                 if skyDrawn {
                     DrawSky(commandBuffer, scenePass, renderWorld, aspect);
                 }
                 Sdl:::SDL_EndGPURenderPass(scenePass);
             }
+            sceneTexture~ raw Sdl:::SDL_GPUTexture~* = postTargets.hdrTexture;
+            if reflectionsDrawn {
+                RecordReflections(commandBuffer, pipelines, samplers, postTargets, depthTarget, renderWorld, aspect, reflectionSteps);
+                sceneTexture = postTargets.reflectedTexture;
+            }
             if bloomDrawn {
-                RecordBloom(commandBuffer, pipelines, samplers, postTargets, post.bloomThreshold);
+                RecordBloom(commandBuffer, pipelines, samplers, postTargets, sceneTexture, post.bloomThreshold);
             }
             occlusionDrawn: bool = post.ambientOcclusionEnabled && post.ambientOcclusionIntensity > 0.0f && !renderWorld->camera.IsOrthographic();
             if occlusionDrawn {
                 RecordAmbientOcclusion(commandBuffer, pipelines, samplers, postTargets, depthTarget, renderWorld->camera, aspect, post);
             }
             if post.antiAliasingEnabled {
-                RecordComposite(commandBuffer, pipelines, samplers, postTargets, postTargets.ldrTexture, renderWorld, depthTarget, aspect, bloomDrawn, occlusionDrawn, encodeFlag);
+                RecordComposite(commandBuffer, pipelines, samplers, postTargets, sceneTexture, postTargets.ldrTexture, renderWorld, depthTarget, aspect, bloomDrawn, occlusionDrawn, encodeFlag);
                 RecordAntiAlias(commandBuffer, pipelines, samplers, postTargets, colorTexture);
             } else {
-                RecordComposite(commandBuffer, pipelines, samplers, postTargets, colorTexture, renderWorld, depthTarget, aspect, bloomDrawn, occlusionDrawn, encodeFlag);
+                RecordComposite(commandBuffer, pipelines, samplers, postTargets, sceneTexture, colorTexture, renderWorld, depthTarget, aspect, bloomDrawn, occlusionDrawn, encodeFlag);
             }
             if renderWorld->lines.length() > 0 || renderWorld->overlay->vertices.length() > 0 {
                 unsafe {

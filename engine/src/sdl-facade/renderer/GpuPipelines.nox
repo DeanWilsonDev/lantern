@@ -56,6 +56,12 @@ lantern:::gpu :: namespace {
          * attributes 4 and 5. The skinned lit and shadow pipelines set it; the vertex shader blends a joint palette.
          */
         hasSkin~ bool = false;
+        /**
+         * Also write the surface buffer (`PostTargets.surfaceTexture`) as a second colour target: the lit and sky pipelines
+         * do, so the reflection pass can read each pixel's normal and roughness. The fragment shader declares the second
+         * output at `location = 1`.
+         */
+        writesSurface~ bool = false;
     }
 
     /** The pipelines the renderer uses, created once at start-up. */
@@ -74,6 +80,8 @@ lantern:::gpu :: namespace {
         shadowSkinned~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** The sky: a full-screen triangle at the far plane, drawn after the meshes into the scene texture. */
         sky~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** Screen-space reflections: the scene plus what glossy surfaces reflect of it, into a second scene texture. */
+        reflections~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Bloom's shrink: halves a picture, blurring it. The first shrink also picks out the bright parts (a uniform). */
         bloomDownsample~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Bloom's growth: blur a small picture and add it to the next larger one. */
@@ -110,6 +118,9 @@ lantern:::gpu :: namespace {
                 }
                 if sky != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, sky);
+                }
+                if reflections != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, reflections);
                 }
                 if bloomDownsample != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, bloomDownsample);
@@ -153,7 +164,8 @@ lantern:::gpu :: namespace {
             cullBackFaces: true,
             depthTest: true,
             depthWrite: true,
-            alphaBlend: false
+            alphaBlend: false,
+            writesSurface: true
         };
     }
 
@@ -246,7 +258,8 @@ lantern:::gpu :: namespace {
             depthWrite: false,
             depthLessOrEqual: true,
             alphaBlend: false,
-            noVertexBuffer: true
+            noVertexBuffer: true,
+            writesSurface: true
         };
     }
 
@@ -379,7 +392,7 @@ lantern:::gpu :: namespace {
         if description.cullBackFaces {
             cullMode = Sdl:::SDL_GPU_CULLMODE_BACK;
         }
-        colorTargetCount~ u32 = 1;
+        colorTargetCount~ u32 = description.writesSurface ? 2 : 1;
         depthBiasConstant~ f32 = 0.0f;
         depthBiasSlope~ f32 = 0.0f;
         if description.depthOnly {
@@ -397,7 +410,11 @@ lantern:::gpu :: namespace {
                 Sdl:::SDL_GPUVertexBufferDescription { slot: 1, pitch: lantern:::renderer:::SKIN_STRIDE, input_rate: Sdl:::SDL_GPU_VERTEXINPUTRATE_VERTEX }
             ];
             firstBufferDescription: Sdl:::SDL_GPUVertexBufferDescription* = reinterpret<Sdl:::SDL_GPUVertexBufferDescription>(bufferDescriptions);
-            colorTarget := Sdl:::SDL_GPUColorTargetDescription { format: colorFormat, blend_state: BlendState(description.alphaBlend, description.additiveBlend) };
+            colorTargets: Sdl:::SDL_GPUColorTargetDescription[2] = [
+                Sdl:::SDL_GPUColorTargetDescription { format: colorFormat, blend_state: BlendState(description.alphaBlend, description.additiveBlend) },
+                Sdl:::SDL_GPUColorTargetDescription { format: SURFACE_FORMAT, blend_state: BlendState(false, false) }
+            ];
+            firstColorTarget: Sdl:::SDL_GPUColorTargetDescription* = reinterpret<Sdl:::SDL_GPUColorTargetDescription>(colorTargets);
             firstAttribute: Sdl:::SDL_GPUVertexAttribute* = reinterpret<Sdl:::SDL_GPUVertexAttribute>(attributes);
             info := Sdl:::SDL_GPUGraphicsPipelineCreateInfo {
                 vertex_shader: vertexShader,
@@ -423,7 +440,7 @@ lantern:::gpu :: namespace {
                     enable_depth_write: description.depthWrite
                 },
                 target_info: Sdl:::SDL_GPUGraphicsPipelineTargetInfo {
-                    color_target_descriptions: colorTarget,
+                    color_target_descriptions: firstColorTarget,
                     num_color_targets: colorTargetCount,
                     depth_stencil_format: depthFormat,
                     has_depth_stencil_target: description.hasDepth
@@ -517,6 +534,15 @@ lantern:::gpu :: namespace {
         when CreatePipeline(device, format, hdrFormat, depthFormat, SkyPipelineDescription()) {
             Result:::Ok(pipeline) -> {
                 pipelines.sky = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(device, format, hdrFormat, depthFormat, FullscreenPipelineDescription("ssr", 3, false)) {
+            Result:::Ok(pipeline) -> {
+                pipelines.reflections = pipeline;
             },
             Result:::Err(message) -> {
                 pipelines.Release(device);

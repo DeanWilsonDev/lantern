@@ -1653,6 +1653,19 @@ reviewed by Dean; the numbers want playing. Cards: `engine-follow-ups/grounded-c
   it, so the verdict is the same.
 - **D-141: a photo is judged against the lens at rest.** The lens blends in over 0.2 s; the verdict, and so a photo taken in
   that fifth of a second, is judged against where it ends up.
+- **D-152: screen-space reflections replace the sky reflection by a difference, so a miss changes nothing.** The lit shader
+  still adds the sky reflection. The reflection pass adds `reflected - sky` weighted by a confidence, so a ray that leaves
+  the screen or finds nothing leaves the sky in place and the picture is never worse than before.
+- **D-153: the surface buffer is a second colour target, not a G-buffer.** Lighting stays forward. Lit, skinned lit and sky
+  write octahedral normal, roughness and reflectance; skinned characters therefore reflect and are reflected with no
+  extra shader. With reflections off the target's store is DONT_CARE.
+- **D-154: low quality turns reflections off; medium is 24 steps and high 48.** `LANTERN_SSR=1` forces them on at medium
+  cost, `0` forces them off. The editor Graphics tab has a checkbox and the quality levels set it. Not timed on a real
+  GPU: the development machine has only a software driver.
+- **D-155: the underside of things is a known limit.** The depth buffer has only the nearest surface, so floating objects
+  reflect their visible front only. Hit thickness grows with distance to make thin walls catch, at the price of some
+  jitter noise. Dean should look at it on a real GPU before more is spent on it.
+
 - **D-142: the survey found most of the controller already there, so this pass adds only what was missing.** Slopes with
   a walkable limit, step-up, ground snap, coyote time, the jump buffer, platform carry and the grounded feel's momentum
   all existed and have tests. The gaps were what happens when the player leaves a moving platform, and a ledge too high to
@@ -1704,12 +1717,12 @@ reviewed by Dean; the numbers want playing. Cards: `engine-follow-ups/grounded-c
 
 ## Doors, lifts and slabs in navigation
 
-- **D-152: the graph's moving parts are features, added after the build.** `Build` still samples only the static world. A game then adds gates (`AddGate`), surfaces (`AddSurface`) and rides (`AddRide`) and opens or shuts each with `SetFeatureAvailable`; `Revision()` counts the changes. `Build` forgets them, so the game registers them again after each build (`game-systems/navigation-dynamics.nyx`). Replaces D-121's "static level only".
-- **D-153: a door blocks the nodes it stands on while it is shut.** The static floor under a door is in the graph already (the door is a kinematic body), so a gate only marks those nodes, within the body's radius of the box. A route avoids them; the point of a route inside a shut gate carries the feature, so the walker can wait.
-- **D-154: when nothing goes round a shut door the route goes through it and she waits.** `FindRoute` plans with shut gates out; with no complete route it plans again with the waitable shut ones in, at a cost per crossing. A bridge or a stair that a switch raises is a surface and waits the same way; a slab that has broken is not waited for.
-- **D-155: slabs and bridges are patches of nodes on the top of the box.** They overlap by 0.1 m at a seam so two slabs share a column of nodes, join the floor next to them by walking, and the edges drop and jump like any edge. The path cost of fragile ground is charged once when a route steps onto it, not per node: a per-node charge made jumping over the slabs cheaper than walking them.
-- **D-156: she crosses fragile slabs only as the leader.** `FindRoute(..., allowFragile)`: leading is true, following is false. They break behind her, so a route home over them would strand her. Not modelled: leading across slabs she would then need to come back over.
-- **D-157: a ride is a link between the two landings, and she boards by watching the platform.** `AddRide` joins the floor nearest each end of the platform's trip. She waits at the landing until the platform's edge is within 1 m and its top level with the landing, steps on, stands still, and steps off at the far landing once the platform is beside it. Trains are not rides.
-- **D-158: a path is kept while the level changes.** A door she waits for opens, a slab breaks behind her. She plans again when she is stuck (D-124) or has no path and something has changed since she looked, not on every change, which restarted her path each time a slab began to shiver.
-- **D-159: the streets companion walks a graph route between stops.** `Companion.Spawn` builds the graph; each leg asks `FindRoute` and falls back to the straight line when it doesn't reach the stop. She is still scripted, not a physics body. The rooftops level has no companion.
-- **D-160: a twelfth prototype, the lift.** A chasm too wide to jump with one moving platform across it, so the ride has a room to be tested in; no existing level had a lift the partner needed.
+- **D-156: the graph's moving parts are features, added after the build.** `Build` still samples only the static world. A game then adds gates (`AddGate`), surfaces (`AddSurface`) and rides (`AddRide`) and opens or shuts each with `SetFeatureAvailable`; `Revision()` counts the changes. `Build` forgets them, so the game registers them again after each build (`game-systems/navigation-dynamics.nyx`). Replaces D-121's "static level only".
+- **D-157: a door blocks the nodes it stands on while it is shut.** The static floor under a door is in the graph already (the door is a kinematic body), so a gate only marks those nodes, within the body's radius of the box. A route avoids them; the point of a route inside a shut gate carries the feature, so the walker can wait.
+- **D-158: when nothing goes round a shut door the route goes through it and she waits.** `FindRoute` plans with shut gates out; with no complete route it plans again with the waitable shut ones in, at a cost per crossing. A bridge or a stair that a switch raises is a surface and waits the same way; a slab that has broken is not waited for.
+- **D-159: slabs and bridges are patches of nodes on the top of the box.** They overlap by 0.1 m at a seam so two slabs share a column of nodes, join the floor next to them by walking, and the edges drop and jump like any edge. The path cost of fragile ground is charged once when a route steps onto it, not per node: a per-node charge made jumping over the slabs cheaper than walking them.
+- **D-160: she crosses fragile slabs only as the leader.** `FindRoute(..., allowFragile)`: leading is true, following is false. They break behind her, so a route home over them would strand her. Not modelled: leading across slabs she would then need to come back over.
+- **D-161: a ride is a link between the two landings, and she boards by watching the platform.** `AddRide` joins the floor nearest each end of the platform's trip. She waits at the landing until the platform's edge is within 1 m and its top level with the landing, steps on, stands still, and steps off at the far landing once the platform is beside it. Trains are not rides.
+- **D-162: a path is kept while the level changes.** A door she waits for opens, a slab breaks behind her. She plans again when she is stuck (D-124) or has no path and something has changed since she looked, not on every change, which restarted her path each time a slab began to shiver.
+- **D-163: the streets companion walks a graph route between stops.** `Companion.Spawn` builds the graph; each leg asks `FindRoute` and falls back to the straight line when it doesn't reach the stop. She is still scripted, not a physics body. The rooftops level has no companion.
+- **D-164: a twelfth prototype, the lift.** A chasm too wide to jump with one moving platform across it, so the ride has a room to be tested in; no existing level had a lift the partner needed.

@@ -10,6 +10,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "sky-common.glsl"
+#include "surface-common.glsl"
 
 // Slot 0, pushed once per frame: SkyUniforms in GpuSky.nox (128 bytes).
 layout(set = 3, binding = 0) uniform SkyUniforms {
@@ -29,6 +30,8 @@ layout(set = 3, binding = 0) uniform SkyUniforms {
 
 layout(location = 0) in vec2 screen_position;
 layout(location = 0) out vec4 output_color;
+// The sky is nothing to reflect in, so the surface buffer is left as 'not reflective'.
+layout(location = 1) out vec4 output_surface;
 
 void main() {
     vec3 direction = normalize(sky.forward.xyz + sky.right_scaled.xyz * screen_position.x + sky.up_scaled.xyz * screen_position.y);
@@ -42,4 +45,5 @@ void main() {
     float glow = pow(max(cosine_to_sun, 0.0), 128.0) * 0.15;
     color += sky.sun_color.rgb * (disc + glow);
     output_color = vec4(color, 1.0);
+    output_surface = SURFACE_NONE;
 }
