@@ -1,0 +1,78 @@
+lantern :: import lantern;
+
+Slab :: (world: lantern:::physics:::CollisionWorld~*, minimumX: f32, maximumX: f32, top: f32) -> void {
+    world->AddStaticBox(Vec3 { x: (minimumX + maximumX) * 0.5f, y: top - 0.5f, z: 0.0f }, Vec3 { x: (maximumX - minimumX) * 0.5f, y: 0.5f, z: 3.0f });
+}
+
+Flat :: (vector: Vec3) -> Vec3 {
+    return Vec3 { x: vector.x, y: 0.0f, z: vector.z };
+}
+
+Walk :: (world: lantern:::physics:::CollisionWorld*, mesh: lantern:::navigation:::NavigationMesh*, body: lantern:::physics:::CharacterController~*, goal: Vec3) -> bool {
+    path := mesh->FindPath(world, body->feetPosition, goal);
+    defer delete path;
+    if !path->isComplete {
+        return false;
+    }
+    index~ usize = 0;
+    holdingJump~ bool = false;
+    steps~ i32 = 0;
+    while index < path->points.length() && steps < 3000 {
+        target: Vec3 = path->points[index];
+        toTarget: Vec3 = Flat(target - body->feetPosition);
+        isLast: bool = index + 1 == path->points.length();
+        radius~ f32 = 0.6f;
+        if isLast {
+            radius = 0.35f;
+        } else if path->kinds[index + 1] == lantern:::navigation:::LINK_JUMP {
+            radius = 0.3f;
+        }
+        if toTarget.length() < radius && Math:::abs(target.y - body->feetPosition.y) < 1.2f {
+            index += 1;
+            continue;
+        }
+        jumpNow: bool = path->kinds[index] == lantern:::navigation:::LINK_JUMP && body->grounded;
+        if jumpNow {
+            holdingJump = true;
+        } else if body->velocity.y <= 0.0f {
+            holdingJump = false;
+        }
+        direction: Vec3 = toTarget / Math:::max(toTarget.length(), 0.0001f);
+        body->Step(world, lantern:::physics:::ControllerInput { moveDirection: direction, jumpPressed: jumpNow, jumpHeld: holdingJump }, lantern:::core:::FIXED_STEP_SECONDS);
+        steps += 1;
+    }
+    return index >= path->points.length();
+}
+
+main :: () -> i32 {
+    world := new lantern:::physics:::CollisionWorld();
+    defer delete world;
+    Slab(world, -4.0f, 8.0f, 0.0f);
+    for stair~ i32 = 0; stair < 4; stair++ {
+        top: f32 = 0.25f * f32(stair + 1);
+        Slab(world, 8.0f + 0.5f * f32(stair), 14.0f, top);
+    }
+    Slab(world, 14.0f, 16.0f, 1.0f);
+    Slab(world, 18.0f, 24.0f, 1.0f);
+    Slab(world, 24.0f, 32.0f, -0.5f);
+    mesh := new lantern:::navigation:::NavigationMesh();
+    defer delete mesh;
+    agent~ lantern:::navigation:::NavigationAgent = lantern:::navigation:::NavigationAgent { };
+    agent.maxJumpAcross = 2.2f;
+    mesh->Build(world, agent);
+    settings~ lantern:::physics:::ControllerSettings = lantern:::physics:::ControllerSettings { };
+    settings.radius = 0.24f;
+    settings.height = 1.5f;
+    settings.walkSpeed = 5.0f;
+    settings.jumpHeight = 1.2f;
+    body~ lantern:::physics:::CharacterController = lantern:::physics:::CharacterController:::Create(settings, Vec3 { x: -2.0f, y: 0.0f, z: 0.0f });
+    lantern:::physicsrig:::Settle(body, world);
+    assert(Walk(world, mesh, body, Vec3 { x: 12.0f, y: 1.0f, z: 0.0f }), "she walks up the stairs");
+    assert(Math:::abs(body.feetPosition.y - 1.0f) < 0.1f && body.grounded, "and stands on the plateau");
+    assert(Walk(world, mesh, body, Vec3 { x: 21.0f, y: 1.0f, z: 0.0f }), "she jumps the two metre gap");
+    assert(Math:::abs(body.feetPosition.x - 21.0f) < 0.6f && Math:::abs(body.feetPosition.y - 1.0f) < 0.1f, "and lands on the far side");
+    assert(Walk(world, mesh, body, Vec3 { x: 28.0f, y: -0.5f, z: 0.0f }), "she steps off the edge to the lower ground");
+    assert(Math:::abs(body.feetPosition.y + 0.5f) < 0.1f, "and stays there");
+    print("a body follows its path over stairs, gaps and drops");
+    return 0;
+}

@@ -11,6 +11,7 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`running.md`](running.md) | Installing `nox` and `mist`, then building, playing, testing and editing on macOS, Arch Linux, other Linux and Windows, with every environment switch. |
 | [`engine-structure.md`](engine-structure.md) | How `engine/src/` is laid out, one folder per domain, with SDL behind a facade folder, and why. |
 | [`application-and-game-loop.md`](application-and-game-loop.md) | Start-up, the fixed-step game loop, input, and shutdown in order. |
+| [`navigation.md`](navigation.md) | The navigation graph, paths and how the partner walks them. |
 | [`renderer.md`](renderer.md) | The renderer one frame at a time, from the game's `RenderWorld` to the screen. |
 
 ## Writing a game

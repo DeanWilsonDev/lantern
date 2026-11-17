@@ -22,11 +22,14 @@ lantern:::navigation :: namespace {
      * Surfaces closer than this in height count as one floor.
      */
     SAME_FLOOR_TOLERANCE: f32 : 0.04f;
+    TIGHT_COST_FACTOR: f32 : 3.0f;
     /**
      * A wall closer to a node than this fraction of the agent's radius rules the node out. The agent's real body is wider,
-     * so a slot just wider than it still has nodes inside it; the controller slides the rest.
+     * so a slot just wider than it still has nodes inside it; the controller slides the rest. A node closer to a wall than
+     * the real radius is "tight": a path may use it but pays TIGHT_COST_FACTOR times as much, and the smoother never cuts a
+     * corner through one.
      */
-    CLEARANCE_FRACTION: f32 : 0.5f;
+    CLEARANCE_FRACTION: f32 : 0.25f;
     /**
      * A contact shallower than this is a touch, not a wall.
      */
@@ -70,7 +73,7 @@ lantern:::navigation :: namespace {
         maxDrop~ f32 = 3.0f;
         maxJumpUp~ f32 = 1.0f;
         maxJumpAcross~ f32 = 2.5f;
-        cellSize~ f32 = 0.5f;
+        cellSize~ f32 = 0.4f;
 
         /**
          * The radius used to keep nodes off walls.
@@ -102,10 +105,21 @@ lantern:::navigation :: namespace {
         }
 
         /**
+         * The same shape with the agent's whole radius.
+         */
+        BodyCapsule :: () -> lantern:::physics:::Capsule {
+            return lantern:::physics:::Capsule:::Upright(radius, height - stepHeight);
+        }
+
+        /**
          * Where the clearance capsule's centre is when the feet are at `feet`.
          */
         ClearanceCenter :: (feet: Vec3) -> Vec3 {
-            return feet + Vec3 { x: 0.0f, y: stepHeight + (height - stepHeight) * 0.5f + 0.02f, z: 0.0f };
+            return feet + Vec3 {
+                x: 0.0f,
+                y: stepHeight + (height - stepHeight) * 0.5f + 0.02f,
+                z: 0.0f
+            };
         }
     }
 
@@ -222,6 +236,7 @@ lantern:::navigation :: namespace {
         nodeNextInColumn~ Array<i32>! = [];
         nodeFirstLink~ Array<i32>! = [];
         nodeWalkLinks~ Array<i32>! = [];
+        nodeIsTight~ Array<bool>! = [];
         linkTarget~ Array<i32>! = [];
         linkKind~ Array<i32>! = [];
         linkCost~ Array<f32>! = [];
@@ -235,6 +250,7 @@ lantern:::navigation :: namespace {
             delete nodeNextInColumn;
             delete nodeFirstLink;
             delete nodeWalkLinks;
+            delete nodeIsTight;
             delete linkTarget;
             delete linkKind;
             delete linkCost;
@@ -253,7 +269,10 @@ lantern:::navigation :: namespace {
          * Samples the static level and builds the graph for `settings`, replacing any earlier one. Returns the node count; an
          * empty world gives 0.
          */
-        Build~: (collisionWorld: lantern:::physics:::CollisionWorld*, settings: NavigationAgent) -> i32 {
+        Build~: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            settings: NavigationAgent
+        ) -> i32 {
             Clear();
             agent = settings;
             bounds: lantern:::core:::Aabb = collisionWorld->StaticBounds();
@@ -296,6 +315,7 @@ lantern:::navigation :: namespace {
             nodeNextInColumn.clear();
             nodeFirstLink.clear();
             nodeWalkLinks.clear();
+            nodeIsTight.clear();
             linkTarget.clear();
             linkKind.clear();
             linkCost.clear();
@@ -316,8 +336,10 @@ lantern:::navigation :: namespace {
             centerZ: i32 = i32(Math:::floor((point.z - originZ) / agent.cellSize));
             best~ i32 = NO_NODE;
             bestScore~ f32 = UNREACHED_COST;
-            for columnZ~ i32 = centerZ - SNAP_CELL_RADIUS; columnZ <= centerZ + SNAP_CELL_RADIUS; columnZ++ {
-                for columnX~ i32 = centerX - SNAP_CELL_RADIUS; columnX <= centerX + SNAP_CELL_RADIUS; columnX++ {
+            for columnZ~ i32 = centerZ - SNAP_CELL_RADIUS; columnZ <= centerZ +
+                SNAP_CELL_RADIUS; columnZ++ {
+                for columnX~ i32 = centerX - SNAP_CELL_RADIUS; columnX <= centerX +
+                    SNAP_CELL_RADIUS; columnX++ {
                     if !InColumns(columnX, columnZ) {
                         continue;
                     }
@@ -346,7 +368,11 @@ lantern:::navigation :: namespace {
          * the reachable node nearest it and says so (`isComplete` false); when `from` is not near any node the route is
          * empty.
          */
-        FindPath :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> NavigationPath*! {
+        FindPath :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3
+        ) -> NavigationPath*! {
             path := new NavigationPath();
             startNode: i32 = NearestNode(from);
             goalNode: i32 = NearestNode(to);
@@ -435,7 +461,8 @@ lantern:::navigation :: namespace {
             if reached && path->points.length() > 0 {
                 lastPoint: Vec3 = path->points[path->points.length() - 1];
                 gap: Vec3 = Vec3 { x: to.x - lastPoint.x, y: 0.0f, z: to.z - lastPoint.z };
-                if gap.length() > 0.05f && gap.length() < agent.cellSize * 3.0f && Math:::abs(to.y - lastPoint.y) < SNAP_HEIGHT {
+                if gap.length() > 0.05f && gap.length() < agent.cellSize * 3.0f &&
+                    Math:::abs(to.y - lastPoint.y) < SNAP_HEIGHT {
                     path->points.push(Vec3 { x: to.x, y: lastPoint.y, z: to.z });
                     path->kinds.push(LINK_WALK);
                 }
@@ -446,7 +473,11 @@ lantern:::navigation :: namespace {
         /**
          * Whether a route exists from `from` to `to`.
          */
-        IsReachable :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+        IsReachable :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3
+        ) -> bool {
             path := FindPath(collisionWorld, from, to);
             defer delete path;
             return path->isComplete;
@@ -461,7 +492,11 @@ lantern:::navigation :: namespace {
         }
 
         ColumnCenter :: (columnX: i32, columnZ: i32) -> Vec3 {
-            return Vec3 { x: originX + (f32(columnX) + 0.5f) * agent.cellSize, y: 0.0f, z: originZ + (f32(columnZ) + 0.5f) * agent.cellSize };
+            return Vec3 {
+                x: originX + (f32(columnX) + 0.5f) * agent.cellSize,
+                y: 0.0f,
+                z: originZ + (f32(columnZ) + 0.5f) * agent.cellSize
+            };
         }
 
         /**
@@ -469,12 +504,23 @@ lantern:::navigation :: namespace {
          * collected; a crossing of an upward-facing triangle is a floor candidate, and any crossing within a body's height
          * above it takes the headroom away.
          */
-        SampleColumn~: (collisionWorld: lantern:::physics:::CollisionWorld*, columnX: i32, columnZ: i32) -> void {
+        SampleColumn~: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            columnX: i32,
+            columnZ: i32
+        ) -> void {
             center: Vec3 = ColumnCenter(columnX, columnZ);
             bottom: Vec3 = Vec3 { x: center.x, y: lowestY, z: center.z };
             top: Vec3 = Vec3 { x: center.x, y: highestY, z: center.z };
-            lineBounds: lantern:::core:::Aabb = lantern:::core:::Aabb:::Create(bottom - Vec3 { x: 0.01f, y: 0.0f, z: 0.01f }, top + Vec3 { x: 0.01f, y: 0.0f, z: 0.01f });
-            near: Array<lantern:::physics:::NearTriangle>! = collisionWorld->NearTriangles(lineBounds, null, false);
+            lineBounds: lantern:::core:::Aabb = lantern:::core:::Aabb:::Create(
+                bottom - Vec3 { x: 0.01f, y: 0.0f, z: 0.01f },
+                top + Vec3 { x: 0.01f, y: 0.0f, z: 0.01f }
+            );
+            near: Array<lantern:::physics:::NearTriangle>! = collisionWorld->NearTriangles(
+                lineBounds,
+                null,
+                false
+            );
             defer delete near;
             floors~ Array<f32>! = [];
             crossings~ Array<f32>! = [];
@@ -482,7 +528,11 @@ lantern:::navigation :: namespace {
             defer delete crossings;
             minimumNormalY: f32 = agent.MinGroundNormalY();
             for candidate in near {
-                if hit := lantern:::physics:::SegmentTriangleIntersection(top, bottom, candidate.triangle) {
+                if hit := lantern:::physics:::SegmentTriangleIntersection(
+                    top,
+                    bottom,
+                    candidate.triangle
+                ) {
                     crossings.push(hit.y);
                     if candidate.triangle.Normal().y >= minimumNormalY {
                         floors.push(hit.y);
@@ -506,7 +556,7 @@ lantern:::navigation :: namespace {
                     continue;
                 }
                 feet: Vec3 = Vec3 { x: center.x, y: floorHeight, z: center.z };
-                if !HasClearance(collisionWorld, feet) {
+                if !HasClearance(collisionWorld, feet, agent.ClearanceCapsule()) {
                     continue;
                 }
                 node: i32 = NodeCount();
@@ -514,6 +564,7 @@ lantern:::navigation :: namespace {
                 nodeNextInColumn.push(NO_NODE);
                 nodeFirstLink.push(NO_NODE);
                 nodeWalkLinks.push(0);
+                nodeIsTight.push(!HasClearance(collisionWorld, feet, agent.BodyCapsule()));
                 if tail == NO_NODE {
                     head = node;
                 } else {
@@ -530,7 +581,8 @@ lantern:::navigation :: namespace {
          */
         HasHeadroom :: (crossings: Array<f32>, floorHeight: f32) -> bool {
             for crossing in crossings {
-                if crossing > floorHeight + SAME_FLOOR_TOLERANCE * 2.0f && crossing < floorHeight + agent.height {
+                if crossing > floorHeight + SAME_FLOOR_TOLERANCE * 2.0f && crossing < floorHeight +
+                    agent.height {
                     return false;
                 }
             }
@@ -540,11 +592,19 @@ lantern:::navigation :: namespace {
         /**
          * The body with its feet at `feet` touches no wall or ceiling (ground contacts are ignored).
          */
-        HasClearance :: (collisionWorld: lantern:::physics:::CollisionWorld*, feet: Vec3) -> bool {
-            contacts: Array<lantern:::physics:::Contact>! = collisionWorld->StaticCapsuleContacts(agent.ClearanceCapsule(), agent.ClearanceCenter(feet));
+        HasClearance :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            feet: Vec3,
+            capsule: lantern:::physics:::Capsule
+        ) -> bool {
+            contacts: Array<lantern:::physics:::Contact>! = collisionWorld->StaticCapsuleContacts(
+                capsule,
+                agent.ClearanceCenter(feet)
+            );
             defer delete contacts;
             for contact in contacts {
-                if contact.depth > CLEARANCE_TOLERANCE && contact.normal.y < GROUND_CONTACT_NORMAL_Y {
+                if contact.depth > CLEARANCE_TOLERANCE &&
+                    contact.normal.y < GROUND_CONTACT_NORMAL_Y {
                     return false;
                 }
             }
@@ -555,12 +615,21 @@ lantern:::navigation :: namespace {
          * Whether the clearance body can move from standing at `from` to standing at `to` along the straight line between
          * them without touching the static level.
          */
-        IsSweepClear :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+        IsSweepClear :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3,
+            capsule: lantern:::physics:::Capsule
+        ) -> bool {
             displacement: Vec3 = to - from;
             if displacement.length() < 0.0001f {
                 return true;
             }
-            hit: lantern:::physics:::ShapeHit? = collisionWorld->StaticCapsuleCast(agent.ClearanceCapsule(), agent.ClearanceCenter(from), displacement);
+            hit: lantern:::physics:::ShapeHit? = collisionWorld->StaticCapsuleCast(
+                capsule,
+                agent.ClearanceCenter(from),
+                displacement
+            );
             return hit == null;
         }
 
@@ -568,7 +637,10 @@ lantern:::navigation :: namespace {
          * Joins `node` to the nodes in the four neighbouring columns ahead of it (east, south, and the two diagonals), both
          * ways, wherever walking between them works.
          */
-        LinkWalkNeighbours~: (collisionWorld: lantern:::physics:::CollisionWorld*, node: i32) -> void {
+        LinkWalkNeighbours~: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            node: i32
+        ) -> void {
             position: Vec3 = nodePositions[usize(node)];
             columnX: i32 = i32(Math:::floor((position.x - originX) / agent.cellSize));
             columnZ: i32 = i32(Math:::floor((position.z - originZ) / agent.cellSize));
@@ -584,7 +656,10 @@ lantern:::navigation :: namespace {
                 neighbour~ i32 = columnHeads[ColumnIndex(neighbourX, neighbourZ)];
                 while neighbour != NO_NODE {
                     if CanWalkBetween(collisionWorld, position, nodePositions[usize(neighbour)]) {
-                        distance: f32 = (nodePositions[usize(neighbour)] - position).length();
+                        distance~ f32 = (nodePositions[usize(neighbour)] - position).length();
+                        if nodeIsTight[usize(node)] || nodeIsTight[usize(neighbour)] {
+                            distance = distance * TIGHT_COST_FACTOR;
+                        }
                         AddLink(node, neighbour, LINK_WALK, distance);
                         AddLink(neighbour, node, LINK_WALK, distance);
                         if !isDiagonal {
@@ -601,7 +676,11 @@ lantern:::navigation :: namespace {
          * Walking from `from` to the neighbouring `to` works when the height change is a step, or is a slope the ground
          * really follows, and the body fits along the way.
          */
-        CanWalkBetween :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+        CanWalkBetween :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3
+        ) -> bool {
             rise: f32 = Math:::abs(to.y - from.y);
             flat: Vec3 = Vec3 { x: to.x - from.x, y: 0.0f, z: to.z - from.z };
             run: f32 = flat.length();
@@ -613,16 +692,24 @@ lantern:::navigation :: namespace {
                     return false;
                 }
             }
-            return IsSweepClear(collisionWorld, from, to);
+            return IsSweepClear(collisionWorld, from, to, agent.ClearanceCapsule());
         }
 
         /**
          * The ground half way between two points is about as high as the line between them.
          */
-        GroundFollows :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+        GroundFollows :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3
+        ) -> bool {
             middle: Vec3 = (from + to) * 0.5f;
             origin: Vec3 = Vec3 { x: middle.x, y: Math:::max(from.y, to.y) + 0.4f, z: middle.z };
-            hit: lantern:::physics:::RayHit? = collisionWorld->StaticRaycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, Math:::abs(to.y - from.y) + 1.0f);
+            hit: lantern:::physics:::RayHit? = collisionWorld->StaticRaycast(
+                origin,
+                Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+                Math:::abs(to.y - from.y) + 1.0f
+            );
             if found := hit {
                 return Math:::abs(found.point.y - middle.y) < 0.15f;
             }
@@ -641,7 +728,8 @@ lantern:::navigation :: namespace {
             directionsZ: i32[8] = [0, 0, 1, -1, 1, -1, 1, -1];
             reachCells: i32 = i32(Math:::ceil(agent.maxJumpAcross / agent.cellSize));
             for direction~ usize = 0; direction < 8; direction++ {
-                stepLength: f32 = Math:::sqrt(f32(directionsX[direction] * directionsX[direction] + directionsZ[direction] * directionsZ[direction])) * agent.cellSize;
+                stepLength: f32 = Math:::sqrt(f32(directionsX[direction] * directionsX[direction] +
+                    directionsZ[direction] * directionsZ[direction])) * agent.cellSize;
                 linked~ bool = false;
                 walkable~ bool = false;
                 for cells~ i32 = 1; cells <= reachCells && !linked && !walkable; cells++ {
@@ -657,7 +745,15 @@ lantern:::navigation :: namespace {
                         rise: f32 = target.y - position.y;
                         if cells == 1 && Math:::abs(rise) <= agent.stepHeight + 0.02f {
                             walkable = true;
-                        } else if TryEdgeLink(collisionWorld, node, candidate, position, target, rise, run) {
+                        } else if TryEdgeLink(
+                            collisionWorld,
+                            node,
+                            candidate,
+                            position,
+                            target,
+                            rise,
+                            run
+                        ) {
                             linked = true;
                         }
                         candidate = nodeNextInColumn[usize(candidate)];
@@ -669,10 +765,23 @@ lantern:::navigation :: namespace {
         /**
          * Adds a drop or jump link from `node` to `candidate` if the move fits the agent and the way is clear.
          */
-        TryEdgeLink~: (collisionWorld: lantern:::physics:::CollisionWorld*, node: i32, candidate: i32, position: Vec3, target: Vec3, rise: f32, run: f32) -> bool {
+        TryEdgeLink~: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            node: i32,
+            candidate: i32,
+            position: Vec3,
+            target: Vec3,
+            rise: f32,
+            run: f32
+        ) -> bool {
             if rise < -agent.stepHeight && rise >= -agent.maxDrop && run <= DROP_REACH {
                 if IsDropClear(collisionWorld, position, target) {
-                    AddLink(node, candidate, LINK_DROP, run + DROP_COST_PENALTY + Math:::abs(rise) * 0.5f);
+                    AddLink(
+                        node,
+                        candidate,
+                        LINK_DROP,
+                        run + DROP_COST_PENALTY + Math:::abs(rise) * 0.5f
+                    );
                     return true;
                 }
                 return false;
@@ -693,19 +802,43 @@ lantern:::navigation :: namespace {
         /**
          * A drop: sideways off the edge at the starting height, then straight down.
          */
-        IsDropClear :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+        IsDropClear :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3
+        ) -> bool {
             above: Vec3 = Vec3 { x: to.x, y: from.y, z: to.z };
-            return IsSweepClear(collisionWorld, from, above) && IsSweepClear(collisionWorld, above, to);
+            return IsSweepClear(
+                collisionWorld,
+                from,
+                above,
+                agent.ClearanceCapsule()
+            ) && IsSweepClear(collisionWorld, above, to, agent.ClearanceCapsule());
         }
 
         /**
          * A jump: up to the higher of the two heights, across, then down to the landing.
          */
-        IsJumpClear :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
+        IsJumpClear :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3
+        ) -> bool {
             topHeight: f32 = Math:::max(from.y, to.y);
             leaving: Vec3 = Vec3 { x: from.x, y: topHeight, z: from.z };
             arriving: Vec3 = Vec3 { x: to.x, y: topHeight, z: to.z };
-            return IsSweepClear(collisionWorld, from, leaving) && IsSweepClear(collisionWorld, leaving, arriving) && IsSweepClear(collisionWorld, arriving, to);
+            capsule: lantern:::physics:::Capsule = agent.ClearanceCapsule();
+            return IsSweepClear(
+                collisionWorld,
+                from,
+                leaving,
+                capsule
+            ) && IsSweepClear(
+                collisionWorld,
+                leaving,
+                arriving,
+                capsule
+            ) && IsSweepClear(collisionWorld, arriving, to, capsule);
         }
 
         AddLink~: (from: i32, to: i32, kind: i32, cost: f32) -> void {
@@ -722,7 +855,13 @@ lantern:::navigation :: namespace {
          * the result in `path`. A drop or jump point stays, with the point before it, so the game knows where to leave
          * from.
          */
-        Smooth :: (collisionWorld: lantern:::physics:::CollisionWorld*, points: Array<Vec3>, kinds: Array<i32>, first: usize, path: NavigationPath~*) -> void {
+        Smooth :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            points: Array<Vec3>,
+            kinds: Array<i32>,
+            first: usize,
+            path: NavigationPath~*
+        ) -> void {
             count: usize = points.length();
             if first >= count {
                 return;
@@ -737,7 +876,8 @@ lantern:::navigation :: namespace {
                     limit = count - 1;
                 }
                 for candidate~ usize = index + 2; candidate <= limit; candidate++ {
-                    if kinds[candidate] != LINK_WALK || kinds[candidate - 1] != LINK_WALK && candidate - 1 > index {
+                    if kinds[candidate] != LINK_WALK || kinds[candidate - 1] != LINK_WALK &&
+                        candidate - 1 > index {
                         break;
                     }
                     if kinds[index + 1] != LINK_WALK {
@@ -758,8 +898,12 @@ lantern:::navigation :: namespace {
          * A straight walk from `from` to `to`: the body fits all the way and the ground never changes by more than a step
          * between samples.
          */
-        IsStraightWalkable :: (collisionWorld: lantern:::physics:::CollisionWorld*, from: Vec3, to: Vec3) -> bool {
-            if !IsSweepClear(collisionWorld, from, to) {
+        IsStraightWalkable :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3
+        ) -> bool {
+            if !IsSweepClear(collisionWorld, from, to, agent.BodyCapsule()) {
                 return false;
             }
             span: Vec3 = to - from;
@@ -769,8 +913,16 @@ lantern:::navigation :: namespace {
             for sample~ i32 = 1; sample <= samples; sample++ {
                 fraction: f32 = f32(sample) / f32(samples);
                 point: Vec3 = from + span * fraction;
-                origin: Vec3 = Vec3 { x: point.x, y: Math:::max(previousHeight, point.y) + agent.stepHeight + 0.2f, z: point.z };
-                hit: lantern:::physics:::RayHit? = collisionWorld->StaticRaycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, agent.stepHeight * 2.0f + 0.6f);
+                origin: Vec3 = Vec3 {
+                    x: point.x,
+                    y: Math:::max(previousHeight, point.y) + agent.stepHeight + 0.2f,
+                    z: point.z
+                };
+                hit: lantern:::physics:::RayHit? = collisionWorld->StaticRaycast(
+                    origin,
+                    Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+                    agent.stepHeight * 2.0f + 0.6f
+                );
                 found := hit;
                 if found == null {
                     return false;
