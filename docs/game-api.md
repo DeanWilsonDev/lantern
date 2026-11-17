@@ -143,6 +143,24 @@ the game decides what a kind means.
 | `controller.Radius()`, `Height()`, `HalfSegment()` | the capsule's axis is `CapsuleCenter() ± HalfSegment()` in y |
 | `controller.SetWalkSpeed(m/s)`, `SetJumpHeight(m)`, `SetGravity(m/s²)` | feel; the rest of `ControllerSettings` is engine tuning |
 
+## Navigation
+
+The engine samples the level's static collision into a graph of standable floors, joined by walk links (steps, stairs and
+slopes), drop links (walking off a ledge) and jump links (a gap, or a ledge too high to step). There are no climb links,
+so a way that needs climbing has no path. Moving bodies (doors, lifts, crumbling slabs) are not in the graph. Build it once
+the level is loaded; the partner does it when she spawns. `docs/navigation.md` explains how it works.
+
+| Call | |
+|---|---|
+| `lantern:::navigation:::Build(radius, height, stepHeight, maxDrop, maxJumpUp, maxJumpAcross) -> i32` | samples the loaded level for a body of that size and returns the node count; 0 when there is no level |
+| `lantern:::navigation:::FindPath(from, to) -> lantern:::navigation:::Path` | a route; `from` and `to` snap to the nearest floor |
+| `lantern:::navigation:::IsReachable(from, to) -> bool`, `NodeCount() -> i32`, `Clear()` | |
+| `path.IsComplete() -> bool` | false when `to` can't be reached: the path then ends at the reachable place nearest it |
+| `path.Count() -> i32`, `path.Point(index) -> Vec3`, `path.Link(index) -> i32` | `Link` is how point `index` is reached: 0 walk, 1 drop, 2 jump. Call them through a `~` binding |
+
+A jump point is reached by leaving the point before it with the jump button down. An empty path means `from` is not near
+any floor.
+
 ## Rendering and screen
 
 | Call | |
@@ -482,6 +500,16 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `Raycast` | `(origin: lantern:::math:::Vec3, direction: lantern:::math:::Vec3, maxDistance: f32) -> lantern:::physics:::RayHit?` |
 | `SphereCast` | `(radius: f32, origin: lantern:::math:::Vec3, motion: lantern:::math:::Vec3) -> f32?` |
 
+### `lantern:::navigation`
+
+| Function | Signature |
+| --- | --- |
+| `Build` | `(radius: f32, height: f32, stepHeight: f32, maxDrop: f32, maxJumpUp: f32, maxJumpAcross: f32) -> i32` |
+| `Clear` | `() -> void` |
+| `NodeCount` | `() -> i32` |
+| `FindPath` | `(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> lantern:::navigation:::Path` |
+| `IsReachable` | `(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> bool` |
+
 ### `lantern:::camera`
 
 | Function | Signature |
@@ -658,6 +686,15 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | method `Distance` | `() -> f32` |
 | method `Point` | `() -> lantern:::math:::Vec3` |
 | method `Normal` | `() -> lantern:::math:::Vec3` |
+
+#### `lantern:::navigation:::Path`
+
+| Member | Signature |
+| --- | --- |
+| method `Count` | `() -> i32` |
+| method `IsComplete` | `() -> bool` |
+| method `Point` | `(index: i32) -> lantern:::math:::Vec3` |
+| method `Link` | `(index: i32) -> i32` |
 
 #### `lantern:::physics:::ControllerStep`
 

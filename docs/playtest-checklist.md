@@ -44,6 +44,17 @@ None of this has been run before; the first play is the test.
 Also note: how long to full speed feels right (0.4 s), whether a hard landing's pause is felt or annoying, and whether
 the jump is too low for the steps and crates.
 
+## Her navigation
+
+With the HUD on (F1) her path is drawn: green walk, orange drop, red jump. `Partner/Navigation` shows the node count and
+her point on the path.
+
+- Hand-off and the station: does she take the stairs without stalling? Does she ever stop and hop at the foot of a stair?
+- Does she jump a gap or hop onto a low ledge when that is the shortest way, and never try to climb?
+- When you stand somewhere she can't reach (a pipe top, a roof), does she follow your trail instead of pressing into a wall?
+- Closed doors and crumbling slabs aren't in her graph: does she stand at a closed door, then find another way after a few
+  seconds? Does that look like thinking, or like being stuck?
+
 ## Things to feel for
 
 - Boost height 3.6 m, the four-second plates: too much, too little, right?
