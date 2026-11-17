@@ -1,0 +1,214 @@
+// A wet floor in front of a red wall, a glowing lamp and a skinned green post standing on it, drawn with screen-space reflections off and then on.
+// Off, the floor reflects only the sky, so it holds no red; on, the wall, the lamp and the post appear in it. The post is skinned
+// (it is drawn by the skinned pipeline) and is a different colour from the wall so its reflection can be told apart, which checks that characters, which are skinned, land in the surface buffer and the depth
+// buffer the reflection pass reads. A dry floor of the same colour must not change, because only glossy pixels trace a ray.
+// With LANTERN_CAPTURE_PATH set the picture with reflections is saved there and the one without beside it, ending in
+// `-before.png`, for before and after screenshots.
+lantern :: import lantern;
+
+ChannelExcess :: (pixels: Array<u8>, width: u32, channel: usize, left: u32, top: u32, right: u32, bottom: u32) -> f32 {
+    total~ f32 = 0.0f;
+    for y~ u32 = top; y < bottom; y++ {
+        for x~ u32 = left; x < right; x++ {
+            offset: usize = usize((y * width + x) * 4);
+            others~ f32 = 0.0f;
+            for other~ usize = 0; other < 3; other++ {
+                if other != channel {
+                    others += f32(pixels[offset + other]);
+                }
+            }
+            total += f32(pixels[offset + channel]) - 0.5f * others;
+        }
+    }
+    return total / f32((right - left) * (bottom - top));
+}
+
+PixelsDiffering :: (first: Array<u8>, second: Array<u8>, width: u32, left: u32, top: u32, right: u32, bottom: u32) -> u32 {
+    count~ u32 = 0;
+    for y~ u32 = top; y < bottom; y++ {
+        for x~ u32 = left; x < right; x++ {
+            offset: usize = usize((y * width + x) * 4);
+            difference: i32 = i32(first[offset]) - i32(second[offset]);
+            if difference > 12 || difference < -12 {
+                count += 1;
+            }
+        }
+    }
+    return count;
+}
+
+NewWorld :: (reflections: bool) -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = true;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->post.ambientOcclusionEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->post.reflectionsEnabled = reflections;
+    world->shadows.enabled = false;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: lantern:::core:::Normalize3(Vec3 { x: 0.3f, y: -1.0f, z: -0.6f }),
+        color: lantern:::core:::Color:::Rgb(0.9f, 0.9f, 0.9f),
+        ambient: lantern:::core:::Color:::Rgb(0.2f, 0.2f, 0.2f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.1f, 0.1f, 0.1f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 1.8f, z: 6.0f }, Vec3 { x: 0.0f, y: 0.6f, z: -2.0f });
+    return world!;
+}
+
+CreateOrFail :: (renderer: lantern:::gpu:::GpuRenderer~*, data: lantern:::renderer:::MeshData*) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag> {
+    when renderer->CreateMesh(data) {
+        Result:::Ok(handle) -> {
+            return handle;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the mesh uploads");
+        }
+    }
+    return lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+}
+
+SceneParts :: struct {
+    floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    wall~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    lamp~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    post~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+    palette~ Array<Mat4> = [];
+    glossy~ lantern:::renderer:::Material = lantern:::renderer:::Material { };
+    dry~ lantern:::renderer:::Material = lantern:::renderer:::Material { };
+}
+
+BuildScene :: (scene: SceneParts, reflections: bool, dryFloor: bool) -> lantern:::renderer:::RenderWorld*! {
+    red := lantern:::core:::Color:::Rgb(0.9f, 0.1f, 0.1f);
+    green := lantern:::core:::Color:::Rgb(0.1f, 0.8f, 0.1f);
+    lampMaterial := lantern:::renderer:::Material { emissive: lantern:::core:::Color:::Rgb(24.0f, 12.0f, 3.0f) };
+    world := NewWorld(reflections);
+    world->DrawWithMaterial(scene.floor, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.5f, 0.5f, 0.5f), dryFloor ? scene.dry : scene.glossy);
+    world->DrawWithMaterial(scene.wall, null, lantern:::core:::MatrixFromRotationTranslation(Quaternion { }, Vec3 { x: 0.0f, y: 3.0f, z: -6.0f }), red, scene.dry);
+    world->DrawWithMaterial(scene.lamp, null, lantern:::core:::MatrixFromRotationTranslation(Quaternion { }, Vec3 { x: 3.0f, y: 2.0f, z: -4.5f }), lantern:::core:::Color:::White(), lampMaterial);
+    offset: i32 = world->AddJointPalette(scene.palette);
+    world->draws.push(lantern:::renderer:::DrawItem {
+        mesh: scene.post,
+        transform: lantern:::core:::MatrixFromScaleRotationTranslation(Vec3 { x: 1.0f, y: 1.6f, z: 1.0f }, Quaternion { }, Vec3 { x: -2.5f, y: -1.6f, z: -2.0f }),
+        color: green,
+        material: scene.dry,
+        jointOffset: offset
+    });
+    return world!;
+}
+
+RenderPixels :: (renderer: lantern:::gpu:::GpuRenderer~*, scene: SceneParts, reflections: bool, dryFloor: bool, width: u32, height: u32) -> Array<u8>! {
+    world := BuildScene(scene, reflections, dryFloor);
+    defer delete world;
+    pixels~ Array<u8>! = [];
+    when renderer->RenderOffscreen(world, width, height, pixels) {
+        Result:::Ok(report) -> {
+            assert(report.drawsSubmitted == 4, "the floor, wall, lamp and post were drawn");
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the frame renders");
+        }
+    }
+    return pixels!;
+}
+
+SaveCapture :: (renderer: lantern:::gpu:::GpuRenderer~*, scene: SceneParts, reflections: bool, suffix: string) -> void {
+    capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+    defer delete capturePath;
+    if path := capturePath {
+        world := BuildScene(scene, reflections, false);
+        defer delete world;
+        when renderer->Capture(world, 960, 540) {
+            Result:::Ok(image) -> {
+                bytes: Array<u8>! = image->ToPngBytes();
+                target: string! = `${path}${suffix}`;
+                assert(lantern:::core:::WriteBytes(target, bytes), "the capture is written");
+                delete target;
+                delete bytes;
+                delete image;
+            },
+            Result:::Err(message) -> {
+                print(message);
+                delete message;
+                assert(false, "the capture renders");
+            }
+        }
+    }
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(30.0f, 30.0f);
+            defer delete floorData;
+            wallData := lantern:::renderer:::BoxMesh(Vec3 { x: 12.0f, y: 3.0f, z: 0.2f }, false);
+            defer delete wallData;
+            lampData := lantern:::renderer:::Sphere(0.4f, 16, 8);
+            defer delete lampData;
+            rig := lantern:::animation_support:::MakeArmRig();
+            defer delete rig;
+            postData := new lantern:::renderer:::MeshData();
+            defer delete postData;
+            lantern:::animation:::AppendSkinnedTube(postData, rig->skeleton, 1, 2, 0, false, 0.25f, 0.25f);
+            assert(postData->IsSkinned(), "the post has skin data");
+            floor := CreateOrFail(renderer, floorData);
+            wall := CreateOrFail(renderer, wallData);
+            lamp := CreateOrFail(renderer, lampData);
+            post := CreateOrFail(renderer, postData);
+            animator := new lantern:::animation:::Animator();
+            defer delete animator;
+            animator->Update(rig, 0.0f);
+            palette: Array<Mat4>! = animator->Palette(rig);
+            defer delete palette;
+
+            glossy := lantern:::renderer:::Material { roughness: 0.05f, wetness: 1.0f };
+            dry := lantern:::renderer:::Material { roughness: 0.8f };
+            scene := SceneParts { floor: floor, wall: wall, lamp: lamp, post: post, palette: palette, glossy: glossy, dry: dry };
+            width: u32 = 480;
+            height: u32 = 270;
+            plain: Array<u8>! = RenderPixels(renderer, scene, false, false, width, height);
+            defer delete plain;
+            reflected: Array<u8>! = RenderPixels(renderer, scene, true, false, width, height);
+            defer delete reflected;
+            dryPlain: Array<u8>! = RenderPixels(renderer, scene, false, true, width, height);
+            defer delete dryPlain;
+            dryReflected: Array<u8>! = RenderPixels(renderer, scene, true, true, width, height);
+            defer delete dryReflected;
+            SaveCapture(renderer, scene, true, "");
+            SaveCapture(renderer, scene, false, "-before.png");
+
+            floorTop: u32 = height * 11 / 20;
+            plainRed: f32 = ChannelExcess(plain, width, 0, 0, floorTop, width, height);
+            reflectedRed: f32 = ChannelExcess(reflected, width, 0, 0, floorTop, width, height);
+            assert(reflectedRed > plainRed + 6.0f, "the wall shows red in the glossy floor");
+            assert(PixelsDiffering(plain, reflected, width, 0, floorTop, width, height) > 300, "reflections change the glossy floor");
+            assert(PixelsDiffering(plain, reflected, width, 0, 0, width, floorTop / 2) < 20, "the wall above the horizon is left as it was");
+            assert(PixelsDiffering(dryPlain, dryReflected, width, 0, floorTop, width, height) < 20, "a dry floor reflects nothing, so it does not change");
+            postLeft: u32 = width * 328 / 960;
+            postRight: u32 = width * 346 / 960;
+            besideLeft: u32 = width * 372 / 960;
+            besideRight: u32 = width * 390 / 960;
+            stripTop: u32 = height * 312 / 540;
+            stripBottom: u32 = height * 372 / 540;
+            plainPostStrip: f32 = ChannelExcess(plain, width, 1, postLeft, stripTop, postRight, stripBottom);
+            plainBesideStrip: f32 = ChannelExcess(plain, width, 1, besideLeft, stripTop, besideRight, stripBottom);
+            reflectedPostStrip: f32 = ChannelExcess(reflected, width, 1, postLeft, stripTop, postRight, stripBottom);
+            reflectedBesideStrip: f32 = ChannelExcess(reflected, width, 1, besideLeft, stripTop, besideRight, stripBottom);
+            assert(reflectedPostStrip - reflectedBesideStrip > plainPostStrip - plainBesideStrip + 4.0f, "the skinned post shows green in the floor beneath it");
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("screen-space reflections show the scene in glossy ground");
+    return 0;
+}

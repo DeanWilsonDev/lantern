@@ -172,6 +172,7 @@ any floor.
 | `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing, ambient occlusion and light shafts off and uses fewer shadow lookups; see `bloom-and-tone-mapping.md` |
 | `lantern:::graphics:::SetAntiAliasing(enabled)` | smooth jagged edges with FXAA (on by default); see `anti-aliasing.md` |
 | `lantern:::graphics:::SetAmbientOcclusion(enabled, radius, intensity)` | darken creases and contact points from the depth buffer (radius in metres, intensity 0 to 1); see `ambient-occlusion.md` |
+| `lantern:::graphics:::SetScreenSpaceReflections(enabled, intensity, maxDistance)` | let glossy and wet surfaces reflect what is on screen, falling back to the sky; see `screen-space-reflections.md` |
 | `lantern:::graphics:::AddBlobShadow(center, radius, strength)` | this frame only: a soft dark patch on the surface around `center` (up to eight); see `blob-shadows.md` |
 | `lantern:::graphics:::SetBlobShadows(enabled)` | switch the frame's blob shadows on or off |
 | `lantern:::graphics:::SetColorGrade(saturation, contrast, tint, vignette)` | the look of the finished picture: saturation 0 to 3, contrast 0.2 to 3, an `"RRGGBB"` tint and a vignette 0 to 1; `1, 1, "FFFFFF", 0` is neutral; see `colour-grade.md` |
@@ -584,6 +585,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `SetBloom` | `(enabled: bool, strength: f32, threshold: f32) -> void` |
 | `SetAntiAliasing` | `(enabled: bool) -> void` |
 | `SetAmbientOcclusion` | `(enabled: bool, radius: f32, intensity: f32) -> void` |
+| `SetScreenSpaceReflections` | `(enabled: bool, intensity: f32, maxDistance: f32) -> void` |
 | `AddBlobShadow` | `(center: lantern:::math:::Vec3, radius: f32, strength: f32) -> void` |
 | `SetBlobShadows` | `(enabled: bool) -> void` |
 | `SetColorGrade` | `(saturation: f32, contrast: f32, tint: string, vignette: f32) -> void` |

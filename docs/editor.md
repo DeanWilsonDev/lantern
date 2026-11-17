@@ -150,10 +150,10 @@ For the real ceiling turn vertical sync off, either in Settings, Graphics, Frame
 UI or the wait for the display, so it shows how much of a frame the 3D view costs.
 
 The Graphics tab changes how the editor viewport is drawn, with the same levels and effects as
-`lantern:::graphics:::SetQuality` in a game (`docs/graphics-effects.md`). Choosing a quality level sets the four effect
+`lantern:::graphics:::SetQuality` in a game (`docs/graphics-effects.md`). Choosing a quality level sets the five effect
 checkboxes and the shadow quality together; a checkbox or the shadow quality can then be changed on its own. The
 default is medium, which is what the viewport drew before the tab existed. The options are the view options `quality`,
-`shadow_quality`, `bloom`, `ambient_occlusion`, `anti_aliasing` and `light_shafts`, so they are saved with the other
+`shadow_quality`, `bloom`, `ambient_occlusion`, `anti_aliasing`, `light_shafts` and `reflections`, so they are saved with the other
 preferences.
 
 Preferences (window size, snapping, view options, bookmarks, the open bottom panel and recent

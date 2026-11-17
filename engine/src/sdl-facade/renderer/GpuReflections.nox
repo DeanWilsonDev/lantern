@@ -1,0 +1,97 @@
+// Screen-space reflections on the GPU: when the pass runs, the uniform block it reads and the pass itself. The algorithm is
+// in `ssr.frag` and explained for readers in `docs/screen-space-reflections.md`.
+//
+// The lit and sky pipelines write a second colour target beside the scene, the surface buffer (`PostTargets.surfaceTexture`,
+// `surface-common.glsl`): each pixel's normal, roughness and reflectance. After the scene pass this pass reads the scene, the
+// depth buffer and the surface buffer and writes the scene again with reflections added into `PostTargets.reflectedTexture`.
+// Bloom and the composite then read that texture instead of `hdrTexture`, which is why a reflected lamp glows.
+Sdl :: import Sdl;
+
+lantern:::gpu :: namespace {
+    Sdl :: import Sdl;
+
+    /** The steps a ray takes when a game turns reflections on from a level that had them off. */
+    DEFAULT_REFLECTION_STEPS: u32 : 24;
+
+    /**
+     * How many steps the reflection ray takes this frame, or 0 when reflections are not drawn. `forcedChoice` is
+     * LANTERN_SSR (see `GpuOptions`): 0 forces reflections off, 1 forces them on whatever the game set, and -1 leaves it to
+     * the game's `PostSettings`. An orthographic camera has no rays fanning from a point to reflect, so it draws none.
+     */
+    ReflectionStepsFor :: (post: lantern:::renderer:::PostSettings, camera: lantern:::renderer:::Camera, forcedChoice: i32) -> u32 {
+        if forcedChoice == 0 || camera.IsOrthographic() {
+            return 0;
+        }
+        if forcedChoice != 1 && !post.reflectionsEnabled {
+            return 0;
+        }
+        if post.reflectionsIntensity <= 0.0f {
+            return 0;
+        }
+        if post.reflectionsSteps == 0 {
+            return forcedChoice == 1 ? DEFAULT_REFLECTION_STEPS : 0;
+        }
+        return post.reflectionsSteps > 64 ? 64 : post.reflectionsSteps;
+    }
+
+    /**
+     * The reflection shader's block: the camera's basis and projection (the same numbers the composite uses to rebuild a pixel's
+     * ray), the sky as the lit shader reflected it (so the pass can take it back out where the ray hits something), the fog (so a
+     * foggy pixel's reflection fades like the rest of it) and the march's settings.
+     */
+    PackReflectionUniforms :: (renderWorld: lantern:::renderer:::RenderWorld*, aspectRatio: f32, stepCount: u32) -> ReflectionUniforms {
+        camera: lantern:::renderer:::Camera = renderWorld->camera;
+        post: lantern:::renderer:::PostSettings = renderWorld->post;
+        sky: SkyUniforms = PackSkyUniforms(renderWorld, aspectRatio);
+        skyLight: SkyLightUniforms = PackSkyLightUniforms(renderWorld);
+        halfHeight: f32 = Math:::tan(camera.verticalFieldOfViewRadians * 0.5f);
+        halfWidth: f32 = halfHeight * Math:::max(aspectRatio, 0.001f);
+        safeWidth: f32 = Math:::max(halfWidth, 0.0001f);
+        safeHeight: f32 = Math:::max(halfHeight, 0.0001f);
+        depthRange: f32 = camera.farPlane / (camera.nearPlane - camera.farPlane);
+        refinementCount: f32 = stepCount > 32 ? 6.0f : 4.0f;
+        return ReflectionUniforms {
+            projectionTerms: [halfWidth, halfHeight, camera.nearPlane, depthRange],
+            cameraRight: [sky.rightScaled[0] / safeWidth, sky.rightScaled[1] / safeWidth, sky.rightScaled[2] / safeWidth, 0.0f],
+            cameraUp: [sky.upScaled[0] / safeHeight, sky.upScaled[1] / safeHeight, sky.upScaled[2] / safeHeight, 0.0f],
+            cameraForward: sky.forward,
+            skyZenith: skyLight.zenith,
+            skyHorizon: skyLight.horizon,
+            skyGround: skyLight.ground,
+            skyStrengthAndIntensity: skyLight.strengthAndIntensity,
+            fog: [renderWorld->fogStart, renderWorld->fogEnd, 0.0f, 0.0f],
+            march: [f32(stepCount), refinementCount, Math:::max(post.reflectionsThickness, 0.01f), Math:::max(post.reflectionsMaxDistance, 1.0f)],
+            look: [Math:::max(post.reflectionsIntensity, 0.0f), 0.0f, 0.0f, 0.0f]
+        };
+    }
+
+    /**
+     * The reflection pass: one full-screen draw into `reflectedTexture`, every pixel of which it writes (a pixel with nothing
+     * to reflect is copied from the scene). Depth is read with the nearest sampler, because blending two depths gives a depth
+     * nothing has, and so is the surface buffer, because blending two normals gives a normal nothing has. The scene is read
+     * with the linear one, since a hit lands between pixels.
+     */
+    RecordReflections :: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pipelines: Pipelines*, samplers: Samplers*, targets: PostTargets*, depthTexture: raw Sdl:::SDL_GPUTexture~*, renderWorld: lantern:::renderer:::RenderWorld*, aspect: f32, stepCount: u32) -> void {
+        uniforms: ReflectionUniforms = PackReflectionUniforms(renderWorld, aspect, stepCount);
+        unsafe {
+            colorTarget := Sdl:::SDL_GPUColorTargetInfo {
+                texture: targets->reflectedTexture,
+                clear_color: Sdl:::SDL_FColor { r: 0.0f, g: 0.0f, b: 0.0f, a: 1.0f },
+                load_op: Sdl:::SDL_GPU_LOADOP_DONT_CARE,
+                store_op: Sdl:::SDL_GPU_STOREOP_STORE
+            };
+            pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, colorTarget, 1, null);
+            Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines->reflections);
+            PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(uniforms), 176);
+            bindings: Sdl:::SDL_GPUTextureSamplerBinding[3] = [
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: targets->hdrTexture, sampler: samplers->linearClamp },
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: depthTexture, sampler: samplers->nearestClamp },
+                Sdl:::SDL_GPUTextureSamplerBinding { texture: targets->surfaceTexture, sampler: samplers->nearestClamp }
+            ];
+            firstBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(bindings);
+            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, firstBinding, 3);
+            Sdl:::SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+            Sdl:::SDL_EndGPURenderPass(pass);
+        }
+    }
+}

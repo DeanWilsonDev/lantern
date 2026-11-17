@@ -1,0 +1,315 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct ReflectionUniforms
+{
+    float4 projection_terms;
+    float4 camera_right;
+    float4 camera_up;
+    float4 camera_forward;
+    float4 sky_zenith;
+    float4 sky_horizon;
+    float4 sky_ground;
+    float4 sky_strength_and_intensity;
+    float4 fog;
+    float4 march;
+    float4 look;
+};
+
+struct main0_out
+{
+    float4 output_color [[color(0)]];
+};
+
+struct main0_in
+{
+    float2 source_uv [[user(locn0)]];
+};
+
+static inline __attribute__((always_inline))
+bool IsBackground(thread const float& depth)
+{
+    return depth > 0.999989986419677734375;
+}
+
+static inline __attribute__((always_inline))
+float LinearDistance(thread const float& depth, constant ReflectionUniforms& settings)
+{
+    float depth_range = settings.projection_terms.w;
+    return (depth_range * settings.projection_terms.z) / (depth + depth_range);
+}
+
+static inline __attribute__((always_inline))
+float3 ViewPosition(thread const float2& uv, thread const float& depth, constant ReflectionUniforms& settings)
+{
+    float param = depth;
+    float distance_ahead = LinearDistance(param, settings);
+    float2 ndc = float2((uv.x * 2.0) - 1.0, 1.0 - (uv.y * 2.0));
+    return float3((ndc.x * settings.projection_terms.x) * distance_ahead, (ndc.y * settings.projection_terms.y) * distance_ahead, -distance_ahead);
+}
+
+static inline __attribute__((always_inline))
+float3 DecodeNormal(thread const float2& encoded)
+{
+    float2 folded = (encoded * 2.0) - float2(1.0);
+    float3 on_octahedron = float3(folded.x, folded.y, (1.0 - abs(folded.x)) - abs(folded.y));
+    float below = fast::clamp(-on_octahedron.z, 0.0, 1.0);
+    float _132;
+    if (on_octahedron.x >= 0.0)
+    {
+        _132 = -below;
+    }
+    else
+    {
+        _132 = below;
+    }
+    float _143;
+    if (on_octahedron.y >= 0.0)
+    {
+        _143 = -below;
+    }
+    else
+    {
+        _143 = below;
+    }
+    float3 _152 = on_octahedron;
+    float2 _154 = _152.xy + float2(_132, _143);
+    on_octahedron.x = _154.x;
+    on_octahedron.y = _154.y;
+    return fast::normalize(on_octahedron);
+}
+
+static inline __attribute__((always_inline))
+float2 ProjectToUv(thread const float3& view_position, constant ReflectionUniforms& settings)
+{
+    float distance_ahead = -view_position.z;
+    float2 ndc = float2(view_position.x / (settings.projection_terms.x * distance_ahead), view_position.y / (settings.projection_terms.y * distance_ahead));
+    return float2((ndc.x * 0.5) + 0.5, 0.5 - (ndc.y * 0.5));
+}
+
+static inline __attribute__((always_inline))
+float InterleavedGradientNoise(thread const float2& pixel)
+{
+    return fract(52.98291778564453125 * fract(dot(pixel, float2(0.067110560834407806396484375, 0.005837149918079376220703125))));
+}
+
+static inline __attribute__((always_inline))
+float RayDistance(thread const float& start_inverse, thread const float& end_inverse, thread const float& t)
+{
+    return 1.0 / mix(start_inverse, end_inverse, t);
+}
+
+static inline __attribute__((always_inline))
+float DepthDifference(thread const float2& uv, thread const float& ray_distance, constant ReflectionUniforms& settings, texture2d<float> depth_image, sampler depth_imageSmplr)
+{
+    float stored_depth = depth_image.sample(depth_imageSmplr, uv, level(0.0)).x;
+    float param = stored_depth;
+    float _333;
+    if (IsBackground(param))
+    {
+        _333 = 1000000.0;
+    }
+    else
+    {
+        float param_1 = stored_depth;
+        _333 = LinearDistance(param_1, settings);
+    }
+    float scene_distance = _333;
+    return ray_distance - scene_distance;
+}
+
+static inline __attribute__((always_inline))
+float3 SkyGradient(thread const float3& direction, thread const float3& zenith, thread const float3& horizon, thread const float3& ground, thread const float& blur)
+{
+    float elevation = direction.y;
+    float upward = fast::clamp(elevation, 0.0, 1.0);
+    float3 above = mix(horizon, zenith, float3(pow(upward, mix(0.449999988079071044921875, 1.0, blur))));
+    float softness = mix(0.00999999977648258209228515625, 0.5, blur);
+    float below_amount = smoothstep(-softness, softness, -elevation);
+    return mix(above, ground, float3(below_amount));
+}
+
+static inline __attribute__((always_inline))
+float3 EnvironmentBrdf(thread const float3& specular_color, thread const float& roughness, thread const float& normal_dot_view)
+{
+    float4 r = (float4(-1.0, -0.0274999998509883880615234375, -0.572000026702880859375, 0.02199999988079071044921875) * roughness) + float4(1.0, 0.0425000004470348358154296875, 1.03999996185302734375, -0.039999999105930328369140625);
+    float a004 = (fast::min(r.x * r.x, exp2((-9.27999973297119140625) * normal_dot_view)) * r.x) + r.y;
+    float2 scale_and_bias = (float2(-1.03999996185302734375, 1.03999996185302734375) * a004) + r.zw;
+    return (specular_color * scale_and_bias.x) + float3(scale_and_bias.y);
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], constant ReflectionUniforms& settings [[buffer(0)]], texture2d<float> scene_image [[texture(0)]], texture2d<float> depth_image [[texture(1)]], texture2d<float> surface_image [[texture(2)]], sampler scene_imageSmplr [[sampler(0)]], sampler depth_imageSmplr [[sampler(1)]], sampler surface_imageSmplr [[sampler(2)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float4 picture = scene_image.sample(scene_imageSmplr, in.source_uv, level(0.0));
+    out.output_color = picture;
+    float4 surface = surface_image.sample(surface_imageSmplr, in.source_uv, level(0.0));
+    float roughness = surface.z;
+    float reflectance = surface.w;
+    float glossiness = 1.0 - smoothstep(0.25, 0.550000011920928955078125, roughness);
+    float depth = depth_image.sample(depth_imageSmplr, in.source_uv, level(0.0)).x;
+    float param = depth;
+    if ((IsBackground(param) || (reflectance < 0.00999999977648258209228515625)) || (glossiness <= 0.0))
+    {
+        return out;
+    }
+    float3 right = settings.camera_right.xyz;
+    float3 up = settings.camera_up.xyz;
+    float3 forward = settings.camera_forward.xyz;
+    float2 param_1 = in.source_uv;
+    float param_2 = depth;
+    float3 position = ViewPosition(param_1, param_2, settings);
+    float3 eye_ray_world = fast::normalize(((right * position.x) + (up * position.y)) + (forward * (-position.z)));
+    float2 param_3 = surface.xy;
+    float3 normal_world = DecodeNormal(param_3);
+    float3 reflected_world = reflect(eye_ray_world, normal_world);
+    float3 reflected = float3(dot(reflected_world, right), dot(reflected_world, up), -dot(reflected_world, forward));
+    float3 normal_view = float3(dot(normal_world, right), dot(normal_world, up), -dot(normal_world, forward));
+    float3 start = position + (normal_view * (0.0199999995529651641845703125 + (0.0040000001899898052215576171875 * (-position.z))));
+    float max_distance = settings.march.w;
+    float near_plane = settings.projection_terms.z;
+    float3 end = start + (reflected * max_distance);
+    if (end.z > (-near_plane))
+    {
+        float to_near_plane = ((-near_plane) - start.z) / reflected.z;
+        end = start + (reflected * fast::clamp(to_near_plane * 0.980000019073486328125, 0.0, max_distance));
+    }
+    float3 param_4 = start;
+    float2 start_uv = ProjectToUv(param_4, settings);
+    float3 param_5 = end;
+    float2 end_uv = ProjectToUv(param_5, settings);
+    float start_inverse = 1.0 / (-start.z);
+    float end_inverse = 1.0 / (-end.z);
+    int step_count = min(int(settings.march.x), 64);
+    int refinement_count = min(int(settings.march.y), 8);
+    float thickness_at_ten_metres = settings.march.z;
+    float2 param_6 = gl_FragCoord.xy;
+    float jitter = InterleavedGradientNoise(param_6);
+    float previous_t = 0.0;
+    float hit_t = -1.0;
+    for (int step_index = 0; step_index < 64; step_index++)
+    {
+        if (step_index >= step_count)
+        {
+            break;
+        }
+        float progress = ((float(step_index) + 1.0) - (0.800000011920928955078125 * jitter)) / float(step_count);
+        float t = (0.5 * progress) + ((0.5 * progress) * progress);
+        float2 uv = mix(start_uv, end_uv, float2(t));
+        bool _597 = uv.x < 0.0;
+        bool _604;
+        if (!_597)
+        {
+            _604 = uv.x > 1.0;
+        }
+        else
+        {
+            _604 = _597;
+        }
+        bool _611;
+        if (!_604)
+        {
+            _611 = uv.y < 0.0;
+        }
+        else
+        {
+            _611 = _604;
+        }
+        bool _618;
+        if (!_611)
+        {
+            _618 = uv.y > 1.0;
+        }
+        else
+        {
+            _618 = _611;
+        }
+        if (_618)
+        {
+            break;
+        }
+        float param_7 = start_inverse;
+        float param_8 = end_inverse;
+        float param_9 = t;
+        float ray_distance = RayDistance(param_7, param_8, param_9);
+        float2 param_10 = uv;
+        float param_11 = ray_distance;
+        float difference = DepthDifference(param_10, param_11, settings, depth_image, depth_imageSmplr);
+        float param_12 = start_inverse;
+        float param_13 = end_inverse;
+        float param_14 = previous_t;
+        float step_span = abs(ray_distance - RayDistance(param_12, param_13, param_14));
+        float thickness = (thickness_at_ten_metres * fast::max(ray_distance * 0.100000001490116119384765625, 0.5)) + step_span;
+        if ((difference > 0.0) && (difference < thickness))
+        {
+            float behind_t = t;
+            float front_t = previous_t;
+            for (int refinement_index = 0; refinement_index < 8; refinement_index++)
+            {
+                if (refinement_index >= refinement_count)
+                {
+                    break;
+                }
+                float middle_t = 0.5 * (front_t + behind_t);
+                float param_15 = start_inverse;
+                float param_16 = end_inverse;
+                float param_17 = middle_t;
+                float2 param_18 = mix(start_uv, end_uv, float2(middle_t));
+                float param_19 = RayDistance(param_15, param_16, param_17);
+                float middle_difference = DepthDifference(param_18, param_19, settings, depth_image, depth_imageSmplr);
+                if (middle_difference > 0.0)
+                {
+                    behind_t = middle_t;
+                }
+                else
+                {
+                    front_t = middle_t;
+                }
+            }
+            float param_20 = start_inverse;
+            float param_21 = end_inverse;
+            float param_22 = behind_t;
+            float2 param_23 = mix(start_uv, end_uv, float2(behind_t));
+            float param_24 = RayDistance(param_20, param_21, param_22);
+            float final_difference = DepthDifference(param_23, param_24, settings, depth_image, depth_imageSmplr);
+            float tolerance = (thickness_at_ten_metres * fast::max(ray_distance * 0.100000001490116119384765625, 0.5)) + (step_span / exp2(float(refinement_count)));
+            if (final_difference < tolerance)
+            {
+                hit_t = behind_t;
+                break;
+            }
+        }
+        previous_t = t;
+    }
+    float3 param_25 = reflected_world;
+    float3 param_26 = settings.sky_zenith.xyz;
+    float3 param_27 = settings.sky_horizon.xyz;
+    float3 param_28 = settings.sky_ground.xyz;
+    float param_29 = roughness;
+    float3 sky_reflection = (SkyGradient(param_25, param_26, param_27, param_28, param_29) * settings.sky_strength_and_intensity.y) * settings.sky_strength_and_intensity.x;
+    if (hit_t < 0.0)
+    {
+        return out;
+    }
+    float2 hit_uv = mix(start_uv, end_uv, float2(hit_t));
+    float3 hit_color = scene_image.sample(scene_imageSmplr, hit_uv, level(0.0)).xyz;
+    float2 param_30 = surface_image.sample(surface_imageSmplr, hit_uv, level(0.0)).xy;
+    float3 hit_normal_world = DecodeNormal(param_30);
+    float2 border = fast::min(hit_uv, float2(1.0) - hit_uv);
+    float edge_fade = smoothstep(0.0, 0.100000001490116119384765625, fast::min(border.x, border.y));
+    float travel_fade = 1.0 - smoothstep(0.60000002384185791015625, 1.0, length(mix(start, end, float3(hit_t)) - start) / fast::max(max_distance, 0.001000000047497451305389404296875));
+    float facing_fade = 1.0 - smoothstep(0.0, 0.4000000059604644775390625, dot(hit_normal_world, reflected_world));
+    float fog = fast::clamp((length(position) - settings.fog.x) / fast::max(settings.fog.y - settings.fog.x, 0.001000000047497451305389404296875), 0.0, 1.0);
+    float confidence = ((((glossiness * edge_fade) * travel_fade) * facing_fade) * (1.0 - fog)) * settings.look.x;
+    float3 param_31 = float3(reflectance);
+    float param_32 = roughness;
+    float param_33 = fast::max(dot(normal_world, -eye_ray_world), 9.9999997473787516355514526367188e-05);
+    float3 brdf = EnvironmentBrdf(param_31, param_32, param_33);
+    out.output_color = float4(fast::max(picture.xyz + ((brdf * confidence) * (hit_color - sky_reflection)), float3(0.0)), picture.w);
+    return out;
+}
+

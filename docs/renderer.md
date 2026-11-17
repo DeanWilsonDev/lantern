@@ -382,6 +382,7 @@ and a point light is six times that, why only twelve tiles exist, and why lights
 | Anti-aliasing (FXAA) | off | on | on |
 | Ambient occlusion | off | on | on |
 | Light shafts | off | on | on |
+| Screen-space reflections | off | on | on |
 | Shadow filter lookups per pixel | 4 | 12 | 20 |
 | Particle budget | 64 | 256 | 512 |
 
@@ -400,8 +401,8 @@ cloud machine has only a software Vulkan driver, so frame times on a real GPU an
 | Particles | One line per live particle, in the overlay pass | the budget |
 | Normal maps | One texture sample per pixel of a draw that has a map | no |
 
-At the top quality a frame is therefore up to 17 render passes beyond the shadow tiles (two shadow maps, the scene, nine
-bloom, two occlusion, the composite, FXAA and the overlay); at Low it is the shadow maps, the scene, the composite and
+With reflections on there is one more full-screen pass between the scene and bloom (`screen-space-reflections.md`). At the top quality a frame is therefore up to 18 render passes beyond the shadow tiles (two shadow maps, the scene, nine
+bloom, two occlusion, the reflections, the composite, FXAA and the overlay); at Low it is the shadow maps, the scene, the composite and
 the overlay. Turn effects down in this order when a frame is too slow: ambient occlusion, then bloom, then shadow
 quality, then FXAA.
 
