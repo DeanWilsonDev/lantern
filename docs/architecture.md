@@ -37,7 +37,7 @@ crates/
   physics/       lantern-physics     triangles, capsule casts, CollisionWorld, kinematic bodies,
                                      CharacterController
   audio/         lantern-audio       WAV decoding, SoundBank, software Mixer (new)
-  debug/         lantern-debug       DebugHud panel and debug_draw helpers
+  debug/         lantern-debug       DebugWindow and debug_draw helpers
   engine/        lantern-engine      FrameLoop and the Game trait, InputRouter, World (entities,
                                      transforms, hierarchy, scenes), extract_draws, AudioSystem
   nyx-sys/       nyx-sys             raw Nyx C ABI bindings (bindgen; builds Nyx with CMake)

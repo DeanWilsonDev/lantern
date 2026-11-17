@@ -295,7 +295,8 @@ The sounds, the buses and the generated placeholders are in [`audio.md`](audio.m
 
 | Call | |
 |---|---|
-| `lantern:::debug:::SetValue(path, value: string)` | a HUD line, such as `"Player/Speed"` |
+| `lantern:::debug:::SetValue(path, value: string)` | a debug window line, such as `"Player/Speed"`; its group picks the page |
+| `lantern:::debug:::SetPage(group, page: string)` | puts a group of values on a page (see [`debug-window.md`](debug-window.md)) |
 | `lantern:::debug:::IsHudVisible() -> bool`, `lantern:::debug:::SetHudVisible(visible)` | |
 | `lantern:::debug:::Capsule(center, radius, halfSegment, color)`, `Sphere(center, radius, color)` | wireframes |
 | `lantern:::debug:::Arrow(start, vector, color)`, `Line(start, end, color)` | |
@@ -688,6 +689,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | Function | Signature |
 | --- | --- |
 | `SetValue` | `(path: string, value: string) -> void` |
+| `SetPage` | `(group: string, page: string) -> void` |
 | `IsHudVisible` | `() -> bool` |
 | `SetHudVisible` | `(visible: bool) -> void` |
 | `Capsule` | `(center: lantern:::math:::Vec3, radius: f32, halfSegment: f32, color: string) -> void` |
