@@ -67,8 +67,8 @@ engine/src/
     loop/                      the Game interface and the GameLoop (events, fixed steps, frame update, render)
     input/                     InputRouter: platform events to each step's action snapshot
     entities/                  World: entities, transforms, hierarchy, scenes, mesh renderers, ExtractDraws
-    audio/                     AudioSystem: named sounds and the music track on an AudioSink
-  audio/                       WAV decoding and the software mixer
+    audio/                     AudioSystem: named sounds, named loops and buses on an AudioSink
+  audio/                       WAV decoding, the software mixer and the generated placeholder sounds (Synth)
   physics/                     collision world and the character controller
   debug/                       the debug HUD and debug-line shapes
   world/                       the .world.json format, and WorldLights: how a light entity becomes a light

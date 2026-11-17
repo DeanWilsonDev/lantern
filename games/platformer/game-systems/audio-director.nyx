@@ -1,0 +1,230 @@
+FoodStall :: import FoodStall;
+Math :: import standard:::Math;
+Watcher :: import Watcher;
+
+// Decides what the game sounds like from moment to moment: which ambience a level lives in, which layers of the music
+// play, and where the listener is. The engine does the mixing (docs/audio.md); this file only says which named layers
+// should be how loud, and the engine fades them.
+//
+// Ambience. A level names its sound with the spawn's `ambience` property: "streets", "rooftops", "station" or "market"
+// (anything else, and a level that names none, takes its chapter's: ChapterProfile). Each profile is a few looping beds
+// (ProfileLayers). When a level starts, the beds it doesn't want fade out and the ones it does fade in over
+// AMBIENCE_FADE_SECONDS, so going from the streets to the rooftops is a crossfade and not a cut. Each food stall also
+// hums where it stands (an emitter), so walking up to one brings its market noise up on that side.
+//
+// Music. Four layers start together and stay together, because each is the same length:
+// - theme: the title screen's tune, on while the menu is up;
+// - calm: the pad that plays while you play;
+// - tension: the drone that comes in as a watcher's beam gets near, or while you stand on a train's track, and goes
+//   away slowly once you are clear;
+// - companion: the soft figure that plays while she is close, so you can hear she is there.
+// Each layer has a target level and moves toward it at its own speed (MusicRate), so tension arrives fast and leaves
+// slowly. Pausing ducks everything.
+//
+// The listener is the camera, set every frame, so everything positional is heard from where you are looking.
+AudioDirector :: class {
+public:
+    // A level has started: crossfade the ambience to the one it asks for, and put its food stalls' hum where they stand.
+    // `ambience` is the spawn's property ("" for none).
+    Start~: (ambience: string, chapter: i32, stalls: Array<FoodStall>) -> void {
+        StartMusic();
+        wanted := ProfileLayers(ambience == "" ? ChapterProfile(chapter) : ambience);
+        for name in ambienceLayers {
+            if !wanted.contains(name) {
+                lantern:::audio:::StopLayer(AmbienceLayer(name), AMBIENCE_FADE_SECONDS);
+            }
+        }
+        for name in wanted {
+            lantern:::audio:::StartLayer(AmbienceLayer(name), `ambience_${name}`, "ambience", LayerGain(name), 0.0f);
+            lantern:::audio:::FadeLayer(AmbienceLayer(name), duck, AMBIENCE_FADE_SECONDS);
+        }
+        ambienceLayers = wanted;
+        for emitter in emitters {
+            lantern:::audio:::StopLayer(emitter, 0.5f);
+        }
+        emitters = [];
+        for index~ i32 = 0; index < stalls.length() && index < MAX_STALL_EMITTERS; index += 1 {
+            name := `stall:${index:d}`;
+            lantern:::audio:::StartEmitter(name, "ambience_market", "ambience", stalls[index].home, 0.9f, STALL_NEAR, STALL_FAR);
+            emitters.add(name);
+        }
+        tension = 0.0f;
+    }
+
+    // Once per display frame. `isMenu` and `isPaused` pick what plays; the eye and forward place the listener; the rest say
+    // how tense things are and whether she is close.
+    // - `watchers`: the level's watchers, whose beams make tension;
+    // - `isOnDanger`: standing somewhere dangerous that isn't a watcher, such as a train's track;
+    // - `hasCompanion`, `companionAt`: whether anyone is walking with you, and where.
+    Frame~: (frameSeconds: f32, isMenu: bool, isPaused: bool, eye: lantern:::math:::Vec3, forward: lantern:::math:::Vec3, playerCenter: lantern:::math:::Vec3, watchers: Array<Watcher>, isOnDanger: bool, hasCompanion: bool, companionAt: lantern:::math:::Vec3) -> void {
+        up: lantern:::math:::Vec3 = { y: 1.0f };
+        lantern:::audio:::SetListener(eye, forward, up);
+        wantedTension~ f32 = WatcherTension(watchers, playerCenter);
+        if isOnDanger {
+            wantedTension = Math:::max(wantedTension, DANGER_TENSION);
+        }
+        nearness := hasCompanion ? Nearness((companionAt - playerCenter).Length()) : 0.0f;
+        newDuck := isPaused ? PAUSE_DUCK : 1.0f;
+        if newDuck != duck {
+            duck = newDuck;
+            for name in ambienceLayers {
+                lantern:::audio:::FadeLayer(AmbienceLayer(name), duck, DUCK_SECONDS);
+            }
+        }
+        tension = Ease(tension, wantedTension, frameSeconds, TENSION_RISE, TENSION_FALL);
+        // What each music layer should be at: [theme, calm, tension, companion].
+        targets: Array<f32> = isMenu ? [1.0f, 0.0f, 0.0f, 0.0f] : [0.0f, 1.0f - 0.5f * tension, tension, nearness];
+        for index~ i32 = 0; index < 4; index += 1 {
+            rate := MusicRate(index);
+            levels[index] = Ease(levels[index], targets[index] * duck, frameSeconds, rate, rate * 0.6f);
+            if Math:::abs(levels[index] - applied[index]) >= 0.02f || (levels[index] == 0.0f && applied[index] != 0.0f) {
+                lantern:::audio:::FadeLayer(MusicLayer(index), levels[index], 0.1f);
+                applied[index] = levels[index];
+            }
+        }
+    }
+
+    // The ambience beds that are on, and the music levels, as text for the debug HUD and tests.
+    AmbienceText :: () -> string {
+        text~ string = "";
+        for name in ambienceLayers {
+            text = `${text}${name} `;
+        }
+        return text;
+    }
+
+    // How loud a music layer is now, 0 to 1: 0 theme, 1 calm, 2 tension, 3 companion.
+    MusicLevel :: (index: i32) -> f32 {
+        return levels[index];
+    }
+
+    // The beds a profile plays. A name that isn't a profile plays the open air.
+    static ProfileLayers :: (profile: string) -> Array<string> {
+        return when profile {
+            "streets" -> ["city", "rain"],
+            "rooftops" -> ["wind", "city"],
+            "station" -> ["station", "city"],
+            "market" -> ["market", "city"],
+            default -> ["wind"]
+        };
+    }
+
+private:
+    static AMBIENCE_FADE_SECONDS :: 3.0f;
+    static DUCK_SECONDS :: 0.4f;
+    static PAUSE_DUCK :: 0.35f;
+    static MAX_STALL_EMITTERS :: 6;
+    static STALL_NEAR :: 2.0f;
+    static STALL_FAR :: 16.0f;
+    static DANGER_TENSION :: 0.8f;
+    static COMPANION_NEAR :: 6.0f;
+    static COMPANION_FAR :: 14.0f;
+    static TENSION_RISE :: 1.2f;          // tension per second while a beam closes in
+    static TENSION_FALL :: 0.3f;          // and while it fades, which is slower so the tune lingers
+
+    ambienceLayers~ Array<string> = [];
+    emitters~ Array<string> = [];
+    levels~ Array<f32> = [0.0f, 0.0f, 0.0f, 0.0f];
+    applied~ Array<f32> = [0.0f, 0.0f, 0.0f, 0.0f];
+    tension~ f32 = 0.0f;
+    duck~ f32 = 1.0f;
+
+    // Starts the four music layers silent and together. Asking again changes nothing.
+    StartMusic~: () -> void {
+        for index~ i32 = 0; index < 4; index += 1 {
+            lantern:::audio:::StartLayer(MusicLayer(index), MusicSound(index), "music", 1.0f, 0.0f);
+        }
+    }
+
+    // The four music layers, by number: theme, calm, tension, companion.
+    MusicLayer :: (index: i32) -> string {
+        return when index <i32> {
+            0 -> "music:theme",
+            1 -> "music:calm",
+            2 -> "music:tension",
+            default -> "music:companion"
+        };
+    }
+
+    // The sound each music layer plays. The theme is a recorded file; the others are generated stems of one piece.
+    MusicSound :: (index: i32) -> string {
+        return when index <i32> {
+            0 -> "theme",
+            1 -> "music_calm",
+            2 -> "music_tension",
+            default -> "music_companion"
+        };
+    }
+
+    // How fast each music layer's level moves toward its target, in levels per second: theme, calm, tension, companion.
+    MusicRate :: (index: i32) -> f32 {
+        return when index <i32> {
+            0 -> 0.5f,
+            1 -> 0.35f,
+            2 -> 0.7f,
+            default -> 0.4f
+        };
+    }
+
+    AmbienceLayer :: (name: string) -> string {
+        return `ambience:${name}`;
+    }
+
+    // How loud each bed is against the others, 0 to 1.
+    LayerGain :: (name: string) -> f32 {
+        return when name {
+            "wind" -> 0.8f,
+            "rain" -> 0.5f,
+            "city" -> 0.5f,
+            "station" -> 0.9f,
+            "market" -> 0.35f,
+            default -> 0.5f
+        };
+    }
+
+    // The profile of a chapter's levels, when a level doesn't name its own.
+    ChapterProfile :: (chapter: i32) -> string {
+        return when chapter <i32> {
+            1 -> "streets",
+            2 -> "rooftops",
+            3 -> "rooftops",
+            4 -> "rooftops",
+            default -> "open"
+        };
+    }
+
+    // 1 when `distance` is within COMPANION_NEAR, 0 beyond COMPANION_FAR, and a straight line between.
+    Nearness :: (distance: f32) -> f32 {
+        return 1.0f - Math:::clamp((distance - COMPANION_NEAR) / (COMPANION_FAR - COMPANION_NEAR), 0.0f, 1.0f);
+    }
+
+    // The most tension any watcher's beam makes: more when the beam is pointing nearer to the player and when the player is
+    // nearer its lamp, less while it is lured away. A beam pointing within three times the catching cone counts.
+    WatcherTension :: (watchers: Array<Watcher>, playerCenter: lantern:::math:::Vec3) -> f32 {
+        most~ f32 = 0.0f;
+        for watcher in watchers {
+            if watcher.IsOn() {
+                toPlayer := playerCenter - watcher.lamp;
+                distance := toPlayer.Length();
+                reach := watcher.range * 1.2f;
+                if distance > 0.5f && distance < reach {
+                    widest := Math:::cos(Math:::TAU * watcher.coneDegrees * 3.0f / 360.0f);
+                    pointing := Math:::clamp((watcher.beamDirection.Dot(toPlayer.Normalized()) - widest) / (1.0f - widest), 0.0f, 1.0f);
+                    closeness := 1.0f - distance / reach;
+                    felt := pointing * (0.5f + 0.5f * closeness) * (watcher.isLured ? 0.4f : 1.0f);
+                    most = Math:::max(most, felt);
+                }
+            }
+        }
+        return most;
+    }
+
+    // Moves `current` toward `target` by at most `rate` per second, `up` when rising and `down` when falling, over
+    // `frameSeconds`.
+    Ease :: (current: f32, target: f32, frameSeconds: f32, up: f32, down: f32) -> f32 {
+        if target > current {
+            return Math:::min(current + up * frameSeconds, target);
+        }
+        return Math:::max(current - down * frameSeconds, target);
+    }
+}

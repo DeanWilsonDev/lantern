@@ -103,7 +103,7 @@ Three small edits, each following **The streets**:
    `HandleMenuChoice`: `PlayPlayground -> { PlayLevel(PLAYGROUND_PATH); },`.
 
 Save and press F5 in the running game to see it. If the level has its own look, add a chapter to
-`settings/chapter-looks.nyx` and set `chapter` on the spawn.
+`settings/chapter-looks.nyx` and set `chapter` on the spawn. The spawn also takes `ambience` (`streets`, `rooftops`, `station`, `market`) and `surface` (`stone`, `metal`, `wood`, `wet`, `grass`) for the sound; see `audio.md`.
 
 ## Part 2: a new mechanic, speed shoes
 

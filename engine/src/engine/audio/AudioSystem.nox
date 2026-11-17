@@ -29,6 +29,8 @@ lantern:::engine :: namespace {
         mixer~ lantern:::audio:::Mixer*!;
         sink~ lantern:::platform:::AudioSink*!?;
         sounds~ lantern:::audio:::SoundBank*!;
+        loopNames~ Array<string!>! = [];
+        loopIds~ Array<i64>! = [];
         underrunCount~ u32 = 0;
         hasPushedAudio~ bool = false;
 
@@ -46,11 +48,15 @@ lantern:::engine :: namespace {
             delete mixer;
             delete sink;
             delete sounds;
+            loopNames.freeAll();
+            delete loopIds;
         }
 
         /**
-         * Loads a WAV file and stores it under a name. A file that can't be read logs a warning and returns null; the game
-         * carries on without the sound.
+         * Loads a WAV file and stores it under a name. A file that can't be read falls back to the generated sound of the
+         * same name when there is one (see `lantern:::synth:::RECIPE_NAMES`), so a checkout with no recorded audio still
+         * has footsteps, ambience, music and menu sounds, and dropping a real file in at the path replaces them. A name
+         * with no file and no recipe logs a warning and returns null; the game carries on without the sound.
          */
         LoadSound~: (name: string, path: string) -> lantern:::core:::Handle<lantern:::audio:::SoundTag>? {
             when lantern:::audio:::LoadWav(path) {
@@ -61,13 +67,32 @@ lantern:::engine :: namespace {
                     return handle;
                 },
                 Result:::Err(failure) -> {
-                    message: string! = `sound '${name}' unavailable: ${failure}`;
+                    delete failure;
+                    if generated := GenerateSound(name) {
+                        return generated;
+                    }
+                    message: string! = `sound '${name}' unavailable: no file at ${path} and no generated sound of that name`;
                     lantern:::core:::LogWarn("audio", message);
                     delete message;
-                    delete failure;
                     return null;
                 }
             }
+        }
+
+        /**
+         * Builds the generated sound called `name` and stores it under that name, or returns null when there is no such
+         * recipe.
+         */
+        GenerateSound~: (name: string) -> lantern:::core:::Handle<lantern:::audio:::SoundTag>? {
+            made := lantern:::synth:::Make(name);
+            if sound := made {
+                handle: lantern:::core:::Handle<lantern:::audio:::SoundTag> = mixer->AddSound(sound);
+                sounds->Insert(name, handle);
+                delete made;
+                return handle;
+            }
+            delete made;
+            return null;
         }
 
         /**
@@ -103,17 +128,165 @@ lantern:::engine :: namespace {
         }
 
         /**
-         * The master, music and effects volumes.
+         * Sets a bus's volume, 0 to 1. `bus` is `master`, `music`, `ambience`, `sfx` or `ui`; another name does nothing.
          */
-        Volumes :: () -> lantern:::audio:::Volumes {
-            return mixer->volumes;
+        SetBusVolume~: (bus: string, volume: f32) -> void {
+            if number := lantern:::audio:::BusFromName(bus) {
+                mixer->SetBusVolume(number, volume);
+            }
         }
 
         /**
-         * Sets the three volumes.
+         * A bus's volume (0 for an unknown name).
          */
-        SetVolumes~: (volumes: lantern:::audio:::Volumes) -> void {
-            mixer->volumes = volumes;
+        BusVolume :: (bus: string) -> f32 {
+            if number := lantern:::audio:::BusFromName(bus) {
+                return mixer->BusVolume(number);
+            }
+            return 0.0f;
+        }
+
+        /**
+         * Mutes or unmutes a bus, keeping its volume.
+         */
+        SetBusMuted~: (bus: string, muted: bool) -> void {
+            if number := lantern:::audio:::BusFromName(bus) {
+                mixer->SetBusMuted(number, muted);
+            }
+        }
+
+        /**
+         * Puts the listener where the camera is. Call it once a frame.
+         */
+        SetListener~: (position: Vec3, forward: Vec3, up: Vec3) -> void {
+            mixer->SetListener(position, forward, up);
+        }
+
+        /**
+         * Plays a loaded sound as a one-shot on a bus (`sfx`, `ui`, `ambience` or `music`; another name uses `sfx`), flat.
+         * `pitch` is 1 for normal speed.
+         */
+        PlayOn~: (name: string, bus: string, volume: f32, pitch: f32) -> void {
+            if sound := sounds->Get(name) {
+                mixer->PlayOn(sound, BusOrEffects(bus), volume, pitch);
+            }
+        }
+
+        /**
+         * Plays a loaded sound as a one-shot at a point in the world. It is quieter with distance from the listener, full
+         * volume inside `minDistance` and silent beyond `maxDistance` (metres), and panned toward the side it is on.
+         */
+        PlayAt~: (name: string, bus: string, position: Vec3, volume: f32, pitch: f32, minDistance: f32, maxDistance: f32) -> void {
+            if sound := sounds->Get(name) {
+                mixer->PlayAt(sound, BusOrEffects(bus), position, volume, pitch, minDistance, maxDistance);
+            }
+        }
+
+        /**
+         * The bus number for a name, or the effects bus for a name that isn't one of the four a sound can play on.
+         */
+        BusOrEffects :: (bus: string) -> usize {
+            if number := lantern:::audio:::BusFromName(bus) {
+                if number != lantern:::audio:::BUS_MASTER {
+                    return number;
+                }
+            }
+            return lantern:::audio:::BUS_SFX;
+        }
+
+        /**
+         * Where a named loop is in the loop list, or null when it isn't playing. A loop that has ended since it was
+         * named counts as not playing.
+         */
+        IndexOfLoop :: (loopName: string) -> usize? {
+            for index~ usize = 0; index < loopNames.length(); index++ {
+                if loopNames[index] == loopName && mixer->IsPlaying(loopIds[index]) {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Starts a named loop, silent (level 0) when `level` is 0 so it can be faded in. Starting a name that is already
+         * playing does nothing, so a game can ask for its ambience every frame. `position` only matters when `positional`
+         * is true. Returns false when the sound isn't loaded.
+         */
+        StartLoop~: (loopName: string, soundName: string, bus: string, volume: f32, level: f32, positional: bool, position: Vec3, minDistance: f32, maxDistance: f32) -> bool {
+            if IndexOfLoop(loopName) != null {
+                return true;
+            }
+            guard sound := sounds->Get(soundName) return false;
+            id: i64 = mixer->StartLoop(sound, BusOrEffects(bus), volume, level, positional, position, minDistance, maxDistance);
+            if id == 0 {
+                return false;
+            }
+            for index~ usize = 0; index < loopNames.length(); index++ {
+                if loopNames[index] == loopName {
+                    loopIds[index] = id;
+                    return true;
+                }
+            }
+            loopNames.push(`${loopName}`);
+            loopIds.push(id);
+            return true;
+        }
+
+        /**
+         * Fades a named loop to `level` (0 to 1) over `seconds`. A name that isn't playing does nothing.
+         */
+        FadeLoop~: (loopName: string, level: f32, seconds: f32) -> void {
+            if index := IndexOfLoop(loopName) {
+                mixer->FadeVoice(loopIds[index], level, seconds);
+            }
+        }
+
+        /**
+         * Moves a positional loop (an emitter).
+         */
+        MoveLoop~: (loopName: string, position: Vec3) -> void {
+            if index := IndexOfLoop(loopName) {
+                mixer->MoveVoice(loopIds[index], position);
+            }
+        }
+
+        /**
+         * Stops a named loop, fading out over `seconds` first (0 stops at once).
+         */
+        StopLoop~: (loopName: string, seconds: f32) -> void {
+            if index := IndexOfLoop(loopName) {
+                mixer->StopVoice(loopIds[index], seconds);
+            }
+        }
+
+        /**
+         * Stops every named loop, fading out over `seconds` (0 stops at once), and forgets the names. The engine calls it with 0
+         * when a game reloads, so a loop the old game started doesn't play on under the new one.
+         */
+        StopAllLoops~: (seconds: f32) -> void {
+            for index~ usize = 0; index < loopIds.length(); index++ {
+                mixer->StopVoice(loopIds[index], seconds);
+            }
+            loopNames.freeAll();
+            loopNames = [];
+            loopIds.clear();
+        }
+
+        /**
+         * The level a named loop is at now (0 when it isn't playing).
+         */
+        LoopLevel :: (loopName: string) -> f32 {
+            if index := IndexOfLoop(loopName) {
+                return mixer->LevelOf(loopIds[index]);
+            }
+            return 0.0f;
+        }
+
+        /**
+         * True while a named loop is playing.
+         */
+        IsLoopPlaying :: (loopName: string) -> bool {
+            return IndexOfLoop(loopName) != null;
         }
 
         /**

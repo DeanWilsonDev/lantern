@@ -1,0 +1,49 @@
+lantern :: import lantern;
+
+LastSample :: (mixer: lantern:::audio:::Mixer~*, frames: usize) -> f32 {
+    block: Array<f32>! = mixer->Mix(frames);
+    last: f32 = block[block.length() - 2];
+    delete block;
+    return last;
+}
+
+main :: () -> i32 {
+    mixer := lantern:::testing:::QuietMixer();
+    defer delete mixer;
+    origin := Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+    wind := lantern:::testing:::AddConstant(mixer, 0.4f, 100);
+    rain := lantern:::testing:::AddConstant(mixer, 0.4f, 100);
+
+    windId: i64 = mixer->StartLoop(wind, lantern:::audio:::BUS_AMBIENCE, 1.0f, 0.0f, false, origin, 2.0f, 30.0f);
+    assert(windId != 0, "a loop starts");
+    assert(LastSample(mixer, 480) == 0.0f, "a loop that starts at level zero is silent");
+
+    mixer->FadeVoice(windId, 1.0f, 1.0f);
+    halfway: f32 = LastSample(mixer, 24000);
+    assert(halfway > 0.15f && halfway < 0.3f, "half a second into a one-second fade it is about half as loud");
+    full: f32 = LastSample(mixer, 24000);
+    assert(full > 0.35f, "after the fade it is at full level");
+    assert(mixer->LevelOf(windId) == 1.0f, "the level reaches its target");
+
+    rainId: i64 = mixer->StartLoop(rain, lantern:::audio:::BUS_AMBIENCE, 1.0f, 0.0f, false, origin, 2.0f, 30.0f);
+    mixer->FadeVoice(rainId, 1.0f, 0.5f);
+    mixer->FadeVoice(windId, 0.0f, 0.5f);
+    during: f32 = LastSample(mixer, 12000);
+    assert(during > 0.3f, "while one fades out and the other in the total stays steady");
+    LastSample(mixer, 24000);
+    assert(mixer->LevelOf(windId) == 0.0f && mixer->LevelOf(rainId) == 1.0f, "the crossfade ends with one layer");
+
+    mixer->StopVoice(windId, 0.2f);
+    LastSample(mixer, 24000);
+    assert(!mixer->IsPlaying(windId), "a voice faded to nothing after a stop is freed");
+    assert(mixer->IsPlaying(rainId), "the other loop plays on");
+    mixer->StopVoice(rainId, 0.0f);
+    assert(!mixer->IsPlaying(rainId), "a stop with no fade frees at once");
+
+    stale: i64 = mixer->StartLoop(wind, lantern:::audio:::BUS_AMBIENCE, 1.0f, 1.0f, false, origin, 2.0f, 30.0f);
+    mixer->RemoveSound(wind);
+    LastSample(mixer, 100);
+    assert(!mixer->IsPlaying(stale), "unloading a sound ends its loops");
+    print("loops fade, crossfade and stop when silent");
+    return 0;
+}

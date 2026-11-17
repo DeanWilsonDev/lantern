@@ -1,0 +1,178 @@
+FootstepWalker :: import FootstepWalker;
+Math :: import standard:::Math;
+
+// Footsteps for everyone who walks: the player, the partner and the route-following companion. Each gets a walker that
+// counts how far its feet have travelled on the ground; every stride it plays one footfall, at the feet, so the
+// engine pans and softens it against the camera (docs/audio.md).
+//
+// Why distance and not the animation: the character animator (docs/animation.md) has no events yet, and a step per
+// stride of ground covered is what a footstep means anyway. A faster walker has a longer stride, so running sounds
+// like running and not like a faster shuffle. When the animator gains foot-plant events, a walker's stride is the
+// only thing that changes.
+//
+// What the footfall sounds like depends on the surface under the feet (SurfaceAt):
+// - the level's own surface: the spawn's `surface` property, else its chapter's (CHAPTER_SURFACES below);
+// - a patch: any "block" entity with a `surface` property ("stone", "metal", "wood", "wet", "grass") covers the ground
+//   within its `surface_radius` (3.5 m if none) in the flat plane, and 3 m up or down;
+// - rain: in a wet chapter every fourth footfall lands in a puddle ("wet"), spread by the step count so it is the same
+//   every run.
+// Each footfall is the sound `footstep_<surface>`; a file at sounds/footstep_<surface>.wav replaces the generated one.
+FootstepSystem :: class {
+public:
+    // Puts the surfaces back for a new level. `defaultSurface` is the spawn's `surface` property ("" if none).
+    Start~: (defaultSurface: string, chapter: i32) -> void {
+        surface = defaultSurface == "" ? ChapterSurface(chapter) : defaultSurface;
+        isWetWorld = chapter == 1 || chapter == 2;
+        patchCenters = [];
+        patchRadii = [];
+        patchSurfaces = [];
+        for block: i64 in lantern:::world:::FindByKind("block") {
+            if lantern:::world:::HasProperty(block, "surface") {
+                patchCenters.add(lantern:::world:::WorldPosition(block));
+                patchRadii.add(lantern:::world:::HasProperty(block, "surface_radius") ? lantern:::world:::NumberProperty(block, "surface_radius") : PATCH_RADIUS);
+                patchSurfaces.add(lantern:::world:::TextProperty(block, "surface"));
+            }
+        }
+        stepCount = 0;
+        player = { };
+        partner = { };
+        companion = { };
+    }
+
+    // The surface at `feet`: the nearest patch that covers it, else the level's own.
+    SurfaceAt :: (feet: lantern:::math:::Vec3) -> string {
+        best~ string = surface;
+        bestDistance~ f32 = 1000000.0f;
+        for index~ i32 = 0; index < patchCenters.length(); index += 1 {
+            center := patchCenters[index];
+            flat := (feet - center).Horizontal().Length();
+            height := Math:::abs(feet.y - center.y);
+            if flat <= patchRadii[index] && height <= PATCH_HEIGHT && flat < bestDistance {
+                best = patchSurfaces[index];
+                bestDistance = flat;
+            }
+        }
+        return best;
+    }
+
+    // One fixed step for the player. `isGrounded` is false while climbing, swinging or falling.
+    StepPlayer~: (feet: lantern:::math:::Vec3, isGrounded: bool, dt: f32) -> void {
+        player = Advance(player, feet, isGrounded, dt, PLAYER_LOUDNESS);
+    }
+
+    // One fixed step for the partner, who is only heard while present.
+    StepPartner~: (feet: lantern:::math:::Vec3, isGrounded: bool, dt: f32) -> void {
+        partner = Advance(partner, feet, isGrounded, dt, PARTNER_LOUDNESS);
+    }
+
+    // One fixed step for the route-following companion, whose script doesn't say when her feet are on the ground: she
+    // counts as grounded while she isn't rising or falling.
+    StepCompanion~: (feet: lantern:::math:::Vec3, dt: f32) -> void {
+        isLevel := companion.hasLast && Math:::abs(feet.y - companion.last.y) < LEVEL_RISE_PER_STEP;
+        companion = Advance(companion, feet, isLevel, dt, PARTNER_LOUDNESS);
+    }
+
+    // Forget where everyone was, so a teleport (a restart, a checkpoint) isn't taken for a run.
+    Reset~: () -> void {
+        player = { };
+        partner = { };
+        companion = { };
+    }
+
+    // The surface the last footfall was on, and how many have played: for the debug HUD and tests.
+    lastSurface~ string = "";
+    stepCount~ i32 = 0;
+
+private:
+    static PATCH_RADIUS :: 3.5f;
+    static PATCH_HEIGHT :: 3.0f;
+    static PLAYER_LOUDNESS :: 1.0f;
+    static PARTNER_LOUDNESS :: 0.8f;
+    static LEVEL_RISE_PER_STEP :: 0.03f;
+    static TELEPORT_DISTANCE :: 1.5f;     // metres in one fixed step: nobody walks that fast, so it was a jump of place
+    static SHORTEST_STRIDE :: 1.1f;       // metres between footfalls when walking slowly
+    static LONGEST_STRIDE :: 1.9f;        // metres between footfalls at a full run
+    static RUN_SPEED :: 6.0f;             // metres per second that counts as a full run
+    static MINIMUM_SPEED :: 0.4f;         // below this the feet aren't stepping
+    static PUDDLE_EVERY :: 4;
+
+    surface~ string = "stone";
+    isWetWorld~ bool = false;
+    patchCenters~ Array<lantern:::math:::Vec3> = [];
+    patchRadii~ Array<f32> = [];
+    patchSurfaces~ Array<string> = [];
+    player~ FootstepWalker = { };
+    partner~ FootstepWalker = { };
+    companion~ FootstepWalker = { };
+
+    // What surface a chapter's streets are, with no property to say: the wet streets are stone, the rooftops sheet metal.
+    ChapterSurface :: (chapter: i32) -> string {
+        return when chapter <i32> {
+            2 -> "metal",
+            3 -> "metal",
+            4 -> "metal",
+            default -> "stone"
+        };
+    }
+
+    // Moves a walker on by one step. Returns it as it is after: where its feet are now and how far they have gone since the
+    // last footfall. A footfall plays when the stride is used up.
+    Advance~: (walker: FootstepWalker, feet: lantern:::math:::Vec3, isGrounded: bool, dt: f32, loudness: f32) -> FootstepWalker {
+        result~ FootstepWalker = walker;
+        moved := walker.hasLast ? (feet - walker.last).Horizontal().Length() : 0.0f;
+        result.hasLast = true;
+        result.last = feet;
+        result.wasGrounded = isGrounded;
+        if !isGrounded || moved > TELEPORT_DISTANCE {
+            result.stride = 0.0f;
+            return result;
+        }
+        speed := moved / dt;
+        if speed < MINIMUM_SPEED {
+            result.stride = 0.0f;
+            return result;
+        }
+        // The first step after landing or setting off comes sooner, as a real first step does.
+        if !walker.wasGrounded || walker.stride == 0.0f {
+            result.stride = StrideFor(speed) * 0.5f;
+        }
+        result.stride += moved;
+        if result.stride >= StrideFor(speed) {
+            result.stride = result.stride - StrideFor(speed);
+            result.isRightFoot = !walker.isRightFoot;
+            Footfall(feet, speed, result.isRightFoot, loudness);
+        }
+        return result;
+    }
+
+    // The distance between footfalls at `speed`: short when strolling, long at a run.
+    StrideFor :: (speed: f32) -> f32 {
+        return SHORTEST_STRIDE + (LONGEST_STRIDE - SHORTEST_STRIDE) * Math:::clamp(speed / RUN_SPEED, 0.0f, 1.0f);
+    }
+
+    // Plays one footfall at `feet`. A harder step is louder; each footfall gets a little change of pitch and loudness
+    // from the step count, so a run of footsteps doesn't sound like one sample repeated.
+    Footfall~: (feet: lantern:::math:::Vec3, speed: f32, isRightFoot: bool, loudness: f32) -> void {
+        stepCount += 1;
+        here~ string = SurfaceAt(feet);
+        if isWetWorld && stepCount % PUDDLE_EVERY == 0 && here == surface {
+            here = "wet";
+        }
+        lastSurface = here;
+        effort := Math:::clamp(speed / RUN_SPEED, 0.0f, 1.0f);
+        luck := Pseudo(stepCount);
+        volume := (0.35f + 0.4f * effort) * loudness * (0.9f + 0.2f * luck);
+        pitch := (isRightFoot ? 1.03f : 0.97f) * (0.94f + 0.12f * Pseudo(stepCount * 7 + 3));
+        lantern:::audio:::PlayAt(`footstep_${here}`, "sfx", feet, volume, pitch, MIN_HEARD, MAX_HEARD);
+    }
+
+    // The metres a footfall is at full volume, and the distance beyond which it can't be heard.
+    static MIN_HEARD :: 2.0f;
+    static MAX_HEARD :: 22.0f;
+
+    // A repeatable number from 0 to 1 for a step number: the same every run, which keeps tests and recordings steady.
+    Pseudo :: (number: i32) -> f32 {
+        mixed := (number * 1103 + 12345) % 1000;
+        return f32(mixed) / 1000.0f;
+    }
+}
