@@ -1,8 +1,59 @@
 lantern:::audio :: namespace {
     /**
-     * The most sound effects that can play at once. Starting a 33rd drops the oldest one.
+     * The most voices that can play at once, loops included. Starting another when all are busy drops the oldest
+     * one-shot sound; when only loops are left the new sound is ignored.
      */
-    MAX_VOICES: usize : 32;
+    MAX_VOICES: usize : 64;
+
+    /**
+     * The buses, as numbers. A bus is a group of sounds with one volume knob: the music, the ambience beds, sound
+     * effects (footsteps, jumps) and the interface. Master sits over all four.
+     */
+    BUS_MUSIC: usize : 0;
+    BUS_AMBIENCE: usize : 1;
+    BUS_SFX: usize : 2;
+    BUS_UI: usize : 3;
+    BUS_MASTER: usize : 4;
+    BUS_COUNT: usize : 5;
+
+    /**
+     * The bus called `name` (`master`, `music`, `ambience`, `sfx` or `ui`), or null.
+     */
+    BusFromName :: (name: string) -> usize? {
+        if name == "master" {
+            return BUS_MASTER;
+        }
+        if name == "music" {
+            return BUS_MUSIC;
+        }
+        if name == "ambience" {
+            return BUS_AMBIENCE;
+        }
+        if name == "sfx" {
+            return BUS_SFX;
+        }
+        if name == "ui" {
+            return BUS_UI;
+        }
+        return null;
+    }
+
+    /**
+     * `bus` limited to the four a sound can play on (not master).
+     */
+    ClampBus :: (bus: usize) -> usize {
+        if bus > BUS_UI {
+            return BUS_UI;
+        }
+        return bus;
+    }
+
+    /**
+     * How far from a listener a sound is at full volume (`minDistance`), and how far it is silent (`maxDistance`),
+     * unless a sound says otherwise. Metres.
+     */
+    DEFAULT_MIN_DISTANCE: f32 : 2.0f;
+    DEFAULT_MAX_DISTANCE: f32 : 30.0f;
 
     /**
      * A marker type. A `Handle<SoundTag>` is the handle a game holds for a loaded sound; the type parameter stops it
@@ -17,21 +68,39 @@ lantern:::audio :: namespace {
     SoundSlot :: struct { }
 
     /**
-     * The three volume knobs, each from 0 to 1. Effects play at master times effects, music at master times music.
+     * Where the listener is: the camera's position and the way it faces. Positional sounds are heard relative to this.
      */
-    Volumes :: struct {
-        master~ f32 = 0.8f;
-        music~ f32 = 0.5f;
-        effects~ f32 = 0.9f;
+    Listener :: struct {
+        position~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+        forward~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+        right~ Vec3 = Vec3 { x: 1.0f, y: 0.0f, z: 0.0f };
     }
 
     /**
-     * One sound being played: which sound, how many frames of it have been played, and its own volume.
+     * One sound being played. `cursor` is how far through it we are (in frames, fractional because `pitch` can speed
+     * it up or slow it down). `volume` is the voice's own loudness; `level` is a second knob that fades toward
+     * `targetLevel` by `levelPerSecond` each second, which is how layers fade in and out and crossfade. A voice with an
+     * `id` can be found again to move, fade or stop it; id 0 is a fire-and-forget one-shot. `lastLeft` and `lastRight`
+     * are the gains used at the end of the previous block, so each block ramps from there rather than jumping.
      */
     Voice :: struct {
         sound~ lantern:::core:::Handle<SoundTag> = lantern:::core:::Handle<SoundTag> { };
-        frame~ usize = 0;
+        id~ i64 = 0;
+        bus~ usize = 2;
+        cursor~ f64 = 0.0f;
         volume~ f32 = 1.0f;
+        pitch~ f32 = 1.0f;
+        looping~ bool = false;
+        level~ f32 = 1.0f;
+        targetLevel~ f32 = 1.0f;
+        levelPerSecond~ f32 = 0.0f;
+        stopWhenSilent~ bool = false;
+        positional~ bool = false;
+        position~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+        minDistance~ f32 = 2.0f;
+        maxDistance~ f32 = 30.0f;
+        lastLeft~ f32 = -1.0f;
+        lastRight~ f32 = -1.0f;
     }
 
     /**
@@ -52,9 +121,53 @@ lantern:::audio :: namespace {
     }
 
     /**
-     * Plays loaded sounds and music into one stereo stream. It has no idea where the audio goes: the SDL layer
+     * How loud a positional sound is at `distance`: 1 inside `minDistance`, 0 beyond `maxDistance`, and between them
+     * a smooth fall (the square of a straight line from 1 to 0, which drops quickly at first the way real sound does).
+     */
+    DistanceGain :: (distance: f32, minDistance: f32, maxDistance: f32) -> f32 {
+        if distance <= minDistance {
+            return 1.0f;
+        }
+        if distance >= maxDistance {
+            return 0.0f;
+        }
+        fraction: f32 = (distance - minDistance) / (maxDistance - minDistance);
+        remaining: f32 = 1.0f - fraction;
+        return remaining * remaining;
+    }
+
+    /**
+     * The left and right gains for a sound at `pan`, from -1 (all left) to 1 (all right). Equal-power: the two squares
+     * always add to 1, so a sound doesn't get quieter as it crosses the middle. Returned as `x` left, `y` right.
+     */
+    PanGains :: (pan: f32) -> Vec2 {
+        clamped: f32 = Math:::clamp(pan, -1.0f, 1.0f);
+        angle: f32 = (clamped + 1.0f) * Math:::PI * 0.25f;
+        return Vec2 { x: Math:::cos(angle), y: Math:::sin(angle) };
+    }
+
+    /**
+     * How far left or right of the listener a point is, from -1 to 1: the sideways part of the direction to it. Straight
+     * ahead or behind is 0, hard left or right is -1 or 1. A point on top of the listener is 0.
+     */
+    PanOf :: (listener: Listener, point: Vec3) -> f32 {
+        offset := Vec3 { x: point.x - listener.position.x, y: point.y - listener.position.y, z: point.z - listener.position.z };
+        length: f32 = Math:::sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+        if length < 0.0001f {
+            return 0.0f;
+        }
+        sideways: f32 = (offset.x * listener.right.x + offset.y * listener.right.y + offset.z * listener.right.z) / length;
+        return Math:::clamp(sideways, -1.0f, 1.0f);
+    }
+
+    /**
+     * Plays loaded sounds into one stereo stream through five buses. It has no idea where the audio goes: the SDL layer
      * asks it for N frames with Mix and sends them to the device. Sounds are resampled to the device's rate when
      * added, so mixing is plain addition.
+     *
+     * A voice is a one-shot (plays once and frees itself) or a loop (plays until stopped). Either can be positional,
+     * heard from a point in the world relative to the listener, or flat. Loops have a fading `level`, which is what
+     * ambience layers and music stems use.
      */
     Mixer :: class {
     public:
@@ -62,23 +175,97 @@ lantern:::audio :: namespace {
         slots~ lantern:::core:::Pool<SoundSlot>*!;
         sounds~ Array<SoundData*!>! = [];
         voices~ Array<Voice>! = [];
-        music~ Voice? = null;
-        volumes~ Volumes = Volumes { };
+        busVolumes~ Array<f32>! = [];
+        busMuted~ Array<bool>! = [];
+        listener~ Listener = Listener { };
+        nextVoiceId~ i64 = 1;
+        musicId~ i64 = 0;
+        musicSound~ lantern:::core:::Handle<SoundTag> = lantern:::core:::Handle<SoundTag> { };
         framesMixed~ u64 = 0;
 
         Mixer~: (rate: u32) {
             sampleRate = rate;
             slots = new lantern:::core:::Pool<SoundSlot>();
+            defaults: f32[5] = [0.5f, 0.6f, 0.9f, 0.9f, 0.8f];
+            for index~ usize = 0; index < BUS_COUNT; index++ {
+                busVolumes.push(defaults[index]);
+                busMuted.push(false);
+            }
         }
 
         !Mixer~: () {
             delete slots;
             sounds.freeAll();
             delete voices;
+            delete busVolumes;
+            delete busMuted;
         }
 
         SampleRate :: () -> u32 {
             return sampleRate;
+        }
+
+        /**
+         * Sets a bus's volume, 0 to 1. A bus number out of range is ignored.
+         */
+        SetBusVolume~: (bus: usize, volume: f32) -> void {
+            if bus < BUS_COUNT {
+                busVolumes[bus] = Math:::clamp(volume, 0.0f, 1.0f);
+            }
+        }
+
+        /**
+         * A bus's volume (0 for a bus number out of range).
+         */
+        BusVolume :: (bus: usize) -> f32 {
+            if bus < BUS_COUNT {
+                return busVolumes[bus];
+            }
+            return 0.0f;
+        }
+
+        /**
+         * Mutes or unmutes a bus without losing its volume setting.
+         */
+        SetBusMuted~: (bus: usize, muted: bool) -> void {
+            if bus < BUS_COUNT {
+                busMuted[bus] = muted;
+            }
+        }
+
+        BusMuted :: (bus: usize) -> bool {
+            if bus < BUS_COUNT {
+                return busMuted[bus];
+            }
+            return false;
+        }
+
+        /**
+         * What a bus lets through right now: its volume times master's, or 0 when it or master is muted.
+         */
+        BusGain :: (bus: usize) -> f32 {
+            if busMuted[bus] || busMuted[BUS_MASTER] {
+                return 0.0f;
+            }
+            if bus == BUS_MASTER {
+                return busVolumes[BUS_MASTER];
+            }
+            return busVolumes[bus] * busVolumes[BUS_MASTER];
+        }
+
+        /**
+         * Puts the listener at `position`, facing `forward` with `up` overhead. The right-hand direction is worked out
+         * from the two. Call it each frame with the camera.
+         */
+        SetListener~: (position: Vec3, forward: Vec3, up: Vec3) -> void {
+            facing: Vec3 = lantern:::core:::NormalizeOr3(forward, Vec3 { x: 0.0f, y: 0.0f, z: -1.0f });
+            side := Vec3 {
+                x: facing.y * up.z - facing.z * up.y,
+                y: facing.z * up.x - facing.x * up.z,
+                z: facing.x * up.y - facing.y * up.x
+            };
+            right: Vec3 = lantern:::core:::NormalizeOr3(side, Vec3 { x: 1.0f, y: 0.0f, z: 0.0f });
+            listener = Listener { position: position, forward: facing, right: right };
         }
 
         /**
@@ -118,11 +305,6 @@ lantern:::audio :: namespace {
             }
             delete voices;
             voices = kept!;
-            if playing := music {
-                if playing.sound == sound {
-                    music = null;
-                }
-            }
             if !Contains(sound) {
                 return;
             }
@@ -134,51 +316,185 @@ lantern:::audio :: namespace {
         }
 
         /**
-         * Starts a sound effect at `volume` (0 to 1) on top of what is playing. An unknown handle logs a warning and
-         * plays nothing. When all voices are busy the oldest is dropped.
+         * Adds a voice, making room first when all are busy. Returns false (and plays nothing) when the sound isn't
+         * loaded or there is no room.
          */
-        Play~: (sound: lantern:::core:::Handle<SoundTag>, volume: f32) -> void {
-            if !Contains(sound) {
-                name: string! = HandleText(sound);
+        Start~: (voice: Voice) -> bool {
+            if !Contains(voice.sound) {
+                name: string! = HandleText(voice.sound);
                 message: string! = `play: unknown sound ${name}`;
                 lantern:::core:::LogWarn("audio", message);
                 delete message;
                 delete name;
-                return;
+                return false;
             }
             if voices.length() >= MAX_VOICES {
-                voices.remove(0);
+                dropped~ bool = false;
+                for index~ usize = 0; !dropped && index < voices.length(); index++ {
+                    if !voices[index].looping {
+                        voices.remove(index);
+                        dropped = true;
+                    }
+                }
+                if !dropped {
+                    return false;
+                }
             }
-            voices.push(Voice { sound: sound, frame: 0, volume: volume });
+            voices.push(voice);
+            return true;
         }
 
         /**
-         * Starts looping music. Asking for the track already playing does nothing, so a game can call it every time
-         * a level loads without restarting the song.
+         * Starts a sound effect at `volume` (0 to 1) on the effects bus, flat (not positional). An unknown handle logs a
+         * warning and plays nothing.
          */
-        PlayMusic~: (sound: lantern:::core:::Handle<SoundTag>) -> void {
-            if playing := music {
-                if playing.sound == sound {
-                    return;
+        Play~: (sound: lantern:::core:::Handle<SoundTag>, volume: f32) -> void {
+            Start(Voice { sound: sound, bus: BUS_SFX, volume: volume });
+        }
+
+        /**
+         * Starts a one-shot on `bus`, flat. `pitch` is 1 for normal speed, 2 for an octave up.
+         */
+        PlayOn~: (sound: lantern:::core:::Handle<SoundTag>, bus: usize, volume: f32, pitch: f32) -> void {
+            Start(Voice { sound: sound, bus: ClampBus(bus), volume: volume, pitch: Math:::clamp(pitch, 0.25f, 4.0f) });
+        }
+
+        /**
+         * Starts a one-shot at a point in the world, on `bus`. It is quieter with distance and panned toward the side
+         * of the listener it is on.
+         */
+        PlayAt~: (sound: lantern:::core:::Handle<SoundTag>, bus: usize, position: Vec3, volume: f32, pitch: f32, minDistance: f32, maxDistance: f32) -> void {
+            Start(Voice {
+                sound: sound,
+                bus: ClampBus(bus),
+                volume: volume,
+                pitch: Math:::clamp(pitch, 0.25f, 4.0f),
+                positional: true,
+                position: position,
+                minDistance: minDistance,
+                maxDistance: Math:::max(maxDistance, minDistance + 0.01f)
+            });
+        }
+
+        /**
+         * Starts a loop and returns its id (0 when it couldn't start). It plays at `volume` and begins at `level`
+         * (0 for silent, to be faded in). Use `FadeVoice` to change the level, `MoveVoice` to move a positional one and
+         * `StopVoice` to end it.
+         */
+        StartLoop~: (sound: lantern:::core:::Handle<SoundTag>, bus: usize, volume: f32, level: f32, positional: bool, position: Vec3, minDistance: f32, maxDistance: f32) -> i64 {
+            id: i64 = nextVoiceId;
+            started: bool = Start(Voice {
+                sound: sound,
+                id: id,
+                bus: ClampBus(bus),
+                volume: volume,
+                looping: true,
+                level: level,
+                targetLevel: level,
+                positional: positional,
+                position: position,
+                minDistance: minDistance,
+                maxDistance: Math:::max(maxDistance, minDistance + 0.01f)
+            });
+            if !started {
+                return 0;
+            }
+            nextVoiceId += 1;
+            return id;
+        }
+
+        /**
+         * The position of the voice with this id in the voice list, or null when there isn't one (it ended or was never
+         * started).
+         */
+        IndexOfVoice :: (id: i64) -> usize? {
+            if id == 0 {
+                return null;
+            }
+            for index~ usize = 0; index < voices.length(); index++ {
+                if voices[index].id == id {
+                    return index;
                 }
             }
-            music = Voice { sound: sound, frame: 0, volume: 1.0f };
+            return null;
+        }
+
+        /**
+         * True while the voice with this id is playing.
+         */
+        IsPlaying :: (id: i64) -> bool {
+            return IndexOfVoice(id) != null;
+        }
+
+        /**
+         * The voice's current level (0 when there is no such voice).
+         */
+        LevelOf :: (id: i64) -> f32 {
+            guard index := IndexOfVoice(id) return 0.0f;
+            return voices[index].level;
+        }
+
+        /**
+         * Fades a voice's level to `level` over `seconds` (immediately when `seconds` is 0 or less).
+         */
+        FadeVoice~: (id: i64, level: f32, seconds: f32) -> void {
+            guard index := IndexOfVoice(id) return;
+            target: f32 = Math:::clamp(level, 0.0f, 1.0f);
+            voices[index].targetLevel = target;
+            if seconds <= 0.0f {
+                voices[index].level = target;
+                voices[index].levelPerSecond = 0.0f;
+                return;
+            }
+            voices[index].levelPerSecond = Math:::abs(target - voices[index].level) / seconds;
+        }
+
+        /**
+         * Moves a positional voice. It takes effect from the next block, ramped, so a moving source doesn't click.
+         */
+        MoveVoice~: (id: i64, position: Vec3) -> void {
+            guard index := IndexOfVoice(id) return;
+            voices[index].position = position;
+        }
+
+        /**
+         * Stops a voice: now when `seconds` is 0 or less, otherwise by fading out over that long and then freeing it.
+         */
+        StopVoice~: (id: i64, seconds: f32) -> void {
+            guard index := IndexOfVoice(id) return;
+            if seconds <= 0.0f {
+                voices.remove(index);
+                return;
+            }
+            FadeVoice(id, 0.0f, seconds);
+            voices[index].stopWhenSilent = true;
+        }
+
+        /**
+         * Starts looping music on the music bus. Asking for the track already playing does nothing, so a game can call it
+         * every time a level loads without restarting the song.
+         */
+        PlayMusic~: (sound: lantern:::core:::Handle<SoundTag>) -> void {
+            if IsPlaying(musicId) && musicSound == sound {
+                return;
+            }
+            StopVoice(musicId, 0.0f);
+            musicSound = sound;
+            musicId = StartLoop(sound, BUS_MUSIC, 1.0f, 1.0f, false, Vec3 { x: 0.0f, y: 0.0f, z: 0.0f }, DEFAULT_MIN_DISTANCE, DEFAULT_MAX_DISTANCE);
         }
 
         /**
          * Stops the music.
          */
         StopMusic~: () -> void {
-            music = null;
+            StopVoice(musicId, 0.0f);
+            musicId = 0;
         }
 
         /**
-         * How many sounds are playing, music included. The debug HUD shows it.
+         * How many voices are playing, loops and music included. The debug HUD shows it.
          */
         ActiveVoiceCount :: () -> usize {
-            if music != null {
-                return voices.length() + 1;
-            }
             return voices.length();
         }
 
@@ -190,59 +506,118 @@ lantern:::audio :: namespace {
         }
 
         /**
-         * Produces the next `frames` stereo frames as interleaved left and right samples. Each effect voice is added in
-         * and advanced, and dropped when it reaches its end; the music loops. The sum goes through SoftClip last.
+         * The gains a voice wants at the end of a block, as `x` left and `y` right: its volume, its level, its bus, and for a
+         * positional voice the distance and the pan. A flat voice gets the same gain in both ears.
+         */
+        TargetGains :: (voice: Voice, level: f32) -> Vec2 {
+            base: f32 = voice.volume * level * BusGain(voice.bus);
+            if !voice.positional {
+                return Vec2 { x: base, y: base };
+            }
+            offset := Vec3 {
+                x: voice.position.x - listener.position.x,
+                y: voice.position.y - listener.position.y,
+                z: voice.position.z - listener.position.z
+            };
+            distance: f32 = Math:::sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
+            spatial: f32 = base * DistanceGain(distance, voice.minDistance, voice.maxDistance);
+            pan: Vec2 = PanGains(PanOf(listener, voice.position));
+            return Vec2 { x: spatial * pan.x, y: spatial * pan.y };
+        }
+
+        /**
+         * Produces the next `frames` stereo frames as interleaved left and right samples. Every voice is added in: its
+         * gains ramp across the block from where the last block ended, it steps through its sound at its pitch, a loop wraps
+         * and a one-shot ends. Voices that have ended, or faded to nothing after a `StopVoice`, are removed. The sum goes
+         * through SoftClip last.
          */
         Mix~: (frames: usize) -> Array<f32>! {
             output~ Array<f32>! = [];
             for index~ usize = 0; index < frames * 2; index++ {
                 output.push(0.0f);
             }
-            effectsGain: f32 = volumes.master * volumes.effects;
-            musicGain: f32 = volumes.master * volumes.music;
+            blockSeconds: f32 = f32(frames) / f32(sampleRate);
             kept~ Array<Voice>! = [];
             for voice in voices {
-                if Contains(voice.sound) {
-                    sound: SoundData* = sounds[usize(voice.sound.index)];
-                    frameCount: usize = sound->FrameCount();
-                    available~ usize = 0;
-                    if frameCount > voice.frame {
-                        available = frameCount - voice.frame;
-                    }
-                    count~ usize = available;
-                    if frames < count {
-                        count = frames;
-                    }
-                    gain: f32 = effectsGain * voice.volume;
-                    for frame~ usize = 0; frame < count; frame++ {
-                        source: usize = (voice.frame + frame) * 2;
-                        output[frame * 2] = output[frame * 2] + sound->samples[source] * gain;
-                        output[frame * 2 + 1] = output[frame * 2 + 1] + sound->samples[source + 1] * gain;
-                    }
-                    advanced: Voice = Voice { sound: voice.sound, frame: voice.frame + count, volume: voice.volume };
-                    if advanced.frame < frameCount {
-                        kept.push(advanced);
+                if !Contains(voice.sound) {
+                    continue;
+                }
+                sound: SoundData* = sounds[usize(voice.sound.index)];
+                frameCount: usize = sound->FrameCount();
+                if frameCount == 0 {
+                    continue;
+                }
+                next~ Voice = voice;
+                if next.level != next.targetLevel {
+                    change: f32 = next.levelPerSecond * blockSeconds;
+                    if Math:::abs(next.targetLevel - next.level) <= change {
+                        next.level = next.targetLevel;
+                    } else if next.targetLevel > next.level {
+                        next.level = next.level + change;
+                    } else {
+                        next.level = next.level - change;
                     }
                 }
+                gains: Vec2 = TargetGains(next, next.level);
+                startLeft~ f32 = next.lastLeft;
+                startRight~ f32 = next.lastRight;
+                if startLeft < 0.0f {
+                    startLeft = gains.x;
+                    startRight = gains.y;
+                }
+                cursor~ f64 = next.cursor;
+                step: f64 = f64(next.pitch);
+                total: f64 = f64(frameCount);
+                ended~ bool = false;
+                for frame~ usize = 0; !ended && frame < frames; frame++ {
+                    if cursor >= total {
+                        if next.looping {
+                            cursor = cursor - total;
+                        } else {
+                            ended = true;
+                            continue;
+                        }
+                    }
+                    ramp: f32 = f32(frame + 1) / f32(frames);
+                    leftGain: f32 = startLeft + (gains.x - startLeft) * ramp;
+                    rightGain: f32 = startRight + (gains.y - startRight) * ramp;
+                    whole: usize = usize(cursor);
+                    fraction: f32 = f32(cursor - f64(whole));
+                    following~ usize = whole + 1;
+                    if following >= frameCount {
+                        if next.looping {
+                            following = 0;
+                        } else {
+                            following = frameCount - 1;
+                        }
+                    }
+                    left~ f32 = sound->samples[whole * 2] + (sound->samples[following * 2] - sound->samples[whole * 2]) * fraction;
+                    right~ f32 = sound->samples[whole * 2 + 1] + (sound->samples[following * 2 + 1] - sound->samples[whole * 2 + 1]) * fraction;
+                    if next.positional {
+                        mono: f32 = (left + right) * 0.5f;
+                        left = mono;
+                        right = mono;
+                    }
+                    output[frame * 2] = output[frame * 2] + left * leftGain;
+                    output[frame * 2 + 1] = output[frame * 2 + 1] + right * rightGain;
+                    cursor = cursor + step;
+                }
+                if ended {
+                    continue;
+                }
+                if !next.looping && cursor >= total {
+                    continue;
+                }
+                if next.stopWhenSilent && next.level <= 0.0f {
+                    continue;
+                }
+                next.cursor = cursor;
+                next.lastLeft = gains.x;
+                next.lastRight = gains.y;
+                kept.push(next);
             }
             delete voices;
             voices = kept!;
-            if playing := music {
-                if Contains(playing.sound) {
-                    sound: SoundData* = sounds[usize(playing.sound.index)];
-                    frameCount: usize = sound->FrameCount();
-                    if frameCount > 0 {
-                        musicFrame~ usize = playing.frame;
-                        for frame~ usize = 0; frame < frames; frame++ {
-                            source: usize = musicFrame * 2;
-                            output[frame * 2] = output[frame * 2] + sound->samples[source] * musicGain;
-                            output[frame * 2 + 1] = output[frame * 2 + 1] + sound->samples[source + 1] * musicGain;
-                            musicFrame = (musicFrame + 1) % frameCount;
-                        }
-                        music = Voice { sound: playing.sound, frame: musicFrame, volume: playing.volume };
-                    }
-                }
-            }
             for index~ usize = 0; index < output.length(); index++ {
                 output[index] = SoftClip(output[index]);
             }

@@ -1,0 +1,42 @@
+lantern :: import lantern;
+
+LevelOf :: (mixer: lantern:::audio:::Mixer~*, bus: usize) -> f32 {
+    beep := lantern:::testing:::AddConstant(mixer, 0.5f, 4000);
+    mixer->PlayOn(beep, bus, 1.0f, 1.0f);
+    block: Array<f32>! = mixer->Mix(100);
+    level: f32 = block[20];
+    delete block;
+    mixer->RemoveSound(beep);
+    return level;
+}
+
+main :: () -> i32 {
+    mixer := lantern:::testing:::QuietMixer();
+    defer delete mixer;
+    full: f32 = LevelOf(mixer, lantern:::audio:::BUS_SFX);
+    assert(full > 0.4f, "a half-scale constant is audible on the effects bus");
+
+    mixer->SetBusVolume(lantern:::audio:::BUS_SFX, 0.5f);
+    half: f32 = LevelOf(mixer, lantern:::audio:::BUS_SFX);
+    assert(half < full * 0.6f && half > full * 0.4f, "half the bus volume is about half the level");
+
+    mixer->SetBusVolume(lantern:::audio:::BUS_SFX, 1.0f);
+    mixer->SetBusVolume(lantern:::audio:::BUS_UI, 0.0f);
+    assert(LevelOf(mixer, lantern:::audio:::BUS_UI) == 0.0f, "a zero ui bus is silent");
+    assert(LevelOf(mixer, lantern:::audio:::BUS_SFX) > 0.4f, "other buses are unaffected");
+
+    mixer->SetBusMuted(lantern:::audio:::BUS_SFX, true);
+    assert(LevelOf(mixer, lantern:::audio:::BUS_SFX) == 0.0f, "a muted bus is silent");
+    assert(mixer->BusVolume(lantern:::audio:::BUS_SFX) == 1.0f, "muting keeps the volume setting");
+    mixer->SetBusMuted(lantern:::audio:::BUS_SFX, false);
+
+    mixer->SetBusVolume(lantern:::audio:::BUS_MASTER, 0.0f);
+    assert(LevelOf(mixer, lantern:::audio:::BUS_SFX) == 0.0f, "master at zero silences every bus");
+    mixer->SetBusVolume(lantern:::audio:::BUS_MASTER, 5.0f);
+    assert(mixer->BusVolume(lantern:::audio:::BUS_MASTER) == 1.0f, "volumes are limited to 1");
+    assert(lantern:::audio:::BusFromName("ambience") != null, "buses can be found by name");
+    unknown := lantern:::audio:::BusFromName("echo");
+    assert(unknown == null, "an unknown bus name is null");
+    print("buses scale, mute and sit under master");
+    return 0;
+}

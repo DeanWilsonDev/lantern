@@ -1,0 +1,477 @@
+/**
+ * Placeholder sounds made from arithmetic, so the repository holds no recorded audio and a checkout has something to
+ * hear. Every sound is built the same way: fill a buffer of mono samples with tones and noise, shape them with an
+ * envelope and a filter, then turn the buffer into a `SoundData`. The same name always gives the same samples.
+ *
+ * To use a real recording instead, put a WAV file at the path the game loads that name from (see docs/audio.md); the
+ * recipe here is only the fallback for a file that isn't there.
+ */
+lantern:::synth :: namespace {
+    /**
+     * The sample rate recipes are built at. The mixer resamples to the device's rate when a sound is added, so this
+     * only sets how much detail the sound has: 32 kHz is plenty for tones and noise.
+     */
+    RATE: u32 : 32000;
+
+    /**
+     * The seconds ambience and music loops last. Every tone in a loop is moved to a whole number of cycles per loop
+     * (see `Quantized`), so the end joins the start with no click, and every music stem has this length, so stems that
+     * start together stay together.
+     */
+    LOOP_SECONDS: f32 : 8.0f;
+
+    /**
+     * A tiny deterministic noise generator (xorshift). `Next` returns a number from -1 to 1; the same seed gives the
+     * same sequence on every machine, which keeps tests and screenshots repeatable.
+     */
+    NoiseSource :: struct {
+        state~ u32 = 2463534242;
+
+        Next ~: () -> f32 {
+            state = state ^ (state << 13);
+            state = state ^ (state >> 17);
+            state = state ^ (state << 5);
+            return f32(state >> 8) / 8388608.0f - 1.0f;
+        }
+    }
+
+    /**
+     * A buffer of `seconds` of silence: mono samples, one per frame.
+     */
+    Silence :: (seconds: f32) -> Array<f32>! {
+        buffer~ Array<f32>! = [];
+        count: usize = usize(seconds * f32(RATE));
+        for index~ usize = 0; index < count; index++ {
+            buffer.push(0.0f);
+        }
+        return buffer!;
+    }
+
+    /**
+     * `frequency` moved to the nearest one that fits a whole number of cycles in `seconds`. A tone at that
+     * frequency is at the same phase at the end of a loop as at its start.
+     */
+    Quantized :: (frequency: f32, seconds: f32) -> f32 {
+        cycles~ f32 = Math:::round(frequency * seconds);
+        if cycles < 1.0f {
+            cycles = 1.0f;
+        }
+        return cycles / seconds;
+    }
+
+    /**
+     * How loud a note is `secondsIn` after it starts: a 6 ms ramp up (so it doesn't click), then an exponential fall
+     * that loses about 63% of its level every `decaySeconds`.
+     */
+    Envelope :: (secondsIn: f32, decaySeconds: f32) -> f32 {
+        if secondsIn < 0.0f {
+            return 0.0f;
+        }
+        attack: f32 = Math:::min(secondsIn / 0.006f, 1.0f);
+        return attack * Math:::exp(-secondsIn / decaySeconds);
+    }
+
+    /**
+     * Mixes a sine tone into `buffer`, starting `startSeconds` in. The tone runs `lengthSeconds`, falling with
+     * `decaySeconds`. When it passes the end of the buffer it carries on from the start, so a note near the end of a loop
+     * rings into the beginning of the next lap.
+     */
+    AddTone :: (buffer: Array<f32~>, frequency: f32, level: f32, startSeconds: f32, lengthSeconds: f32, decaySeconds: f32) -> void {
+        total: usize = buffer.length();
+        if total == 0 {
+            return;
+        }
+        startFrame: usize = usize(startSeconds * f32(RATE));
+        count: usize = usize(lengthSeconds * f32(RATE));
+        step: f32 = Math:::TAU * frequency / f32(RATE);
+        for offset~ usize = 0; offset < count; offset++ {
+            seconds: f32 = f32(offset) / f32(RATE);
+            sample: f32 = Math:::sin(step * f32(offset)) * level * Envelope(seconds, decaySeconds);
+            slot: usize = (startFrame + offset) % total;
+            buffer[slot] = buffer[slot] + sample;
+        }
+    }
+
+    /**
+     * Mixes noise into `buffer` from `startSeconds`, for `lengthSeconds`, falling with `decaySeconds`. `noise` is
+     * advanced, so the next call gets different noise.
+     */
+    AddNoise :: (buffer: Array<f32~>, noise: NoiseSource~*, level: f32, startSeconds: f32, lengthSeconds: f32, decaySeconds: f32) -> void {
+        total: usize = buffer.length();
+        if total == 0 {
+            return;
+        }
+        startFrame: usize = usize(startSeconds * f32(RATE));
+        count: usize = usize(lengthSeconds * f32(RATE));
+        for offset~ usize = 0; offset < count; offset++ {
+            seconds: f32 = f32(offset) / f32(RATE);
+            slot: usize = (startFrame + offset) % total;
+            buffer[slot] = buffer[slot] + noise->Next() * level * Envelope(seconds, decaySeconds);
+        }
+    }
+
+    /**
+     * A copy of `source` with everything above `cutoffHz` softened (a one-pole low-pass filter). Noise through a low
+     * cutoff is a rumble or wind; through a high one it is a hiss.
+     */
+    LowPassed :: (source: Array<f32>, cutoffHz: f32) -> Array<f32>! {
+        filtered~ Array<f32>! = [];
+        smoothing: f32 = 1.0f - Math:::exp(-Math:::TAU * cutoffHz / f32(RATE));
+        previous~ f32 = 0.0f;
+        for sample in source {
+            previous = previous + (sample - previous) * smoothing;
+            filtered.push(previous);
+        }
+        return filtered!;
+    }
+
+    /**
+     * A copy of `source` with the slow part taken out: the sound minus its low-pass. What is left is the crisp
+     * top of the noise, used for hiss, rain and the edge of a footfall.
+     */
+    HighPassed :: (source: Array<f32>, cutoffHz: f32) -> Array<f32>! {
+        slow: Array<f32>! = LowPassed(source, cutoffHz);
+        crisp~ Array<f32>! = [];
+        for index~ usize = 0; index < source.length(); index++ {
+            crisp.push(source[index] - slow[index]);
+        }
+        delete slow;
+        return crisp!;
+    }
+
+    /**
+     * `source` made to loop with no seam. The last `blendSeconds` are mixed into the start, fading one out as the other
+     * fades in, then cut off, so the sample after the end is a natural continuation of the start. The result is
+     * `blendSeconds` shorter than the source.
+     */
+    Looped :: (source: Array<f32>, blendSeconds: f32) -> Array<f32>! {
+        blendFrames: usize = usize(blendSeconds * f32(RATE));
+        keep: usize = source.length() - blendFrames;
+        looped~ Array<f32>! = [];
+        for index~ usize = 0; index < keep; index++ {
+            sample~ f32 = source[index];
+            if index < blendFrames {
+                fadeIn: f32 = f32(index) / f32(blendFrames);
+                sample = source[index] * fadeIn + source[keep + index] * (1.0f - fadeIn);
+            }
+            looped.push(sample);
+        }
+        return looped!;
+    }
+
+    /**
+     * Scales `buffer` so its loudest sample is `peak`. A silent buffer stays silent.
+     */
+    Normalise :: (buffer: Array<f32~>, peak: f32) -> void {
+        loudest~ f32 = 0.0f;
+        for sample in buffer {
+            loudest = Math:::max(loudest, Math:::abs(sample));
+        }
+        if loudest < 0.00001f {
+            return;
+        }
+        scale: f32 = peak / loudest;
+        for index~ usize = 0; index < buffer.length(); index++ {
+            buffer[index] = buffer[index] * scale;
+        }
+    }
+
+    /**
+     * Turns mono samples into a sound (stereo, both channels the same), which is what the mixer stores.
+     */
+    ToSound :: (mono: Array<f32>) -> lantern:::audio:::SoundData*! {
+        sound := new lantern:::audio:::SoundData(RATE);
+        for sample in mono {
+            sound->samples.push(sample);
+            sound->samples.push(sample);
+        }
+        return sound!;
+    }
+
+    /**
+     * The surfaces a character can walk on, as footstep recipe suffixes: `footstep_stone`, `footstep_metal`,
+     * `footstep_wood`, `footstep_wet` and `footstep_grass`.
+     */
+    SURFACE_NAMES: string[5] : ["stone", "metal", "wood", "wet", "grass"];
+
+    /**
+     * One footfall on a surface. Each is a short burst of noise (the scuff) plus a low tone (the weight), shaped by what
+     * the surface is: stone is dry and hard, metal rings, wood thuds, water splashes, grass whispers.
+     */
+    Footstep :: (surface: string) -> Array<f32>! {
+        noise~ NoiseSource = NoiseSource { state: 1234567 };
+        buffer~ Array<f32>! = Silence(0.28f);
+        if surface == "metal" {
+            AddNoise(buffer, noise, 0.5f, 0.0f, 0.05f, 0.012f);
+            AddTone(buffer, 640.0f, 0.35f, 0.0f, 0.25f, 0.08f);
+            AddTone(buffer, 1130.0f, 0.2f, 0.0f, 0.25f, 0.06f);
+            AddTone(buffer, 95.0f, 0.5f, 0.0f, 0.1f, 0.03f);
+        } else if surface == "wood" {
+            AddNoise(buffer, noise, 0.3f, 0.0f, 0.05f, 0.015f);
+            AddTone(buffer, 170.0f, 0.8f, 0.0f, 0.18f, 0.045f);
+            AddTone(buffer, 340.0f, 0.2f, 0.0f, 0.1f, 0.03f);
+        } else if surface == "wet" {
+            raw~ Array<f32>! = Silence(0.28f);
+            AddNoise(raw, noise, 0.8f, 0.0f, 0.2f, 0.07f);
+            AddNoise(raw, noise, 0.4f, 0.05f, 0.15f, 0.05f);
+            bright: Array<f32>! = HighPassed(raw, 1200.0f);
+            for index~ usize = 0; index < bright.length(); index++ {
+                buffer[index] = buffer[index] + bright[index];
+            }
+            delete bright;
+            delete raw;
+            AddTone(buffer, 110.0f, 0.3f, 0.0f, 0.1f, 0.03f);
+        } else if surface == "grass" {
+            raw~ Array<f32>! = Silence(0.28f);
+            AddNoise(raw, noise, 0.8f, 0.0f, 0.25f, 0.09f);
+            soft: Array<f32>! = LowPassed(raw, 3500.0f);
+            for index~ usize = 0; index < soft.length(); index++ {
+                seconds: f32 = f32(index) / f32(RATE);
+                buffer[index] = buffer[index] + soft[index] * Math:::min(seconds / 0.015f, 1.0f);
+            }
+            delete soft;
+            delete raw;
+            AddTone(buffer, 80.0f, 0.2f, 0.0f, 0.1f, 0.03f);
+        } else {
+            raw~ Array<f32>! = Silence(0.28f);
+            AddNoise(raw, noise, 0.9f, 0.0f, 0.1f, 0.02f);
+            scuff: Array<f32>! = LowPassed(raw, 2200.0f);
+            for index~ usize = 0; index < scuff.length(); index++ {
+                buffer[index] = buffer[index] + scuff[index];
+            }
+            delete scuff;
+            delete raw;
+            AddTone(buffer, 90.0f, 0.7f, 0.0f, 0.12f, 0.035f);
+        }
+        Normalise(buffer, 0.7f);
+        return buffer!;
+    }
+
+    /**
+     * Noise shaped into a loopable bed: `seconds` of noise through a low-pass and a high-pass (a band), then made seamless.
+     * `swellHertz` slowly raises and lowers the volume; it is moved to a whole number of cycles per loop so the swell
+     * also joins up.
+     */
+    NoiseBed :: (lowCutHz: f32, highCutHz: f32, swellHertz: f32, swellDepth: f32, seed: u32) -> Array<f32>! {
+        blendSeconds: f32 = 1.0f;
+        noise~ NoiseSource = NoiseSource { state: seed };
+        raw~ Array<f32>! = Silence(LOOP_SECONDS + blendSeconds);
+        AddNoise(raw, noise, 1.0f, 0.0f, LOOP_SECONDS + blendSeconds, 1000.0f);
+        banded: Array<f32>! = LowPassed(raw, highCutHz);
+        delete raw;
+        shaped~ Array<f32>! = HighPassed(banded, lowCutHz);
+        delete banded;
+        swell: f32 = Quantized(swellHertz, LOOP_SECONDS);
+        for index~ usize = 0; index < shaped.length(); index++ {
+            seconds: f32 = f32(index) / f32(RATE);
+            shaped[index] = shaped[index] * (1.0f - swellDepth + swellDepth * (0.5f + 0.5f * Math:::sin(Math:::TAU * swell * seconds)));
+        }
+        looped~ Array<f32>! = Looped(shaped, blendSeconds);
+        delete shaped;
+        Normalise(looped, 0.8f);
+        return looped!;
+    }
+
+    /**
+     * A loop of steady low tones: a hum. Each `frequencies` entry is moved to fit the loop, and `rumbleHz` and
+     * `rumbleLevel` set the low noise under the tones.
+     */
+    HumBed :: (frequencies: Array<f32>, rumbleHz: f32, rumbleLevel: f32) -> Array<f32>! {
+        blendSeconds: f32 = 0.5f;
+        hum~ Array<f32>! = Silence(LOOP_SECONDS + blendSeconds);
+        for frequency in frequencies {
+            AddTone(hum, Quantized(frequency, LOOP_SECONDS), 0.3f, 0.0f, LOOP_SECONDS + blendSeconds, 1000.0f);
+        }
+        noise~ NoiseSource = NoiseSource { state: 99 };
+        rumble~ Array<f32>! = Silence(LOOP_SECONDS + blendSeconds);
+        AddNoise(rumble, noise, rumbleLevel, 0.0f, LOOP_SECONDS + blendSeconds, 1000.0f);
+        slow: Array<f32>! = LowPassed(rumble, rumbleHz);
+        for index~ usize = 0; index < hum.length(); index++ {
+            hum[index] = hum[index] + slow[index] * 3.0f;
+        }
+        delete slow;
+        delete rumble;
+        looped~ Array<f32>! = Looped(hum, blendSeconds);
+        delete hum;
+        Normalise(looped, 0.8f);
+        return looped!;
+    }
+
+    /**
+     * The calm music stem: a slow pad of stacked fifths (A, E, B, F sharp) that swells and settles twice per loop.
+     */
+    MusicCalm :: () -> Array<f32>! {
+        pad~ Array<f32>! = Silence(LOOP_SECONDS);
+        notes: f32[4] = [110.0f, 164.81f, 246.94f, 369.99f];
+        for note in notes {
+            frequency: f32 = Quantized(note, LOOP_SECONDS);
+            for index~ usize = 0; index < pad.length(); index++ {
+                seconds: f32 = f32(index) / f32(RATE);
+                swell: f32 = 0.6f + 0.4f * Math:::sin(Math:::TAU * 2.0f * seconds / LOOP_SECONDS);
+                pad[index] = pad[index] + Math:::sin(Math:::TAU * frequency * seconds) * 0.2f * swell;
+            }
+        }
+        Normalise(pad, 0.6f);
+        return pad!;
+    }
+
+    /**
+     * The tension music stem: a low drone with a second a semitone off beating against it, a pulse eight times a loop,
+     * and a thin rumble. It is meant to sit under the calm stem and pull on it.
+     */
+    MusicTension :: () -> Array<f32>! {
+        drone~ Array<f32>! = Silence(LOOP_SECONDS);
+        low: f32 = Quantized(55.0f, LOOP_SECONDS);
+        clash: f32 = Quantized(58.27f, LOOP_SECONDS);
+        high: f32 = Quantized(233.08f, LOOP_SECONDS);
+        for index~ usize = 0; index < drone.length(); index++ {
+            seconds: f32 = f32(index) / f32(RATE);
+            pulse: f32 = 0.55f + 0.45f * Math:::sin(Math:::TAU * 8.0f * seconds / LOOP_SECONDS);
+            tone~ f32 = Math:::sin(Math:::TAU * low * seconds) * 0.5f + Math:::sin(Math:::TAU * clash * seconds) * 0.4f;
+            tone = tone + Math:::sin(Math:::TAU * high * seconds) * 0.12f * pulse;
+            drone[index] = tone * (0.7f + 0.3f * pulse);
+        }
+        Normalise(drone, 0.6f);
+        return drone!;
+    }
+
+    /**
+     * The companion music stem: a gentle pentatonic figure, one soft pluck each second, that rings into the next
+     * lap. It plays when the partner is close, so the stem itself says she is there.
+     */
+    MusicCompanion :: () -> Array<f32>! {
+        figure~ Array<f32>! = Silence(LOOP_SECONDS);
+        notes: f32[8] = [440.0f, 523.25f, 659.25f, 783.99f, 659.25f, 587.33f, 523.25f, 392.0f];
+        for index~ usize = 0; index < 8; index++ {
+            AddTone(figure, notes[index], 0.5f, f32(index), 1.6f, 0.35f);
+            AddTone(figure, notes[index] * 2.0f, 0.12f, f32(index), 0.8f, 0.2f);
+        }
+        Normalise(figure, 0.6f);
+        return figure!;
+    }
+
+    /**
+     * A short menu sound from up to three notes in a row. `high` and `low` are the first and last pitch.
+     */
+    Blip :: (first: f32, second: f32, noteSeconds: f32) -> Array<f32>! {
+        blip~ Array<f32>! = Silence(noteSeconds * 2.0f + 0.1f);
+        AddTone(blip, first, 0.6f, 0.0f, noteSeconds + 0.05f, noteSeconds * 0.5f);
+        AddTone(blip, second, 0.6f, noteSeconds, noteSeconds + 0.08f, noteSeconds * 0.6f);
+        Normalise(blip, 0.5f);
+        return blip!;
+    }
+
+    /**
+     * The photo shutter: a sharp click, a short gap, then a second softer, lower click, with a faint mechanical whirr.
+     */
+    Shutter :: () -> Array<f32>! {
+        noise~ NoiseSource = NoiseSource { state: 4242 };
+        shutter~ Array<f32>! = Silence(0.22f);
+        AddNoise(shutter, noise, 0.9f, 0.0f, 0.03f, 0.006f);
+        AddTone(shutter, 2400.0f, 0.3f, 0.0f, 0.03f, 0.008f);
+        AddNoise(shutter, noise, 0.6f, 0.075f, 0.05f, 0.012f);
+        AddTone(shutter, 1500.0f, 0.2f, 0.075f, 0.05f, 0.015f);
+        AddTone(shutter, 180.0f, 0.15f, 0.0f, 0.2f, 0.06f);
+        Normalise(shutter, 0.7f);
+        return shutter!;
+    }
+
+    /**
+     * Every recipe name, in a fixed order. Footsteps are `footstep_` plus a surface, ambience beds start `ambience_`,
+     * music stems `music_` and menu sounds `ui_`.
+     */
+    RECIPE_NAMES: string[18] : [
+        "footstep_stone", "footstep_metal", "footstep_wood", "footstep_wet", "footstep_grass",
+        "ambience_wind", "ambience_rain", "ambience_city", "ambience_station", "ambience_market",
+        "music_calm", "music_tension", "music_companion",
+        "ui_move", "ui_select", "ui_back", "ui_shutter", "ui_error"
+    ];
+
+    /**
+     * True when there is a recipe called `name`.
+     */
+    HasRecipe :: (name: string) -> bool {
+        for recipe in RECIPE_NAMES {
+            if recipe == name {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The mono samples for a recipe name; empty when there is no such recipe.
+     */
+    Samples :: (name: string) -> Array<f32>! {
+        if name == "footstep_stone" {
+            return Footstep("stone");
+        }
+        if name == "footstep_metal" {
+            return Footstep("metal");
+        }
+        if name == "footstep_wood" {
+            return Footstep("wood");
+        }
+        if name == "footstep_wet" {
+            return Footstep("wet");
+        }
+        if name == "footstep_grass" {
+            return Footstep("grass");
+        }
+        if name == "ambience_wind" {
+            return NoiseBed(80.0f, 700.0f, 0.5f, 0.6f, 7);
+        }
+        if name == "ambience_rain" {
+            return NoiseBed(900.0f, 7000.0f, 0.25f, 0.15f, 11);
+        }
+        if name == "ambience_city" {
+            cityTones: f32[3] = [55.0f, 110.0f, 165.0f];
+            return HumBed(cityTones.borrow(), 260.0f, 0.5f);
+        }
+        if name == "ambience_station" {
+            stationTones: f32[3] = [100.0f, 150.0f, 301.0f];
+            return HumBed(stationTones.borrow(), 500.0f, 0.8f);
+        }
+        if name == "ambience_market" {
+            return NoiseBed(250.0f, 1400.0f, 1.5f, 0.5f, 23);
+        }
+        if name == "music_calm" {
+            return MusicCalm();
+        }
+        if name == "music_tension" {
+            return MusicTension();
+        }
+        if name == "music_companion" {
+            return MusicCompanion();
+        }
+        if name == "ui_move" {
+            return Blip(880.0f, 880.0f, 0.03f);
+        }
+        if name == "ui_select" {
+            return Blip(660.0f, 990.0f, 0.06f);
+        }
+        if name == "ui_back" {
+            return Blip(520.0f, 390.0f, 0.05f);
+        }
+        if name == "ui_error" {
+            return Blip(220.0f, 196.0f, 0.07f);
+        }
+        if name == "ui_shutter" {
+            return Shutter();
+        }
+        return [];
+    }
+
+    /**
+     * Builds the sound for a recipe name, or `null` when there isn't one.
+     */
+    Make :: (name: string) -> lantern:::audio:::SoundData*!? {
+        if !HasRecipe(name) {
+            return null;
+        }
+        samples: Array<f32>! = Samples(name);
+        sound := ToSound(samples);
+        delete samples;
+        return sound!;
+    }
+}

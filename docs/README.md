@@ -28,6 +28,7 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`playtest-checklist.md`](playtest-checklist.md) | What to try in each prototype room, with and without her, and what to note. |
 | [`night-look.md`](night-look.md) | Why the platformer is played at night, the moon, sky and lamps that make it readable, and the day look. |
 | [`camera.md`](camera.md) | The follow camera, camera volumes, authored shots, blends and how a level designer places them. |
+| [`audio.md`](audio.md) | The mixer and its buses, positional sound, ambience and music layers, footsteps, and how to swap in real recordings. |
 | [`photo-mode.md`](photo-mode.md) | The photo collectable: raising the camera, what counts as a photo, and how sights are authored. |
 
 ## The renderer's effects

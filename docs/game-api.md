@@ -276,9 +276,19 @@ components (`lantern:::ui`); `lantern:::overlay:::` is for quick text and rectan
 
 | Call | |
 |---|---|
-| `lantern:::audio:::Load(name, path)` | a WAV; a missing sound is logged and stays silent |
-| `lantern:::audio:::Play(name, volume)` | a one-shot voice |
-| `lantern:::audio:::PlayMusic(name)`, `lantern:::audio:::StopMusic()` | one looping track |
+| `lantern:::audio:::Load(name, path)` | a WAV; a missing file falls back to the generated sound of that name, else it is logged and stays silent |
+| `lantern:::audio:::Play(name, volume)` | a flat one-shot on the `sfx` bus |
+| `lantern:::audio:::PlayOn(name, bus, volume, pitch)` | a flat one-shot on `music`, `ambience`, `sfx` or `ui`; pitch 1 is normal speed |
+| `lantern:::audio:::PlayAt(name, bus, position, volume, pitch, minDistance, maxDistance)` | a one-shot at a point in the world, panned and attenuated against the listener |
+| `lantern:::audio:::SetListener(position, forward, up)` | where the camera is; call it every frame |
+| `lantern:::audio:::SetBusVolume(bus, volume)`, `BusVolume(bus) -> f32`, `SetBusMuted(bus, muted)` | `master`, `music`, `ambience`, `sfx` or `ui` |
+| `lantern:::audio:::StartLayer(layer, sound, bus, volume, level) -> bool` | a named flat loop, starting at `level`; starting one that is playing does nothing |
+| `lantern:::audio:::StartEmitter(emitter, sound, bus, position, volume, minDistance, maxDistance) -> bool` | a named looping sound at a point |
+| `lantern:::audio:::FadeLayer(layer, level, seconds)`, `MoveEmitter(emitter, position)`, `StopLayer(layer, seconds)` | change or end a named loop; a stop fades out first |
+| `lantern:::audio:::LayerLevel(layer) -> f32`, `IsPlaying(layer) -> bool` | read a named loop |
+| `lantern:::audio:::PlayMusic(name)`, `lantern:::audio:::StopMusic()` | one looping track on the `music` bus |
+
+The sounds, the buses and the generated placeholders are in [`audio.md`](audio.md).
 
 ## Debug
 
@@ -637,8 +647,21 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | --- | --- |
 | `Load` | `(name: string, path: string) -> void` |
 | `Play` | `(name: string, volume: f32) -> void` |
+| `PlayOn` | `(name: string, bus: string, volume: f32, pitch: f32) -> void` |
+| `PlayAt` | `(name: string, bus: string, position: lantern:::math:::Vec3, volume: f32, pitch: f32, minDistance: f32, maxDistance: f32) -> void` |
 | `PlayMusic` | `(name: string) -> void` |
 | `StopMusic` | `() -> void` |
+| `SetListener` | `(position: lantern:::math:::Vec3, forward: lantern:::math:::Vec3, up: lantern:::math:::Vec3) -> void` |
+| `SetBusVolume` | `(bus: string, volume: f32) -> void` |
+| `BusVolume` | `(bus: string) -> f32` |
+| `SetBusMuted` | `(bus: string, muted: bool) -> void` |
+| `StartLayer` | `(layer: string, sound: string, bus: string, volume: f32, level: f32) -> bool` |
+| `StartEmitter` | `(emitter: string, sound: string, bus: string, position: lantern:::math:::Vec3, volume: f32, minDistance: f32, maxDistance: f32) -> bool` |
+| `FadeLayer` | `(layer: string, level: f32, seconds: f32) -> void` |
+| `MoveEmitter` | `(emitter: string, position: lantern:::math:::Vec3) -> void` |
+| `StopLayer` | `(layer: string, seconds: f32) -> void` |
+| `LayerLevel` | `(layer: string) -> f32` |
+| `IsPlaying` | `(layer: string) -> bool` |
 
 ### `lantern:::overlay`
 

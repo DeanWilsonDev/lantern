@@ -1,0 +1,56 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    audio := new lantern:::engine:::AudioSystem(null);
+    defer delete audio;
+    for bus in ["master", "music", "ambience", "sfx", "ui"] {
+        audio->SetBusVolume(bus, 1.0f);
+    }
+    origin := Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+
+    assert(!audio->HasSound("footstep_stone"), "nothing is loaded yet");
+    stone := audio->LoadSound("footstep_stone", "sounds/not-there.wav");
+    assert(stone != null, "a missing file falls back to the generated sound of that name");
+    assert(audio->HasSound("footstep_stone"), "and it is stored under that name");
+    missing := audio->LoadSound("nothing_like_it", "sounds/not-there.wav");
+    assert(missing == null, "a missing file with no generated sound loads nothing");
+    audio->LoadSound("ambience_wind", "x.wav");
+    audio->LoadSound("ambience_rain", "x.wav");
+
+    started: bool = audio->StartLoop("area", "ambience_wind", "ambience", 1.0f, 0.0f, false, origin, 2.0f, 30.0f);
+    assert(started, "a layer starts");
+    assert(audio->IsLoopPlaying("area"), "it is playing");
+    count: usize = audio->mixer->ActiveVoiceCount();
+    audio->StartLoop("area", "ambience_wind", "ambience", 1.0f, 0.0f, false, origin, 2.0f, 30.0f);
+    assert(audio->mixer->ActiveVoiceCount() == count, "asking for a layer that is playing starts nothing new");
+    refused: bool = audio->StartLoop("other", "no_such_sound", "ambience", 1.0f, 0.0f, false, origin, 2.0f, 30.0f);
+    assert(!refused, "a layer with an unknown sound is refused");
+
+    audio->FadeLoop("area", 1.0f, 0.0f);
+    assert(audio->LoopLevel("area") == 1.0f, "a fade of no length is immediate");
+    audio->StartLoop("rain", "ambience_rain", "ambience", 1.0f, 0.0f, false, origin, 2.0f, 30.0f);
+    audio->FadeLoop("rain", 1.0f, 1.0f);
+    audio->FadeLoop("area", 0.0f, 1.0f);
+    block: Array<f32>! = audio->mixer->Mix(24000);
+    delete block;
+    half: f32 = audio->LoopLevel("rain");
+    assert(half > 0.45f && half < 0.55f, "half a second into a crossfade each layer is at about half");
+
+    audio->LoadSound("ambience_city", "x.wav");
+    audio->StartLoop("lamp", "ambience_city", "ambience", 1.0f, 1.0f, true, Vec3 { x: 6.0f, y: 0.0f, z: 0.0f }, 2.0f, 30.0f);
+    audio->MoveLoop("lamp", Vec3 { x: -6.0f, y: 0.0f, z: 0.0f });
+    audio->StopLoop("lamp", 0.0f);
+    assert(!audio->IsLoopPlaying("lamp"), "a stopped emitter is gone and its name can be used again");
+    audio->StopLoop("rain", 0.0f);
+    audio->StopLoop("area", 0.0f);
+
+    audio->SetBusVolume("sfx", 0.25f);
+    assert(audio->BusVolume("sfx") == 0.25f, "bus volumes are set by name");
+    audio->SetBusVolume("echo", 0.9f);
+    assert(audio->BusVolume("echo") == 0.0f, "an unknown bus name is ignored");
+    audio->PlayAt("footstep_stone", "sfx", Vec3 { x: 3.0f, y: 0.0f, z: 0.0f }, 1.0f, 1.1f, 2.0f, 30.0f);
+    audio->PlayAt("no_such_sound", "sfx", Vec3 { x: 3.0f, y: 0.0f, z: 0.0f }, 1.0f, 1.0f, 2.0f, 30.0f);
+    assert(audio->mixer->ActiveVoiceCount() == 1, "a positional one-shot plays and an unknown sound is ignored");
+    print("the audio system layers, emitters and generated sounds");
+    return 0;
+}

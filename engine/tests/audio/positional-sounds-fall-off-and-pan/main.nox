@@ -1,0 +1,59 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    assert(lantern:::audio:::DistanceGain(1.0f, 2.0f, 30.0f) == 1.0f, "inside the minimum distance is full volume");
+    assert(lantern:::audio:::DistanceGain(30.0f, 2.0f, 30.0f) == 0.0f, "at the maximum distance is silent");
+    near: f32 = lantern:::audio:::DistanceGain(5.0f, 2.0f, 30.0f);
+    far: f32 = lantern:::audio:::DistanceGain(20.0f, 2.0f, 30.0f);
+    assert(near > far && far > 0.0f && near < 1.0f, "volume falls between the two distances");
+
+    centre := lantern:::audio:::PanGains(0.0f);
+    assert(Math:::abs(centre.x - centre.y) < 0.001f, "the middle is equal in both ears");
+    assert(Math:::abs(centre.x * centre.x + centre.y * centre.y - 1.0f) < 0.001f, "panning keeps the power constant");
+    hardLeft := lantern:::audio:::PanGains(-1.0f);
+    assert(hardLeft.y < 0.001f && hardLeft.x > 0.99f, "hard left is all left");
+
+    mixer := lantern:::testing:::QuietMixer();
+    defer delete mixer;
+    origin := Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+    mixer->SetListener(origin, Vec3 { x: 0.0f, y: 0.0f, z: -1.0f }, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+    beep := lantern:::testing:::AddConstant(mixer, 0.5f, 200);
+
+    mixer->PlayAt(beep, lantern:::audio:::BUS_SFX, Vec3 { x: 4.0f, y: 0.0f, z: 0.0f }, 1.0f, 1.0f, 2.0f, 30.0f);
+    onRight: Array<f32>! = mixer->Mix(200);
+    assert(onRight[399] > onRight[398] * 10.0f, "a sound on the right is louder in the right ear");
+    delete onRight;
+
+    mixer->PlayAt(beep, lantern:::audio:::BUS_SFX, Vec3 { x: -4.0f, y: 0.0f, z: 0.0f }, 1.0f, 1.0f, 2.0f, 30.0f);
+    onLeft: Array<f32>! = mixer->Mix(200);
+    assert(onLeft[398] > onLeft[399] * 10.0f, "a sound on the left is louder in the left ear");
+    delete onLeft;
+
+    mixer->SetListener(origin, Vec3 { x: 1.0f, y: 0.0f, z: 0.0f }, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+    mixer->PlayAt(beep, lantern:::audio:::BUS_SFX, Vec3 { x: 0.0f, y: 0.0f, z: -4.0f }, 1.0f, 1.0f, 2.0f, 30.0f);
+    turned: Array<f32>! = mixer->Mix(200);
+    assert(turned[398] > turned[399] * 10.0f, "turning the listener to face +x puts a -z source on the left");
+    delete turned;
+
+    mixer->SetListener(origin, Vec3 { x: 0.0f, y: 0.0f, z: -1.0f }, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+    mixer->PlayAt(beep, lantern:::audio:::BUS_SFX, Vec3 { x: 0.0f, y: 0.0f, z: -3.0f }, 1.0f, 1.0f, 2.0f, 30.0f);
+    close: Array<f32>! = mixer->Mix(200);
+    closeLevel: f32 = close[398];
+    delete close;
+    mixer->PlayAt(beep, lantern:::audio:::BUS_SFX, Vec3 { x: 0.0f, y: 0.0f, z: -20.0f }, 1.0f, 1.0f, 2.0f, 30.0f);
+    distant: Array<f32>! = mixer->Mix(200);
+    distantLevel: f32 = distant[398];
+    delete distant;
+    assert(closeLevel > distantLevel * 3.0f, "a distant sound is much quieter than a near one");
+
+    mixer->PlayAt(beep, lantern:::audio:::BUS_SFX, Vec3 { x: 0.0f, y: 0.0f, z: -40.0f }, 1.0f, 1.0f, 2.0f, 30.0f);
+    beyond: Array<f32>! = mixer->Mix(200);
+    silent~ bool = true;
+    for sample in beyond {
+        silent = silent && sample == 0.0f;
+    }
+    delete beyond;
+    assert(silent, "a sound past the maximum distance is silent");
+    print("positional sounds fall off and pan");
+    return 0;
+}

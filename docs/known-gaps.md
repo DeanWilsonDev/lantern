@@ -31,6 +31,7 @@ hardware.
 | **Direct3D 12** | SDL GPU takes Vulkan on Windows and Metal on macOS. | Needs shaders compiled to DXIL. |
 | **A Vulkan `RenderBackend`** | `GpuRenderer` over SDL GPU. | Card `engine-follow-ups/a-vulkan-renderbackend-for-full-control-of-the-renderer` (todo) |
 | **Text beyond ASCII, compressed audio, audio on its own thread** | An 8x8 bitmap font, WAV files and a mixer on the main thread. | `future-work.md` |
+| **Sound behind walls, height, Doppler, a duller sound behind the listener** | Positional sound is distance and left-right pan only; the sound of a thing on a floor above sounds the same as one beside you. | `audio.md` |
 | **Automatic hot reload** | F5 reloads by hand and restarts the game. | `future-work.md` |
 | **Input rebinding and saved settings** | Bindings are set in `games/platformer/settings/input-settings.nyx`. | `future-work.md` |
 

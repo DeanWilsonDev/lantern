@@ -1,0 +1,203 @@
+lantern:::host :: namespace {
+    /**
+     * The audio a game can use from Nyx, as `lantern::audio`. See docs/audio.md.
+     *
+     * Sounds are loaded by name (`Load`), and a name with no file falls back to the generated sound of that name.
+     * There are five buses, `master`, `music`, `ambience`, `sfx` and `ui`, each with a volume. A sound plays as a
+     * one-shot (`Play`, `PlayOn`, `PlayAt`) or as a named loop: a layer (`StartLayer`, flat) or an emitter
+     * (`StartEmitter`, at a point in the world). Loops are faded with `FadeLayer` and stopped with `StopLayer`, and
+     * `SetListener` says where the camera is so positional sounds are panned and attenuated against it.
+     */
+    RegisterAudioApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        audioNamespace := new HostNamespace(runtime, "lantern::audio");
+        audioNamespace->Function("Load", "(name: string, path: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            relative: string! = context->Text(1);
+            if !context->Refused() {
+                unsafe {
+                    path: string! = state->AssetPath(relative);
+                    state->audioSystemInstance->LoadSound(name, path);
+                    delete path;
+                }
+            }
+            delete relative;
+            delete name;
+        });
+        audioNamespace->Function("Play", "(name: string, volume: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            volume: f32 = context->F32(1);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->Play(name, volume);
+                }
+            }
+            delete name;
+        });
+        audioNamespace->Function("PlayOn", "(name: string, bus: string, volume: f32, pitch: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            bus: string! = context->Text(1);
+            volume: f32 = context->F32(2);
+            pitch: f32 = context->F32(3);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->PlayOn(name, bus, volume, pitch);
+                }
+            }
+            delete bus;
+            delete name;
+        });
+        audioNamespace->Function("PlayAt", "(name: string, bus: string, position: lantern:::math:::Vec3, volume: f32, pitch: f32, minDistance: f32, maxDistance: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            name: string! = context->Text(0);
+            bus: string! = context->Text(1);
+            position: Vec3 = Vec3Argument(context, 2, math);
+            volume: f32 = context->F32(3);
+            pitch: f32 = context->F32(4);
+            minDistance: f32 = context->F32(5);
+            maxDistance: f32 = context->F32(6);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->PlayAt(name, bus, position, volume, pitch, minDistance, maxDistance);
+                }
+            }
+            delete bus;
+            delete name;
+        });
+        audioNamespace->Function("PlayMusic", "(name: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->PlayMusic(name);
+                }
+            }
+            delete name;
+        });
+        audioNamespace->Function("StopMusic", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                state->audioSystemInstance->StopMusic();
+            }
+        });
+        audioNamespace->Function("SetListener", "(position: lantern:::math:::Vec3, forward: lantern:::math:::Vec3, up: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            position: Vec3 = Vec3Argument(context, 0, math);
+            forward: Vec3 = Vec3Argument(context, 1, math);
+            up: Vec3 = Vec3Argument(context, 2, math);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->SetListener(position, forward, up);
+                }
+            }
+        });
+        audioNamespace->Function("SetBusVolume", "(bus: string, volume: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            bus: string! = context->Text(0);
+            volume: f32 = context->F32(1);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->SetBusVolume(bus, volume);
+                }
+            }
+            delete bus;
+        });
+        audioNamespace->Function("BusVolume", "(bus: string) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            bus: string! = context->Text(0);
+            if !context->Refused() {
+                unsafe {
+                    context->ReturnF32(state->audioSystemInstance->BusVolume(bus));
+                }
+            }
+            delete bus;
+        });
+        audioNamespace->Function("SetBusMuted", "(bus: string, muted: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            bus: string! = context->Text(0);
+            muted: bool = context->Bool(1);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->SetBusMuted(bus, muted);
+                }
+            }
+            delete bus;
+        });
+        audioNamespace->Function("StartLayer", "(layer: string, sound: string, bus: string, volume: f32, level: f32) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            layer: string! = context->Text(0);
+            sound: string! = context->Text(1);
+            bus: string! = context->Text(2);
+            volume: f32 = context->F32(3);
+            level: f32 = context->F32(4);
+            if !context->Refused() {
+                unsafe {
+                    context->ReturnBool(state->audioSystemInstance->StartLoop(layer, sound, bus, volume, level, false, Vec3 { x: 0.0f, y: 0.0f, z: 0.0f }, lantern:::audio:::DEFAULT_MIN_DISTANCE, lantern:::audio:::DEFAULT_MAX_DISTANCE));
+                }
+            }
+            delete bus;
+            delete sound;
+            delete layer;
+        });
+        audioNamespace->Function("StartEmitter", "(emitter: string, sound: string, bus: string, position: lantern:::math:::Vec3, volume: f32, minDistance: f32, maxDistance: f32) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            emitter: string! = context->Text(0);
+            sound: string! = context->Text(1);
+            bus: string! = context->Text(2);
+            position: Vec3 = Vec3Argument(context, 3, math);
+            volume: f32 = context->F32(4);
+            minDistance: f32 = context->F32(5);
+            maxDistance: f32 = context->F32(6);
+            if !context->Refused() {
+                unsafe {
+                    context->ReturnBool(state->audioSystemInstance->StartLoop(emitter, sound, bus, volume, 1.0f, true, position, minDistance, maxDistance));
+                }
+            }
+            delete bus;
+            delete sound;
+            delete emitter;
+        });
+        audioNamespace->Function("FadeLayer", "(layer: string, level: f32, seconds: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            layer: string! = context->Text(0);
+            level: f32 = context->F32(1);
+            seconds: f32 = context->F32(2);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->FadeLoop(layer, level, seconds);
+                }
+            }
+            delete layer;
+        });
+        audioNamespace->Function("MoveEmitter", "(emitter: string, position: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            emitter: string! = context->Text(0);
+            position: Vec3 = Vec3Argument(context, 1, math);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->MoveLoop(emitter, position);
+                }
+            }
+            delete emitter;
+        });
+        audioNamespace->Function("StopLayer", "(layer: string, seconds: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            layer: string! = context->Text(0);
+            seconds: f32 = context->F32(1);
+            if !context->Refused() {
+                unsafe {
+                    state->audioSystemInstance->StopLoop(layer, seconds);
+                }
+            }
+            delete layer;
+        });
+        audioNamespace->Function("LayerLevel", "(layer: string) -> f32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            layer: string! = context->Text(0);
+            if !context->Refused() {
+                unsafe {
+                    context->ReturnF32(state->audioSystemInstance->LoopLevel(layer));
+                }
+            }
+            delete layer;
+        });
+        audioNamespace->Function("IsPlaying", "(layer: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            layer: string! = context->Text(0);
+            if !context->Refused() {
+                unsafe {
+                    context->ReturnBool(state->audioSystemInstance->IsLoopPlaying(layer));
+                }
+            }
+            delete layer;
+        });
+        failure := audioNamespace->Finish();
+        delete audioNamespace;
+        return failure!;
+    }
+}
