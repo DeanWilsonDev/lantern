@@ -1,0 +1,143 @@
+lantern :: import lantern;
+
+FloatBits :: struct {
+    value~ f32 = 0.0f;
+}
+
+FloatBytes :: struct {
+    bytes~ u8[4] = [0, 0, 0, 0];
+}
+
+PushLittleEndian32 :: (writer: lantern:::renderer:::ByteWriter~*, value: u32) -> void {
+    writer->Push(u8(value & 255));
+    writer->Push(u8((value >> 8) & 255));
+    writer->Push(u8((value >> 16) & 255));
+    writer->Push(u8((value >> 24) & 255));
+}
+
+PushFloat :: (writer: lantern:::renderer:::ByteWriter~*, value: f32) -> void {
+    bits~ FloatBits = FloatBits { value: value };
+    unsafe {
+        bytes: FloatBytes~* = reinterpret<FloatBytes>(bits);
+        for byteIndex~ usize = 0; byteIndex < 4; byteIndex += 1 {
+            writer->Push(bytes->bytes[byteIndex]);
+        }
+    }
+}
+
+PushFloats :: (writer: lantern:::renderer:::ByteWriter~*, values: Array<f32>!) -> void {
+    for value in values {
+        PushFloat(writer, value);
+    }
+    delete values;
+}
+
+/**
+ * A skinned triangle: two joints (`root` at the origin and `tip` one metre above it), three vertices (two on the root, the
+ * apex two metres up on the tip), and one animation, `bend`, that moves the root up half a metre and turns the tip a
+ * quarter turn about z over one second. The armature node above the root is turned a half turn about y, as a model facing
+ * +z is, so the importer's yaw has something to undo.
+ */
+SkinnedGlb :: (rootAboveGround: bool) -> Array<u8>! {
+    json~ string! = "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0,1]}]," + "";
+    json += "\"nodes\":[{\"name\":\"body\",\"mesh\":0,\"skin\":0},";
+    json += "{\"name\":\"armature\",\"rotation\":[0,1,0,0],\"children\":[2]},";
+    json += "{\"name\":\"root\",\"children\":[3]},";
+    json += "{\"name\":\"tip\",\"translation\":[0,1,0]}],";
+    json += "\"skins\":[{\"joints\":[2,3],\"inverseBindMatrices\":4}],";
+    json += "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3}}]}],";
+    json += "\"animations\":[{\"name\":\"bend\",\"samplers\":[{\"input\":5,\"output\":6},{\"input\":5,\"output\":7}],";
+    json += "\"channels\":[{\"sampler\":0,\"target\":{\"node\":3,\"path\":\"rotation\"}},{\"sampler\":1,\"target\":{\"node\":2,\"path\":\"translation\"}}]}],";
+    json += "\"accessors\":[";
+    json += "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,2,0]},";
+    json += "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},";
+    json += "{\"bufferView\":2,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},";
+    json += "{\"bufferView\":3,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"},";
+    json += "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"},";
+    json += "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\",\"min\":[0],\"max\":[1]},";
+    json += "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"},";
+    json += "{\"bufferView\":7,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}],";
+    json += "\"bufferViews\":[";
+    json += "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},";
+    json += "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":12},{\"buffer\":0,\"byteOffset\":84,\"byteLength\":48},";
+    json += "{\"buffer\":0,\"byteOffset\":132,\"byteLength\":128},{\"buffer\":0,\"byteOffset\":260,\"byteLength\":8},";
+    json += "{\"buffer\":0,\"byteOffset\":268,\"byteLength\":32},{\"buffer\":0,\"byteOffset\":300,\"byteLength\":24}],";
+    json += "\"buffers\":[{\"byteLength\":324}]}";
+    while json.length() % 4 != 0 {
+        json += " ";
+    }
+    binaryLength: u32 = 324;
+    total: u32 = 12 + 8 + u32(json.length()) + 8 + binaryLength;
+    writer := new lantern:::renderer:::ByteWriter();
+    defer delete writer;
+    writer->PushAscii("glTF");
+    PushLittleEndian32(writer, 2);
+    PushLittleEndian32(writer, total);
+    PushLittleEndian32(writer, u32(json.length()));
+    writer->PushAscii("JSON");
+    writer->PushAscii(json);
+    delete json;
+    PushLittleEndian32(writer, binaryLength);
+    writer->PushAscii("BIN");
+    writer->Push(0);
+    PushFloats(writer, [0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 2.0f, 0.0f]);
+    PushFloats(writer, [0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f]);
+    for vertex~ usize = 0; vertex < 3; vertex += 1 {
+        writer->Push(vertex == 2 ? 1 : 0);
+        writer->Push(0);
+        writer->Push(0);
+        writer->Push(0);
+    }
+    PushFloats(writer, [1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f]);
+    PushFloats(writer, [1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f]);
+    PushFloats(writer, [1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, -1.0f, 0.0f, 1.0f]);
+    PushFloats(writer, [0.0f, 1.0f]);
+    PushFloats(writer, [0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.70710678f, 0.70710678f]);
+    PushFloats(writer, [0.0f, 0.0f, 0.0f, 0.0f, 0.5f, 0.0f]);
+    return writer->TakeBytes();
+}
+
+main :: () -> i32 {
+    glb: Array<u8>! = SkinnedGlb(true);
+    defer delete glb;
+    options: lantern:::animation:::GltfRigOptions = lantern:::animation:::GltfRigOptions { scale: 2.0f, yawRadians: 0.0f, feetOnGround: false };
+    when lantern:::animation:::GltfRigFromBytes(glb, ".", options) {
+        Result:::Ok(loaded) -> {
+            character~ lantern:::animation:::GltfRig = loaded!;
+            skeleton: lantern:::animation:::Skeleton* = character.rig->skeleton;
+            assert(skeleton->JointCount() == 2, "two joints");
+            assert(skeleton->names[0] == "root" && skeleton->names[1] == "tip", "joints keep their names, parents first");
+            assert(skeleton->parents[0] == -1 && skeleton->parents[1] == 0, "the tip hangs from the root");
+            tipRest: Vec3 = lantern:::core:::TransformPoint3(skeleton->bindModel[1], Vec3 { });
+            assert(
+                lantern:::animation_support:::NearPoint(tipRest, Vec3 { y: 2.0f }),
+                "the half-turn armature keeps the tip above the root and the scale doubles the metre to two"
+            );
+            assert(character.mesh->vertices.length() == 3 && character.mesh->skin.length() == 3, "three skinned vertices");
+            apex: lantern:::renderer:::Vertex = character.mesh->vertices[2];
+            assert(Math:::abs(apex.position[1] - 4.0f) < 0.001f, "the vertices are scaled too");
+            assert(character.mesh->skin[2].joints[0] == 1 && character.mesh->skin[2].weights[0] == 255, "the apex follows the tip alone");
+            assert(character.mesh->skin[0].joints[0] == 0 && character.mesh->skin[0].weights[0] == 255, "the base follows the root alone");
+            assert(character.rig->clips.length() == 1 && character.rig->FindClip("bend") == 0, "one clip, named for the animation");
+            clip: lantern:::animation:::AnimationClip* = character.rig->clips[0];
+            assert(Math:::abs(clip->duration - 1.0f) < 0.001f, "the clip lasts as long as its last key");
+            assert(clip->tracks.length() == 2, "two joints move");
+            pose~ Array<lantern:::animation:::JointTransform>! = skeleton->RestPose();
+            clip->SampleInto(0.5f, false, skeleton, pose);
+            matrices: Array<Mat4>! = skeleton->ModelMatrices(pose);
+            moved: Vec3 = lantern:::core:::TransformPoint3(matrices[0], Vec3 { });
+            delete matrices;
+            assert(Math:::abs(moved.y - 0.25f * 2.0f) < 0.001f, "half way through, the root has risen a quarter metre (scaled to half)");
+            delete pose;
+            delete character.rig;
+            delete character.mesh;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    print("a skinned glb loads as a rig with weights and clips");
+    return 0;
+}

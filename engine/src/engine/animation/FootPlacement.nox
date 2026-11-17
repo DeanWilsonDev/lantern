@@ -1,0 +1,310 @@
+lantern:::animation :: namespace {
+    /** The joints of one leg, as indices into a skeleton: the hip end of the leg, the knee, and the ankle. */
+    LegJoints :: struct {
+        /** The joint at the top of the leg, which swings the whole leg. */
+        thigh~ i32 = -1;
+        /** The knee: the joint the lower leg turns about. */
+        shin~ i32 = -1;
+        /** The ankle, the joint that has to reach the ground. */
+        foot~ i32 = -1;
+    }
+
+    /**
+     * What the world says about the ground under one foot, for one frame. `found` is false when there is nothing close
+     * enough below the foot (an edge, a drop), and then the foot is left where the animation put it.
+     */
+    FootGround :: struct {
+        /** Whether a surface was found under the foot. */
+        found~ bool = false;
+        /** How far the surface is above (positive) or below (negative) the ground the character stands on, in metres. */
+        offset~ f32 = 0.0f;
+        /** The surface's unit normal, in the character's own space. */
+        normal~ Vec3 = Vec3 { y: 1.0f };
+    }
+
+    /** 0 below `edgeStart`, 1 above `edgeEnd` and a smooth curve between. */
+    FootSmoothStep :: (edgeStart: f32, edgeEnd: f32, value: f32) -> f32 {
+        t: f32 = Math:::clamp((value - edgeStart) / (edgeEnd - edgeStart), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    /** The model-space rotation of a joint in a pose: its own rotation after all its ancestors'. */
+    PoseModelRotation :: (skeleton: Skeleton*, pose: Array<JointTransform>, joint: i32) -> Quaternion {
+        result~ Quaternion = Quaternion { };
+        walk~ i32 = joint;
+        while walk >= 0 {
+            result = pose[usize(walk)].rotation * result;
+            walk = skeleton->parents[usize(walk)];
+        }
+        return result;
+    }
+
+    /**
+     * Turns a joint by a rotation given in model space, about the joint's own position, so everything below it swings and
+     * the joint stays where it is. The turn is converted into the joint's local rotation.
+     */
+    TurnJointInModelSpace :: (
+        skeleton: Skeleton*,
+        pose: Array<JointTransform~>,
+        joint: i32,
+        turn: Quaternion
+    ) -> void {
+        parentRotation~ Quaternion = Quaternion { };
+        if skeleton->parents[usize(joint)] >= 0 {
+            parentRotation = PoseModelRotation(skeleton, pose, skeleton->parents[usize(joint)]);
+        }
+        pose[usize(joint)].rotation = parentRotation.conjugate() * turn * parentRotation * pose[usize(joint)].rotation;
+    }
+
+    /** The rotation that carries the unit vector `from` onto the unit vector `to` by the shortest way. */
+    ArcFromTo :: (from: Vec3, to: Vec3) -> Quaternion {
+        axis: Vec3 = from.cross(to);
+        raw: Quaternion = Quaternion { x: axis.x, y: axis.y, z: axis.z, w: 1.0f + from.dot(to) };
+        if raw.w < 0.0001f {
+            return Quaternion { };
+        }
+        return raw.normalized();
+    }
+
+    /** The model-space position of a joint in a pose. */
+    PoseJointPosition :: (matrices: Array<Mat4>, joint: i32) -> Vec3 {
+        return lantern:::core:::TransformPoint3(matrices[usize(joint)], Vec3 { });
+    }
+
+    /**
+     * Moves a leg's ankle to `target` (a model-space point) by bending the knee and swinging the thigh: two-bone IK. The
+     * leg keeps its bone lengths, so a target further away than the leg is long is reached as far as it can be, with the leg
+     * straight. `kneeDirection` is the way the knee points when the leg is bent (the character's forward); it picks the
+     * bend when the leg starts out straight. Only the thigh's and the shin's rotations change.
+     */
+    SolveTwoBoneLeg :: (
+        skeleton: Skeleton*,
+        pose: Array<JointTransform~>,
+        leg: LegJoints,
+        target: Vec3,
+        kneeDirection: Vec3
+    ) -> void {
+        before: Array<Mat4>! = skeleton->ModelMatrices(pose);
+        hip: Vec3 = PoseJointPosition(before, leg.thigh);
+        knee: Vec3 = PoseJointPosition(before, leg.shin);
+        ankle: Vec3 = PoseJointPosition(before, leg.foot);
+        delete before;
+        upperLength: f32 = (knee - hip).length();
+        lowerLength: f32 = (ankle - knee).length();
+        guard upperLength > 0.001f && lowerLength > 0.001f return;
+        shortest: f32 = Math:::abs(upperLength - lowerLength) + 0.001f;
+        longest: f32 = upperLength + lowerLength - 0.001f;
+        reach: f32 = Math:::clamp((target - hip).length(), shortest, longest);
+        upperDirection: Vec3 = lantern:::core:::Normalize3(knee - hip);
+        lowerDirection: Vec3 = lantern:::core:::Normalize3(ankle - knee);
+        currentBend: f32 = Math:::acos(Math:::clamp(upperDirection.dot(lowerDirection), -1.0f, 1.0f));
+        interior: f32 = Math:::acos(Math:::clamp(
+            (upperLength * upperLength + lowerLength * lowerLength - reach * reach) / (2.0f * upperLength * lowerLength),
+            -1.0f,
+            1.0f
+        ));
+        wantedBend: f32 = Math:::PI - interior;
+        bendAxis~ Vec3 = upperDirection.cross(lowerDirection);
+        if bendAxis.length() < 0.0001f {
+            bendAxis = upperDirection.cross(Vec3 { } - kneeDirection);
+        }
+        bendAxis = lantern:::core:::NormalizeOr3(bendAxis, Vec3 { x: 1.0f });
+        TurnJointInModelSpace(skeleton, pose, leg.shin, Quaternion:::fromAxisAngle(bendAxis, wantedBend - currentBend));
+        after: Array<Mat4>! = skeleton->ModelMatrices(pose);
+        reached: Vec3 = PoseJointPosition(after, leg.foot);
+        delete after;
+        swing: Quaternion = ArcFromTo(
+            lantern:::core:::Normalize3(reached - hip),
+            lantern:::core:::Normalize3(target - hip)
+        );
+        TurnJointInModelSpace(skeleton, pose, leg.thigh, swing);
+    }
+
+    /**
+     * Keeps a character's feet on the ground it really stands on. After the animation has made a pose, the placer is told
+     * how far above or below the character's own ground each foot's surface is (`FootGround`); it lowers the hips by the
+     * deepest drop, plants each foot that is down on its surface with two-bone IK and tilts it to the surface's slope.
+     * A foot that is in the air in the animation (the swing of a stride, a jump) is left alone, so stepping still looks
+     * like stepping.
+     *
+     * The offsets are smoothed over a fraction of a second, so walking onto a step glides instead of popping, and the
+     * whole effect fades with `SetWeight` (0 in the air, 1 on the ground).
+     */
+    FootPlacer :: class {
+    public:
+        /** The legs, in the order the grounds are given. */
+        legs~ Array<LegJoints>! = [];
+        /** How high above the sole of the foot each ankle joint is in the bind pose, in metres. */
+        ankleHeights~ Array<f32>! = [];
+        /** The way the knees point when they bend, in the model's space. */
+        kneeDirection~ Vec3 = Vec3 { z: -1.0f };
+        /** A foot this far (metres) above its resting height is still planted. */
+        plantedHeight~ f32 = 0.06f;
+        /** A foot this far above its resting height is in the air, and left alone. Between the two it fades out. */
+        liftedHeight~ f32 = 0.22f;
+        /** The most a foot is raised to meet a surface, in metres. */
+        highestReach~ f32 = 0.45f;
+        /** The most the hips and a foot are lowered, in metres. */
+        deepestReach~ f32 = 0.45f;
+        /** How quickly the offsets follow the ground, per second (larger is quicker). */
+        followSpeed~ f32 = 14.0f;
+
+        /** A placer for no legs; add them with `AddLeg`. */
+        FootPlacer~: () { }
+
+        /** Frees the arrays. */
+        !FootPlacer~: () {
+            delete legs;
+            delete ankleHeights;
+            delete smoothedOffsets;
+            delete smoothedNormals;
+        }
+
+        /** Adds a leg from three joint indices, taking the ankle's height above the sole from the bind pose. */
+        AddLeg~: (skeleton: Skeleton*, leg: LegJoints) -> void {
+            legs.push(leg);
+            ankleHeights.push(Math:::max(lantern:::core:::TransformPoint3(skeleton->bindModel[usize(leg.foot)], Vec3 { }).y, 0.0f));
+            smoothedOffsets.push(0.0f);
+            smoothedNormals.push(Vec3 { y: 1.0f });
+        }
+
+        /**
+         * A placer for a skeleton with joints named `leftThigh`, `leftShin`, `leftFoot` and the same with `right` (as the
+         * mannequin's are). A skeleton without them gets a placer with no legs, which does nothing.
+         */
+        static ForSkeleton :: (skeleton: Skeleton*) -> FootPlacer*! {
+            placer := new FootPlacer();
+            names: string[2] = ["left", "right"];
+            for side~ usize = 0; side < 2; side++ {
+                thighName: string! = `${names[side]}Thigh`;
+                shinName: string! = `${names[side]}Shin`;
+                footName: string! = `${names[side]}Foot`;
+                leg: LegJoints = LegJoints {
+                    thigh: skeleton->FindJoint(thighName),
+                    shin: skeleton->FindJoint(shinName),
+                    foot: skeleton->FindJoint(footName)
+                };
+                delete thighName;
+                delete shinName;
+                delete footName;
+                if leg.thigh < 0 || leg.shin < 0 || leg.foot < 0 {
+                    return placer!;
+                }
+                placer->AddLeg(skeleton, leg);
+            }
+            return placer!;
+        }
+
+        /** How strongly the placer works: 0 leaves the animation alone, 1 plants feet fully. It eases toward the value. */
+        SetWeight~: (value: f32) -> void {
+            wantedWeight = Math:::clamp(value, 0.0f, 1.0f);
+        }
+
+        /** Sets the weight at once, without easing: for a placer made switched off. */
+        SnapWeight~: (value: f32) -> void {
+            wantedWeight = Math:::clamp(value, 0.0f, 1.0f);
+            weight = wantedWeight;
+        }
+
+        /** True while the placer has any effect: it is switched on, or still fading out. */
+        IsActive :: () -> bool {
+            return wantedWeight > 0.0f || weight > 0.002f;
+        }
+
+        /** The current (eased) weight. */
+        Weight :: () -> f32 {
+            return weight;
+        }
+
+        /** The smoothed height offset of leg `index`, for tests and the debug view. */
+        SmoothedOffset :: (index: usize) -> f32 {
+            return smoothedOffsets[index];
+        }
+
+        /**
+         * Where each ankle is in the character's own space after the animation, for the caller to probe the ground under.
+         * The caller owns the result.
+         */
+        FootPositions :: (skeleton: Skeleton*, pose: Array<JointTransform>) -> Array<Vec3>! {
+            matrices: Array<Mat4>! = skeleton->ModelMatrices(pose);
+            positions~ Array<Vec3>! = [];
+            for leg in legs {
+                positions.push(PoseJointPosition(matrices, leg.foot));
+            }
+            delete matrices;
+            return positions!;
+        }
+
+        /**
+         * Changes `pose` so the feet meet `grounds` (one per leg, in the order the legs were added). `deltaTime` is the time
+         * since the last call, for the smoothing.
+         */
+        Place~: (
+            skeleton: Skeleton*,
+            pose: Array<JointTransform~>,
+            grounds: Array<FootGround>,
+            deltaTime: f32
+        ) -> void {
+            guard legs.length() > 0 && grounds.length() == legs.length() return;
+            weight += (wantedWeight - weight) * (1.0f - Math:::exp(-10.0f * deltaTime));
+            ease: f32 = 1.0f - Math:::exp(-followSpeed * deltaTime);
+            matrices: Array<Mat4>! = skeleton->ModelMatrices(pose);
+            footPositions~ Array<Vec3>! = [];
+            plantedShares~ Array<f32>! = [];
+            for index~ usize = 0; index < legs.length(); index++ {
+                footPosition: Vec3 = PoseJointPosition(matrices, legs[index].foot);
+                footPositions.push(footPosition);
+                height: f32 = footPosition.y - ankleHeights[index];
+                plantedShares.push(1.0f - FootSmoothStep(plantedHeight, liftedHeight, height));
+                wantedOffset~ f32 = 0.0f;
+                wantedNormal~ Vec3 = Vec3 { y: 1.0f };
+                if grounds[index].found {
+                    wantedOffset = Math:::clamp(grounds[index].offset, -deepestReach, highestReach);
+                    wantedNormal = grounds[index].normal;
+                }
+                smoothedOffsets[index] += (wantedOffset - smoothedOffsets[index]) * ease;
+                smoothedNormals[index] = lantern:::core:::NormalizeOr3(
+                    lantern:::core:::Lerp3(smoothedNormals[index], wantedNormal, ease),
+                    Vec3 { y: 1.0f }
+                );
+            }
+            delete matrices;
+            lowest~ f32 = 0.0f;
+            for index~ usize = 0; index < legs.length(); index++ {
+                lowest = Math:::min(lowest, smoothedOffsets[index] * plantedShares[index] * weight);
+            }
+            pelvis~ i32 = legs[0].thigh;
+            while skeleton->parents[usize(pelvis)] >= 0 {
+                pelvis = skeleton->parents[usize(pelvis)];
+            }
+            pose[usize(pelvis)].translation.y += lowest;
+            for index~ usize = 0; index < legs.length(); index++ {
+                share: f32 = plantedShares[index] * weight;
+                if share <= 0.001f {
+                    continue;
+                }
+                wanted: Vec3 = Vec3 {
+                    x: footPositions[index].x,
+                    y: footPositions[index].y + smoothedOffsets[index] * share,
+                    z: footPositions[index].z
+                };
+                SolveTwoBoneLeg(skeleton, pose, legs[index], wanted, kneeDirection);
+                tilt: Quaternion = ArcFromTo(Vec3 { y: 1.0f }, smoothedNormals[index]);
+                TurnJointInModelSpace(
+                    skeleton,
+                    pose,
+                    legs[index].foot,
+                    lantern:::core:::QuaternionSlerp(Quaternion { }, tilt, share)
+                );
+            }
+            delete footPositions;
+            delete plantedShares;
+        }
+
+    private:
+        weight~ f32 = 1.0f;
+        wantedWeight~ f32 = 1.0f;
+        smoothedOffsets~ Array<f32>! = [];
+        smoothedNormals~ Array<Vec3>! = [];
+    }
+}

@@ -1668,3 +1668,36 @@ reviewed by Dean; the numbers want playing. Cards: `engine-follow-ups/grounded-c
   the haul and then moves onto the top, with the controller not asked to move the player, as for climbing and the Anchor.
   It starts only when the player pushes toward the ledge and their jump has reached its top (upward speed 1.5 m/s or less).
   The companion never mantles. Platformer levels keep their old feel, so their jump gaps are unchanged.
+- **D-146: foot placement is a pass over the finished pose, with the ground read by the host.** After an animator has
+  sampled and blended its clips, `FootPlacer` (`FootPlacement.nox`) lowers the hips by the deepest drop under a planted foot,
+  moves each planted ankle with two-bone IK (law of cosines, the knee bending toward the character's forward) and tilts the
+  foot to the slope. The animation system does not know about physics: `PlaceAnimatedFeet` (`host/FootPlacementHost.nox`)
+  casts one ray down from 0.5 m above the character's own ground at each foot's `x` and `z` (reach 0.5 m up and 0.5 m down)
+  and hands the hits over. Offsets are relative to the ground under the character's origin, so a flat floor changes nothing.
+- **D-147: only planted feet are placed.** A foot's weight fades from 1 at 6 cm above its resting height to 0 at 22 cm, so the
+  swing of a stride keeps its arc and a jump pose is left alone. The whole effect has a weight of its own that the game sets
+  with `SetFootPlacement`: `CharacterAnimator.Observe` switches it off in the air and on when grounded. Offsets and tilt follow
+  the ground at 14 per second, so a step glides instead of popping. Rays hit static geometry and moving bodies alike.
+  Provisional (2026-11-17): a moving platform's own motion is not compensated, and a foot with no ground in reach is left as
+  the animation has it.
+- **D-148: footsliding is corrected by stride matching, not foot locking.** A clip says how fast its feet carry the character
+  at playback speed 1 (`AnimationClip.groundSpeed`; the mannequin's walk and run get it from their leg swing and cycle
+  time, 1.66 and 3.74 m/s). A blend state then plays at the character's speed over the mixed ground speed of the two clips
+  it is mixing, between 0.6 and 1.6, and not at all below 0.2 m/s. Locking feet to the world during stance (IK anchoring)
+  would fix more cases but needs a stance detector per clip; it stays a follow-up.
+- **D-149: glTF import builds a `Rig` and a skinned mesh from the first skin.** `LoadGltfRig` and `GltfRigFromBytes`
+  (`animation-mesh/GltfRig.nox`) read joints, `JOINTS_0` and `WEIGHTS_0`, and translation and rotation channels (linear, step;
+  cubic spline is read at its keys without tangents) into a skeleton, a skinned `MeshData` and one `AnimationClip` per animation,
+  with translation and rotation keys resampled onto the union of each joint's key times, since `Keyframe` holds both. Scale
+  channels, morph targets, textures and non-joint nodes between joints are left out (a gap, stated in `docs/animation.md`).
+  More than `MAX_JOINTS` (32) joints is an error that says so, not a truncation.
+- **D-150: an imported character is stood up by options, not by the file.** `GltfRigOptions` has a scale, a yaw and a
+  feet-on-the-ground shift. They are folded into the root joint (its translation, rotation and scale, and the same on every
+  root key) and into the vertices, so the skeleton, the clips and the mesh stay consistent and no entity scale is needed. The
+  armature node above the root joints is folded into the root the same way, so a file exported with a rotated or scaled
+  armature loads upright. `LoadRig(path, scale, yawDegrees)` in Nyx always puts the feet on the ground. Provisional
+  (2026-11-17): a model facing +z, the glTF convention, wants a yaw of 180 to face Lantern's -z; not reviewed by Dean.
+- **D-151: the partner wears the animated body.** She is a `CharacterAnimator` on the mannequin rig like the player and the
+  companion: walking and running follow her measured speed, she crouches for the boost, waves for her nudge instead of
+  hopping, jumps on jump links, and looks at the player within 12 m. The squashed capsule, `HOP_SECONDS`, `HOP_HEIGHT` and
+  `CROUCH_SCALE` are gone. Her physics body, her height and her feet are unchanged.

@@ -1,0 +1,80 @@
+lantern :: import lantern;
+
+SettleOn :: (
+    rig: lantern:::animation:::Rig*,
+    placer: lantern:::animation:::FootPlacer~*,
+    pose: Array<lantern:::animation:::JointTransform~>,
+    grounds: Array<lantern:::animation:::FootGround>
+) -> void {
+    for step~ i32 = 0; step < 40; step++ {
+        fresh: Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+        for joint~ usize = 0; joint < fresh.length(); joint++ {
+            pose[joint] = fresh[joint];
+        }
+        delete fresh;
+        placer->Place(rig->skeleton, pose, grounds, 0.1f);
+    }
+}
+
+main :: () -> i32 {
+    rig := lantern:::animation_support:::MakeLegRig();
+    defer delete rig;
+    placer := lantern:::animation:::FootPlacer:::ForSkeleton(rig->skeleton);
+    defer delete placer;
+    assert(placer->legs.length() == 2, "the placer finds both legs by name");
+    pose~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete pose;
+
+    higher: Array<lantern:::animation:::FootGround>! = [
+        lantern:::animation:::FootGround { found: true, offset: 0.15f },
+        lantern:::animation:::FootGround { found: true, offset: 0.0f }
+    ];
+    defer delete higher;
+    SettleOn(rig, placer, pose, higher);
+    assert(
+        Math:::abs(lantern:::animation_support:::JointPosition(rig, pose, 3).y - 0.15f) < 0.01f,
+        "the left foot rests on the step"
+    );
+    assert(
+        Math:::abs(lantern:::animation_support:::JointPosition(rig, pose, 6).y) < 0.01f,
+        "the right foot stays on the floor"
+    );
+    assert(
+        Math:::abs(lantern:::animation_support:::JointPosition(rig, pose, 0).y - 1.0f) < 0.01f,
+        "a higher step does not move the hips"
+    );
+
+    lower: Array<lantern:::animation:::FootGround>! = [
+        lantern:::animation:::FootGround { found: true, offset: -0.2f },
+        lantern:::animation:::FootGround { found: true, offset: 0.0f }
+    ];
+    defer delete lower;
+    SettleOn(rig, placer, pose, lower);
+    assert(
+        Math:::abs(lantern:::animation_support:::JointPosition(rig, pose, 3).y + 0.2f) < 0.01f,
+        "the left foot reaches the lower ground"
+    );
+    assert(
+        Math:::abs(lantern:::animation_support:::JointPosition(rig, pose, 0).y - 0.8f) < 0.01f,
+        "the hips drop by the deepest drop"
+    );
+    assert(
+        Math:::abs(lantern:::animation_support:::JointPosition(rig, pose, 6).y) < 0.01f,
+        "the other foot stays where it was"
+    );
+
+    tilted: Array<lantern:::animation:::FootGround>! = [
+        lantern:::animation:::FootGround {
+            found: true,
+            offset: 0.0f,
+            normal: Vec3 { y: Math:::cos(0.35f), z: -Math:::sin(0.35f) }
+        },
+        lantern:::animation:::FootGround { found: false }
+    ];
+    defer delete tilted;
+    SettleOn(rig, placer, pose, tilted);
+    footUp: Vec3 = lantern:::animation:::PoseModelRotation(rig->skeleton, pose, 3).rotate(Vec3 { y: 1.0f });
+    assert(footUp.dot(tilted[0].normal) > 0.995f, "the foot tilts to the slope");
+    print("feet meet steps and the hips drop");
+    return 0;
+}

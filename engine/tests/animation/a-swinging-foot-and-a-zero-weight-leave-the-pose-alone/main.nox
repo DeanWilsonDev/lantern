@@ -1,0 +1,42 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    rig := lantern:::animation_support:::MakeLegRig();
+    defer delete rig;
+    placer := lantern:::animation:::FootPlacer:::ForSkeleton(rig->skeleton);
+    defer delete placer;
+    grounds: Array<lantern:::animation:::FootGround>! = [
+        lantern:::animation:::FootGround { found: true, offset: 0.3f },
+        lantern:::animation:::FootGround { found: true, offset: 0.3f }
+    ];
+    defer delete grounds;
+
+    swinging~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete swinging;
+    swinging[1].rotation = Quaternion:::fromAxisAngle(Vec3 { x: 1.0f }, -0.9f);
+    before: Vec3 = lantern:::animation_support:::JointPosition(rig, swinging, 3);
+    assert(before.y > 0.25f, "the test foot is lifted well above its resting height");
+    for step~ i32 = 0; step < 20; step++ {
+        placer->Place(rig->skeleton, swinging, grounds, 0.1f);
+    }
+    assert(
+        lantern:::animation_support:::NearPoint(lantern:::animation_support:::JointPosition(rig, swinging, 3), before),
+        "a foot in the air is left where the animation put it"
+    );
+
+    placer->SetWeight(0.0f);
+    spare~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete spare;
+    for step~ i32 = 0; step < 80; step++ {
+        placer->Place(rig->skeleton, spare, grounds, 0.1f);
+    }
+    resting~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete resting;
+    placer->Place(rig->skeleton, resting, grounds, 0.1f);
+    assert(
+        Math:::abs(lantern:::animation_support:::JointPosition(rig, resting, 6).y) < 0.02f,
+        "with the weight at zero the feet stay on their own ground"
+    );
+    print("swinging feet and zero weight are left alone");
+    return 0;
+}

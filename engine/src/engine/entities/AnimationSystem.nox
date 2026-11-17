@@ -1,4 +1,14 @@
 lantern:::engine :: namespace {
+    /** A surface a ray found under one foot, in world space. `found` is false when the ray hit nothing. */
+    FootHit :: struct {
+        /** Whether the ray hit a surface. */
+        found~ bool = false;
+        /** Where it hit. */
+        point~ Vec3 = Vec3 { };
+        /** The surface's unit normal there. */
+        normal~ Vec3 = Vec3 { y: 1.0f };
+    }
+
     /**
      * Every rig and animator a game has made, and how they reach the screen. A game makes a rig (`lantern::animation`
      * in Nyx), gives an entity an animator for it, and sets the animator's parameters from its own code. Each frame the
@@ -20,6 +30,8 @@ lantern:::engine :: namespace {
         animatorRigs~ Array<i32>! = [];
         /** The entity each animator moves. */
         animatorEntities~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+        /** The foot placer of each animator. It has no legs when the rig's skeleton has none, and is off until asked. */
+        animatorFeet~ Array<lantern:::animation:::FootPlacer*!>! = [];
 
         /** An empty system. */
         AnimationSystem~: () { }
@@ -31,6 +43,7 @@ lantern:::engine :: namespace {
             animators.freeAll();
             delete animatorRigs;
             delete animatorEntities;
+            animatorFeet.freeAll();
         }
 
         /** Adds a rig and its skinned mesh, and returns the rig's index. */
@@ -45,6 +58,9 @@ lantern:::engine :: namespace {
             animators.push(new lantern:::animation:::Animator());
             animatorRigs.push(rigIndex);
             animatorEntities.push(entity);
+            placer := lantern:::animation:::FootPlacer:::ForSkeleton(rigs[usize(rigIndex)]->skeleton);
+            placer->SnapWeight(0.0f);
+            animatorFeet.push(placer!);
             return i32(animators.length()) - 1;
         }
 
@@ -54,6 +70,8 @@ lantern:::engine :: namespace {
             animators = [];
             animatorRigs.clear();
             animatorEntities.clear();
+            animatorFeet.freeAll();
+            animatorFeet = [];
         }
 
         /** Forgets every animator and rig, for a new session. The caller frees the meshes. */
@@ -72,6 +90,70 @@ lantern:::engine :: namespace {
             guard record := entityWorld->Get(animatorEntities[usize(animator)]) return;
             guard inverse := record.WorldMatrix().inverse() return;
             animators[usize(animator)]->SetLook(lantern:::core:::TransformPoint3(inverse, worldTarget), weight);
+        }
+
+        /**
+         * Where each of an animator's feet is in world space, for the host to cast a ray down from. Empty when the animator
+         * has foot placement off (and is not still fading out of it) or its rig has no legs.
+         */
+        FootWorldPositions :: (entityWorld: World*, animator: i32) -> Array<Vec3>! {
+            result~ Array<Vec3>! = [];
+            placer: lantern:::animation:::FootPlacer* = animatorFeet[usize(animator)];
+            guard placer->legs.length() > 0 && placer->IsActive() return result!;
+            guard animators[usize(animator)]->pose.length() > 0 return result!;
+            guard record := entityWorld->Get(animatorEntities[usize(animator)]) return result!;
+            positions: Array<Vec3>! = placer->FootPositions(
+                rigs[usize(animatorRigs[usize(animator)])]->skeleton,
+                animators[usize(animator)]->pose
+            );
+            entityMatrix: Mat4 = record.WorldMatrix();
+            for position in positions {
+                result.push(lantern:::core:::TransformPoint3(entityMatrix, position));
+            }
+            delete positions;
+            return result!;
+        }
+
+        /** Where an animator's entity has its origin (its feet) in world space, or the origin when the entity is gone. */
+        OriginWorld :: (entityWorld: World*, animator: i32) -> Vec3 {
+            guard record := entityWorld->Get(animatorEntities[usize(animator)]) return Vec3 { };
+            return lantern:::core:::TransformPoint3(record.WorldMatrix(), Vec3 { });
+        }
+
+        /**
+         * Plants an animator's feet on the surfaces the host found under them (`hits`, one per foot in the order
+         * `FootWorldPositions` gave them). Each surface's height is taken relative to the ground under the character's own
+         * origin, so only differences in the ground show.
+         */
+        PlaceFeet~: (entityWorld: World*, animator: i32, hits: Array<FootHit>, deltaTime: f32) -> void {
+            guard record := entityWorld->Get(animatorEntities[usize(animator)]) return;
+            guard inverse := record.WorldMatrix().inverse() return;
+            origin: Vec3 = lantern:::core:::TransformPoint3(record.WorldMatrix(), Vec3 { });
+            grounds~ Array<lantern:::animation:::FootGround>! = [];
+            for hit in hits {
+                if !hit.found {
+                    grounds.push(lantern:::animation:::FootGround { });
+                    continue;
+                }
+                modelNormal: Vec3 = lantern:::core:::NormalizeOr3(
+                    lantern:::core:::TransformPoint3(inverse, hit.point + hit.normal) - lantern:::core:::TransformPoint3(inverse, hit.point),
+                    Vec3 { y: 1.0f }
+                );
+                grounds.push(lantern:::animation:::FootGround {
+                    found: true,
+                    offset: hit.point.y - origin.y,
+                    normal: modelNormal
+                });
+            }
+            skeleton: lantern:::animation:::Skeleton* = rigs[usize(animatorRigs[usize(animator)])]->skeleton;
+            pose: Array<lantern:::animation:::JointTransform~> = animators[usize(animator)]->pose.borrow().mutable();
+            animatorFeet[usize(animator)]->Place(skeleton, pose, grounds, deltaTime);
+            delete grounds;
+        }
+
+        /** Turns an animator's foot placement on (weight 1) or off (0). It eases between the two. */
+        SetFootPlacement~: (animator: i32, weight: f32) -> void {
+            animatorFeet[usize(animator)]->SetWeight(weight);
         }
 
         /** Advances every animator by `deltaTime` seconds. An animator whose entity is gone is skipped. */

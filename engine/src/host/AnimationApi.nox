@@ -74,6 +74,43 @@ lantern:::host :: namespace {
                 }
             }
         });
+        animationNamespace->Function("LoadRig", "(path: string, scale: f32, yawDegrees: f32) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            path: string! = AssetPathArgument(context, state, 0);
+            defer delete path;
+            options: lantern:::animation:::GltfRigOptions = lantern:::animation:::GltfRigOptions {
+                scale: context->F32(1),
+                yawRadians: context->F32(2) * Math:::PI / 180.0f,
+                feetOnGround: true
+            };
+            if Stopped(context) {
+                return;
+            }
+            loaded := lantern:::animation:::LoadGltfRig(path, options);
+            when loaded! {
+                Result:::Ok(loaded) -> {
+                    character~ lantern:::animation:::GltfRig = loaded!;
+                    unsafe {
+                        created := state->renderBackend->CreateMesh(character.mesh);
+                        when created! {
+                            Result:::Ok(handle) -> {
+                                state->scriptMeshes.push(handle);
+                                context->ReturnI64(i64(state->animationSystem->AddRig(character.rig!, handle)));
+                            },
+                            Result:::Err(message) -> {
+                                delete character.rig;
+                                Invalid(context, message);
+                                delete message;
+                            }
+                        }
+                    }
+                    delete character.mesh;
+                },
+                Result:::Err(message) -> {
+                    NotFound(context, message);
+                    delete message;
+                }
+            }
+        });
         animationNamespace->Function("Spawn", "(entity: i64, rig: i64, texture: i64, tint: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;
             rigId: i64 = context->I64(1);
@@ -244,6 +281,16 @@ lantern:::host :: namespace {
             }
             unsafe {
                 state->animationSystem->SetLook(state->entityWorld, animator, target, weight);
+            }
+        });
+        animationNamespace->Function("SetFootPlacement", "(animator: i64, enabled: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            enabled: bool = context->Bool(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->animationSystem->SetFootPlacement(i32(animator), enabled ? 1.0f : 0.0f);
             }
         });
         failure := animationNamespace->Finish();

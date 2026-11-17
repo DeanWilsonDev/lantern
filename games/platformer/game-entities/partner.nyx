@@ -1,5 +1,6 @@
 TeamBeat :: import TeamBeat;
 PartnerTuning :: import PartnerTuning;
+CharacterAnimator :: import CharacterAnimator;
 Math :: import standard:::Math;
 
 // What she is doing right now.
@@ -44,8 +45,9 @@ public:
     note~ string = "";
     controller~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, lantern:::math:::Vec3:::Zero());
 
-    // Makes her at `start`, with the level's beats in order. A level with no partner marker has no partner at all.
-    Spawn~: (start: lantern:::math:::Vec3, bodyMesh: i64, bodyTexture: i64, beatsInOrder~ Array<TeamBeat>) -> void {
+    // Makes her at `start`, with the level's beats in order. `rig` is the animated humanoid the player and the
+    // companion wear too (docs/animation.md). A level with no partner marker has no partner at all.
+    Spawn~: (start: lantern:::math:::Vec3, rig: i64, bodyTexture: i64, beatsInOrder~ Array<TeamBeat>) -> void {
         isPresent = true;
         beats = beatsInOrder;
         controller = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, start);
@@ -53,12 +55,8 @@ public:
         controller.SetJumpHeight(PartnerTuning:::JUMP_HEIGHT);
         navigationNodes = lantern:::navigation:::Build(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, PartnerTuning:::NAV_STEP_HEIGHT, PartnerTuning:::NAV_MAX_DROP, PartnerTuning:::NAV_MAX_JUMP_UP, PartnerTuning:::NAV_MAX_JUMP_ACROSS);
         root = lantern:::world:::Spawn("partner", start);
-        body = lantern:::world:::Spawn("partner_body", { y: PartnerTuning:::HEIGHT * 0.5f });
-        lantern:::world:::SetTexturedMesh(body, bodyMesh, bodyTexture, "E8506A");
-        // The player's capsule mesh is 1.7 m tall and 0.7 m wide; she is 1.5 by 0.48.
-        lantern:::world:::SetScale(body, { x: 0.7f, y: 0.88f, z: 0.7f });
-        lantern:::world:::SetParent(body, root);
-        bodyCenter = PartnerTuning:::HEIGHT * 0.5f;
+        animation = new CharacterAnimator();
+        animation.Create(root, "partner_body", rig, bodyTexture, "E8506A");
         BeginAgain(start);
     }
 
@@ -68,6 +66,7 @@ public:
         controller.Teleport(start);
         BeginAgain(start);
         lantern:::world:::Teleport(root, start);
+        animation.Forget();
     }
 
     // For the debug HUD and the tests.
@@ -136,7 +135,6 @@ public:
     // One fixed step. `activeChannels` are the switch channels that are on now, which some beats wait for.
     Update~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, activeChannels: Array<i32>, dt: f32) -> void {
         guard isPresent;
-        hopSeconds += dt;
         wantsToMove = false;
         speedScale = 1.0f;
         moveTarget = position;
@@ -150,13 +148,12 @@ public:
         DrawPath();
         lantern:::world:::SetPosition(root, position);
         lantern:::world:::SetYaw(root, facingYaw);
-        ShowBody();
+        ShowBody(playerFeet, dt);
     }
 
 private:
     beats~ Array<TeamBeat> = [];
-    body~ i64 = 0;
-    bodyCenter~ f32 = 0.0f;
+    animation~ CharacterAnimator = new CharacterAnimator();
     // The walk to the current beat: the places to pass first, and which of them is next.
     route~ Array<lantern:::math:::Vec3> = [];
     routeIndex~ i32 = 0;
@@ -178,7 +175,6 @@ private:
     actingSeconds~ f32 = 0.0f;
     isPaused~ bool = false;
     nudgeSeconds~ f32 = 0.0f;
-    hopSeconds~ f32 = 1000.0f;
     hasPending~ bool = false;
     // What this step decided: whether she walks, to where, and how fast.
     wantsToMove~ bool = false;
@@ -372,6 +368,9 @@ private:
         }
         controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED * speedScale);
         controller.Step(direction, isJumping, isJumpHeld, dt);
+        if isJumping {
+            animation.Jump();
+        }
         before := position;
         position = controller.FeetPosition();
         if wantsToMove && HasReached(moveTarget) {
@@ -568,22 +567,21 @@ private:
         }
     }
 
-    // The player is far off: every NUDGE_INTERVAL_SECONDS she hops, a wave that says "this way".
+    // The player is far off: every NUDGE_INTERVAL_SECONDS she waves, a gesture that says "this way".
     Nudge~: (dt: f32) -> void {
         nudgeSeconds += dt;
         if nudgeSeconds >= PartnerTuning:::NUDGE_INTERVAL_SECONDS {
             nudgeSeconds = 0.0f;
-            hopSeconds = 0.0f;
+            animation.Wave();
         }
     }
 
-    // Crouching is her body squashed to CROUCH_SCALE of its height, lowered so her feet stay on the ground; a hop lifts
-    // it.
-    ShowBody~: () -> void {
-        isCrouched := mode == PartnerMode:::Acting && action == "crouch";
-        scale := isCrouched ? PartnerTuning:::CROUCH_SCALE : 1.0f;
-        hop := hopSeconds < PartnerTuning:::HOP_SECONDS ? Math:::sin(hopSeconds / PartnerTuning:::HOP_SECONDS * 3.14159265f) * PartnerTuning:::HOP_HEIGHT : 0.0f;
-        lantern:::world:::SetScale(body, { x: 0.7f, y: 0.88f * scale, z: 0.7f });
-        lantern:::world:::SetPosition(body, { y: bodyCenter * scale + hop });
+    // She crouches to offer the boost, looks at the player while they are near, and the animator turns her speed and
+    // whether she is on the ground into walking, running, jumping and falling.
+    ShowBody~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
+        animation.SetCrouching(mode == PartnerMode:::Acting && action == "crouch");
+        isNear := (playerFeet - position).Length() < PartnerTuning:::LOOK_RANGE;
+        animation.LookAt(playerFeet + lantern:::math:::Vec3 { x: 0.0f, y: 1.6f, z: 0.0f }, isNear ? 1.0f : 0.0f);
+        animation.Observe(position, controller.IsGrounded(), dt);
     }
 }

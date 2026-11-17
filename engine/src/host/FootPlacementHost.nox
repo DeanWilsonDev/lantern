@@ -1,0 +1,32 @@
+lantern:::host :: namespace {
+    /** How high above a character's own ground a foot's ray starts, and so the tallest step a foot reaches up to. */
+    FOOT_RAY_START_HEIGHT: f32 : 0.5f;
+    /** How far the ray reaches below that start: the start height plus the deepest drop a foot reaches down to. */
+    FOOT_RAY_LENGTH: f32 : 1.0f;
+
+    /**
+     * Plants the feet of every animator that asked for it. For each of an animator's feet it casts a ray straight down
+     * through the collision world, starting a little above the character's ground, and hands the surfaces it found (or
+     * the lack of one) to the animation system, which turns them into leg and hip changes. It runs after the animators
+     * have posed themselves and before the draws are made.
+     */
+    PlaceAnimatedFeet :: (animationSystem: lantern:::engine:::AnimationSystem~*, entityWorld: lantern:::engine:::World*, collision: lantern:::physics:::CollisionWorld*, deltaTime: f32) -> void {
+        for animator~ i32 = 0; animator < i32(animationSystem->animators.length()); animator++ {
+            feet: Array<Vec3>! = animationSystem->FootWorldPositions(entityWorld, animator);
+            defer delete feet;
+            guard feet.length() > 0 continue;
+            origin: Vec3 = animationSystem->OriginWorld(entityWorld, animator);
+            hits~ Array<lantern:::engine:::FootHit>! = [];
+            defer delete hits;
+            for foot in feet {
+                rayStart: Vec3 = Vec3 { x: foot.x, y: origin.y + FOOT_RAY_START_HEIGHT, z: foot.z };
+                if hit := collision->Raycast(rayStart, Vec3 { y: -1.0f }, FOOT_RAY_LENGTH) {
+                    hits.push(lantern:::engine:::FootHit { found: true, point: hit.point, normal: hit.normal });
+                } else {
+                    hits.push(lantern:::engine:::FootHit { });
+                }
+            }
+            animationSystem->PlaceFeet(entityWorld, animator, hits, deltaTime);
+        }
+    }
+}
