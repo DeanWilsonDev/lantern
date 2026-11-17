@@ -1,0 +1,134 @@
+lantern:::animation :: namespace {
+    /** One key of a joint's animation: where the joint is at `time` seconds into the clip. */
+    Keyframe :: struct {
+        /** Seconds from the start of the clip. */
+        time~ f32 = 0.0f;
+        /** The joint's local position at this time. */
+        translation~ Vec3 = Vec3 { };
+        /** The joint's local rotation at this time. */
+        rotation~ Quaternion = Quaternion { };
+    }
+
+    /**
+     * The keys for one joint, in time order. Between two keys the joint's position and rotation are blended, so a clip
+     * needs only its extreme poses. A joint with no track in a clip stays at its bind pose.
+     */
+    JointTrack :: class {
+    public:
+        /** Which joint of the skeleton these keys move. */
+        joint~ i32 = 0;
+        /** The keys, earliest first. */
+        keys~ Array<Keyframe>! = [];
+
+        /** A track for `jointIndex` with no keys yet. */
+        JointTrack~: (jointIndex: i32) {
+            joint = jointIndex;
+        }
+
+        /** Frees the keys. */
+        !JointTrack~: () {
+            delete keys;
+        }
+
+        /**
+         * The joint's transform `time` seconds in. Before the first key it holds the first key, after the last the last
+         * key, between two it blends them. `rest` supplies the scale, which clips don't animate.
+         */
+        Sample :: (time: f32, rest: JointTransform) -> JointTransform {
+            guard keys.length() > 0 return rest;
+            if time <= keys[0].time {
+                return JointTransform {
+                    translation: keys[0].translation,
+                    rotation: keys[0].rotation,
+                    scale: rest.scale
+                };
+            }
+            lastIndex: usize = keys.length() - 1;
+            if time >= keys[lastIndex].time {
+                return JointTransform {
+                    translation: keys[lastIndex].translation,
+                    rotation: keys[lastIndex].rotation,
+                    scale: rest.scale
+                };
+            }
+            index~ usize = 0;
+            while keys[index + 1].time < time {
+                index += 1;
+            }
+            before: Keyframe = keys[index];
+            after: Keyframe = keys[index + 1];
+            amount: f32 = (time - before.time) / (after.time - before.time);
+            return JointTransform {
+                translation: lantern:::core:::Lerp3(before.translation, after.translation, amount),
+                rotation: lantern:::core:::QuaternionSlerp(before.rotation, after.rotation, amount),
+                scale: rest.scale
+            };
+        }
+    }
+
+    /**
+     * A named animation: how some of a skeleton's joints move over `duration` seconds. A looping clip's last pose should
+     * match its first, so playback wraps without a jump.
+     */
+    AnimationClip :: class {
+    public:
+        /** The name a game plays the clip by. */
+        name~ string!;
+        /** How long the clip is, in seconds. */
+        duration~ f32 = 1.0f;
+        /** One track per animated joint. */
+        tracks~ Array<JointTrack*!>! = [];
+
+        /** An empty clip. */
+        AnimationClip~: (clipName: string, clipDuration: f32) {
+            name = `${clipName}`;
+            duration = clipDuration;
+        }
+
+        /** Frees the name and the tracks. */
+        !AnimationClip~: () {
+            delete name;
+            tracks.freeAll();
+        }
+
+        /** Adds a key to a joint's track, making the track if the joint has none. Keys must be added in time order. */
+        AddKey~: (joint: i32, time: f32, translation: Vec3, rotation: Quaternion) -> void {
+            for index~ usize = 0; index < tracks.length(); index++ {
+                if tracks[index]->joint == joint {
+                    tracks[index]->keys.push(Keyframe {
+                        time: time,
+                        translation: translation,
+                        rotation: rotation
+                    });
+                    return;
+                }
+            }
+            track := new JointTrack(joint);
+            track->keys.push(Keyframe { time: time, translation: translation, rotation: rotation });
+            tracks.push(track!);
+        }
+
+        /**
+         * Writes this clip's pose at `time` seconds into `pose`, joint by joint, over whatever `pose` held: joints without
+         * a track keep their value. `pose` should start as the skeleton's rest pose. A looping clip wraps `time`; a
+         * one-shot clip holds its last pose.
+         */
+        SampleInto :: (
+            time: f32,
+            loops: bool,
+            skeleton: Skeleton*,
+            pose: Array<JointTransform~>
+        ) -> void {
+            wrapped~ f32 = time;
+            if loops && duration > 0.0f {
+                wrapped = time - duration * Math:::floor(time / duration);
+            } else {
+                wrapped = Math:::clamp(time, 0.0f, duration);
+            }
+            for index~ usize = 0; index < tracks.length(); index++ {
+                joint: usize = usize(tracks[index]->joint);
+                pose[joint] = tracks[index]->Sample(wrapped, skeleton->bindPose[joint]);
+            }
+        }
+    }
+}

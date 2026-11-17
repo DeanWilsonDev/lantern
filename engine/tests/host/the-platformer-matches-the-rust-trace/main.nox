@@ -64,6 +64,24 @@ RunTraced :: (autoplay: bool, walking: bool, frames: u32) -> string! {
     return trace!;
 }
 
+/**
+ * The line without its last column, the number of entities in the world. The Rust traces were recorded with capsule
+ * bodies; the characters are animated skinned meshes now, so the count is a fact about how the game builds its
+ * characters, not about how the engine simulates them. Everything the simulation decides is still compared.
+ */
+WithoutEntityCount :: (line: string) -> string! {
+    columns: Array<string>! = line.split("\t");
+    result~ string! = "";
+    for index~ usize = 0; index + 1 < columns.length(); index++ {
+        if index > 0 {
+            result += "\t";
+        }
+        result += columns[index];
+    }
+    delete columns;
+    return result!;
+}
+
 MatchesRust :: (name: string, trace: string) -> bool {
     WriteNoxTrace(name, trace);
     rustPath: string! = `${TRACE_DIRECTORY}/rust-${name}.trace`;
@@ -77,7 +95,12 @@ MatchesRust :: (name: string, trace: string) -> bool {
         print(`${name}: ${noxLines.length()} lines against Rust's ${rustLines.length()}`);
     }
     for index~ usize = 0; index < rustLines.length() && index < noxLines.length(); index++ {
-        if rustLines[index] != noxLines[index] {
+        rustComparable: string! = WithoutEntityCount(rustLines[index]);
+        noxComparable: string! = WithoutEntityCount(noxLines[index]);
+        isSame: bool = rustComparable == noxComparable;
+        delete rustComparable;
+        delete noxComparable;
+        if !isSame {
             print(`${name}: first difference at line ${index + 1}`);
             print(`  rust: ${rustLines[index]}`);
             print(`  nox:  ${noxLines[index]}`);

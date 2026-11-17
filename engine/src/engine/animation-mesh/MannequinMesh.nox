@@ -1,0 +1,296 @@
+lantern:::animation :: namespace {
+    /** The model-space position of a joint in the skeleton's bind pose. */
+    BindPosition :: (skeleton: Skeleton*, joint: usize) -> Vec3 {
+        return lantern:::core:::TransformPoint3(skeleton->bindModel[joint], Vec3 { });
+    }
+
+    /** Paints every vertex from `firstVertex` on with a vertex colour, which multiplies the texture and the tint. */
+    PaintFrom :: (mesh: lantern:::renderer:::MeshData~*, firstVertex: usize, shade: f32) -> void {
+        for index~ usize = firstVertex; index < mesh->vertices.length(); index++ {
+            mesh->vertices[index].color = [shade, shade, shade, 1.0f];
+        }
+    }
+
+    /**
+     * Adds a sphere or capsule part that follows one joint rigidly: every vertex gets that joint with full weight. `center`
+     * is where the part sits in model space in the bind pose.
+     */
+    AppendRigidPart :: (
+        mesh: lantern:::renderer:::MeshData~*,
+        part: lantern:::renderer:::MeshData*,
+        center: Vec3,
+        joint: usize
+    ) -> void {
+        offset: u32 = u32(mesh->vertices.length());
+        for vertex in part->vertices {
+            moved~ lantern:::renderer:::Vertex = vertex;
+            moved.position = [
+                vertex.position[0] + center.x,
+                vertex.position[1] + center.y,
+                vertex.position[2] + center.z
+            ];
+            mesh->vertices.push(moved);
+            mesh->skin.push(lantern:::renderer:::SkinVertex:::Rigid(u8(joint)));
+        }
+        for index in part->indices {
+            mesh->indices.push(index + offset);
+        }
+    }
+
+    /** A box part that follows one joint rigidly. */
+    AppendRigidBox :: (
+        mesh: lantern:::renderer:::MeshData~*,
+        halfExtents: Vec3,
+        center: Vec3,
+        joint: usize
+    ) -> void {
+        box := lantern:::renderer:::BoxMesh(halfExtents, false);
+        defer delete box;
+        AppendRigidPart(mesh, box, center, joint);
+    }
+
+    /** A sphere part that follows one joint rigidly. */
+    AppendRigidSphere :: (
+        mesh: lantern:::renderer:::MeshData~*,
+        radius: f32,
+        center: Vec3,
+        joint: usize
+    ) -> void {
+        sphere := lantern:::renderer:::Sphere(radius, 12, 8);
+        defer delete sphere;
+        AppendRigidPart(mesh, sphere, center, joint);
+    }
+
+    /**
+     * A tube from one joint to the next, skinned smoothly. Its rings follow `startJoint`, except that the last ring slides
+     * half way over to `endJoint` (so a bending elbow or knee folds instead of tearing) and, when `parentJoint` isn't -1,
+     * the first ring slides half way over to the joint before the start. Radius runs from `startRadius` to `endRadius`.
+     * The ends are closed with a fan of triangles.
+     */
+    AppendSkinnedTube :: (
+        mesh: lantern:::renderer:::MeshData~*,
+        skeleton: Skeleton*,
+        startJoint: usize,
+        endJoint: usize,
+        parentJoint: i32,
+        blendEnd: bool,
+        startRadius: f32,
+        endRadius: f32
+    ) -> void {
+        ringCount: u32 = 7;
+        segmentCount: u32 = 10;
+        start: Vec3 = BindPosition(skeleton, startJoint);
+        end: Vec3 = BindPosition(skeleton, endJoint);
+        axis: Vec3 = lantern:::core:::Normalize3(end - start);
+        sideways: Vec3 = lantern:::core:::Normalize3(lantern:::core:::AnyOrthonormalVector3(axis));
+        forward: Vec3 = axis.cross(sideways);
+        first: u32 = u32(mesh->vertices.length());
+        for ring~ u32 = 0; ring < ringCount; ring++ {
+            along: f32 = f32(ring) / f32(ringCount - 1);
+            center: Vec3 = start + (end - start) * along;
+            radius: f32 = startRadius + (endRadius - startRadius) * along;
+            endShare~ f32 = 0.0f;
+            if blendEnd {
+                endShare = 0.5f * SmoothStep(0.65f, 1.0f, along);
+            }
+            parentShare~ f32 = 0.0f;
+            parentIndex~ u8 = 0;
+            if parentJoint >= 0 {
+                parentShare = 0.5f * (1.0f - SmoothStep(0.0f, 0.35f, along));
+                parentIndex = u8(parentJoint);
+            }
+            skin: lantern:::renderer:::SkinVertex = lantern:::renderer:::SkinVertex:::Blend(
+                u8(startJoint),
+                u8(endJoint),
+                endShare,
+                parentIndex,
+                parentShare
+            );
+            for segment~ u32 = 0; segment < segmentCount; segment++ {
+                angle: f32 = 2.0f * Math:::PI * f32(segment) / f32(segmentCount);
+                direction: Vec3 = sideways * Math:::cos(angle) + forward * Math:::sin(angle);
+                mesh->vertices.push(lantern:::renderer:::Vertex:::Create(
+                    center + direction * radius,
+                    direction,
+                    Vec2 { x: f32(segment) / f32(segmentCount), y: along },
+                    Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f }
+                ));
+                mesh->skin.push(skin);
+            }
+        }
+        for ring~ u32 = 0; ring + 1 < ringCount; ring++ {
+            for segment~ u32 = 0; segment < segmentCount; segment++ {
+                nextSegment: u32 = (segment + 1) % segmentCount;
+                a: u32 = first + ring * segmentCount + segment;
+                b: u32 = first + ring * segmentCount + nextSegment;
+                c: u32 = first + (ring + 1) * segmentCount + nextSegment;
+                d: u32 = first + (ring + 1) * segmentCount + segment;
+                mesh->indices.push(a);
+                mesh->indices.push(b);
+                mesh->indices.push(c);
+                mesh->indices.push(a);
+                mesh->indices.push(c);
+                mesh->indices.push(d);
+            }
+        }
+        AppendTubeCap(mesh, first, segmentCount, start, axis * -1.0f, false);
+        AppendTubeCap(mesh, first + (ringCount - 1) * segmentCount, segmentCount, end, axis, true);
+    }
+
+    /** Closes one end of a tube with a fan around a centre vertex that shares the end ring's skin. */
+    AppendTubeCap :: (
+        mesh: lantern:::renderer:::MeshData~*,
+        ringFirst: u32,
+        segmentCount: u32,
+        center: Vec3,
+        outward: Vec3,
+        isEnd: bool
+    ) -> void {
+        centerIndex: u32 = u32(mesh->vertices.length());
+        mesh->vertices.push(lantern:::renderer:::Vertex:::Create(
+            center,
+            outward,
+            Vec2 { x: 0.5f, y: isEnd ? 1.0f : 0.0f },
+            Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f }
+        ));
+        mesh->skin.push(mesh->skin[usize(ringFirst)]);
+        capFirst: u32 = u32(mesh->vertices.length());
+        for segment~ u32 = 0; segment < segmentCount; segment++ {
+            ringVertex: lantern:::renderer:::Vertex = mesh->vertices[usize(ringFirst + segment)];
+            mesh->vertices.push(lantern:::renderer:::Vertex:::Create(
+                ringVertex.Position(),
+                outward,
+                ringVertex.uv[0] == 0.0f ? Vec2 { } : Vec2 {
+                    x: ringVertex.uv[0],
+                    y: ringVertex.uv[1]
+                },
+                Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f }
+            ));
+            mesh->skin.push(mesh->skin[usize(ringFirst + segment)]);
+        }
+        for segment~ u32 = 0; segment < segmentCount; segment++ {
+            nextSegment: u32 = (segment + 1) % segmentCount;
+            mesh->indices.push(centerIndex);
+            if isEnd {
+                mesh->indices.push(capFirst + segment);
+                mesh->indices.push(capFirst + nextSegment);
+            } else {
+                mesh->indices.push(capFirst + nextSegment);
+                mesh->indices.push(capFirst + segment);
+            }
+        }
+    }
+
+    /** 0 below `edgeStart`, 1 above `edgeEnd`, a smooth ramp between. */
+    SmoothStep :: (edgeStart: f32, edgeEnd: f32, value: f32) -> f32 {
+        ramp: f32 = Math:::clamp((value - edgeStart) / (edgeEnd - edgeStart), 0.0f, 1.0f);
+        return ramp * ramp * (3.0f - 2.0f * ramp);
+    }
+
+    /**
+     * The mannequin's skinned mesh, built to fit `MannequinRig`'s bind pose: smooth tubes for the torso, arms and legs,
+     * a sphere head with a dark visor on its front (-z, so you can see which way it faces), spheres at the shoulders and
+     * hands and boxes for feet. The caller owns it.
+     */
+    MannequinMesh :: (rig: Rig*) -> lantern:::renderer:::MeshData*! {
+        mesh := new lantern:::renderer:::MeshData();
+        skeleton: Skeleton* = rig->skeleton;
+        AppendSkinnedTube(mesh, skeleton, MANNEQUIN_HIPS, MANNEQUIN_SPINE, -1, true, 0.15f, 0.14f);
+        AppendSkinnedTube(
+            mesh,
+            skeleton,
+            MANNEQUIN_SPINE,
+            MANNEQUIN_CHEST,
+            i32(MANNEQUIN_HIPS),
+            true,
+            0.14f,
+            0.16f
+        );
+        AppendSkinnedTube(
+            mesh,
+            skeleton,
+            MANNEQUIN_CHEST,
+            MANNEQUIN_NECK,
+            i32(MANNEQUIN_SPINE),
+            false,
+            0.17f,
+            0.12f
+        );
+        AppendSkinnedTube(
+            mesh,
+            skeleton,
+            MANNEQUIN_NECK,
+            MANNEQUIN_HEAD,
+            i32(MANNEQUIN_CHEST),
+            false,
+            0.05f,
+            0.05f
+        );
+        headCenter: Vec3 = BindPosition(skeleton, MANNEQUIN_HEAD) + Vec3 { y: 0.11f };
+        AppendRigidSphere(mesh, 0.12f, headCenter, MANNEQUIN_HEAD);
+        visorStart: usize = mesh->vertices.length();
+        AppendRigidBox(
+            mesh,
+            Vec3 { x: 0.085f, y: 0.03f, z: 0.03f },
+            headCenter + Vec3 { y: 0.01f, z: -0.1f },
+            MANNEQUIN_HEAD
+        );
+        PaintFrom(mesh, visorStart, 0.08f);
+        armJoints: usize[2] = [MANNEQUIN_LEFT_UPPER_ARM, MANNEQUIN_RIGHT_UPPER_ARM];
+        legJoints: usize[2] = [MANNEQUIN_LEFT_THIGH, MANNEQUIN_RIGHT_THIGH];
+        for side~ usize = 0; side < 2; side++ {
+            upperArm: usize = armJoints[side];
+            AppendRigidSphere(mesh, 0.07f, BindPosition(skeleton, upperArm), upperArm);
+            AppendSkinnedTube(
+                mesh,
+                skeleton,
+                upperArm,
+                upperArm + 1,
+                i32(MANNEQUIN_CHEST),
+                true,
+                0.06f,
+                0.05f
+            );
+            AppendSkinnedTube(
+                mesh,
+                skeleton,
+                upperArm + 1,
+                upperArm + 2,
+                i32(upperArm),
+                false,
+                0.05f,
+                0.04f
+            );
+            AppendRigidSphere(mesh, 0.05f, BindPosition(skeleton, upperArm + 2), upperArm + 2);
+            thigh: usize = legJoints[side];
+            AppendSkinnedTube(
+                mesh,
+                skeleton,
+                thigh,
+                thigh + 1,
+                i32(MANNEQUIN_HIPS),
+                true,
+                0.09f,
+                0.065f
+            );
+            AppendSkinnedTube(
+                mesh,
+                skeleton,
+                thigh + 1,
+                thigh + 2,
+                i32(thigh),
+                false,
+                0.065f,
+                0.05f
+            );
+            ankle: Vec3 = BindPosition(skeleton, thigh + 2);
+            AppendRigidBox(
+                mesh,
+                Vec3 { x: 0.05f, y: 0.04f, z: 0.12f },
+                ankle + Vec3 { y: -0.03f, z: -0.07f },
+                thigh + 2
+            );
+        }
+        return mesh!;
+    }
+}

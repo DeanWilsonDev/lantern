@@ -1,0 +1,62 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct JointUniforms
+{
+    float4x4 joints[32];
+};
+
+struct ObjectUniforms
+{
+    float4x4 model;
+    float4x4 normal_matrix;
+};
+
+struct FrameUniforms
+{
+    float4x4 view_projection;
+    float4 camera_position;
+};
+
+struct main0_out
+{
+    float3 world_position [[user(locn0)]];
+    float3 world_normal [[user(locn1)]];
+    float2 surface_uv [[user(locn2)]];
+    float4 surface_color [[user(locn3)]];
+    float4 gl_Position [[position]];
+};
+
+struct main0_in
+{
+    float3 input_position [[attribute(0)]];
+    float3 input_normal [[attribute(1)]];
+    float2 input_uv [[attribute(2)]];
+    float4 input_color [[attribute(3)]];
+    uint4 input_joints [[attribute(4)]];
+    float4 input_weights [[attribute(5)]];
+};
+
+vertex main0_out main0(main0_in in [[stage_in]], constant FrameUniforms& frame [[buffer(0)]], constant ObjectUniforms& object_uniforms [[buffer(1)]], constant JointUniforms& palette [[buffer(2)]])
+{
+    main0_out out = {};
+    float4x4 _34 = palette.joints[in.input_joints.x] * in.input_weights.x;
+    float4x4 _42 = palette.joints[in.input_joints.y] * in.input_weights.y;
+    float4x4 _55 = float4x4(_34[0] + _42[0], _34[1] + _42[1], _34[2] + _42[2], _34[3] + _42[3]);
+    float4x4 _63 = palette.joints[in.input_joints.z] * in.input_weights.z;
+    float4x4 _76 = float4x4(_55[0] + _63[0], _55[1] + _63[1], _55[2] + _63[2], _55[3] + _63[3]);
+    float4x4 _84 = palette.joints[in.input_joints.w] * in.input_weights.w;
+    float4x4 skin = float4x4(_76[0] + _84[0], _76[1] + _84[1], _76[2] + _84[2], _76[3] + _84[3]);
+    float4 skinned_position = skin * float4(in.input_position, 1.0);
+    float3 skinned_normal = float3x3(skin[0].xyz, skin[1].xyz, skin[2].xyz) * in.input_normal;
+    float4 world = object_uniforms.model * skinned_position;
+    out.gl_Position = frame.view_projection * world;
+    out.world_position = world.xyz;
+    out.world_normal = (object_uniforms.normal_matrix * float4(skinned_normal, 0.0)).xyz;
+    out.surface_uv = in.input_uv;
+    out.surface_color = in.input_color;
+    return out;
+}
+

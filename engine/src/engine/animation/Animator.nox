@@ -1,0 +1,495 @@
+lantern:::animation :: namespace {
+    /** How a transition's condition compares a parameter with its threshold. */
+    TransitionCondition :: enum {
+        /** True while the parameter is above the threshold. */
+        Greater,
+        /** True while the parameter is below the threshold. */
+        Less,
+        /** True once the state's clip has played to its end. Needs a state that does not loop. */
+        Finished,
+        /** True when the parameter was set to 1, and sets it back to 0 when the transition is taken. */
+        Trigger
+    }
+
+    /**
+     * A rule for moving from one state to another: when its condition holds, the animator crossfades into `to` over
+     * `fadeTime` seconds. Rules are checked in the order they were added and the first that holds wins.
+     */
+    Transition :: struct {
+        /** The state this rule leaves, or -1 for a rule that applies from any state. */
+        from~ i32 = -1;
+        /** The state it enters. */
+        to~ i32 = 0;
+        /** The parameter its condition reads, or -1 for `Finished`. */
+        parameter~ i32 = -1;
+        /** How the parameter is compared. */
+        condition~ TransitionCondition = TransitionCondition:::Greater;
+        /** What the parameter is compared with. */
+        threshold~ f32 = 0.0f;
+        /** How long the crossfade takes, in seconds. */
+        fadeTime~ f32 = 0.2f;
+    }
+
+    /**
+     * One thing a character can be doing. Most states play one clip. A blend state mixes several by a parameter, such as
+     * idle, walk and run by speed: its clips are added with the parameter value at which each plays alone, in rising
+     * order, and a value between two thresholds mixes the two clips on either side of it.
+     */
+    AnimationState :: class {
+    public:
+        /** The name a game and the transitions refer to the state by. */
+        name~ string!;
+        /** The clips, as indices into the rig. A plain state has one. */
+        clipIndices~ Array<i32>! = [];
+        /** For a blend state, the parameter value at which each clip plays alone, rising. */
+        thresholds~ Array<f32>! = [];
+        /** The parameter that drives a blend state, or -1 for a plain state. */
+        parameter~ i32 = -1;
+        /** Whether the state starts over when it ends. A state that doesn't hold its last pose and counts as finished. */
+        loops~ bool = true;
+        /** Playback speed: 1 is the clips' own, 2 is twice as fast. */
+        speed~ f32 = 1.0f;
+
+        /** A state with no clips yet. */
+        AnimationState~: (stateName: string) {
+            name = `${stateName}`;
+        }
+
+        /** Frees the name and the arrays. */
+        !AnimationState~: () {
+            delete name;
+            delete clipIndices;
+            delete thresholds;
+        }
+    }
+
+    /** Which two clips of a blend state to mix, and how much of the second. */
+    BlendBracket :: struct {
+        /** The clip below the value. */
+        low~ usize = 0;
+        /** The clip above it, equal to `low` when the value is past either end. */
+        high~ usize = 0;
+        /** 0 for all of `low`, 1 for all of `high`. */
+        amount~ f32 = 0.0f;
+    }
+
+    /**
+     * Plays a rig's clips on one character. It holds the character's state machine (states, parameters and transitions)
+     * and the playback: which state is playing, how far through it is, and the crossfade out of the state before.
+     * `Update` advances it; `Pose` then holds the local pose to skin with.
+     *
+     * The animator keeps no pointer to its rig: the caller passes the rig to each call, which keeps ownership simple
+     * when many animators share one rig.
+     */
+    Animator :: class {
+    public:
+        /** The states. The first one added is where playback starts. */
+        states~ Array<AnimationState*!>! = [];
+        /** The transition rules. */
+        transitions~ Array<Transition>! = [];
+        /** The parameters' names; a game sets them by name. */
+        parameterNames~ Array<string!>! = [];
+        /** The parameters' current values. */
+        parameterValues~ Array<f32>! = [];
+        /** The local pose after the latest update, one transform per joint. */
+        pose~ Array<JointTransform>! = [];
+        /** The state playing, or -1 before the first update. */
+        currentState~ i32 = -1;
+        /** How far through the current state, 0 to 1. */
+        currentPhase~ f32 = 0.0f;
+        /** True once a state that doesn't loop has reached its end. */
+        currentFinished~ bool = false;
+        /** The state being faded out, or -1. */
+        fadeState~ i32 = -1;
+        /** How far through the outgoing state. */
+        fadePhase~ f32 = 0.0f;
+        /** Seconds the crossfade has run. */
+        fadeElapsed~ f32 = 0.0f;
+        /** Seconds the crossfade lasts; 0 when none is running. */
+        fadeDuration~ f32 = 0.0f;
+        /** The pose the crossfade started from, when a new fade interrupted one. */
+        frozenPose~ Array<JointTransform>! = [];
+        /** Whether `frozenPose` is what is fading out. */
+        hasFrozenPose~ bool = false;
+        /** Where the character looks, in the model's space; see `SetLook`. */
+        lookTarget~ Vec3 = Vec3 { };
+        /** How much the character looks there, 0 (straight ahead, as animated) to 1. */
+        lookWeight~ f32 = 0.0f;
+        /** The look target after smoothing, which is what the head turns toward. */
+        lookSmoothedTarget~ Vec3 = Vec3 { };
+        /** The look weight after smoothing, so the head turns back gradually when the target is dropped. */
+        lookSmoothedWeight~ f32 = 0.0f;
+        /** The most the head and neck turn from the animated pose, in degrees. */
+        lookLimitDegrees~ f32 = 75.0f;
+
+        /** An animator with no states. */
+        Animator~: () { }
+
+        /** Frees everything it owns. */
+        !Animator~: () {
+            states.freeAll();
+            delete transitions;
+            parameterNames.freeAll();
+            delete parameterValues;
+            delete pose;
+            delete frozenPose;
+        }
+
+        /** The parameter's index, adding it with value 0 when it is new. */
+        ParameterIndex~: (name: string) -> i32 {
+            for index~ usize = 0; index < parameterNames.length(); index++ {
+                if parameterNames[index] == name {
+                    return i32(index);
+                }
+            }
+            copied: string! = `${name}`;
+            parameterNames.push(copied!);
+            parameterValues.push(0.0f);
+            return i32(parameterNames.length()) - 1;
+        }
+
+        /** Sets a parameter, adding it when it is new. A bool is 0 or 1; a trigger is set to 1. */
+        SetParameter~: (name: string, value: f32) -> void {
+            index: i32 = ParameterIndex(name);
+            parameterValues[usize(index)] = value;
+        }
+
+        /** A parameter's value, or 0 when there is no such parameter. */
+        Parameter :: (name: string) -> f32 {
+            for index~ usize = 0; index < parameterNames.length(); index++ {
+                if parameterNames[index] == name {
+                    return parameterValues[index];
+                }
+            }
+            return 0.0f;
+        }
+
+        /** Adds a state that plays one clip and returns its index. */
+        AddState~: (name: string, clip: i32, loops: bool) -> i32 {
+            state := new AnimationState(name);
+            state->clipIndices.push(clip);
+            state->thresholds.push(0.0f);
+            state->loops = loops;
+            states.push(state!);
+            return i32(states.length()) - 1;
+        }
+
+        /** Adds a blend state driven by `parameterName`, with no clips yet; add them with `AddBlendClip`. */
+        AddBlendState~: (name: string, parameterName: string) -> i32 {
+            state := new AnimationState(name);
+            state->parameter = ParameterIndex(parameterName);
+            states.push(state!);
+            return i32(states.length()) - 1;
+        }
+
+        /** Adds a clip to a blend state, played alone when the parameter equals `threshold`. Add them in rising order. */
+        AddBlendClip~: (state: i32, clip: i32, threshold: f32) -> void {
+            states[usize(state)]->clipIndices.push(clip);
+            states[usize(state)]->thresholds.push(threshold);
+        }
+
+        /** The state's index, or -1 when none has that name. */
+        FindState :: (name: string) -> i32 {
+            for index~ usize = 0; index < states.length(); index++ {
+                if states[index]->name == name {
+                    return i32(index);
+                }
+            }
+            return -1;
+        }
+
+        /** Adds a transition rule. `parameterName` is ignored by `Finished` rules. */
+        AddTransition~: (
+            from: i32,
+            to: i32,
+            parameterName: string,
+            condition: TransitionCondition,
+            threshold: f32,
+            fadeTime: f32
+        ) -> void {
+            parameter~ i32 = -1;
+            if condition != TransitionCondition:::Finished {
+                parameter = ParameterIndex(parameterName);
+            }
+            transitions.push(Transition {
+                from: from,
+                to: to,
+                parameter: parameter,
+                condition: condition,
+                threshold: threshold,
+                fadeTime: fadeTime
+            });
+        }
+
+        /** Crossfades into a state at once, whatever the rules say. Fading into the state already playing does nothing. */
+        Play~: (state: i32, fadeTime: f32) -> void {
+            if state == currentState || state < 0 || usize(state) >= states.length() {
+                return;
+            }
+            Enter(state, fadeTime);
+        }
+
+        /** The name of the state playing, or an empty name before the first update. */
+        CurrentStateName :: () -> string {
+            if currentState < 0 {
+                return "";
+            }
+            return states[usize(currentState)]->name;
+        }
+
+        /** The two clips of a blend state to mix at `value`. A plain state is its one clip. */
+        Bracket :: (state: i32, value: f32) -> BlendBracket {
+            thresholds: Array<f32> = states[usize(state)]->thresholds.borrow();
+            lastIndex: usize = thresholds.length() - 1;
+            if thresholds.length() == 1 || value <= thresholds[0] {
+                return BlendBracket { low: 0, high: 0, amount: 0.0f };
+            }
+            if value >= thresholds[lastIndex] {
+                return BlendBracket { low: lastIndex, high: lastIndex, amount: 0.0f };
+            }
+            index~ usize = 0;
+            while thresholds[index + 1] < value {
+                index += 1;
+            }
+            amount: f32 = (value - thresholds[index]) / (thresholds[index + 1] - thresholds[index]);
+            return BlendBracket { low: index, high: index + 1, amount: amount };
+        }
+
+        /**
+         * How long one play of the state takes in seconds at speed 1. A blend state's is the mix of its clips' lengths,
+         * which keeps their steps in time as the mix changes.
+         */
+        StateDuration :: (rig: Rig*, state: i32) -> f32 {
+            current: AnimationState* = states[usize(state)];
+            parameterValue~ f32 = 0.0f;
+            if current->parameter >= 0 {
+                parameterValue = parameterValues[usize(current->parameter)];
+            }
+            bracket: BlendBracket = Bracket(state, parameterValue);
+            lowDuration: f32 = rig->clips[usize(current->clipIndices[bracket.low])]->duration;
+            highDuration: f32 = rig->clips[usize(current->clipIndices[bracket.high])]->duration;
+            return Math:::max(lowDuration + (highDuration - lowDuration) * bracket.amount, 0.001f);
+        }
+
+        /** The local pose of a state at `phase` (0 to 1) as a new array the caller owns. */
+        SampleState :: (rig: Rig*, state: i32, phase: f32) -> Array<JointTransform>! {
+            current: AnimationState* = states[usize(state)];
+            parameterValue~ f32 = 0.0f;
+            if current->parameter >= 0 {
+                parameterValue = parameterValues[usize(current->parameter)];
+            }
+            bracket: BlendBracket = Bracket(state, parameterValue);
+            lowClip: AnimationClip* = rig->clips[usize(current->clipIndices[bracket.low])];
+            result~ Array<JointTransform>! = rig->skeleton->RestPose();
+            lowClip->SampleInto(phase * lowClip->duration, current->loops, rig->skeleton, result);
+            if bracket.high != bracket.low {
+                highClip: AnimationClip* = rig->clips[usize(current->clipIndices[bracket.high])];
+                highPose~ Array<JointTransform>! = rig->skeleton->RestPose();
+                highClip->SampleInto(
+                    phase * highClip->duration,
+                    current->loops,
+                    rig->skeleton,
+                    highPose
+                );
+                for index~ usize = 0; index < result.length(); index++ {
+                    result[index] = result[index].Blended(highPose[index], bracket.amount);
+                }
+                delete highPose;
+            }
+            return result!;
+        }
+
+        /**
+         * Advances the animation by `deltaTime` seconds: takes the first transition whose condition holds, moves the playing
+         * state and the fading one forward, and rebuilds `pose`.
+         */
+        Update~: (rig: Rig*, deltaTime: f32) -> void {
+            guard states.length() > 0 return;
+            if currentState < 0 {
+                currentState = 0;
+                currentPhase = 0.0f;
+            }
+            for index~ usize = 0; index < transitions.length(); index++ {
+                rule: Transition = transitions[index];
+                if (rule.from == currentState || rule.from < 0) && rule.to != currentState &&
+                    Holds(rule) {
+                    if rule.condition == TransitionCondition:::Trigger {
+                        parameterValues[usize(rule.parameter)] = 0.0f;
+                    }
+                    Enter(rule.to, rule.fadeTime);
+                    break;
+                }
+            }
+            current: AnimationState* = states[usize(currentState)];
+            currentPhase = Advanced(rig, currentState, currentPhase, deltaTime);
+            if !current->loops && currentPhase >= 1.0f {
+                currentFinished = true;
+            }
+            if fadeDuration > 0.0f {
+                fadeElapsed += deltaTime;
+                if fadeState >= 0 {
+                    fadePhase = Advanced(rig, fadeState, fadePhase, deltaTime);
+                }
+                if fadeElapsed >= fadeDuration {
+                    EndFade();
+                }
+            }
+            nextPose~ Array<JointTransform>! = SampleState(rig, currentState, currentPhase);
+            if fadeDuration > 0.0f {
+                raw: f32 = fadeElapsed / fadeDuration;
+                amount: f32 = raw * raw * (3.0f - 2.0f * raw);
+                if hasFrozenPose {
+                    for index~ usize = 0; index < nextPose.length(); index++ {
+                        nextPose[index] = frozenPose[index].Blended(nextPose[index], amount);
+                    }
+                } else {
+                    outgoing~ Array<JointTransform>! = SampleState(rig, fadeState, fadePhase);
+                    for index~ usize = 0; index < nextPose.length(); index++ {
+                        nextPose[index] = outgoing[index].Blended(nextPose[index], amount);
+                    }
+                    delete outgoing;
+                }
+            }
+            ApplyLook(rig, nextPose, deltaTime);
+            delete pose;
+            pose = nextPose!;
+        }
+
+        /**
+         * Asks the character to look at `target` (a point in the model's space) with `weight` from 0 to 1. The head and its
+         * neighbours turn toward it on top of whatever is playing; the next updates ease the turn in and out, and the turn is
+         * limited to `lookLimitDegrees` so a target behind the character is only looked at as far as a head can turn.
+         */
+        SetLook~: (target: Vec3, weight: f32) -> void {
+            if lookSmoothedWeight <= 0.001f {
+                lookSmoothedTarget = target;
+            }
+            lookTarget = target;
+            lookWeight = Math:::clamp(weight, 0.0f, 1.0f);
+        }
+
+        /** The skinning palette for the latest pose: one matrix per joint. The caller owns it. */
+        Palette :: (rig: Rig*) -> Array<Mat4>! {
+            return rig->skeleton->Palette(pose);
+        }
+
+    private:
+        ApplyLook~: (rig: Rig*, target: Array<JointTransform~>, deltaTime: f32) -> void {
+            ease: f32 = 1.0f - Math:::exp(-8.0f * deltaTime);
+            lookSmoothedWeight += (lookWeight - lookSmoothedWeight) * ease;
+            lookSmoothedTarget = lantern:::core:::Lerp3(lookSmoothedTarget, lookTarget, ease);
+            guard lookSmoothedWeight > 0.001f return;
+            skeleton: Skeleton* = rig->skeleton;
+            head: i32 = skeleton->FindJoint("head");
+            guard head >= 0 return;
+            neck: i32 = skeleton->FindJoint("neck");
+            chest: i32 = skeleton->FindJoint("chest");
+            matrices: Array<Mat4>! = skeleton->ModelMatrices(target);
+            eye: Vec3 = lantern:::core:::TransformPoint3(matrices[usize(head)], Vec3 { y: 0.1f });
+            delete matrices;
+            wanted: Vec3 = lantern:::core:::NormalizeOr3(lookSmoothedTarget - eye, Vec3 { z: -1.0f });
+            current: Vec3 = ModelRotation(skeleton, target, head).rotate(Vec3 { z: -1.0f });
+            turn: Quaternion = ArcBetween(current, wanted);
+            angle: f32 = 2.0f * Math:::acos(Math:::clamp(turn.w, -1.0f, 1.0f));
+            limit: f32 = lookLimitDegrees * Math:::PI / 180.0f;
+            fraction: f32 = angle > limit ? limit / angle : 1.0f;
+            whole: Quaternion = lantern:::core:::QuaternionSlerp(Quaternion { }, turn, fraction * lookSmoothedWeight);
+            if chest >= 0 {
+                Turn(skeleton, target, chest, lantern:::core:::QuaternionSlerp(Quaternion { }, whole, 0.2f));
+            }
+            if neck >= 0 {
+                Turn(skeleton, target, neck, lantern:::core:::QuaternionSlerp(Quaternion { }, whole, 0.3f));
+            }
+            Turn(skeleton, target, head, lantern:::core:::QuaternionSlerp(Quaternion { }, whole, 0.5f));
+        }
+
+        ModelRotation :: (skeleton: Skeleton*, source: Array<JointTransform>, joint: i32) -> Quaternion {
+            result~ Quaternion = Quaternion { };
+            walk~ i32 = joint;
+            while walk >= 0 {
+                result = source[usize(walk)].rotation * result;
+                walk = skeleton->parents[usize(walk)];
+            }
+            return result;
+        }
+
+        ArcBetween :: (from: Vec3, to: Vec3) -> Quaternion {
+            axis: Vec3 = from.cross(to);
+            raw: Quaternion = Quaternion { x: axis.x, y: axis.y, z: axis.z, w: 1.0f + from.dot(to) };
+            if raw.w < 0.0001f {
+                return Quaternion { };
+            }
+            return raw.normalized();
+        }
+
+        Turn :: (skeleton: Skeleton*, target: Array<JointTransform~>, joint: i32, turn: Quaternion) -> void {
+            parentRotation~ Quaternion = Quaternion { };
+            if skeleton->parents[usize(joint)] >= 0 {
+                parentRotation = ModelRotation(skeleton, target, skeleton->parents[usize(joint)]);
+            }
+            target[usize(joint)].rotation = parentRotation.conjugate() * turn * parentRotation * target[usize(joint)].rotation;
+        }
+
+        Holds :: (rule: Transition) -> bool {
+            if rule.condition == TransitionCondition:::Finished {
+                return currentFinished;
+            }
+            value: f32 = parameterValues[usize(rule.parameter)];
+            when rule.condition {
+                TransitionCondition:::Greater -> {
+                    return value > rule.threshold;
+                },
+                TransitionCondition:::Less -> {
+                    return value < rule.threshold;
+                },
+                TransitionCondition:::Trigger -> {
+                    return value > 0.5f;
+                },
+                TransitionCondition:::Finished -> {
+                    return false;
+                }
+            }
+        }
+
+        Advanced :: (rig: Rig*, state: i32, phase: f32, deltaTime: f32) -> f32 {
+            current: AnimationState* = states[usize(state)];
+            next: f32 = phase + deltaTime * current->speed / StateDuration(rig, state);
+            if current->loops {
+                return next - Math:::floor(next);
+            }
+            return Math:::min(next, 1.0f);
+        }
+
+        Enter~: (state: i32, fadeTime: f32) -> void {
+            if fadeTime > 0.0f && !(pose.length() == 0) {
+                if fadeDuration > 0.0f {
+                    delete frozenPose;
+                    frozenPose = [];
+                    for joint in pose {
+                        frozenPose.push(joint);
+                    }
+                    hasFrozenPose = true;
+                    fadeState = -1;
+                } else {
+                    fadeState = currentState;
+                    fadePhase = currentPhase;
+                    hasFrozenPose = false;
+                }
+                fadeElapsed = 0.0f;
+                fadeDuration = fadeTime;
+            } else {
+                EndFade();
+            }
+            currentState = state;
+            currentPhase = 0.0f;
+            currentFinished = false;
+        }
+
+        EndFade~: () -> void {
+            fadeState = -1;
+            fadeElapsed = 0.0f;
+            fadeDuration = 0.0f;
+            hasFrozenPose = false;
+        }
+    }
+}

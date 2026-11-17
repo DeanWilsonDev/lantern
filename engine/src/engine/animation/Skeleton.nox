@@ -1,0 +1,160 @@
+lantern:::animation :: namespace {
+    /**
+     * The most joints one skinned mesh may use. The skinning shader reads a fixed-size palette of this many matrices, and
+     * a vertex's joint index is one byte.
+     */
+    MAX_JOINTS: usize : 32;
+
+    /**
+     * Where one joint sits relative to its parent: a position, a rotation and a scale. An animation is a list of these,
+     * one per joint, which is called a pose. Rotations are quaternions so two poses can be blended smoothly.
+     */
+    JointTransform :: struct {
+        /** The joint's position in its parent's space, in metres. */
+        translation~ Vec3 = Vec3 { };
+        /** The joint's rotation in its parent's space. The default is no rotation. */
+        rotation~ Quaternion = Quaternion { };
+        /** The joint's scale in its parent's space. Almost always 1. */
+        scale~ Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+
+        /** A joint at `translation` with no rotation and scale 1. */
+        static At :: (translation: Vec3) -> JointTransform {
+            return JointTransform { translation: translation };
+        }
+
+        /** The matrix that takes a point in the joint's space to its parent's space. */
+        Matrix :: () -> Mat4 {
+            return lantern:::core:::MatrixFromScaleRotationTranslation(
+                scale,
+                rotation,
+                translation
+            );
+        }
+
+        /**
+         * Blends towards `other`: `amount` 0 is this transform, 1 is `other`. Positions and scales mix in a straight line;
+         * rotations take the short way round the sphere (a slerp), so a blended arm swings through the middle instead of
+         * shrinking through it.
+         */
+        Blended :: (other: JointTransform, amount: f32) -> JointTransform {
+            return JointTransform {
+                translation: lantern:::core:::Lerp3(translation, other.translation, amount),
+                rotation: lantern:::core:::QuaternionSlerp(rotation, other.rotation, amount),
+                scale: lantern:::core:::Lerp3(scale, other.scale, amount)
+            };
+        }
+    }
+
+    /**
+     * A tree of joints with a bind pose: the pose the skinned mesh was modelled in. Joints are added parents first, so a
+     * joint's parent always has a smaller index and one pass from joint 0 up computes every joint's model-space matrix.
+     *
+     * The skeleton also keeps each joint's inverse bind matrix. Skinning multiplies a vertex by "where the joint is now"
+     * times "where the joint was when the mesh was modelled, undone", so a vertex at rest comes out where it started.
+     */
+    Skeleton :: class {
+    public:
+        /** The joints' names, for looking them up from a game. */
+        names~ Array<string!>! = [];
+        /** Each joint's parent index, or -1 for a root. */
+        parents~ Array<i32>! = [];
+        /** Each joint's rest transform, relative to its parent. */
+        bindPose~ Array<JointTransform>! = [];
+        /** Each joint's rest matrix in model space. */
+        bindModel~ Array<Mat4>! = [];
+        /** The inverse of `bindModel`, one per joint. */
+        inverseBind~ Array<Mat4>! = [];
+
+        /** An empty skeleton. */
+        Skeleton~: () { }
+
+        /** Frees the arrays. */
+        !Skeleton~: () {
+            names.freeAll();
+            delete parents;
+            delete bindPose;
+            delete bindModel;
+            delete inverseBind;
+        }
+
+        /**
+         * Adds a joint and returns its index. `parent` is an earlier joint's index or -1. `rest` is where the joint sits in
+         * the bind pose, relative to its parent.
+         */
+        AddJoint~: (name: string, parent: i32, rest: JointTransform) -> i32 {
+            assert(parent < i32(names.length()), "a joint's parent must be added before it");
+            assert(names.length() < MAX_JOINTS, "a skeleton may have at most MAX_JOINTS joints");
+            model~ Mat4 = rest.Matrix();
+            if parent >= 0 {
+                model = bindModel[usize(parent)] * rest.Matrix();
+            }
+            inverse~ Mat4 = Mat4 { };
+            if undone := model.inverse() {
+                inverse = undone;
+            }
+            copiedName: string! = `${name}`;
+            names.push(copiedName!);
+            parents.push(parent);
+            bindPose.push(rest);
+            bindModel.push(model);
+            inverseBind.push(inverse);
+            return i32(names.length()) - 1;
+        }
+
+        /** How many joints there are. */
+        JointCount :: () -> usize {
+            return names.length();
+        }
+
+        /** The joint's index, or -1 when no joint has that name. */
+        FindJoint :: (name: string) -> i32 {
+            for index~ usize = 0; index < names.length(); index++ {
+                if names[index] == name {
+                    return i32(index);
+                }
+            }
+            return -1;
+        }
+
+        /** The bind pose as a pose to start from. The caller owns it. */
+        RestPose :: () -> Array<JointTransform>! {
+            copy~ Array<JointTransform>! = [];
+            for joint in bindPose {
+                copy.push(joint);
+            }
+            return copy!;
+        }
+
+        /**
+         * Turns a pose into model-space matrices, one per joint: each joint's matrix is its parent's times its own local
+         * matrix. `modelMatrices` is cleared and refilled.
+         */
+        ModelMatrices :: (pose: Array<JointTransform>) -> Array<Mat4>! {
+            matrices~ Array<Mat4>! = [];
+            for index~ usize = 0; index < pose.length(); index++ {
+                local: Mat4 = pose[index].Matrix();
+                parent: i32 = parents[index];
+                if parent >= 0 {
+                    matrices.push(matrices[usize(parent)] * local);
+                } else {
+                    matrices.push(local);
+                }
+            }
+            return matrices!;
+        }
+
+        /**
+         * The skinning palette for a pose: for each joint, its model-space matrix times its inverse bind matrix. A vertex
+         * weighted to joint j is moved by `palette[j]`. The caller owns the result.
+         */
+        Palette :: (pose: Array<JointTransform>) -> Array<Mat4>! {
+            matrices: Array<Mat4>! = ModelMatrices(pose);
+            palette~ Array<Mat4>! = [];
+            for index~ usize = 0; index < matrices.length(); index++ {
+                palette.push(matrices[index] * inverseBind[index]);
+            }
+            delete matrices;
+            return palette!;
+        }
+    }
+}

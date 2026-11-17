@@ -8,6 +8,9 @@ lantern:::renderer :: namespace {
     /** Marks a `Handle` as naming a texture. */
     TextureTag :: struct { }
 
+    /** How many matrices a skinned draw's palette holds. The skinned shaders declare the same number. */
+    MAX_PALETTE_JOINTS: usize : 32;
+
     /** Bytes per `LineVertex`: 3 floats of position and 4 of colour. Must match the lines pipeline's vertex layout. */
     LINE_VERTEX_STRIDE: u32 : 28;
     /**
@@ -38,6 +41,11 @@ lantern:::renderer :: namespace {
         material~ Material = Material { };
         /** Whether this draw blocks light, so it leaves a shadow on what is behind it. Off for a sky dome or a decal. */
         castsShadows~ bool = true;
+        /**
+         * For a skinned mesh, where this draw's joint palette starts in `RenderWorld.jointMatrices`, or -1 for a mesh that
+         * doesn't deform. The palette is as many matrices as the skeleton has joints.
+         */
+        jointOffset~ i32 = -1;
     }
 
     /**
@@ -599,6 +607,11 @@ lantern:::renderer :: namespace {
         draws~ Array<DrawItem>! = [];
         /** The blob shadows to draw this frame; see `BlobShadow`. */
         blobShadows~ Array<BlobShadow>! = [];
+        /**
+         * This frame's joint palettes, end to end: a skinned draw's `jointOffset` says where its palette starts. Cleared with
+         * the draws.
+         */
+        jointMatrices~ Array<Mat4>! = [];
         /** Debug line vertices this frame, two per line. */
         lines~ Array<LineVertex>! = [];
         /** The 2D overlay this frame. Owned. */
@@ -618,6 +631,7 @@ lantern:::renderer :: namespace {
         !RenderWorld~: () {
             delete particles;
             delete draws;
+            delete jointMatrices;
             delete blobShadows;
             delete lines;
             delete lights;
@@ -660,11 +674,24 @@ lantern:::renderer :: namespace {
         }
 
         /**
+         * Adds a joint palette for a skinned draw and returns the offset to put in its `DrawItem.jointOffset`. At most
+         * `MAX_PALETTE_JOINTS` matrices are used; the shader reads that many.
+         */
+        AddJointPalette~: (palette: Array<Mat4>) -> i32 {
+            offset: i32 = i32(jointMatrices.length());
+            for index~ usize = 0; index < MAX_PALETTE_JOINTS; index++ {
+                jointMatrices.push(index < palette.length() ? palette[index] : Mat4 { });
+            }
+            return offset;
+        }
+
+        /**
          * Empties the draws, lines and overlay for a new frame. The camera, light, clear colour and fog stay as they
          * were.
          */
         Clear~: () -> void {
             draws.clear();
+            jointMatrices.clear();
             blobShadows.clear();
             lines.clear();
             overlay->Clear();

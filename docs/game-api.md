@@ -281,6 +281,24 @@ The engine fills the `Frame`, `Script`, `Renderer`, `World`, `Audio` and `Errors
 Nyx's own `Math` (`sin`, `cos`, `tan`, `atan2`, `asin`, `acos`, `sqrt`, `min`, `max`, `clamp`,
 `TAU`, ...) needs no host.
 
+## Animation, `lantern:::animation`
+
+Skeletal animation (see `docs/animation.md`). Ids are small integers valid until the level's entities are cleared.
+
+| Function | Does |
+| --- | --- |
+| `MannequinRig() -> i64` | Builds the humanoid rig and its mesh. Make it once, share it. |
+| `Spawn(entity, rig, texture, tint) -> i64` | Makes the entity an animated, skinned body and returns its animator. |
+| `AddState(animator, state, clip, loops)` | A state that plays one clip. |
+| `AddBlendState(animator, state, parameter)` | A state that mixes clips by a float parameter. |
+| `AddBlendClip(animator, state, clip, threshold)` | Adds a clip to a blend state at a parameter value. |
+| `SetStateSpeed(animator, state, speed)` | Playback speed of a state (1 is normal). |
+| `AddTransition(animator, from, to, parameter, condition, threshold, fadeSeconds)` | A rule: `condition` is `greater`, `less`, `finished` or `trigger`; an empty `from` means any state. The first rule that holds wins. |
+| `SetFloat(animator, parameter, value)`, `SetBool(...)`, `Trigger(animator, parameter)` | Report facts. A trigger fires one transition. |
+| `Play(animator, state, fadeSeconds)` | Force a crossfade into a state. |
+| `CurrentState(animator) -> string` | The state playing. |
+| `SetLookTarget(animator, target, weight)` | Turn chest, neck and head toward a world point. |
+
 ## Examples
 
 Each snippet is how the platformer (`games/platformer/`) uses the group; the file is named so you can read it in context.

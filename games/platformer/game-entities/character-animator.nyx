@@ -1,0 +1,109 @@
+// A skinned, animated body for a character: the mannequin rig, an animator with the states a person
+// needs on a platformer (stand, walk and run as one blend, jump, fall, crouch, wave) and the rules
+// between them. The player and the companion each own one.
+//
+// The idea to take away: the game never plays a clip itself. It describes the character once (states
+// and the rules that move between them) and afterwards only reports facts (how fast am I moving, am
+// I on the ground, am I crouching). The engine's animator (lantern:::animation, see docs/animation.md)
+// works out which clip plays and crossfades between them, so a jump never snaps from a walk.
+CharacterAnimator :: class {
+public:
+    // The engine's animator id, or -1 before Create. Script ids are small numbers; the engine owns the animator.
+    animator~ i64 = -1;
+    // The entity that shows the mannequin. It sits at the character's feet, because the mannequin's
+    // origin is at its feet (the old capsule was lifted by half its height instead).
+    entity~ i64 = 0;
+
+    // Makes the animated body as a child of `parent` and describes its states. `rig` is the id
+    // MannequinRig returned, shared by every character that uses the same skeleton.
+    Create~: (parent: i64, name: string, rig: i64, texture: i64, tint: string) -> void {
+        entity = lantern:::world:::Spawn(name, lantern:::math:::Vec3:::Zero());
+        lantern:::world:::SetParent(entity, parent);
+        animator = lantern:::animation:::Spawn(entity, rig, texture, tint);
+        hasPreviousPosition = false;
+        smoothedSpeed = 0.0f;
+
+        // States. "locomotion" is one state that mixes three clips by the "speed" parameter: at
+        // 0 m/s it is idle, around 1.8 m/s the walk, from 5 m/s the run, and anything in between is a
+        // blend of the two nearest clips, so speeding up needs no extra rules.
+        lantern:::animation:::AddBlendState(animator, "locomotion", "speed");
+        lantern:::animation:::AddBlendClip(animator, "locomotion", "idle", 0.0f);
+        lantern:::animation:::AddBlendClip(animator, "locomotion", "walk", 1.8f);
+        lantern:::animation:::AddBlendClip(animator, "locomotion", "run", 5.0f);
+        lantern:::animation:::AddState(animator, "jump", "jump", false);
+        lantern:::animation:::AddState(animator, "fall", "fall", true);
+        lantern:::animation:::AddState(animator, "crouch", "crouch", true);
+        lantern:::animation:::AddState(animator, "wave", "wave", false);
+
+        // Rules, checked in the order they are added, and the first that holds wins. The empty "from"
+        // would mean "from any state"; naming the state keeps a jump from being cut short by the fall rule.
+        lantern:::animation:::AddTransition(animator, "locomotion", "jump", "jump", "trigger", 0.0f, 0.08f);
+        lantern:::animation:::AddTransition(animator, "jump", "fall", "", "finished", 0.0f, 0.15f);
+        lantern:::animation:::AddTransition(animator, "locomotion", "fall", "grounded", "less", 0.5f, 0.15f);
+        lantern:::animation:::AddTransition(animator, "crouch", "fall", "grounded", "less", 0.5f, 0.15f);
+        lantern:::animation:::AddTransition(animator, "fall", "locomotion", "grounded", "greater", 0.5f, 0.1f);
+        lantern:::animation:::AddTransition(animator, "locomotion", "crouch", "crouching", "greater", 0.5f, 0.2f);
+        lantern:::animation:::AddTransition(animator, "crouch", "locomotion", "crouching", "less", 0.5f, 0.25f);
+        lantern:::animation:::AddTransition(animator, "locomotion", "wave", "wave", "trigger", 0.0f, 0.15f);
+        lantern:::animation:::AddTransition(animator, "wave", "locomotion", "", "finished", 0.0f, 0.2f);
+        lantern:::animation:::SetFloat(animator, "grounded", 1.0f);
+    }
+
+    // Reports this step's facts. The speed is measured from how far the character moved since the
+    // last call, so a character moved by any means (physics, a scripted walk, a swing) animates the
+    // same. It is smoothed a little so one slow frame does not flicker the blend.
+    Observe~: (position: lantern:::math:::Vec3, isGrounded: bool, dt: f32) -> void {
+        guard animator >= 0;
+        if hasPreviousPosition && dt > 0.0f {
+            measuredSpeed := (position - previousPosition).Horizontal().Length() / dt;
+            // A jump of more than 20 m/s in one step is a teleport (a respawn), not running.
+            smoothedSpeed = measuredSpeed > 20.0f ? 0.0f : smoothedSpeed + (measuredSpeed - smoothedSpeed) * 0.35f;
+        }
+        previousPosition = position;
+        hasPreviousPosition = true;
+        lantern:::animation:::SetFloat(animator, "speed", smoothedSpeed);
+        lantern:::animation:::SetBool(animator, "grounded", isGrounded);
+    }
+
+    // The character has teleported: forget where it was so the move is not mistaken for speed.
+    Forget~: () -> void {
+        hasPreviousPosition = false;
+        smoothedSpeed = 0.0f;
+    }
+
+    // Plays the take-off. Called on the step a jump starts.
+    Jump~: () -> void {
+        guard animator >= 0;
+        lantern:::animation:::Trigger(animator, "jump");
+    }
+
+    // Plays the wave once: the companion's "this way".
+    Wave~: () -> void {
+        guard animator >= 0;
+        lantern:::animation:::Trigger(animator, "wave");
+    }
+
+    // Crouches or stands up, fading between the two.
+    SetCrouching~: (isCrouching: bool) -> void {
+        guard animator >= 0;
+        lantern:::animation:::SetBool(animator, "crouching", isCrouching);
+    }
+
+    // The character looks at a world position, with `weight` from 0 (not at all) to 1 (as far as the
+    // neck allows, see docs/animation.md).
+    LookAt~: (target: lantern:::math:::Vec3, weight: f32) -> void {
+        guard animator >= 0;
+        lantern:::animation:::SetLookTarget(animator, target, weight);
+    }
+
+    // Shows or hides the body (photo mode hides the player while the camera is at their eyes).
+    SetVisible~: (isVisible: bool) -> void {
+        guard animator >= 0;
+        lantern:::world:::SetVisible(entity, isVisible);
+    }
+
+private:
+    previousPosition~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    hasPreviousPosition~ bool = false;
+    smoothedSpeed~ f32 = 0.0f;
+}

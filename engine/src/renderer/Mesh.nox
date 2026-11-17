@@ -45,6 +45,47 @@ lantern:::renderer :: namespace {
         }
     }
 
+    /** Bytes per `SkinVertex`: four joint indices and four weights, one byte each. Must match the skinned pipelines' second vertex buffer. */
+    SKIN_STRIDE: u32 : 8;
+
+    /**
+     * The skinning data of one vertex, parallel to its `Vertex`: up to four joints that move it and how much each does.
+     * Weights are bytes that add up to 255, so 255 is "all of this joint". A vertex that follows one joint rigidly has one
+     * weight of 255; a vertex on an elbow might split 128 and 127 between the upper and lower arm. Unused slots have
+     * weight 0. Shader locations 4 (joints) and 5 (weights), in a vertex buffer of their own.
+     */
+    SkinVertex :: struct {
+        /** The skeleton joints this vertex follows. */
+        joints~ u8[4] = [0, 0, 0, 0];
+        /** How much each of `joints` counts, out of 255. */
+        weights~ u8[4] = [255, 0, 0, 0];
+
+        /** A vertex that follows `joint` alone. */
+        static Rigid :: (joint: u8) -> SkinVertex {
+            return SkinVertex { joints: [joint, 0, 0, 0], weights: [255, 0, 0, 0] };
+        }
+
+        /**
+         * A vertex shared by up to three joints. The fractions (each 0 to 1) are rounded to bytes; the first joint takes
+         * what is left so the weights always add up to 255.
+         */
+        static Blend :: (
+            firstJoint: u8,
+            secondJoint: u8,
+            secondShare: f32,
+            thirdJoint: u8,
+            thirdShare: f32
+        ) -> SkinVertex {
+            second: u8 = u8(Math:::clamp(secondShare, 0.0f, 1.0f) * 255.0f + 0.5f);
+            third: u8 = u8(Math:::clamp(thirdShare, 0.0f, 1.0f) * 255.0f + 0.5f);
+            first: u8 = u8(255 - i32(second) - i32(third));
+            return SkinVertex {
+                joints: [firstJoint, secondJoint, thirdJoint, 0],
+                weights: [first, second, third, 0]
+            };
+        }
+    }
+
     /** Three corner positions, for physics and picking, which need triangles rather than indexed vertices. */
     Triangle :: struct {
         first~ Vec3 = Vec3 { };
@@ -66,6 +107,11 @@ lantern:::renderer :: namespace {
         vertices~ Array<Vertex>! = [];
         /** Three indices into `vertices` per triangle. */
         indices~ Array<u32>! = [];
+        /**
+         * The skinning data, one per vertex, or empty for a mesh that doesn't deform. A mesh with skin data is drawn
+         * through a joint palette (see `DrawItem.joints`).
+         */
+        skin~ Array<SkinVertex>! = [];
 
         /** An empty mesh. */
         MeshData~: () { }
@@ -74,6 +120,17 @@ lantern:::renderer :: namespace {
         !MeshData~: () {
             delete vertices;
             delete indices;
+            delete skin;
+        }
+
+        /** True when the mesh has skinning data and so deforms with a skeleton. */
+        IsSkinned :: () -> bool {
+            return skin.length() > 0;
+        }
+
+        /** Bytes the skinning data takes on the GPU. */
+        SkinByteLength :: () -> usize {
+            return skin.length() * usize(SKIN_STRIDE);
         }
 
         /**
@@ -108,6 +165,10 @@ lantern:::renderer :: namespace {
                     return problem!;
                 }
             }
+            if skin.length() != 0 && skin.length() != vertices.length() {
+                problem: string! = `${skin.length()} skin entries for ${vertices.length()} vertices`;
+                return problem!;
+            }
             if vertices.length() == 0 {
                 return "a mesh needs at least one vertex" + "";
             }
@@ -139,6 +200,10 @@ lantern:::renderer :: namespace {
             for index in other->indices {
                 indices.push(index + offset);
             }
+            assert(
+                skin.length() == 0 && other->skin.length() == 0,
+                "skinned meshes can't be merged"
+            );
         }
 
         /** Bytes the vertices take on the GPU. */

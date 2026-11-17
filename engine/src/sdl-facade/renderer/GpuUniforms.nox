@@ -130,6 +130,41 @@ lantern:::gpu :: namespace {
         return packed;
     }
 
+    /**
+     * The skinned vertex shaders' joint palette, 2048 bytes, as `JointUniforms` in lit-skinned.vert lays it out: 32 matrices of
+     * 16 floats, column by column, one per joint. Pushed at vertex slot 2 for each skinned draw.
+     */
+    JointUniforms :: struct {
+        /** The matrices, end to end. */
+        matrices~ f32[512] = filled<f32, 512>(0.0f);
+    }
+
+    /**
+     * The joint palette for a skinned draw: its `MAX_PALETTE_JOINTS` matrices from the render world, starting at the
+     * draw's `jointOffset`, flattened to floats for the shader.
+     */
+    PackJointUniforms :: (
+        renderWorld: lantern:::renderer:::RenderWorld*,
+        jointOffset: i32
+    ) -> JointUniforms {
+        packed~ JointUniforms = JointUniforms { };
+        for joint~ usize = 0; joint < lantern:::renderer:::MAX_PALETTE_JOINTS; joint++ {
+            matrix: Mat4 = renderWorld->jointMatrices[usize(jointOffset) + joint];
+            for element~ usize = 0; element < 16; element++ {
+                packed.matrices[joint * 16 + element] = matrix.elements[element];
+            }
+        }
+        return packed;
+    }
+
+    /**
+     * True when a draw goes through the skinned pipelines: it names a joint palette and its mesh has skin data. A draw
+     * with a palette but an unskinned mesh, or the reverse, is drawn as a plain mesh.
+     */
+    IsSkinnedDraw :: (draw: lantern:::renderer:::DrawItem, mesh: GpuMesh) -> bool {
+        return draw.jointOffset >= 0 && mesh.skinBuffer != null;
+    }
+
     /** A single vec4: the overlay's target size, or the lines' sRGB flag. */
     VectorUniforms :: struct {
         /** The four floats. */

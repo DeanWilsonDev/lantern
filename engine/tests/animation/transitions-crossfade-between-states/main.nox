@@ -1,0 +1,53 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    rig := lantern:::animation_support:::MakeArmRig();
+    defer delete rig;
+    animator := new lantern:::animation:::Animator();
+    defer delete animator;
+    idle: i32 = animator->AddState("idle", 0, true);
+    raised: i32 = animator->AddState("raised", 1, false);
+    animator->AddTransition(
+        idle,
+        raised,
+        "lift",
+        lantern:::animation:::TransitionCondition:::Greater,
+        0.5f,
+        0.4f
+    );
+    animator->AddTransition(
+        raised,
+        idle,
+        "lift",
+        lantern:::animation:::TransitionCondition:::Less,
+        0.5f,
+        0.4f
+    );
+    animator->Update(rig, 0.1f);
+    assert(animator->CurrentStateName() == "idle", "it starts in the first state");
+    animator->SetParameter("lift", 1.0f);
+    animator->Update(rig, 0.0f);
+    assert(animator->CurrentStateName() == "raised", "the rule moved it on");
+    assert(
+        lantern:::animation_support:::NearPoint(
+            lantern:::animation_support:::TipOf(rig, animator),
+            Vec3 { y: 2.0f }
+        ),
+        "a crossfade starts at the old pose"
+    );
+    animator->Update(rig, 0.2f);
+    tipHalfWay: Vec3 = lantern:::animation_support:::TipOf(rig, animator);
+    assert(
+        tipHalfWay.x < -0.02f && tipHalfWay.x > -0.5f,
+        "half way through the fade the arm is partly raised"
+    );
+    animator->Update(rig, 0.3f);
+    animator->SetParameter("lift", 0.0f);
+    animator->Update(rig, 0.05f);
+    assert(
+        animator->CurrentStateName() == "idle",
+        "the arm goes back down when the parameter falls"
+    );
+    print("transitions crossfade");
+    return 0;
+}

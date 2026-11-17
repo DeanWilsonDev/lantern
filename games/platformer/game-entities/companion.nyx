@@ -1,6 +1,7 @@
 Anchor :: import Anchor;
 CompanionStop :: import CompanionStop;
 Math :: import standard:::Math;
+CharacterAnimator :: import CharacterAnimator;
 
 // The companion: a second character who leads the player along the level's route of stops. She
 // walks ahead to the next stop, waits there for the player, swings the Anchor first so the player
@@ -17,7 +18,7 @@ Math :: import standard:::Math;
 // Her movement is scripted rather than steered: she reads a list of stops, the level's Anchors and the
 // player's position, nothing else. That keeps her predictable, which matters when a puzzle depends on
 // where she is, and it costs almost no code. She is made of the same pieces as the player: a root at
-// her feet and a capsule body above it.
+// her feet and the animated mannequin on it (CharacterAnimator).
 Companion :: class {
 public:
     root~ i64 = 0;
@@ -33,7 +34,7 @@ public:
     // Makes her entities. `stopsInOrder` is sorted by the level, and `anchorsInLevel` are the
     // level's swing arcs, which her swing stops use. With no stops there is no companion at all and
     // nothing is drawn.
-    Spawn~: (stopsInOrder~ Array<CompanionStop>, anchorsInLevel~ Array<Anchor>, bodyMesh: i64, bodyTexture: i64) -> void {
+    Spawn~: (stopsInOrder~ Array<CompanionStop>, anchorsInLevel~ Array<Anchor>, mannequinRig: i64, bodyTexture: i64) -> void {
         stops = stopsInOrder;
         anchors = anchorsInLevel;
         swingAnchorIndexByStop = [];
@@ -42,9 +43,8 @@ public:
         }
         guard stops.length() > 0;
         root = lantern:::world:::Spawn("companion", stops[0].position);
-        body = lantern:::world:::Spawn("companion_body", { y: BODY_LIFT });
-        lantern:::world:::SetTexturedMesh(body, bodyMesh, bodyTexture, "E8506A");
-        lantern:::world:::SetParent(body, root);
+        animation = new CharacterAnimator();
+        animation.Create(root, "companion_body", mannequinRig, bodyTexture, "E8506A");
         SendToStop(0);
     }
 
@@ -63,7 +63,9 @@ public:
         isPausedForPlayer = false;
         nudgeSeconds = 0.0f;
         lantern:::world:::Teleport(root, position);
-        ShowCrouch();
+        animation.Forget();
+        animation.LookAt(position, 0.0f);
+        ReportToAnimator(0.0f);
     }
 
     // Called by the rules when the player has jumped off her back. She doesn't stand up and walk on
@@ -99,13 +101,11 @@ public:
     Update~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, dt: f32) -> void {
         guard stops.length() > 0;
         Advance(playerFeet, isPlayerGrounded, dt);
-        hopSeconds += dt;
-        ShowCrouch();
+        LookAtPlayer(playerFeet);
+        ReportToAnimator(dt);
     }
 
 private:
-    static BODY_LIFT :: 0.85f;           // half the body's 1.7 m height: the capsule is centred
-    static CROUCH_SCALE :: 0.6f;         // how much shorter she is while crouched
     static LEAD_RANGE :: 10.0f;          // metres: how close the player must be for her to walk on, unless the stop says `near`
     static AHEAD_MARGIN :: 3.0f;         // metres nearer the next stop than her that makes the player "ahead"
     static HURRY_LIMIT :: 30.0f;         // metres: a player further than this is somewhere else, not ahead of her
@@ -113,13 +113,12 @@ private:
     static PAUSE_DISTANCE :: 16.0f;      // metres behind her at which she stops walking and waits
     static RESUME_DISTANCE :: 11.0f;     // ... and the distance the player must close to before she walks again
     static NUDGE_INTERVAL_SECONDS :: 3.0f;
-    static HOP_SECONDS :: 0.5f;
-    static HOP_HEIGHT :: 0.5f;
+    static LOOK_RANGE :: 12.0f;          // metres: she looks at the player when they are this near
     static LANDING_RELEASE_DISTANCE :: 4.0f;  // metres: how near the player must come to her at a landing for her to walk on
     static ANCHOR_BESIDE_DISTANCE :: 2.5f;    // metres along the ground from a swing stop to the start post it uses
     static LEDGE_MIN_HEIGHT :: 2.0f;     // metres above her that counts as having landed on the ledge: above an unboosted jump's 1.5 m
     static MIN_JUMP_SECONDS :: 0.1f;     // the player is still on the ground for the step the jump starts in
-    body~ i64 = 0;
+    animation~ CharacterAnimator = new CharacterAnimator();
     waitedSeconds~ f32 = 0.0f;
     isBoostJumpInFlight~ bool = false;
     secondsSinceBoostJump~ f32 = 0.0f;
@@ -134,7 +133,6 @@ private:
     isHoldingAtLanding~ bool = false;
     isPausedForPlayer~ bool = false;
     nudgeSeconds~ f32 = 0.0f;
-    hopSeconds~ f32 = 1000.0f;
 
     // Her decision for this step: swing, walk, or wait at a stop and decide whether to set off.
     Advance~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, dt: f32) -> void {
@@ -217,7 +215,7 @@ private:
         nudgeSeconds += dt;
         if nudgeSeconds >= NUDGE_INTERVAL_SECONDS {
             nudgeSeconds = 0.0f;
-            hopSeconds = 0.0f;
+            animation.Wave();
         }
     }
 
@@ -277,7 +275,6 @@ private:
         isBoostJumpInFlight = false;
         if playerFeet.y > position.y + LEDGE_MIN_HEIGHT {
             isHoldingForBoost = false;
-            ShowCrouch();
         }
     }
 
@@ -300,17 +297,21 @@ private:
             }
         }
         lantern:::world:::SetPosition(root, position);
-        ShowCrouch();
     }
 
-    // Crouching is her body squashed to CROUCH_SCALE of its height. A scale shrinks around the
-    // body's centre, so the body is lowered by the same factor to keep her feet on the ground.
-    ShowCrouch~: () -> void {
-        guard stops.length() > 0;
+    // Tells her animator what she is doing, once per step: crouching while she offers the boost, and her
+    // speed from how far she moved. The animator turns that into clips and fades. She is always on the ground
+    // in the animator's eyes: her movement is scripted along the route.
+    ReportToAnimator~: (dt: f32) -> void {
         isCrouched := !isWalking && isHoldingForBoost;
-        scale := isCrouched ? CROUCH_SCALE : 1.0f;
-        hop := hopSeconds < HOP_SECONDS ? Math:::sin(hopSeconds / HOP_SECONDS * 3.14159265f) * HOP_HEIGHT : 0.0f;
-        lantern:::world:::SetScale(body, { x: 1.0f, y: scale, z: 1.0f });
-        lantern:::world:::SetPosition(body, { y: BODY_LIFT * scale + hop });
+        animation.SetCrouching(isCrouched);
+        animation.Observe(position, true, dt);
+    }
+
+    // Her head and chest turn toward the player's head while they are near, and relax when they are not: a small thing that
+    // makes her feel like a person walking with you rather than a guide on rails.
+    LookAtPlayer~: (playerFeet: lantern:::math:::Vec3) -> void {
+        isNear := (playerFeet - position).Length() < LOOK_RANGE;
+        animation.LookAt(playerFeet + lantern:::math:::Vec3 { x: 0.0f, y: 1.6f, z: 0.0f }, isNear ? 1.0f : 0.0f);
     }
 }

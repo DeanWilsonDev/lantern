@@ -1589,3 +1589,24 @@ Dean (2026-11-17): more renderer work, shaders and materials. Nothing in this se
   step shows the sky through the existing image-based lighting and a sharp lamp streak from the lowered roughness. SSR is the next card.
 - **D-119: the streets are wet by default.** Chapters 1 and 2 call `SetWetWorld(0.8, 0.55)` after the night look; the rooftops and course
   stay dry, `LANTERN_WET=0` turns it off and `LANTERN_WET=1` rains everywhere. Provisional: Dean picks whether the night streets stay wet.
+
+Dean (2026-11-17): skeletal animation for the player and companion. Nothing in this section is reviewed by Dean; the numbers are provisional.
+
+- **D-120: animation is engine data driven by game facts.** The engine owns skeletons, clips, animators and the blend maths
+  (`lantern:::animation`); the game describes states and rules once and afterwards only sets parameters (`SetFloat`, `SetBool`,
+  `Trigger`). A game never plays a clip by name from its own code, so a state change can't skip a fade.
+- **D-121: skinning on the GPU, in two extra shaders.** `lit-skinned.vert` and `shadow-skinned.vert` take joints and weights from a
+  second vertex buffer and a 32-matrix uniform; the fragment stage is shared, so skinned meshes get shadows and every effect for free.
+  The alternative, skinning on the CPU and re-uploading vertices every frame, was left out for the cost at 60 fps.
+- **D-122: 32 joints, four influences per vertex.** The palette is a fixed uniform block (2 KB) and weights are bytes. A richer
+  rig needs a storage buffer, which is not worth it for a humanoid with 17 joints.
+- **D-123: the mannequin is built in code.** Importing glTF skins is its own card; a generated humanoid keeps the checkout
+  self-contained, and its clips come from formulas (`StrideCycle`) so the tests can check them.
+- **D-124: animators work from measured speed.** `CharacterAnimator.Observe` takes a position and works out horizontal speed from the
+  last one, so physics, a scripted walk and a swing animate the same way. A step over 20 m/s is a teleport and reads as standing.
+  Footsliding is not corrected; the walk and run clips' strides are matched to the blend thresholds by eye (1.8 and 5 m/s).
+- **D-125: look-at is a layer on top of the clips.** After the pose is sampled, a smoothed turn toward the target is spread over chest,
+  neck and head; a weight of 0 changes nothing, so a character that never looks costs nothing.
+- **D-126: the Rust trace test ignores the entity count.** The characters used to be a capsule and a visor (3 entities for the
+  player); an animated body is one entity, so the count moved by one while every simulated column still matches.
+

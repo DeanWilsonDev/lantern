@@ -1,0 +1,41 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    rig := lantern:::animation_support:::MakeArmRig();
+    defer delete rig;
+    pose~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete pose;
+    rig->clips[1]->SampleInto(0.5f, true, rig->skeleton, pose);
+    matrices~ Array<Mat4>! = rig->skeleton->ModelMatrices(pose);
+    tip~ Vec3 = lantern:::core:::TransformPoint3(matrices[2], Vec3 { });
+    expected: f32 = Math:::sin(Math:::PI * 0.25f);
+    assert(
+        lantern:::animation_support:::NearPoint(
+            tip,
+            Vec3 { x: -expected, y: 1.0f + expected, z: 0.0f }
+        ),
+        "half way is an eighth turn"
+    );
+    rig->clips[1]->SampleInto(1.5f, true, rig->skeleton, pose);
+    delete matrices;
+    matrices = rig->skeleton->ModelMatrices(pose);
+    tip = lantern:::core:::TransformPoint3(matrices[2], Vec3 { });
+    assert(
+        lantern:::animation_support:::NearPoint(
+            tip,
+            Vec3 { x: -expected, y: 1.0f + expected, z: 0.0f }
+        ),
+        "a looping clip wraps"
+    );
+    rig->clips[1]->SampleInto(1.5f, false, rig->skeleton, pose);
+    delete matrices;
+    matrices = rig->skeleton->ModelMatrices(pose);
+    tip = lantern:::core:::TransformPoint3(matrices[2], Vec3 { });
+    assert(
+        lantern:::animation_support:::NearPoint(tip, Vec3 { x: -1.0f, y: 1.0f, z: 0.0f }),
+        "a one-shot clip holds its last key"
+    );
+    delete matrices;
+    print("clips blend and wrap");
+    return 0;
+}

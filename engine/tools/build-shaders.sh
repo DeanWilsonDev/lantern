@@ -7,10 +7,10 @@ compiled_directory="$shader_directory/compiled"
 mkdir -p "$compiled_directory"
 
 shader_files=(
-    lit.vert lit.frag
+    lit.vert lit.frag lit-skinned.vert
     lines.vert lines.frag
     overlay.vert overlay.frag
-    shadow.vert shadow.frag
+    shadow.vert shadow.frag shadow-skinned.vert
     fullscreen.vert sky.vert sky.frag
     bloom-downsample.frag bloom-upsample.frag composite.frag fxaa.frag
     ao.frag ao-blur.frag
