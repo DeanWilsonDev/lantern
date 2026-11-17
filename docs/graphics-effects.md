@@ -19,6 +19,7 @@ frame.
 | Colour grade | `colour-grade.md` | a few ALU ops |
 | Particles | `particles.md` | one line per live particle |
 | Normal maps | `normal-maps.md` | one sample for draws that have a map |
+| Wet surfaces and puddles | `wet-surfaces.md` | a few ALU ops and a noise lookup for wet draws |
 
 ## What each quality level sets
 
@@ -31,7 +32,7 @@ frame.
 | Shadow filter samples | 4 | 12 | 20 |
 | Particle budget | 64 | 256 | 512 |
 
-Height fog, blob shadows, the colour grade, the sky and normal maps are cheap and are not changed by the level. The default
+Height fog, blob shadows, the colour grade, the sky, wet surfaces and normal maps are cheap and are not changed by the level. The default
 is medium. Each effect's own call, such as `SetBloom` or `SetAntiAliasing`, tunes or overrides one effect and may be called
 before or after `SetQuality`; a later `SetQuality` sets every row above again.
 

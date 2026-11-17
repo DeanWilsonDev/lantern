@@ -107,6 +107,7 @@ Defining an action twice is a script error (`the action 'jump' is defined twice`
 | `lantern:::world:::SetTint(entity, tint)`, `SetVisible(entity, visible)`, `IsVisible(entity) -> bool` | |
 | `lantern:::world:::SetNormalMap(entity, texture, strength)` | fine surface bumps from a normal map, strength 0 to 4; see `normal-maps.md` |
 | `lantern:::world:::SetSurface(entity, metallic, roughness, emissive)` | the entity's material: 0 to 1 metallic and roughness, an "RRGGBB" emissive glow; see `lighting-and-shadows.md` |
+| `lantern:::world:::SetWetness(entity, wetness, puddles)` | 0 to 1 each: a wet entity is darker and glossier, and the puddles fraction of its upward-facing surface becomes mirrors; see `wet-surfaces.md` |
 | `lantern:::world:::SetGlow(entity, color, strength)` | the entity's emissive light as `color` times `strength`; a strength above 1 is brighter than white, so it blooms. Keeps metallic and roughness |
 | `lantern:::world:::SetCastsShadows(entity, castsShadows)` | whether the entity blocks light |
 | `lantern:::world:::SetParent(child, parent)` | transforms become relative to the parent |
@@ -154,6 +155,7 @@ the game decides what a kind means.
 | `lantern:::graphics:::AddBlobShadow(center, radius, strength)` | this frame only: a soft dark patch on the surface around `center` (up to eight); see `blob-shadows.md` |
 | `lantern:::graphics:::SetBlobShadows(enabled)` | switch the frame's blob shadows on or off |
 | `lantern:::graphics:::SetColorGrade(saturation, contrast, tint, vignette)` | the look of the finished picture: saturation 0 to 3, contrast 0.2 to 3, an `"RRGGBB"` tint and a vignette 0 to 1; `1, 1, "FFFFFF", 0` is neutral; see `colour-grade.md` |
+| `lantern:::graphics:::SetWetWorld(wetness, puddles)` | rain on the whole scene: the least wetness every surface has and how much wet ground is puddles, 0 to 1 each; see `wet-surfaces.md` |
 | `lantern:::graphics:::SetBloom(enabled, strength, threshold)` | the glow around bright things: how much is added back and the brightness where it starts (1 is a white wall in full sun) |
 | `lantern:::graphics:::SetExposure(exposure)`, `lantern:::graphics:::SetToneMapper(name)` | a brightness knob applied before the curve, and the curve itself: `"none"`, `"neutral"` or `"aces"` |
 | `lantern:::lights:::SetSun(direction, color, skyAmbient, groundAmbient)` | the sun and the ambient light; colours are `"RRGGBB"` |
@@ -440,6 +442,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `SetNormalMap` | `(entity: i64, texture: i64, strength: f32) -> void` |
 | `SetTint` | `(entity: i64, tint: string) -> void` |
 | `SetSurface` | `(entity: i64, metallic: f32, roughness: f32, emissive: string) -> void` |
+| `SetWetness` | `(entity: i64, wetness: f32, puddles: f32) -> void` |
 | `SetGlow` | `(entity: i64, color: string, strength: f32) -> void` |
 | `SetCastsShadows` | `(entity: i64, castsShadows: bool) -> void` |
 | `SetParent` | `(child: i64, parent: i64) -> void` |
@@ -529,6 +532,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `AddBlobShadow` | `(center: lantern:::math:::Vec3, radius: f32, strength: f32) -> void` |
 | `SetBlobShadows` | `(enabled: bool) -> void` |
 | `SetColorGrade` | `(saturation: f32, contrast: f32, tint: string, vignette: f32) -> void` |
+| `SetWetWorld` | `(wetness: f32, puddles: f32) -> void` |
 | `SetExposure` | `(exposure: f32) -> void` |
 | `SetToneMapper` | `(name: string) -> void` |
 

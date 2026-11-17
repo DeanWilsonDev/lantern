@@ -1,0 +1,151 @@
+// A floor lit by a low sun, drawn dry, soaked, and soaked with puddles. Soaking darkens the floor's diffuse colour. Puddles
+// turn parts of the floor into flat mirrors, so the floor's brightness stops being even: patches stay dull and patches
+// become dark water that reflects the sky.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+MeanBrightness :: (pixels: Array<u8>, width: u32) -> f32 {
+    total~ u32 = 0;
+    for y~ u32 = 16; y < 112; y++ {
+        for x~ u32 = 16; x < 112; x++ {
+            total += u32(PixelAt(pixels, width, x, y)[0]);
+        }
+    }
+    return f32(total) / f32(96 * 96);
+}
+
+BrightnessRange :: (pixels: Array<u8>, width: u32) -> u32 {
+    lowest~ u32 = 255;
+    highest~ u32 = 0;
+    for y~ u32 = 16; y < 112; y++ {
+        for x~ u32 = 16; x < 112; x++ {
+            value: u32 = u32(PixelAt(pixels, width, x, y)[0]);
+            if value < lowest {
+                lowest = value;
+            }
+            if value > highest {
+                highest = value;
+            }
+        }
+    }
+    return highest - lowest;
+}
+
+FloorWorld :: (floor: lantern:::core:::Handle<lantern:::renderer:::MeshTag>, material: lantern:::renderer:::Material) -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = true;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->post.ambientOcclusionEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->shadows.enabled = false;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: lantern:::core:::Normalize3(Vec3 { x: 1.0f, y: -1.0f, z: 0.0f }),
+        color: lantern:::core:::Color:::White(),
+        ambient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 6.0f, z: 0.01f }, Vec3 { });
+    world->DrawWithMaterial(floor, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.6f), material);
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(12.0f, 12.0f);
+            defer delete floorData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+
+            dry := FloorWorld(floor, lantern:::renderer:::Material { roughness: 0.8f });
+            defer delete dry;
+            soaked := FloorWorld(floor, lantern:::renderer:::Material { roughness: 0.8f, wetness: 1.0f });
+            defer delete soaked;
+            puddled := FloorWorld(floor, lantern:::renderer:::Material:::Wet(1.0f));
+            defer delete puddled;
+
+            dryMean~ f32 = 0.0f;
+            soakedMean~ f32 = 0.0f;
+            soakedRange~ u32 = 0;
+            when renderer->RenderOffscreen(dry, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    dryMean = MeanBrightness(pixels, size);
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->RenderOffscreen(soaked, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    soakedMean = MeanBrightness(pixels, size);
+                    soakedRange = BrightnessRange(pixels, size);
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            assert(soakedMean < dryMean - 4.0f, "a soaked floor is darker than a dry one");
+            assert(soakedRange < 8, "a soaked floor without puddles is even");
+
+            when renderer->Capture(puddled, 512, 512) {
+                Result:::Ok(image) -> {
+                    capturePath: string!? = environmentVariable("LANTERN_CAPTURE_PATH");
+                    if path := capturePath {
+                        bytes: Array<u8>! = image->ToPngBytes();
+                        assert(lantern:::core:::WriteBytes(path, bytes), "the capture is written");
+                        delete bytes;
+                    }
+                    delete capturePath;
+                    delete image;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            when renderer->RenderOffscreen(puddled, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    range: u32 = BrightnessRange(pixels, size);
+                    assert(range >= 20, "puddles make the wet floor uneven: dull patches beside dark water");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("wet surfaces darken and puddles mirror the light");
+    return 0;
+}

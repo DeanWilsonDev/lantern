@@ -46,6 +46,7 @@ finding what to turn down when a frame is slow. Each effect has its own guide.
 | [`colour-grade.md`](colour-grade.md) | Saturation, contrast, tint and vignette after tone mapping. |
 | [`particles.md`](particles.md) | Dust, sparks and trails. |
 | [`normal-maps.md`](normal-maps.md) | Fine surface bumps from a normal map. |
+| [`wet-surfaces.md`](wet-surfaces.md) | Wet and puddled surfaces: darker, glossier, mirror-like. |
 
 ## The world editor
 

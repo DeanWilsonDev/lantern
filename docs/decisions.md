@@ -1573,3 +1573,19 @@ this section has been compiled or run (the cloud has no `nox` or `mist`); all of
 - **D-114: failing room tests print the debug values.** Six host tests use `ExpectWithState`, which prints every debug value before it asserts, so a
   failure shows where she stood and what mode she was in. It prints only on failure.
 
+## Wet surfaces and puddles
+
+Dean (2026-11-17): more renderer work, shaders and materials. Nothing in this section is reviewed by Dean; the streets' wet look is provisional.
+
+- **D-115: wetness is a material property, with a scene-wide minimum.** `Material.wetness` darkens the diffuse colour and pulls roughness
+  towards a mirror's; `Material.puddles` says how much of the wet, upward-facing surface is flat standing water. `RenderWorld.worldWetness`
+  and `worldPuddles` are a floor every draw shares (the larger value wins), which is how rain works without touching every entity.
+- **D-116: no new uniforms.** Wetness rides in the spare `surface.w` and the puddle amount in `emissive.w` of the 48-byte material block, so
+  the C-side layout, the Metal translation and every other shader stay as they were.
+- **D-117: puddles are a world-space noise mask, not authored decals.** Two octaves of value noise over the ground plane, cut off at a level
+  `puddles` sets, only on surfaces whose normal is within about 25 degrees of up. Cheap, texture-free and the same everywhere, but static
+  and unrelated to the level's geometry (a puddle can cross the edge of a slab). Authored puddles would be a decal, which is not built.
+- **D-118: a puddle mirrors the sky and the lights, not the scene.** Real reflections need screen-space reflections or probes; this
+  step shows the sky through the existing image-based lighting and a sharp lamp streak from the lowered roughness. SSR is the next card.
+- **D-119: the streets are wet by default.** Chapters 1 and 2 call `SetWetWorld(0.8, 0.55)` after the night look; the rooftops and course
+  stay dry, `LANTERN_WET=0` turns it off and `LANTERN_WET=1` rains everywhere. Provisional: Dean picks whether the night streets stay wet.

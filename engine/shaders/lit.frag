@@ -5,6 +5,9 @@
 //
 //   colour = ambient + sun + every local light + emissive, then faded into the fog colour with distance
 //
+// A wet material (material.surface.w) is darker and glossier, and on wet ground facing up some of the surface is a puddle
+// (material.emissive.w): flat, dark and almost a mirror. See WetnessMask and the wetness block in main.
+//
 // where the ambient comes from the sky (see below), or from the flat sky and ground colours when the sky's lighting is off
 //
 // - albedo: the surface's own colour, the texture times the vertex colour times the draw's tint.
@@ -81,9 +84,9 @@ layout(set = 3, binding = 0) uniform LightUniforms {
 // Slot 1, pushed once per draw: the draw's tint and material (MaterialUniforms in GpuUniforms.nox, 48 bytes).
 layout(set = 3, binding = 1) uniform MaterialUniforms {
     vec4 color;
-    // x: metallic, y: roughness, z: normal map strength (0 when the draw has no normal map).
+    // x: metallic, y: roughness, z: normal map strength (0 when the draw has no normal map), w: wetness (0 dry, 1 soaked).
     vec4 surface;
-    // Light the surface gives off.
+    // rgb: light the surface gives off, w: how much of a wet upward-facing surface is puddles (0 to 1).
     vec4 emissive;
 } material;
 
@@ -334,6 +337,36 @@ vec3 PerturbNormal(vec3 surface_normal, vec3 position, vec2 uv, vec3 tangent_spa
     return normalize(tangent * scale * bent.x + bitangent * scale * bent.y + surface_normal * bent.z);
 }
 
+// A pseudo-random number between 0 and 1 for a point on an integer grid. The fract/dot trick needs no texture and no
+// integer maths, and is good enough for noise the eye reads as irregular blobs.
+float HashGrid(vec2 cell) {
+    return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+// Smooth value noise: the hash at the four grid corners around `point`, blended with a smoothstep curve so the result has no
+// visible grid lines. Between 0 and 1.
+float ValueNoise(vec2 point) {
+    vec2 cell = floor(point);
+    vec2 within = fract(point);
+    vec2 blend = within * within * (3.0 - 2.0 * within);
+    float low = mix(HashGrid(cell), HashGrid(cell + vec2(1.0, 0.0)), blend.x);
+    float high = mix(HashGrid(cell + vec2(0.0, 1.0)), HashGrid(cell + vec2(1.0, 1.0)), blend.x);
+    return mix(low, high, blend.y);
+}
+
+// How much of the surface at `position` is puddle, 0 (dry) to 1 (open water). Two octaves of noise over the ground plane
+// make blobs a few metres across with a ragged edge; `coverage` (0 to 1) says how much of the ground they fill by moving
+// the cut-off, and the short smoothstep keeps the water's edge crisp but not aliased. Only surfaces facing nearly straight up
+// can hold water, so walls and slopes get none.
+float PuddleMask(vec3 position, float up_facing, float coverage) {
+    if (coverage <= 0.0) {
+        return 0.0;
+    }
+    float blobs = ValueNoise(position.xz * 0.45) * 0.65 + ValueNoise(position.xz * 1.3 + 17.0) * 0.35;
+    float level = 1.0 - coverage * 0.75;
+    return smoothstep(level, level + 0.06, blobs) * smoothstep(0.88, 0.98, up_facing);
+}
+
 void main() {
     vec4 albedo = texture(albedo_texture, surface_uv) * surface_color * material.color;
     // Interpolating unit normals across a triangle shortens them, so normalise again per pixel.
@@ -347,6 +380,18 @@ void main() {
     float metallic = clamp(material.surface.x, 0.0, 1.0);
     // Below about 0.04 the highlight shrinks to a few pixels and flickers, so roughness stops there.
     float roughness = clamp(material.surface.y, 0.04, 1.0);
+
+    // Wetness. Water in a surface's pores darkens its diffuse colour (a metal has no diffuse to darken) and a film of water
+    // on top is smooth, so roughness falls most of the way to a mirror's. Puddles go further: they are flat (the surface's
+    // normal, bumps and all, is replaced by straight up), nearly black underneath and a full mirror on top.
+    float wetness = clamp(material.surface.w, 0.0, 1.0);
+    float puddle = PuddleMask(world_position, normalize(world_normal).y, wetness * clamp(material.emissive.w, 0.0, 1.0));
+    float darkening = mix(1.0, 0.55, wetness * (1.0 - metallic));
+    darkening = mix(darkening, 0.3, puddle);
+    albedo.rgb *= darkening;
+    roughness = mix(roughness, 0.1, wetness * 0.8);
+    roughness = mix(roughness, 0.04, puddle);
+    normal = normalize(mix(normal, vec3(0.0, 1.0, 0.0), puddle));
     // The GGX alpha is the square of roughness, which spreads the artist's slider more evenly.
     float alpha = roughness * roughness;
     // A non-metal shows its colour as diffuse and reflects about 4% of light as a white highlight; a metal has no
