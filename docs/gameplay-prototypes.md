@@ -94,6 +94,8 @@ The main menu has a **Prototypes** button listing one room per idea, plus **The 
 all. Each room is one world file in `assets/worlds/prototypes/`, small and isolated, with signs that say what to try.
 Every room has a **solo route** and a **companion route**; [`playtest-checklist.md`](playtest-checklist.md) asks you to
 try both. Every room has a host test in `engine/tests/host/` that plays it with scripted keys.
+**11, the camera room**, is not a gameplay idea but a camera one: a straight path through camera volumes and shots, described in
+[`camera.md`](camera.md); it has no companion and no solo or companion route.
 
 | Room | File | Verbs | World kinds it uses |
 | --- | --- | --- | --- |

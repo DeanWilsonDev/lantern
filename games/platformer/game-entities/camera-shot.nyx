@@ -1,0 +1,38 @@
+CameraPose :: import CameraPose;
+
+// A camera shot: a world-file entity of kind "camera_shot". The camera sits at the entity's position and looks at a
+// point, like a camera a film crew set up on a tripod. A camera volume whose `shot` property equals this shot's
+// `number` shows it while the player is inside.
+//
+// Properties set on the entity in the world editor:
+// - `number` (number): which shot this is. A volume picks it by this number. Default 1.
+// - `target` (vector): the world-space point the camera looks at. Missing, it looks straight ahead along -Z.
+// - `track` (number): 1 keeps the camera on the player: it stays where it is but turns to follow them, like a camera
+//   on a pole. 0 (the default) keeps it fixed on `target`.
+// - `fov` (number): the lens in degrees. Default 50, a touch tighter than the follow camera's 60, which reads as more
+//   cinematic.
+CameraShot :: class {
+public:
+    entity: i64;
+    number: i32;
+    position: lantern:::math:::Vec3;
+    target: lantern:::math:::Vec3;
+    isTracking: bool;
+    fieldOfViewDegrees: f32;
+
+    CameraShot~: (entity: i64) : entity(entity),
+        number(lantern:::world:::HasProperty(entity, "number") ? i32(lantern:::world:::NumberProperty(entity, "number")) : 1),
+        position(lantern:::world:::WorldPosition(entity)),
+        target(lantern:::world:::HasProperty(entity, "target") ? lantern:::world:::VectorProperty(entity, "target") : lantern:::world:::WorldPosition(entity) + lantern:::math:::Vec3 { x: 0.0f, y: 0.0f, z: -10.0f }),
+        isTracking(lantern:::world:::HasProperty(entity, "track") && lantern:::world:::NumberProperty(entity, "track") > 0.5f),
+        fieldOfViewDegrees(lantern:::world:::HasProperty(entity, "fov") ? lantern:::world:::NumberProperty(entity, "fov") : DEFAULT_FIELD_OF_VIEW) { }
+
+    // The pose this shot gives. `playerAim` is the point a tracking shot follows (the follow camera's pivot, which is
+    // already smoothed, so the shot turns gently instead of twitching with every footstep).
+    PoseFor :: (playerAim: lantern:::math:::Vec3) -> CameraPose {
+        return CameraPose:::Of(position, isTracking ? playerAim : target, fieldOfViewDegrees);
+    }
+
+private:
+    static DEFAULT_FIELD_OF_VIEW :: 50.0f;
+}

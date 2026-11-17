@@ -41,6 +41,7 @@ to be in the shot too`).
 | The sight entity: reads `title`, `together`, `max_distance`; owns the marker | `game-entities/photo-sight.nyx` |
 | The verdict the camera gives | `game-entities/photo-verdict.nyx` |
 | The camera, the framing maths and the counting | `game-systems/photo-mode.nyx` |
+| Blending the lens in and out | `game-systems/camera-director.nyx` (see [`camera.md`](camera.md)) |
 | The viewfinder, the flash and the album line | `ui/photo-hud.chaos`, `ui/photo-hud.cosmos` |
 | What the UI reads | `ui/game-ui-model.nyx` (`isPhotoMode`, `isPhotoReady`, `photoHint`, `isPhotoFlash`, `album`) |
 | The actions | `settings/input-settings.nyx` (`PHOTO`, `SHUTTER`) |
@@ -51,7 +52,7 @@ right), gives a position from -1 to 1 across the screen. The viewfinder frame is
 0.84. The field of view (60 degrees) is the renderer's `Camera` default; the game does not read it back, so it is written
 in `photo-mode.nyx` too.
 
-The engine needs nothing new. Raycasts, the camera, the HUD and the world's properties already existed; photo mode is
+The engine needs nothing new for photo mode. Raycasts, the camera, the HUD and the world's properties already existed; photo mode is
 game code. What it doesn't do: it doesn't save the picture to a file. A counted photo is enough for the prototype; the
 engine can already write a frame to a PNG (`LANTERN_CAPTURE_PATH`), and a `lantern:::screen:::Capture(path)` would be the
 one new function a saved album needs.

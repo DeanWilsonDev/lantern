@@ -1,5 +1,12 @@
 lantern:::host :: namespace {
     /**
+     * The narrowest and widest lens game code can ask for. Outside this range the projection distorts too much to be a
+     * camera at all, so the request is clamped instead of refused.
+     */
+    MINIMUM_FIELD_OF_VIEW_DEGREES: f32 : 10.0f;
+    MAXIMUM_FIELD_OF_VIEW_DEGREES: f32 : 120.0f;
+
+    /**
      * Registers `lantern:::engine`: `Log`, `Warn`, `Quit`, `Flag` and `Setting`. Entities and levels are in
      * `lantern:::world` (WorldApi.nox). See game-api.md.
      */
@@ -140,7 +147,7 @@ lantern:::host :: namespace {
     }
 
     /**
-     * Registers `lantern:::camera` (`LookAt`), `lantern:::renderer` (`SetClearColor`, `SetFog`) and `lantern:::screen`
+     * Registers `lantern:::camera` (`LookAt`, `SetFieldOfView`), `lantern:::renderer` (`SetClearColor`, `SetFog`) and `lantern:::screen`
      * (`Width`, `Height`, `UiScale`, `SetMouseCaptured`).
      */
     RegisterRenderingApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
@@ -152,7 +159,20 @@ lantern:::host :: namespace {
                 return;
             }
             unsafe {
+                // LookAt builds a new camera, so the field of view the game set last is carried over: placing the
+                // camera each frame must not undo a wider or narrower lens.
+                fieldOfViewRadians: f32 = state->renderWorld->camera.verticalFieldOfViewRadians;
                 state->renderWorld->camera = lantern:::renderer:::Camera:::LookAt(eye, target);
+                state->renderWorld->camera.verticalFieldOfViewRadians = fieldOfViewRadians;
+            }
+        });
+        camera->Function("SetFieldOfView", "(degrees: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            degrees: f32 = context->F32(0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->renderWorld->camera.verticalFieldOfViewRadians = Math:::clamp(degrees, MINIMUM_FIELD_OF_VIEW_DEGREES, MAXIMUM_FIELD_OF_VIEW_DEGREES) * (Math:::PI / 180.0f);
             }
         });
         failure~ lantern:::nyx:::NyxError*!? = camera->Finish();

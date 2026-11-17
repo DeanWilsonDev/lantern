@@ -1,13 +1,19 @@
+CameraPose :: import CameraPose;
+CameraRigSettings :: import CameraRigSettings;
 Math :: import standard:::Math;
+Smoothing :: import Smoothing;
 
-// Third-person orbit camera with collision. Presentation only: it runs per drawn frame and never
+// Third-person follow camera with collision. Presentation only: it runs per drawn frame and never
 // affects the simulation, except that movement input is read relative to its yaw.
 //
-// The camera is described by three numbers instead of a position: `yaw` (which way round the
-// player it is), `pitch` (how far above or below) and `distance` (how far away). Those are
-// spherical coordinates around a pivot at the player's head. They are what the player actually
-// controls (mouse left/right is yaw, up/down is pitch), they are easy to clamp, and the position
-// can be rebuilt from them every frame (see Follow).
+// The player steers the camera with two numbers, `yaw` (which way round the player it is) and
+// `pitch` (how far above or below). With a distance from the settings those are spherical
+// coordinates around a pivot near the player's head. They are what the player actually controls
+// (mouse left/right is yaw, up/down is pitch), they are easy to clamp, and the position can be
+// rebuilt from them every frame (see ComputePose).
+//
+// This class only works out a pose. The CameraDirector decides whether to use it, blend it with
+// another or replace it with an authored shot, and is the only code that tells the engine.
 //
 // Angle conventions, shared with the engine (WrapAngle in engine/src/core/Conventions.nox):
 // - Y is up, and the level's forward is -Z.
@@ -17,7 +23,6 @@ ThirdPersonCamera :: class {
 public:
     yaw~ f32 = 0.0f;                  // radians about +Y; 0 looks toward -Z (the level's forward)
     pitch~ f32 = DEFAULT_PITCH;       // radians; negative puts the camera above the pivot
-    distance~ f32 = DEFAULT_DISTANCE;
 
     // A look delta in radians (+x turns right, +y looks up).
     Look~: (delta: lantern:::math:::Vec2) -> void {
@@ -38,7 +43,7 @@ public:
     ResetBehind~: (newYaw: f32) -> void {
         yaw = newYaw;
         pitch = DEFAULT_PITCH;
-        currentDistance = distance;
+        needsSnap = true;
     }
 
     // The horizontal directions movement input is mapped onto.
@@ -58,61 +63,197 @@ public:
         return { x: Math:::cos(yaw), z: -Math:::sin(yaw) };
     }
 
-    // Places the camera behind `playerFeet`, pulled in so nothing sits between the pivot and the
-    // lens. Moving in is instant; easing back out takes RETURN_SPEED.
-    Follow~: (playerFeet: lantern:::math:::Vec3, frameSeconds: f32) -> void {
-        // Orbit around the head, not the feet, so the player sits low in the frame and you can
-        // see where you are going.
-        headHeight: lantern:::math:::Vec3 = { y: PIVOT_HEIGHT };
-        pivot := playerFeet + headHeight;
+    // Works out where the camera should be this frame, without placing it. The CameraDirector places it, because it
+    // may blend this pose with another or replace it with an authored shot.
+    //
+    // The camera looks at a pivot near the player's head, and the pivot is not simply the head:
+    // 1. The head is smoothed. Sideways it follows closely (FOLLOW_HALF_LIFE), but up and down it is lazy
+    //    (VERTICAL_HALF_LIFE), so a jump lifts the view a little less than the player instead of bobbing it with every
+    //    hop. The smoothed head is never allowed to lag more than a metre or so behind (MAX_*_LAG), or the player
+    //    would leave the frame.
+    // 2. The pivot leads. The player's speed, measured from how far the feet moved this frame, pushes the pivot ahead of
+    //    them along the direction they are going, up to `settings.lookAhead` metres. You see more of where you are
+    //    heading and less of where you have been. The lead is eased in and out so a quick stop or turn doesn't whip
+    //    the view.
+    // 3. The pivot sits over a shoulder. It moves sideways by `settings.shoulder`, so the player stands to one side of the
+    //    frame and the middle of the screen shows what is ahead of them. If that shift would put the pivot in a wall
+    //    the camera swaps to the other shoulder (ChooseShoulder), easing across instead of jumping.
+    // 4. Both shifts are tested against the world. A small sphere is swept from the player's real head to the shifted
+    //    pivot, and the pivot stops where it touches something, so neither the lead nor the shoulder can push the camera
+    //    into geometry.
+    //
+    // Last, the lens is placed on the boom behind the pivot, pulled in by collision exactly as before.
+    ComputePose~: (playerFeet: lantern:::math:::Vec3, frameSeconds: f32, settings: CameraRigSettings) -> CameraPose {
+        dt := Math:::clamp(frameSeconds, 0.0f, MAX_FRAME_SECONDS);
+        head := playerFeet + Lift(settings.height);
+        // The very first frame, a respawn and a teleport all start from the player's place instead of easing there from
+        // wherever the camera was.
+        if needsSnap || !hasPreviousFeet || playerFeet.DistanceTo(previousFeet) > TELEPORT_DISTANCE {
+            smoothedHead = head;
+            lead = lantern:::math:::Vec3:::Zero();
+            velocity = lantern:::math:::Vec3:::Zero();
+            shoulderSide = settings.shoulder >= 0.0f ? 1.0f : -1.0f;
+            shoulderSideGoal = shoulderSide;
+            shoulderClearSeconds = 0.0f;
+            currentDistance = settings.distance;
+            needsSnap = false;
+        } else if dt > 0.0001f {
+            measured := ((playerFeet - previousFeet) / dt).Horizontal();
+            velocity = velocity.Lerp(measured, Smoothing:::Amount(dt, VELOCITY_HALF_LIFE));
+        }
+        previousFeet = playerFeet;
+        hasPreviousFeet = true;
+
+        // 1. The smoothed head, kept within reach of the real one.
+        followAmount := Smoothing:::Amount(dt, FOLLOW_HALF_LIFE);
+        verticalAmount := Smoothing:::Amount(dt, VERTICAL_HALF_LIFE);
+        easedHead: lantern:::math:::Vec3 = {
+            x: Smoothing:::Toward(smoothedHead.x, head.x, followAmount),
+            y: Smoothing:::Toward(smoothedHead.y, head.y, verticalAmount),
+            z: Smoothing:::Toward(smoothedHead.z, head.z, followAmount)
+        };
+        lag := easedHead - head;
+        limitedLag~ lantern:::math:::Vec3 = lag.Horizontal().ClampLength(MAX_HORIZONTAL_LAG);
+        limitedLag = limitedLag.WithY(Math:::clamp(lag.y, -MAX_VERTICAL_LAG, MAX_VERTICAL_LAG));
+        smoothedHead = head + limitedLag;
+
+        // 2. The lead: where the player will be in LEAD_SECONDS, but never further ahead than `lookAhead`.
+        leadGoal := (velocity * LEAD_SECONDS).ClampLength(settings.lookAhead);
+        lead = lead.Lerp(leadGoal, Smoothing:::Amount(dt, LEAD_HALF_LIFE));
+
+        // 3. The shoulder.
+        led := smoothedHead + lead;
+        ChooseShoulder(led, settings.shoulder, dt);
+        shoulderOffset := Right() * (Math:::abs(settings.shoulder) * shoulderSide);
+        shifted := led + shoulderOffset;
+
+        // 4. The sphere sweep from the real head to the shifted pivot.
+        pivot := Clipped(head, shifted);
+
+        // The boom, as before: spherical coordinates around the pivot, pulled in when something is in the way and eased back
+        // out afterwards.
+        effectivePitch := Math:::clamp(pitch + settings.pitchOffset, MIN_PITCH, MAX_PITCH);
         // Spherical to Cartesian: the unit vector from the pivot out to the camera.
         // - cos(pitch) is how much of the length lies flat; sin(pitch) is how much is vertical.
-        // - The flat part points along (sin yaw, cos yaw) in x and z, which is -Forward(): the
-        //   camera sits behind the direction it looks.
-        // - y is -sin(pitch) because pitch is negative above the pivot: pitch -0.35 rad (about
-        //   20 degrees) gives y = +0.34, so the camera is raised and looks down.
-        // Its length is 1, since cos²(pitch)(sin²(yaw) + cos²(yaw)) + sin²(pitch) = 1, so
-        // `backward * distance` is exactly `distance` metres away.
+        // - The flat part points along (sin yaw, cos yaw) in x and z, which is -Forward(): the camera sits behind the
+        //   direction it looks.
+        // - y is -sin(pitch) because pitch is negative above the pivot: pitch -0.35 rad (about 20 degrees) gives
+        //   y = +0.34, so the camera is raised and looks down.
         backward: lantern:::math:::Vec3 = {
-            x: Math:::cos(pitch) * Math:::sin(yaw),
-            y: -Math:::sin(pitch),
-            z: Math:::cos(pitch) * Math:::cos(yaw)
+            x: Math:::cos(effectivePitch) * Math:::sin(yaw),
+            y: -Math:::sin(effectivePitch),
+            z: Math:::cos(effectivePitch) * Math:::cos(yaw)
         };
-        // Camera collision. Sweep a small sphere from the pivot out to where the camera wants
-        // to be. If it hits something, SphereCast returns the fraction (0..1) of the way it got
-        // before touching, so `distance * fraction` is the furthest the camera can go and still
-        // see the player. A sphere, not a ray, because the lens has size: the near plane must
-        // not poke through a wall even when the centre of the view is clear. MIN_DISTANCE stops
-        // the camera ending up inside the player's head when backed into a corner.
-        allowedDistance := when lantern:::physics:::SphereCast(COLLISION_RADIUS, pivot, backward * distance) {
-            fraction: f32 -> Math:::max(distance * fraction, MIN_DISTANCE),
-            null -> distance
+        // Camera collision. A small sphere, not a ray, because the lens has size: the near plane must not poke through a
+        // wall even when the centre of the view is clear. SphereCast returns the fraction (0..1) of the way it got before
+        // touching, so `distance * fraction` is the furthest the camera can go and still see the player. MIN_DISTANCE
+        // stops the camera ending up inside the player's head when backed into a corner.
+        allowedDistance := when lantern:::physics:::SphereCast(COLLISION_RADIUS, pivot, backward * settings.distance) {
+            fraction: f32 -> Math:::max(settings.distance * fraction, MIN_DISTANCE),
+            null -> settings.distance
         };
-        // Asymmetric smoothing:
-        // - Pulling in is instant. If a wall comes between the camera and the player, even
-        //   one frame of looking through it is wrong.
-        // - Moving back out is gradual, RETURN_SPEED metres per second (x frameSeconds gives
-        //   this frame's metres, so it is the same speed at any frame rate). Min() stops it
-        //   overshooting the allowed distance. Snapping back out would make the view jump
-        //   every time an obstacle slides out of the way.
+        // Asymmetric smoothing: pulling in is instant (even one frame of looking through a wall is wrong), moving back
+        // out is gradual, RETURN_SPEED metres per second, so the view doesn't jump every time an obstacle slides away.
         currentDistance = allowedDistance < currentDistance
             ? allowedDistance
-            : Math:::min(currentDistance + RETURN_SPEED * frameSeconds, allowedDistance);
+            : Math:::min(currentDistance + RETURN_SPEED * dt, allowedDistance);
         // Eye at pivot + direction x distance, looking back at the pivot.
-        lantern:::camera:::LookAt(pivot + backward * currentDistance, pivot);
+        return CameraPose:::Of(pivot + backward * currentDistance, pivot, settings.fieldOfViewDegrees);
+    }
+
+    // Which shoulder the camera is on: 1 for the player's right, -1 for their left, eased between the two.
+    // The shoulder the level asks for (the sign of `preferred`) is used whenever there is room. When a wall is within
+    // half the shift on that side and the other side is clear, the camera crosses over. It goes back only after the
+    // preferred side has been clear for SHOULDER_RETURN_SECONDS, so standing at a corner doesn't make it flicker.
+    ChooseShoulder~: (led: lantern:::math:::Vec3, preferred: f32, dt: f32) -> void {
+        amount := Math:::abs(preferred);
+        preferredSign := preferred >= 0.0f ? 1.0f : -1.0f;
+        if amount > 0.01f {
+            preferredClearance := ShoulderClearance(led, preferredSign * amount);
+            otherClearance := ShoulderClearance(led, -preferredSign * amount);
+            if shoulderSideGoal == preferredSign {
+                if preferredClearance < SHOULDER_BLOCKED_FRACTION && otherClearance > SHOULDER_FREE_FRACTION {
+                    shoulderSideGoal = -preferredSign;
+                    shoulderClearSeconds = 0.0f;
+                }
+            } else if preferredClearance > SHOULDER_FREE_FRACTION {
+                shoulderClearSeconds += dt;
+                if shoulderClearSeconds >= SHOULDER_RETURN_SECONDS {
+                    shoulderSideGoal = preferredSign;
+                }
+            } else {
+                shoulderClearSeconds = 0.0f;
+            }
+        }
+        shoulderSide = Smoothing:::Toward(shoulderSide, shoulderSideGoal, Smoothing:::Amount(dt, SHOULDER_HALF_LIFE));
+    }
+
+    // The side the camera is on, for tests and the debug HUD: 1 right, -1 left, and in between while it swaps.
+    ShoulderSide :: () -> f32 {
+        return shoulderSide;
     }
 
 private:
-    // How far the camera actually is this frame (after collision), as opposed to `distance`,
-    // how far it wants to be.
-    currentDistance~ f32 = DEFAULT_DISTANCE;
+    // How far the camera actually is this frame (after collision), as opposed to the settings' distance, how far it
+    // wants to be.
+    currentDistance~ f32 = CameraRigSettings:::DEFAULT_DISTANCE;
+    // The rig's memory between frames. `needsSnap` asks the next ComputePose to start from the player's place.
+    needsSnap~ bool = true;
+    hasPreviousFeet~ bool = false;
+    previousFeet~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    smoothedHead~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    lead~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    velocity~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    shoulderSide~ f32 = 1.0f;
+    shoulderSideGoal~ f32 = 1.0f;
+    shoulderClearSeconds~ f32 = 0.0f;
 
-    static PIVOT_HEIGHT :: 1.4f;      // about head height above the feet
-    static DEFAULT_DISTANCE :: 6.0f;
+    // The fraction (0 to 1) of a shift of `offset` metres to the player's right (negative: left) from `from` that is
+    // free of geometry. 1 means the whole shift is clear.
+    ShoulderClearance :: (from: lantern:::math:::Vec3, signedOffset: f32) -> f32 {
+        shift := Right() * signedOffset;
+        return when lantern:::physics:::SphereCast(COLLISION_RADIUS, from, shift) {
+            fraction: f32 -> fraction,
+            null -> 1.0f
+        };
+    }
+
+    // `to`, or the last point on the way there from `from` that a camera-sized sphere can reach, stopping SKIN short of the
+    // surface. The gap matters: a pivot left exactly touching a wall makes the next sweep (the boom, back from the pivot)
+    // start in contact, report no room at all, and throw the lens the whole way in to MIN_DISTANCE in one frame.
+    Clipped :: (from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> lantern:::math:::Vec3 {
+        shift := to - from;
+        length := shift.Length();
+        guard length > 0.01f return to;
+        return when lantern:::physics:::SphereCast(COLLISION_RADIUS, from, shift) {
+            fraction: f32 -> from + shift * (Math:::max(length * fraction - SKIN, 0.0f) / length),
+            null -> to
+        };
+    }
+
+    Lift :: (metres: f32) -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: metres };
+        return lift;
+    }
+
     static MIN_DISTANCE :: 0.6f;
-    static COLLISION_RADIUS :: 0.25f; // larger than the near plane's half-diagonal
-    static RETURN_SPEED :: 5.0f;      // metres per second
-    static MIN_PITCH :: -1.35f;       // about 77 degrees: nearly overhead
-    static MAX_PITCH :: 0.45f;        // about 26 degrees below the pivot, looking up
-    static DEFAULT_PITCH :: -0.35f;   // about 20 degrees above, looking down at the player
+    static SKIN :: 0.1f;                     // metres kept between a clipped pivot and the surface it stopped at
+    static COLLISION_RADIUS :: 0.25f;        // larger than the near plane's half-diagonal
+    static RETURN_SPEED :: 5.0f;             // metres per second
+    static MIN_PITCH :: -1.35f;              // about 77 degrees: nearly overhead
+    static MAX_PITCH :: 0.45f;               // about 26 degrees below the pivot, looking up
+    static DEFAULT_PITCH :: -0.35f;          // about 20 degrees above, looking down at the player
+    static MAX_FRAME_SECONDS :: 0.1f;        // a long hitch must not throw the camera across the level
+    static TELEPORT_DISTANCE :: 4.0f;        // metres the feet may move in one frame before it counts as a teleport
+    static FOLLOW_HALF_LIFE :: 0.06f;        // seconds: the head is followed sideways almost at once
+    static VERTICAL_HALF_LIFE :: 0.22f;      // seconds: but lazily up and down
+    static MAX_HORIZONTAL_LAG :: 0.9f;       // metres the smoothed head may trail the real one along the ground
+    static MAX_VERTICAL_LAG :: 1.1f;         // and up or down
+    static VELOCITY_HALF_LIFE :: 0.08f;      // seconds: the speed that look-ahead reads is itself smoothed
+    static LEAD_SECONDS :: 0.45f;            // look this far into the player's future
+    static LEAD_HALF_LIFE :: 0.3f;           // seconds: the lead comes and goes gently
+    static SHOULDER_HALF_LIFE :: 0.18f;      // seconds: crossing from one shoulder to the other
+    static SHOULDER_BLOCKED_FRACTION :: 0.55f;
+    static SHOULDER_FREE_FRACTION :: 0.98f;
+    static SHOULDER_RETURN_SECONDS :: 0.8f;
 }

@@ -1,0 +1,54 @@
+CameraRigSettings :: import CameraRigSettings;
+
+// A camera volume: a world-file entity of kind "camera_volume". While the player stands inside the box, the follow
+// camera uses this volume's framing instead of the default, and, when the volume names a shot, the camera cuts or
+// glides to that authored view for as long as they stay inside. The entity itself draws nothing in the game.
+//
+// Properties set on the entity in the world editor (every one is optional):
+// - `half_extents` (vector): half the box's width, height and depth in metres, around the entity's position. The box
+//   is axis-aligned: turning the entity does not turn the box. Default 4 x 3 x 4.
+// - `priority` (number): when volumes overlap, the highest wins; on a tie, the one whose centre is nearest the player.
+//   Default 0.
+// - `blend` (number): seconds the camera takes to move to this framing on entering. 0 is an instant cut. Default 1.2.
+// - `exit_blend` (number): seconds it takes to come back to the default on leaving. Default: the same as `blend`. A
+//   volume can cut in and glide out, which is how a shot that surprises usually wants to go.
+// - `shot` (number): the `number` of a camera_shot entity to show while inside. 0 or missing means no shot, only a
+//   change of framing.
+// - `distance`, `shoulder`, `height`, `pitch_offset_degrees`, `fov`, `look_ahead`: the framing, as in
+//   CameraRigSettings. A missing one keeps the game's default.
+CameraVolume :: class {
+public:
+    entity: i64;
+    centre: lantern:::math:::Vec3;
+    halfExtents: lantern:::math:::Vec3;
+    priority: f32;
+    blendSeconds: f32;
+    exitBlendSeconds: f32;
+    shotNumber: i32;
+    settings: CameraRigSettings;
+
+    CameraVolume~: (entity: i64) : entity(entity), centre(lantern:::world:::WorldPosition(entity)),
+        halfExtents(lantern:::world:::HasProperty(entity, "half_extents") ? lantern:::world:::VectorProperty(entity, "half_extents") : lantern:::math:::Vec3 { x: 4.0f, y: 3.0f, z: 4.0f }),
+        priority(lantern:::world:::HasProperty(entity, "priority") ? lantern:::world:::NumberProperty(entity, "priority") : 0.0f),
+        blendSeconds(lantern:::world:::HasProperty(entity, "blend") ? lantern:::world:::NumberProperty(entity, "blend") : DEFAULT_BLEND_SECONDS),
+        exitBlendSeconds(lantern:::world:::HasProperty(entity, "exit_blend") ? lantern:::world:::NumberProperty(entity, "exit_blend")
+            : (lantern:::world:::HasProperty(entity, "blend") ? lantern:::world:::NumberProperty(entity, "blend") : DEFAULT_BLEND_SECONDS)),
+        shotNumber(lantern:::world:::HasProperty(entity, "shot") ? i32(lantern:::world:::NumberProperty(entity, "shot")) : 0),
+        settings(CameraRigSettings:::FromEntity(entity)) { }
+
+    // True when `point` is inside the box.
+    Contains :: (point: lantern:::math:::Vec3) -> bool {
+        offset := point - centre;
+        return offset.x >= -halfExtents.x && offset.x <= halfExtents.x
+            && offset.y >= -halfExtents.y && offset.y <= halfExtents.y
+            && offset.z >= -halfExtents.z && offset.z <= halfExtents.z;
+    }
+
+    // How far `point` is from the centre of the box, for breaking a tie between overlapping volumes.
+    DistanceFromCentre :: (point: lantern:::math:::Vec3) -> f32 {
+        return point.DistanceTo(centre);
+    }
+
+private:
+    static DEFAULT_BLEND_SECONDS :: 1.2f;
+}

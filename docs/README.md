@@ -27,6 +27,7 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`grounded-adventure-ideas.md`](grounded-adventure-ideas.md) | Five more ideas to test for the action-adventure direction, with how each would be fun and what it costs. |
 | [`playtest-checklist.md`](playtest-checklist.md) | What to try in each prototype room, with and without her, and what to note. |
 | [`night-look.md`](night-look.md) | Why the platformer is played at night, the moon, sky and lamps that make it readable, and the day look. |
+| [`camera.md`](camera.md) | The follow camera, camera volumes, authored shots, blends and how a level designer places them. |
 | [`photo-mode.md`](photo-mode.md) | The photo collectable: raising the camera, what counts as a photo, and how sights are authored. |
 
 ## The renderer's effects

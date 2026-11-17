@@ -166,6 +166,7 @@ any floor.
 | Call | |
 |---|---|
 | `lantern:::camera:::LookAt(eye, target)` | this frame's camera |
+| `lantern:::camera:::SetFieldOfView(degrees)` | the lens, 10 to 120 degrees top to bottom (60 by default); `LookAt` keeps it |
 | `lantern:::renderer:::SetClearColor(color)`, `lantern:::renderer:::SetFog(start, end)` | |
 | `lantern:::graphics:::SetQuality(level)` | `"low"`, `"medium"` or `"high"`: how much the renderer spends on looks. Low turns bloom, anti-aliasing, ambient occlusion and light shafts off and uses fewer shadow lookups; see `bloom-and-tone-mapping.md` |
 | `lantern:::graphics:::SetAntiAliasing(enabled)` | smooth jagged edges with FXAA (on by default); see `anti-aliasing.md` |
@@ -367,12 +368,16 @@ allowedDistance := when lantern:::physics:::SphereCast(0.2f, pivot, backward * d
 };
 ```
 
-**Camera and screen** (`game-systems/third-person-camera.nyx`, `main.nyx`):
+**Camera and screen** (`game-systems/camera-director.nyx`, `main.nyx`):
 
 ```nyx
-lantern:::camera:::LookAt(pivot + backward * currentDistance, pivot);
+lantern:::camera:::SetFieldOfView(shown.fieldOfViewDegrees);
+lantern:::camera:::LookAt(shown.eye, shown.target);
 lantern:::screen:::SetMouseCaptured(true);
 ```
+
+`third-person-camera.nyx` works out a pose and `camera-director.nyx` is the one place that places the camera; see
+[`camera.md`](camera.md).
 
 **Lights** (`game-systems/level-lighting.nyx`): the sun once, lamps as handles you can remove.
 
@@ -533,6 +538,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | Function | Signature |
 | --- | --- |
 | `LookAt` | `(eye: lantern:::math:::Vec3, target: lantern:::math:::Vec3) -> void` |
+| `SetFieldOfView` | `(degrees: f32) -> void` |
 
 ### `lantern:::renderer`
 
