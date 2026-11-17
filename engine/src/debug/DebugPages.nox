@@ -1,0 +1,203 @@
+lantern:::debug :: namespace {
+    /**
+     * The page that lists every value, whatever its group.
+     */
+    ALL_PAGE: string : "All";
+
+    /**
+     * Which debug page each group of values is on. A value is published as "Group/Name" (see DebugValues), and its group
+     * is looked up here: "Anchor" is on the "Companion" page, "Script" on "Frame". A group with no entry gets a page of its
+     * own with the group's name, so a subsystem needs no registration at all to appear; it only calls `Assign` to share a page.
+     */
+    PageAssignments :: class {
+    public:
+        groups~ Array<string!>! = [];
+        pages~ Array<string!>! = [];
+
+        PageAssignments~: () {
+            Assign("Frame", "Frame");
+            Assign("Script", "Frame");
+            Assign("Errors", "Errors");
+            Assign("Audio", "Audio");
+            Assign("Renderer", "Renderer");
+            Assign("Camera", "Camera");
+            Assign("Player", "Player");
+            Assign("Companion", "Companion");
+            Assign("Anchor", "Companion");
+            Assign("World", "World");
+            Assign("Game", "World");
+            Assign("Platform", "World");
+            Assign("Photo", "World");
+            Assign("Minigames", "World");
+            Assign("Climb", "Player");
+            Assign("Mantle", "Player");
+            Assign("Partner", "Companion");
+            Assign("Team", "Companion");
+            Assign("Gate", "Mechanics");
+            Assign("Switch", "Mechanics");
+            Assign("Crumble", "Mechanics");
+            Assign("Channel", "Mechanics");
+            Assign("Glow", "Mechanics");
+            Assign("Watcher", "Mechanics");
+        }
+
+        !PageAssignments~: () {
+            groups.freeAll();
+            pages.freeAll();
+        }
+
+        /**
+         * Puts every value in `group` on the page called `page`, replacing an earlier assignment of the group.
+         */
+        Assign~: (group: string, page: string) -> void {
+            for index~ usize = 0; index < groups.length(); index++ {
+                if groups[index] == group {
+                    pages.remove(index);
+                    pages.insert(index, `${page}`);
+                    return;
+                }
+            }
+            groups.push(`${group}`);
+            pages.push(`${page}`);
+        }
+
+        /**
+         * The page a group is on: its assignment, or the group's own name.
+         */
+        PageFor :: (group: string) -> string! {
+            for index~ usize = 0; index < groups.length(); index++ {
+                if groups[index] == group {
+                    return `${pages[index]}`;
+                }
+            }
+            return `${group}`;
+        }
+    }
+
+    /**
+     * Where a page sits in the tab row: the ones the engine knows come first in a fixed order (errors, then frame
+     * and the engine's subsystems, then the game's), and every other page follows in the order it first appeared.
+     */
+    PageRank :: (page: string) -> usize {
+        if page == "Errors" {
+            return 0;
+        }
+        if page == "Frame" {
+            return 1;
+        }
+        if page == "Audio" {
+            return 2;
+        }
+        if page == "Renderer" {
+            return 3;
+        }
+        if page == "Camera" {
+            return 4;
+        }
+        if page == "Player" {
+            return 5;
+        }
+        if page == "Companion" {
+            return 6;
+        }
+        if page == "World" {
+            return 7;
+        }
+        if page == "Mechanics" {
+            return 8;
+        }
+        return 9;
+    }
+
+    /**
+     * The tabs of the debug window: "All" first, then each page that has a value matching the filter, with how many
+     * values it holds.
+     */
+    PageSummary :: class {
+    public:
+        names~ Array<string!>! = [];
+        counts~ Array<usize>! = [];
+
+        PageSummary~: () { }
+
+        !PageSummary~: () {
+            names.freeAll();
+            delete counts;
+        }
+
+        IndexOf :: (name: string) -> usize? {
+            for index~ usize = 0; index < names.length(); index++ {
+                if names[index] == name {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        /**
+         * Counts one more value on the page `name`, adding the page after the ones with a lower rank.
+         */
+        Count~: (name: string) -> void {
+            if existing := IndexOf(name) {
+                counts[existing] += 1;
+                return;
+            }
+            rank: usize = PageRank(name);
+            position~ usize = names.length();
+            for index~ usize = 1; index < names.length(); index++ {
+                if rank < PageRank(names[index]) {
+                    position = index;
+                    break;
+                }
+            }
+            names.insert(position, `${name}`);
+            counts.insert(position, 1);
+        }
+    }
+
+    /**
+     * True when `text` holds `filter` in any case. An empty filter holds in everything. `filter` is already lower case.
+     */
+    TextMatches :: (text: string, filter: string) -> bool {
+        if filter.length() == 0 {
+            return true;
+        }
+        lowered: string! = text.toLower();
+        defer delete lowered;
+        return lowered.contains(filter);
+    }
+
+    /**
+     * True when the value at `index` matches the filter, by its path ("Audio/Underruns") or by what it shows ("3").
+     */
+    ValueMatches :: (values: lantern:::core:::DebugValues*, index: usize, filter: string) -> bool {
+        if filter.length() == 0 {
+            return true;
+        }
+        if TextMatches(values->PathAt(index), filter) {
+            return true;
+        }
+        shown: string! = values->DisplayAt(index);
+        defer delete shown;
+        return TextMatches(shown, filter);
+    }
+
+    /**
+     * The tabs for the values that match `filter`: "All" first (always), then the pages that hold a match.
+     */
+    SummarisePages :: (values: lantern:::core:::DebugValues*, assignments: PageAssignments*, filter: string) -> PageSummary*! {
+        summary := new PageSummary();
+        summary->names.push(`${ALL_PAGE}`);
+        summary->counts.push(0);
+        for index~ usize = 0; index < values->Length(); index++ {
+            if !ValueMatches(values, index, filter) {
+                continue;
+            }
+            summary->counts[0] += 1;
+            page: string! = assignments->PageFor(lantern:::core:::DebugGroup(values->PathAt(index)));
+            summary->Count(page);
+            delete page;
+        }
+        return summary!;
+    }
+}

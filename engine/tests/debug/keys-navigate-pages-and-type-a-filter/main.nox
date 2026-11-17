@@ -1,0 +1,59 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    overlay := new lantern:::renderer:::Overlay();
+    defer delete overlay;
+    values := new lantern:::core:::DebugValues();
+    defer delete values;
+    pages := new lantern:::debug:::PageAssignments();
+    defer delete pages;
+    values->SetInteger("Frame/FPS", 60);
+    values->SetInteger("Audio/Underruns", 2);
+    values->SetNumber("Audio/Queued ms", 40.0f);
+    values->SetText("Player/Position", "1, 2, 3");
+    window := new lantern:::debug:::DebugWindow();
+    defer delete window;
+    window->visible = true;
+    window->Draw(values, pages, overlay, Vec2 { x: 1280.0f, y: 720.0f }, 1.0f);
+
+    assert(!window->HandleKey(lantern:::core:::KeyCode:::Tab, false, values, pages), "an unfocused window leaves keys to the game");
+    assert(window->page == "All", "so the page stays");
+    assert(window->HandleKey(lantern:::core:::KeyCode:::F3, false, values, pages) && window->focused, "F3 focuses a visible window");
+
+    window->HandleKey(lantern:::core:::KeyCode:::Tab, false, values, pages);
+    assert(window->page == "Frame", "Tab goes to the next page");
+    window->HandleKey(lantern:::core:::KeyCode:::Right, false, values, pages);
+    assert(window->page == "Audio", "Right goes to the next page");
+    window->HandleKey(lantern:::core:::KeyCode:::Left, false, values, pages);
+    window->HandleKey(lantern:::core:::KeyCode:::Left, false, values, pages);
+    assert(window->page == "All", "Left goes back");
+    window->HandleKey(lantern:::core:::KeyCode:::Left, false, values, pages);
+    assert(window->page == "Player", "and wraps round to the last page");
+    window->HandleKey(lantern:::core:::KeyCode:::LeftShift, false, values, pages);
+    window->HandleKey(lantern:::core:::KeyCode:::Tab, false, values, pages);
+    assert(window->page == "Audio", "Shift+Tab goes back too");
+    window->HandleKeyUp(lantern:::core:::KeyCode:::LeftShift);
+
+    window->HandleKey(lantern:::core:::KeyCode:::U, false, values, pages);
+    window->HandleKey(lantern:::core:::KeyCode:::N, false, values, pages);
+    window->HandleKey(lantern:::core:::KeyCode:::D, false, values, pages);
+    assert(window->filter == "und", "letters type into the filter");
+    summary := lantern:::debug:::SummarisePages(values, pages, window->filter);
+    defer delete summary;
+    assert(summary->names.length() == 2 && summary->names[1] == "Audio", "only the pages with a match stay");
+    assert(summary->counts[0] == 1, "only the underrun value matches");
+    window->HandleKey(lantern:::core:::KeyCode:::Backspace, false, values, pages);
+    assert(window->filter == "un", "Backspace removes a letter");
+    window->HandleKey(lantern:::core:::KeyCode:::Escape, false, values, pages);
+    assert(window->filter == "" && window->focused, "Escape clears the filter first");
+    window->HandleKey(lantern:::core:::KeyCode:::Escape, false, values, pages);
+    assert(!window->focused, "and then leaves the window");
+
+    window->focused = true;
+    window->SelectPage("Player");
+    window->HandleKey(lantern:::core:::KeyCode:::Z, false, values, pages);
+    window->Draw(values, pages, overlay, Vec2 { x: 1280.0f, y: 720.0f }, 1.0f);
+    assert(window->page == "All", "a page the filter empties falls back to All");
+    print("keys navigate pages and type a filter");
+    return 0;
+}
