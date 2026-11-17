@@ -48,9 +48,15 @@ plate, crouching, pulling a lever or luring a light) and **Following** after the
 The player and she hold things for each other: she holds the door until the player is through, and the player holds a
 plate (or a lever) so she can come through the next one. Every puzzle can still be done by the player alone, harder.
 
-**Safety nets.** She never walks off an edge (a down ray ahead of each step), recovers when stuck (retry, skip the beat
-after two retries, then a teleport to the player's trail), is put back if she falls, hurries when the player gets far
-ahead, and pauses when they fall behind. She follows the player's trail after the last beat.
+**Finding her way.** She walks paths over the level's navigation graph ([`navigation.md`](navigation.md)): to the next beat while
+she leads, to the player once her beats are done. The path takes stairs and corners, drops off ledges and jumps short gaps,
+and never climbs. A beat's `via` places are the older hand-made route, used when the graph has no way to the beat (it
+knows only the static level, so a beat across a moving slab has none) and when the path fails her.
+
+**Safety nets.** She never walks off an edge unless the path says to (a down ray ahead of each step), recovers when stuck
+(plan the path again, then the `via` route, then retry, skip the beat after two retries, then a teleport to the player's
+trail), is put back if she falls, hurries when the player gets far ahead, and pauses when they fall behind. She follows a
+path to the player after the last beat, and their trail when there is no path.
 
 **Finishing together.** A goal only counts when she is within `TOGETHER_DISTANCE` (6 m) and `TOGETHER_HEIGHT` (3 m) of the
 player. Reaching it alone shows a hint to go back for her. The scripted route (`Guide`) stays for the streets, rooftops
@@ -134,6 +140,8 @@ which stays in `player-tuning.nyx`.
 | Leading | `LEAD_RANGE`, `AHEAD_MARGIN`, `HURRY_LIMIT`, `HURRY_SPEED_SCALE`, `PAUSE`, `RESUME` | 10, 3, 30 m, 1.6, 24 m, 18 m | How far ahead she goes, when she hurries, and when she waits |
 | Edges | `EDGE_PROBE_DISTANCE`, `EDGE_DROP_LIMIT`, `FALL_RESET_DEPTH` | 0.8 m, 1.2 m, 5 m | When she refuses a step; when a fall is put right |
 | Recovery | `RETRIES_BEFORE_SKIP`, `NUDGE` | 2, 3 s | How patient she is before skipping a beat |
+| Navigation | `JUMP_HEIGHT`, `NAV_STEP_HEIGHT`, `NAV_MAX_DROP`, `NAV_MAX_JUMP_UP`, `NAV_MAX_JUMP_ACROSS` | 1.2 m, 0.3 m, 3 m, 1 m, 2.2 m | What she can step up, jump and drop |
+| Path | `PATH_POINT_REACHED`, `JUMP_TAKEOFF_REACHED`, `PATH_HEIGHT_REACHED`, `FOLLOW_REPLAN_SECONDS` | 0.6 m, 0.3 m, 1.2 m, 1 s | How exactly she walks a path; how often she plans one to the player |
 | Together | `TOGETHER_DISTANCE`, `TOGETHER_HEIGHT` | 6 m, 3 m | How close she must be for the goal to count |
 | Stuck | `STUCK_SECONDS`, `STUCK_SPEED` | 2.5 s, 0.4 m/s | When she gives up ("She can't get there") |
 | Crouch | `CROUCH_SCALE` | 0.6 | How low her boost pose is |

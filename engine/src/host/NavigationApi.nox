@@ -1,0 +1,160 @@
+lantern:::host :: namespace {
+    /**
+     * The host object type of a route over the navigation mesh.
+     */
+    NAVIGATION_PATH_TYPE_NAME: string : "lantern::navigation::Path";
+
+    /**
+     * The object a script holds for a route. It owns the NavigationPath, so the route lives as long as the script keeps it.
+     */
+    ScriptNavigationPath :: class {
+    implements:
+        lantern:::nyx:::HostObject;
+    public:
+        path~ lantern:::navigation:::NavigationPath*!;
+
+        ScriptNavigationPath~: (found: lantern:::navigation:::NavigationPath*!) {
+            path = found!;
+        }
+
+        !ScriptNavigationPath~: () {
+            delete path;
+        }
+
+        HostTypeName :: () -> string {
+            return NAVIGATION_PATH_TYPE_NAME;
+        }
+    }
+
+    /**
+     * The route a method was called on.
+     */
+    NavigationPathOf :: (context: lantern:::nyx:::CallContext~*) -> ScriptNavigationPath~*? {
+        guard object ~= context->ReceiverObject() return null;
+        return object as ScriptNavigationPath~*;
+    }
+
+    /**
+     * Declares the route type: `Count`, `Point`, `Link` and `IsComplete`.
+     */
+    DeclareNavigationPathType :: (math: MathTypes) -> lantern:::nyx:::HostType*! {
+        paths := new lantern:::nyx:::HostType(NAVIGATION_PATH_TYPE_NAME);
+        paths->Method("Count", "() -> i32", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if found ~= NavigationPathOf(context) {
+                context->ReturnI32(found->path->Length());
+            }
+        });
+        paths->Method("IsComplete", "() -> bool", false, new (context: lantern:::nyx:::CallContext~*) -> void {
+            if found ~= NavigationPathOf(context) {
+                context->ReturnBool(found->path->isComplete);
+            }
+        });
+        paths->Method("Point", "(index: i32) -> lantern:::math:::Vec3", true, new (context: lantern:::nyx:::CallContext~*) -> void [math] {
+            index: i32 = context->I32(0);
+            if Stopped(context) {
+                return;
+            }
+            if found ~= NavigationPathOf(context) {
+                if index < 0 || index >= found->path->Length() {
+                    message: string! = `the route has no point ${index}`;
+                    NotFound(context, message);
+                    delete message;
+                    return;
+                }
+                ReturnVec3(context, math, found->path->points[usize(index)]);
+            }
+        });
+        paths->Method("Link", "(index: i32) -> i32", true, new (context: lantern:::nyx:::CallContext~*) -> void {
+            index: i32 = context->I32(0);
+            if Stopped(context) {
+                return;
+            }
+            if found ~= NavigationPathOf(context) {
+                if index < 0 || index >= found->path->Length() {
+                    message: string! = `the route has no point ${index}`;
+                    NotFound(context, message);
+                    delete message;
+                    return;
+                }
+                context->ReturnI32(found->path->kinds[usize(index)]);
+            }
+        });
+        return paths!;
+    }
+
+    /**
+     * Registers the route type and `lantern:::navigation`: `Build`, `Clear`, `NodeCount`, `FindPath` and `IsReachable`.
+     */
+    RegisterNavigationApi :: (
+        runtime: lantern:::nyx:::Runtime~*,
+        state: raw EngineState~*,
+        math: MathTypes
+    ) -> lantern:::nyx:::NyxError*!? {
+        pathType := DeclareNavigationPathType(math);
+        pathTypeHandle~ raw lantern:::nyx:::HostType~* = null;
+        unsafe {
+            pathTypeHandle = pathType;
+        }
+        failure~ lantern:::nyx:::NyxError*!? = runtime->RegisterType(pathType!);
+        if failure != null {
+            return failure!;
+        }
+        navigationFunctions := new HostNamespace(runtime, "lantern::navigation");
+        navigationFunctions->Function("Build", "(radius: f32, height: f32, stepHeight: f32, maxDrop: f32, maxJumpUp: f32, maxJumpAcross: f32) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            settings~ lantern:::navigation:::NavigationAgent = lantern:::navigation:::NavigationAgent { };
+            settings.radius = context->F32(0);
+            settings.height = context->F32(1);
+            settings.stepHeight = context->F32(2);
+            settings.maxDrop = context->F32(3);
+            settings.maxJumpUp = context->F32(4);
+            settings.maxJumpAcross = context->F32(5);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                context->ReturnI32(state->navigationMesh->Build(state->collision, settings));
+            }
+        });
+        navigationFunctions->Function("Clear", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                state->navigationMesh->Clear();
+            }
+        });
+        navigationFunctions->Function("NodeCount", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI32(state->navigationMesh->NodeCount());
+            }
+        });
+        navigationFunctions->Function("FindPath", "(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> lantern:::navigation:::Path", new (context: lantern:::nyx:::CallContext~*) -> void [
+            state,
+            math,
+            pathTypeHandle
+        ] {
+            from: Vec3 = Vec3Argument(context, 0, math);
+            to: Vec3 = Vec3Argument(context, 1, math);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                found := state->navigationMesh->FindPath(state->collision, from, to);
+                context->ReturnObject(pathTypeHandle, new ScriptNavigationPath(found!));
+            }
+        });
+        navigationFunctions->Function("IsReachable", "(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [
+            state,
+            math
+        ] {
+            from: Vec3 = Vec3Argument(context, 0, math);
+            to: Vec3 = Vec3Argument(context, 1, math);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                context->ReturnBool(state->navigationMesh->IsReachable(state->collision, from, to));
+            }
+        });
+        failure = navigationFunctions->Finish();
+        delete navigationFunctions;
+        return failure!;
+    }
+}

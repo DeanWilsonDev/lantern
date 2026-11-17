@@ -1589,24 +1589,29 @@ Dean (2026-11-17): more renderer work, shaders and materials. Nothing in this se
   step shows the sky through the existing image-based lighting and a sharp lamp streak from the lowered roughness. SSR is the next card.
 - **D-119: the streets are wet by default.** Chapters 1 and 2 call `SetWetWorld(0.8, 0.55)` after the night look; the rooftops and course
   stay dry, `LANTERN_WET=0` turns it off and `LANTERN_WET=1` rains everywhere. Provisional: Dean picks whether the night streets stay wet.
+- **D-120: the navigation graph is a sampled grid of floors, not a triangle navmesh.** The level is boxes and ramps, a grid handles stacked floors (a street under a bridge) as spans, and the first goal is behaviour that is easy to predict and test. 0.4 m cells give about 23,000 nodes for The crossing, built in about 0.4 s when the partner spawns. A triangle mesh with portals is the upgrade if the node count or the zig-zag of grid paths becomes a problem.
+- **D-121: the graph holds the static level only.** A door, a lift or a crumbling slab is a moving body and isn't where it was at build time, so paths ignore doors and slabs. The partner falls back to a beat's `via` route when there is no path, and after two stuck checks on a path, which keeps every room test passing. Follow-up card: `navigation-over-moving-platforms-and-gates`.
+- **D-122: there is no climb link.** She can't climb in this game (Dean, 2026-11-16), so a way that needs climbing has no path; she helps by taking another route. She can step up 0.3 m, jump up 1.0 m or across 2.2 m (her jump rises 1.2 m) and drop 3 m.
+- **D-123: nodes keep a quarter of her radius from walls, and nodes nearer than the whole radius cost three times as much.** With the whole radius, a grid cell can miss a slot only 0.18 m wider than her (the narrow way had no nodes in its slot). Smoothing only cuts straight lines a full-radius capsule can walk. Provisional: she may still scrape a corner; the stuck check catches it.
+- **D-124: stuck on a path means plan again, then the `via` route, then the older nets.** The first stuck check is usually a path that was good when planned (the player moved a platform); the second means the graph is wrong here (a closed door).
+- **D-125: a path is drawn when the debug HUD is on.** Green walk, orange drop, red jump, from her to the end, so a thread or Dean can see why she went where she did without a screenshot tool.
 
 Dean (2026-11-17): skeletal animation for the player and companion. Nothing in this section is reviewed by Dean; the numbers are provisional.
 
-- **D-120: animation is engine data driven by game facts.** The engine owns skeletons, clips, animators and the blend maths
+- **D-126: animation is engine data driven by game facts.** The engine owns skeletons, clips, animators and the blend maths
   (`lantern:::animation`); the game describes states and rules once and afterwards only sets parameters (`SetFloat`, `SetBool`,
   `Trigger`). A game never plays a clip by name from its own code, so a state change can't skip a fade.
-- **D-121: skinning on the GPU, in two extra shaders.** `lit-skinned.vert` and `shadow-skinned.vert` take joints and weights from a
+- **D-127: skinning on the GPU, in two extra shaders.** `lit-skinned.vert` and `shadow-skinned.vert` take joints and weights from a
   second vertex buffer and a 32-matrix uniform; the fragment stage is shared, so skinned meshes get shadows and every effect for free.
   The alternative, skinning on the CPU and re-uploading vertices every frame, was left out for the cost at 60 fps.
-- **D-122: 32 joints, four influences per vertex.** The palette is a fixed uniform block (2 KB) and weights are bytes. A richer
+- **D-128: 32 joints, four influences per vertex.** The palette is a fixed uniform block (2 KB) and weights are bytes. A richer
   rig needs a storage buffer, which is not worth it for a humanoid with 17 joints.
-- **D-123: the mannequin is built in code.** Importing glTF skins is its own card; a generated humanoid keeps the checkout
+- **D-129: the mannequin is built in code.** Importing glTF skins is its own card; a generated humanoid keeps the checkout
   self-contained, and its clips come from formulas (`StrideCycle`) so the tests can check them.
-- **D-124: animators work from measured speed.** `CharacterAnimator.Observe` takes a position and works out horizontal speed from the
+- **D-130: animators work from measured speed.** `CharacterAnimator.Observe` takes a position and works out horizontal speed from the
   last one, so physics, a scripted walk and a swing animate the same way. A step over 20 m/s is a teleport and reads as standing.
   Footsliding is not corrected; the walk and run clips' strides are matched to the blend thresholds by eye (1.8 and 5 m/s).
-- **D-125: look-at is a layer on top of the clips.** After the pose is sampled, a smoothed turn toward the target is spread over chest,
+- **D-131: look-at is a layer on top of the clips.** After the pose is sampled, a smoothed turn toward the target is spread over chest,
   neck and head; a weight of 0 changes nothing, so a character that never looks costs nothing.
-- **D-126: the Rust trace test ignores the entity count.** The characters used to be a capsule and a visor (3 entities for the
+- **D-132: the Rust trace test ignores the entity count.** The characters used to be a capsule and a visor (3 entities for the
   player); an animated body is one entity, so the count moved by one while every simulated column still matches.
-

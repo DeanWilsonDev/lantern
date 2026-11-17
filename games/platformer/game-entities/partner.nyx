@@ -20,9 +20,12 @@ PartnerMode :: enum {
 // for a boost, pulls a lever, draws a light) and goes on when you have done yours. She is a
 // character with her own physics body, the same pieces as the player.
 //
-// She has no path finding. She walks in a straight line to where she is going and a beat's `via`
-// places steer her round corners, so she is predictable, which matters when a puzzle depends on
-// where she is. What keeps her from being lost is a set of safety nets:
+// She finds her way over the level's navigation graph (lantern:::navigation): a path to the next beat while she
+// leads, a path to the player while she follows. The path walks stairs and corners, drops off ledges and jumps short
+// gaps; it never climbs. A beat's `via` places are the older, hand-made route, used when the graph has no path to the
+// beat (it knows only the static level, so a door or a lift that moves is not in it) and after the path has failed her.
+// What keeps her from being lost is a set of safety nets:
+// - when she makes no progress on a path she plans it again, then falls back to the `via` route;
 // - she looks for ground ahead of every step and stops at an edge instead of walking off it;
 // - when she makes no progress she goes back to the beat she last stood at and tries again, and on
 //   the third try goes straight to the beat she was heading for, so a level can never lock;
@@ -47,6 +50,8 @@ public:
         beats = beatsInOrder;
         controller = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, start);
         controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED);
+        controller.SetJumpHeight(PartnerTuning:::JUMP_HEIGHT);
+        navigationNodes = lantern:::navigation:::Build(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, PartnerTuning:::NAV_STEP_HEIGHT, PartnerTuning:::NAV_MAX_DROP, PartnerTuning:::NAV_MAX_JUMP_UP, PartnerTuning:::NAV_MAX_JUMP_ACROSS);
         root = lantern:::world:::Spawn("partner", start);
         body = lantern:::world:::Spawn("partner_body", { y: PartnerTuning:::HEIGHT * 0.5f });
         lantern:::world:::SetTexturedMesh(body, bodyMesh, bodyTexture, "E8506A");
@@ -69,10 +74,18 @@ public:
     ModeName :: () -> string {
         return when mode <PartnerMode> {
             Waiting -> "waiting",
-            Leading -> isPaused ? "paused" : "leading",
+            Leading -> isPaused ? "paused" : (isOnPath ? "leading (path)" : "leading"),
             Acting -> "acting " + action,
             Following -> "following"
         };
+    }
+
+    // For the debug HUD: how many nodes the level's navigation graph has, and where she is on her path.
+    NavigationSummary :: () -> string {
+        if !isOnPath {
+            return `${navigationNodes:d} nodes, no path`;
+        }
+        return `${navigationNodes:d} nodes, point ${pathIndex + 1:d} of ${pathPoints.length():d}`;
     }
 
     IsOfferingBoost :: () -> bool {
@@ -131,9 +144,10 @@ public:
             Waiting -> { DecideWaiting(playerFeet, dt); },
             Leading -> { DecideLeading(playerFeet, dt); },
             Acting -> { DecideActing(playerFeet, isPlayerGrounded, activeChannels, dt); },
-            Following -> { DecideFollowing(playerFeet); }
+            Following -> { DecideFollowing(playerFeet, isPlayerGrounded, dt); }
         }
         MoveAndWatch(playerFeet, dt);
+        DrawPath();
         lantern:::world:::SetPosition(root, position);
         lantern:::world:::SetYaw(root, facingYaw);
         ShowBody();
@@ -153,6 +167,14 @@ private:
     lastSafe~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     stuckSeconds~ f32 = 0.0f;
     retries~ i32 = 0;
+    navigationNodes~ i32 = 0;
+    pathPoints~ Array<lantern:::math:::Vec3> = [];
+    pathKinds~ Array<i32> = [];
+    pathIndex~ i32 = 0;
+    isOnPath~ bool = false;
+    pathFailures~ i32 = 0;
+    replanSeconds~ f32 = 0.0f;
+    isJumpHeld~ bool = false;
     actingSeconds~ f32 = 0.0f;
     isPaused~ bool = false;
     nudgeSeconds~ f32 = 0.0f;
@@ -180,6 +202,12 @@ private:
         isPaused = false;
         nudgeSeconds = 0.0f;
         hasPending = false;
+        isOnPath = false;
+        pathPoints = [];
+        pathKinds = [];
+        pathIndex = 0;
+        pathFailures = 0;
+        isJumpHeld = false;
     }
 
     // Waiting between beats: she sets off when the player is near, or has run past her toward the beat. A player who
@@ -187,6 +215,8 @@ private:
     DecideWaiting~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
         if beatIndex >= beats.length() {
             mode = PartnerMode:::Following;
+            isOnPath = false;
+            replanSeconds = PartnerTuning:::FOLLOW_REPLAN_SECONDS;
             trailIndex = NearestTrailIndex();
             return;
         }
@@ -205,6 +235,8 @@ private:
     StartLeg~: () -> void {
         route = beats[beatIndex].route;
         routeIndex = 0;
+        pathFailures = 0;
+        isOnPath = PlanPath(beats[beatIndex].position);
         stuckSeconds = 0.0f;
         isPaused = false;
         nudgeSeconds = 0.0f;
@@ -231,7 +263,11 @@ private:
             Nudge(dt);
             return;
         }
-        moveTarget = routeIndex < route.length() ? route[routeIndex] : beat.position;
+        if isOnPath {
+            moveTarget = pathPoints[pathIndex];
+        } else {
+            moveTarget = routeIndex < route.length() ? route[routeIndex] : beat.position;
+        }
         wantsToMove = true;
         speedScale = isAhead && gap < PartnerTuning:::HURRY_LIMIT ? PartnerTuning:::HURRY_SPEED_SCALE : 1.0f;
     }
@@ -255,37 +291,98 @@ private:
         }
     }
 
-    // After her last beat: walk the player's trail to them, or arrive beside them when far behind.
-    DecideFollowing~: (playerFeet: lantern:::math:::Vec3) -> void {
+    // After her last beat: walk a path to the player, or their trail when there is no path, or arrive beside them when far
+    // behind.
+    DecideFollowing~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, dt: f32) -> void {
         gap := (playerFeet - position).Horizontal().Length();
         if gap > PartnerTuning:::CATCH_UP_DISTANCE {
             controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * 1.5f);
+            isOnPath = false;
         } else if gap > PartnerTuning:::FOLLOW_DISTANCE {
-            moveTarget = NextTrailPoint(playerFeet);
+            replanSeconds += dt;
+            if isPlayerGrounded && (!isOnPath || replanSeconds >= PartnerTuning:::FOLLOW_REPLAN_SECONDS) {
+                replanSeconds = 0.0f;
+                isOnPath = PlanPath(playerFeet);
+            }
+            if isOnPath {
+                moveTarget = pathPoints[pathIndex];
+            } else {
+                moveTarget = NextTrailPoint(playerFeet);
+            }
             wantsToMove = true;
+        } else {
+            isOnPath = false;
         }
+    }
+
+    // Plans a path from where she stands to `goal`. True, and she follows it, when the graph has a way all the way there.
+    PlanPath~: (goal: lantern:::math:::Vec3) -> bool {
+        pathPoints = [];
+        pathKinds = [];
+        pathIndex = 0;
+        guard navigationNodes > 0 return false;
+        found~ lantern:::navigation:::Path = lantern:::navigation:::FindPath(position, goal);
+        guard found.IsComplete() && found.Count() > 0 return false;
+        for index~ i32 = 0; index < found.Count(); index++ {
+            pathPoints.add(found.Point(index));
+            pathKinds.add(found.Link(index));
+        }
+        return true;
+    }
+
+    // Has she reached `target`, the next place she is walking to? On a path, a point on the way is reached more loosely
+    // than the end, and the point before a jump more tightly, so she takes off from the edge.
+    HasReached :: (target: lantern:::math:::Vec3) -> bool {
+        flat := (target - position).Horizontal().Length();
+        if !isOnPath {
+            return flat < PartnerTuning:::ARRIVE_DISTANCE;
+        }
+        if (target.y - position.y) > PartnerTuning:::PATH_HEIGHT_REACHED || (position.y - target.y) > PartnerTuning:::PATH_HEIGHT_REACHED {
+            return false;
+        }
+        if pathIndex >= pathPoints.length() - 1 {
+            return flat < PartnerTuning:::ARRIVE_DISTANCE;
+        }
+        if pathKinds[pathIndex + 1] == PartnerTuning:::LINK_JUMP {
+            return flat < PartnerTuning:::JUMP_TAKEOFF_REACHED;
+        }
+        return flat < PartnerTuning:::PATH_POINT_REACHED;
     }
 
     // The step itself: face where she is going, stop at an edge, let the controller move her, notice arriving, and
     // notice being stuck or fallen.
     MoveAndWatch~: (playerFeet: lantern:::math:::Vec3, dt: f32) -> void {
         direction~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+        isLeavingTheGround := wantsToMove && isOnPath && pathKinds[pathIndex] != PartnerTuning:::LINK_WALK;
         if wantsToMove {
             toTarget := (moveTarget - position).Horizontal();
             if toTarget.Length() > 0.05f {
                 direction = toTarget.Normalized();
                 facingYaw = direction.Yaw();
-                if !HasGroundAhead(direction) {
+                if !isLeavingTheGround && !HasGroundAhead(direction) {
                     direction = lantern:::math:::Vec3:::Zero();
                 }
             }
         }
+        isJumping := isLeavingTheGround && pathKinds[pathIndex] == PartnerTuning:::LINK_JUMP && controller.IsGrounded();
+        if isJumping {
+            isJumpHeld = true;
+        } else if controller.Velocity().y <= 0.0f {
+            isJumpHeld = false;
+        }
         controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED * speedScale);
-        controller.Step(direction, false, false, dt);
+        controller.Step(direction, isJumping, isJumpHeld, dt);
         before := position;
         position = controller.FeetPosition();
-        if mode == PartnerMode:::Leading && wantsToMove && (moveTarget - position).Horizontal().Length() < PartnerTuning:::ARRIVE_DISTANCE {
-            Arrive();
+        if wantsToMove && HasReached(moveTarget) {
+            if mode == PartnerMode:::Leading {
+                Arrive();
+            } else if mode == PartnerMode:::Following && isOnPath {
+                pathIndex++;
+                if pathIndex >= pathPoints.length() {
+                    isOnPath = false;
+                }
+            }
         }
         WatchForTrouble(playerFeet, before, dt);
     }
@@ -293,7 +390,13 @@ private:
     // Reaching a place on the route moves her on to the next; reaching the beat starts its action.
     Arrive~: () -> void {
         stuckSeconds = 0.0f;
-        if routeIndex < route.length() {
+        if isOnPath {
+            pathIndex++;
+            if pathIndex < pathPoints.length() {
+                return;
+            }
+            isOnPath = false;
+        } else if routeIndex < route.length() {
             routeIndex++;
             return;
         }
@@ -384,6 +487,17 @@ private:
         if mode == PartnerMode:::Following {
             controller.Teleport(playerFeet + lantern:::math:::Vec3:::FromYaw(facingYaw) * -1.5f);
             position = controller.FeetPosition();
+            isOnPath = false;
+            return;
+        }
+        if mode == PartnerMode:::Leading && !hasFallen && isOnPath {
+            pathFailures++;
+            if pathFailures == 1 {
+                isOnPath = PlanPath(beats[beatIndex].position);
+            } else {
+                isOnPath = false;
+                routeIndex = 0;
+            }
             return;
         }
         retries++;
@@ -391,6 +505,9 @@ private:
             controller.Teleport(lastSafe);
             position = lastSafe;
             routeIndex = 0;
+            if mode == PartnerMode:::Leading {
+                isOnPath = PlanPath(beats[beatIndex].position);
+            }
             if mode == PartnerMode:::Acting {
                 action = "";
                 hasPending = false;
@@ -402,6 +519,7 @@ private:
         controller.Teleport(arrival);
         position = arrival;
         routeIndex = route.length();
+        isOnPath = false;
     }
 
     // The breadcrumb she is walking to: she skips the ones she is already at, and when she has
@@ -425,6 +543,22 @@ private:
             }
         }
         return best;
+    }
+
+    // With the debug HUD on, the path she is walking: a line from her through each point still ahead, drops in orange and
+    // jumps in red.
+    DrawPath :: () -> void {
+        guard isOnPath && lantern:::debug:::IsHudVisible();
+        lift: lantern:::math:::Vec3 = { y: 0.15f };
+        previous~ lantern:::math:::Vec3 = position + lift;
+        for index~ i32 = pathIndex; index < pathPoints.length(); index++ {
+            point := pathPoints[index] + lift;
+            kind := pathKinds[index];
+            color := kind == PartnerTuning:::LINK_JUMP ? "FF4040" : (kind == PartnerTuning:::LINK_DROP ? "FFA030" : "40FF80");
+            lantern:::debug:::Line(previous, point, color);
+            lantern:::debug:::Sphere(point, 0.12f, color);
+            previous = point;
+        }
     }
 
     FacePlayer~: (playerFeet: lantern:::math:::Vec3) -> void {
