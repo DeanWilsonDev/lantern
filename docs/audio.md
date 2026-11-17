@@ -158,3 +158,5 @@ No test needs a sound card.
 
 To hear the result, run the game on a machine with a sound card (`mist run game`). Set `LANTERN_DEBUG_HUD=1` for the
 audio line: whether a device is open, how many voices are playing, how much is queued and how many times the queue ran dry.
+
+To find which kind of sound a problem is in, mute buses for one run: `LANTERN_AUDIO_MUTE=ambience,music mist run game` leaves only footsteps and menu sounds. The names are `master`, `music`, `ambience`, `sfx` and `ui`.

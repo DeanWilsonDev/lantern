@@ -1,0 +1,38 @@
+Sdl :: import Sdl;
+lantern :: import lantern;
+
+lantern:::sdlreadback :: foreign "SDL3" {
+    SDL_GetAudioStreamData :: (stream: raw Sdl:::SDL_AudioStream~*, samples: Array<f32~>, byteLength: i32) -> i32;
+}
+
+main :: () -> i32 {
+    spec~ Sdl:::SDL_AudioSpec = Sdl:::SDL_AudioSpec { format: Sdl:::SDL_AUDIO_F32, channels: 2, freq: 48000 };
+    stream~ raw Sdl:::SDL_AudioStream~* = null;
+    unsafe {
+        stream = Sdl:::SDL_CreateAudioStream(spec, spec);
+    }
+    guard stream != null return 1;
+    sent~ Array<f32>! = [];
+    received~ Array<f32>! = [];
+    for index~ usize = 0; index < 960; index++ {
+        sent.push(f32(index) / 1000.0f);
+        received.push(-1.0f);
+    }
+    pushed~ bool = false;
+    got~ i32 = 0;
+    unsafe {
+        pushed = lantern:::sdlaudio:::SDL_PutAudioStreamData(stream, sent, 3840);
+        Sdl:::SDL_FlushAudioStream(stream);
+        got = lantern:::sdlreadback:::SDL_GetAudioStreamData(stream, received, 3840);
+        Sdl:::SDL_DestroyAudioStream(stream);
+    }
+    print(`pushed ${pushed} read back ${got} bytes`);
+    matching~ bool = got == 3840;
+    for index~ usize = 0; index < 960; index++ {
+        matching = matching && received[index] == sent[index];
+    }
+    print(`samples come back unchanged ${matching}`);
+    delete sent;
+    delete received;
+    return 0;
+}
