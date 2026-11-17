@@ -1,0 +1,43 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    world := new lantern:::physics:::CollisionWorld();
+    defer delete world;
+    platformTriangles: Array<lantern:::physics:::Triangle>! = lantern:::physics:::BoxTriangles(Vec3 { }, Vec3 { x: 3.0f, y: 0.25f, z: 3.0f });
+    platform := world->AddBody(platformTriangles, Mat4 { });
+    delete platformTriangles;
+    controller~ lantern:::physics:::CharacterController = lantern:::physicsrig:::ControllerAt(Vec3 { x: 0.0f, y: 0.3f, z: 0.0f });
+    controller.settings.keepsPlatformSpeedInAir = true;
+    position~ Vec3 = Vec3 { };
+    step~ u32 = 0;
+    jumpedAtX~ f32 = 0.0f;
+    landedAtX~ f32 = -100.0f;
+    leftTheGround~ bool = false;
+    while step < 160 {
+        world->BeginStep();
+        if step < 100 {
+            position.x += 2.0f * lantern:::physicsrig:::STEP_SECONDS;
+            world->SetBodyTransform(platform, Mat4:::translation(position));
+        }
+        input~ lantern:::physics:::ControllerInput = lantern:::physicsrig:::Idle();
+        if step >= 60 {
+            input.jumpHeld = true;
+        }
+        if step == 60 {
+            input.jumpPressed = true;
+            jumpedAtX = controller.feetPosition.x;
+        }
+        controller.Step(world, input, lantern:::physicsrig:::STEP_SECONDS);
+        if step > 60 && !controller.grounded {
+            leftTheGround = true;
+        }
+        if step > 60 && leftTheGround && controller.grounded && landedAtX < -50.0f {
+            landedAtX = controller.feetPosition.x;
+        }
+        step += 1;
+    }
+    assert(jumpedAtX > 1.0f, "the player rode the platform before jumping");
+    assert(landedAtX > jumpedAtX + 1.0f, "a jump off a moving platform keeps its sideways speed");
+    print("platforms hand their speed to a jumping player");
+    return 0;
+}
