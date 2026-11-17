@@ -1,0 +1,71 @@
+AdventureTuning :: import AdventureTuning;
+Math :: import standard:::Math;
+
+// Player-only mantling (docs/gameplay-prototypes.md, "Mantling"). A jump that ends against a ledge a little higher than
+// the player can reach hauls them up onto it instead of letting them slide down the wall. Like climbing and the Anchor's
+// swing, the character controller isn't asked to move the player while this runs: this system says where their feet are
+// each step and the game places them there (Player.SwingTo).
+//
+// The engine finds the ledge (CharacterController.FindLedge: a wall ahead, a walkable top above a step, room to stand).
+// This system only plays the haul, in two parts a person would recognise: first the body rises beside the wall with the
+// hands on the edge, then it swings forward onto the top. Rising first matters: moving straight toward the standing
+// point would push the player into the wall under the edge.
+//
+// She never mantles: the companion has no hands for it. The navigation graph gives her a way round on the ground.
+MantleSystem :: class {
+public:
+    isMantling~ bool = false;
+    // Where the feet are, and which way they face, as of the last Start or Advance.
+    feet~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    yaw~ f32 = 0.0f;
+
+    // Begins a haul from `from` to `standPoint`, facing `facingYaw`.
+    Start~: (from: lantern:::math:::Vec3, standPoint: lantern:::math:::Vec3, facingYaw: f32) -> void {
+        isMantling = true;
+        start = from;
+        target = standPoint;
+        yaw = facingYaw;
+        feet = from;
+        elapsedSeconds = 0.0f;
+        durationSeconds = Math:::clamp(AdventureTuning:::MANTLE_SECONDS_PER_METRE * (standPoint.y - from.y), AdventureTuning:::MANTLE_MIN_SECONDS, AdventureTuning:::MANTLE_MAX_SECONDS);
+    }
+
+    // One step of the haul. True on the step it finishes, when `feet` is the standing point.
+    Advance~: (dt: f32) -> bool {
+        guard isMantling return false;
+        elapsedSeconds += dt;
+        progress := Math:::clamp(elapsedSeconds / durationSeconds, 0.0f, 1.0f);
+        risePart := Math:::clamp(progress / AdventureTuning:::MANTLE_RISE_FRACTION, 0.0f, 1.0f);
+        forwardPart := Math:::clamp((progress - AdventureTuning:::MANTLE_RISE_FRACTION) / (1.0f - AdventureTuning:::MANTLE_RISE_FRACTION), 0.0f, 1.0f);
+        easedRise := EaseInOut(risePart);
+        easedForward := EaseInOut(forwardPart);
+        placed: lantern:::math:::Vec3 = {
+            x: start.x + (target.x - start.x) * easedForward,
+            y: start.y + (target.y - start.y) * easedRise,
+            z: start.z + (target.z - start.z) * easedForward
+        };
+        feet = placed;
+        if progress >= 1.0f {
+            feet = target;
+            isMantling = false;
+            return true;
+        }
+        return false;
+    }
+
+    // Stops without moving the player (a respawn or a restart).
+    Release~: () -> void {
+        isMantling = false;
+    }
+
+private:
+    start~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    target~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    elapsedSeconds~ f32 = 0.0f;
+    durationSeconds~ f32 = 1.0f;
+
+    // Slow at the ends, quicker in the middle: t x t x (3 - 2t), whose slope is 0 at t = 0 and t = 1.
+    EaseInOut :: (t: f32) -> f32 {
+        return t * t * (3.0f - 2.0f * t);
+    }
+}

@@ -1653,3 +1653,18 @@ reviewed by Dean; the numbers want playing. Cards: `engine-follow-ups/grounded-c
   it, so the verdict is the same.
 - **D-141: a photo is judged against the lens at rest.** The lens blends in over 0.2 s; the verdict, and so a photo taken in
   that fifth of a second, is judged against where it ends up.
+- **D-142: the survey found most of the controller already there, so this pass adds only what was missing.** Slopes with
+  a walkable limit, step-up, ground snap, coyote time, the jump buffer, platform carry and the grounded feel's momentum
+  all existed and have tests. The gaps were what happens when the player leaves a moving platform, and a ledge too high to
+  step but within reach of a jump.
+- **D-143: leaving a moving platform keeps its sideways speed, behind `keepsPlatformSpeedInAir`.** The platform's
+  horizontal speed is added to the player's movement until they land, separately from the stick-driven velocity, so letting
+  go of the stick in the air doesn't cancel it. It is off by default because the Rust-trace test pins the old behaviour, and
+  the game turns it on for the player in the grounded feel only. The companion's navigation doesn't plan for it.
+- **D-144: the engine finds ledges, the game plays the haul.** `CharacterController.FindLedge(direction)` wants a wall
+  within `mantleReach` (0.5 m), a walkable top more than a step and at most `mantleMaxHeight` (1.9 m) above the feet, and
+  room for the whole body on top; `LedgeStandPoint()` is where the feet end up. Nothing moves the body in the engine.
+- **D-145: mantling is the player's, in the grounded feel, in the air.** `MantleSystem` rises beside the wall for 60% of
+  the haul and then moves onto the top, with the controller not asked to move the player, as for climbing and the Anchor.
+  It starts only when the player pushes toward the ledge and their jump has reached its top (upward speed 1.5 m/s or less).
+  The companion never mantles. Platformer levels keep their old feel, so their jump gaps are unchanged.
