@@ -60,6 +60,7 @@ lantern:::host :: namespace {
         capturePath~ string!? = null;
         quit~ bool = false;
         mouseCaptured~ bool = false;
+        mouseCapturedNow~ bool = false;
         pixelsPerPoint~ f32 = 1.0f;
         mouse~ MouseForUi = MouseForUi { };
 
@@ -284,6 +285,23 @@ lantern:::host :: namespace {
             values->SetInteger("Audio/Voices", i64(audioStats.activeVoices));
             values->SetNumber("Audio/Queued ms", f64(audioStats.queuedMilliseconds));
             values->SetInteger("Audio/Underruns", i64(audioStats.underrunCount));
+            busNames: Array<string>! = ["Music", "Ambience", "Effects", "Interface", "Master"];
+            for bus~ usize = 0; bus < lantern:::audio:::BUS_COUNT; bus++ {
+                busPath: string! = `Audio/Bus ${busNames[bus]}`;
+                volumeText: string! = lantern:::core:::FixedDecimals(f64(state->audioSystemInstance->mixer->BusVolume(bus)), 2, 0);
+                gainText: string! = lantern:::core:::FixedDecimals(f64(state->audioSystemInstance->mixer->BusGain(bus)), 2, 0);
+                busText~ string! = `${volumeText} gain ${gainText}`;
+                if state->audioSystemInstance->mixer->BusMuted(bus) {
+                    delete busText;
+                    busText = "muted" + "";
+                }
+                values->SetText(busPath, busText);
+                delete busText;
+                delete gainText;
+                delete volumeText;
+                delete busPath;
+            }
+            delete busNames;
             if error := errorText {
                 values->SetText("Errors/Script", error);
             } else {
@@ -361,12 +379,37 @@ lantern:::host :: namespace {
          */
         HandleEvent~: (event: lantern:::platform:::PlatformEvent, platformBackend: lantern:::platform:::PlatformBackend~*) -> void {
             when event <lantern:::platform:::PlatformEvent> {
+                KeyDown(key, repeat) -> {
+                    engineState: raw EngineState~* = StatePointer();
+                    unsafe {
+                        engineState->debugWindow->HandleKey(key, repeat, engineState->debugValues, engineState->debugPages);
+                    }
+                },
+                KeyUp(key) -> {
+                    state->debugWindow->HandleKeyUp(key);
+                },
+                MouseWheel(deltaY) -> {
+                    if state->debugWindow->visible && state->debugWindow->focused {
+                        state->debugWindow->ScrollWheel(deltaY);
+                    }
+                },
                 MouseMoved(_, _, x, y) -> {
                     mouse.position = Vec2 { x: x, y: y };
                 },
                 MouseButtonDown(button, x, y) -> {
                     if button == lantern:::core:::MouseButton:::Left {
                         mouse.position = Vec2 { x: x, y: y };
+                        pixelPoint: Vec2 = Vec2 { x: x * pixelsPerPoint, y: y * pixelsPerPoint };
+                        engineState: raw EngineState~* = StatePointer();
+                        consumed~ bool = false;
+                        unsafe {
+                            if !mouseCaptured || engineState->debugWindow->focused {
+                                consumed = engineState->debugWindow->HandleClick(pixelPoint);
+                            }
+                        }
+                        if consumed {
+                            return;
+                        }
                         mouse.leftWentDown = true;
                         mouse.leftHeld = true;
                     }
@@ -396,7 +439,11 @@ lantern:::host :: namespace {
             }
             state->entityWorld->StorePreviousTransforms();
             state->collision->BeginStep();
-            state->input->SetSnapshot(step.input->Copy());
+            if state->debugWindow->focused {
+                state->input->SetSnapshot(new lantern:::core:::InputSnapshot());
+            } else {
+                state->input->SetSnapshot(step.input->Copy());
+            }
             stepArguments: Array<f32>! = [step.stepSeconds];
             Call(GameHook:::OnFixedUpdate, stepArguments);
             delete stepArguments;
@@ -414,23 +461,35 @@ lantern:::host :: namespace {
             if frame.window.logicalWidth > 0 && frame.window.pixelWidth > 0 {
                 pixelsPerPoint = f32(frame.window.pixelWidth) / f32(frame.window.logicalWidth);
             }
-            state->input->SetSnapshot(frame.input->Copy());
+            if state->debugWindow->focused {
+                state->input->SetSnapshot(new lantern:::core:::InputSnapshot());
+            } else {
+                state->input->SetSnapshot(frame.input->Copy());
+            }
             reload: bool = frame.input->Pressed(EngineReloadAction());
             toggleHud: bool = frame.input->Pressed(EngineToggleHudAction());
             if toggleHud {
-                state->debugHud->Toggle();
+                state->debugWindow->Toggle();
             }
             if reload {
                 Reload();
             }
-            NavigateUi();
+            if state->debugWindow->focused {
+                mouse = MouseForUi { position: mouse.position, leftHeld: mouse.leftHeld };
+            } else {
+                NavigateUi();
+            }
             frameArguments: Array<f32>! = [frame.frameSeconds];
             Call(GameHook:::OnUpdate, frameArguments);
             delete frameArguments;
             if captured := state->requests.mouseCaptured {
-                platformBackend->SetMouseCaptured(captured);
                 mouseCaptured = captured;
                 state->requests.mouseCaptured = null;
+            }
+            wantsCapture: bool = mouseCaptured && !state->debugWindow->focused;
+            if wantsCapture != mouseCapturedNow {
+                platformBackend->SetMouseCaptured(wantsCapture);
+                mouseCapturedNow = wantsCapture;
             }
             if state->requests.quit {
                 state->requests.quit = false;
@@ -469,6 +528,10 @@ lantern:::host :: namespace {
             }
             ReportUiMessages();
             engineState: raw EngineState~* = StatePointer();
+            unsafe {
+                windowScale: f32 = Math:::max(Math:::round(engineState->uiScale * 0.5f), 1.0f);
+                engineState->debugWindow->Draw(engineState->debugValues, engineState->debugPages, engineState->renderWorld->overlay, engineState->screenSize, windowScale);
+            }
             if running ~= session {
                 unsafe {
                     running->DrawUi(engineState->renderWorld->overlay, engineState->screenSize, engineState->uiScale * 0.5f);
@@ -481,7 +544,7 @@ lantern:::host :: namespace {
                 engineState->animationSystem->Extract(engineState->entityWorld, frame.alpha, engineState->renderWorld);
             }
             if error := scriptError {
-                if !state->debugHud->visible {
+                if !state->debugWindow->visible {
                     shown: string! = `${error}`;
                     DrawScriptError(shown);
                     delete shown;
@@ -490,7 +553,6 @@ lantern:::host :: namespace {
             scale: f32 = state->uiScale;
             reportFromRender~ lantern:::renderer:::RenderReport? = null;
             unsafe {
-                engineState->debugHud->Draw(engineState->debugValues, engineState->renderWorld->overlay, Vec2 { x: 8.0f * scale, y: 8.0f * scale }, scale);
                 rendered := engineState->renderBackend->Render(engineState->renderWorld);
                 when rendered! {
                     Result:::Ok(report) -> {

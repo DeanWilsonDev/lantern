@@ -1,0 +1,610 @@
+lantern:::debug :: namespace {
+    /**
+     * The debug page that shows in red: anything the engine publishes under "Errors/".
+     */
+    ERROR_GROUP: string : "Errors";
+
+    /**
+     * A rectangle in screen pixels that the window remembers from its last draw, so a click can be matched to what was
+     * drawn there.
+     */
+    HitBox :: struct {
+        minimum~ Vec2 = Vec2 { };
+        maximum~ Vec2 = Vec2 { };
+
+        Contains :: (point: Vec2) -> bool {
+            return point.x >= minimum.x && point.x < maximum.x && point.y >= minimum.y && point.y < maximum.y;
+        }
+    }
+
+    /**
+     * One line of a page: the heading of a group, or one value. `valueIndex` is the value's index in DebugValues, and for a
+     * heading the first value of the group.
+     */
+    DebugRow :: struct {
+        valueIndex~ usize = 0;
+        isHeading~ bool = false;
+    }
+
+    /**
+     * The smaller of two counts.
+     */
+    SmallerCount :: (first: usize, second: usize) -> usize {
+        if first < second {
+            return first;
+        }
+        return second;
+    }
+
+    /**
+     * The larger of two counts.
+     */
+    LargerCount :: (first: usize, second: usize) -> usize {
+        if first > second {
+            return first;
+        }
+        return second;
+    }
+
+    /**
+     * `text` cut to at most `characters` characters, never through a multi-byte one.
+     */
+    CutToCharacters :: (text: string, characters: usize) -> string {
+        seen~ usize = 0;
+        for index~ usize = 0; index < text.length(); index++ {
+            byte: u8 = text.byteAt(index);
+            if byte < 128 || byte >= 192 {
+                if seen == characters {
+                    return text.substring(0, index);
+                }
+                seen++;
+            }
+        }
+        return text;
+    }
+
+    /**
+     * How many characters `text` shows (a multi-byte one counts once).
+     */
+    CharacterCount :: (text: string) -> usize {
+        count~ usize = 0;
+        for index~ usize = 0; index < text.length(); index++ {
+            byte: u8 = text.byteAt(index);
+            if byte < 128 || byte >= 192 {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The debug window: the engine's debug values as a window of pages, over the frame.
+     *
+     * - The tab row has "All" and one page for each area that has values (frame, audio, renderer, camera, player,
+     *   companion, world, and any group a game publishes), each with how many values it holds. Which page a group is on is
+     *   `assignments` (see PageAssignments).
+     * - The filter narrows every page to the values whose path or text holds what was typed, and drops the pages with no match.
+     * - F1 shows and hides the window. While it is showing, F3 focuses it: the game stops getting input, the mouse is freed and
+     *   the keys navigate (see `HandleKey`). A click on the window focuses it too.
+     * - It sizes itself to the screen, shows as many rows as fit and scrolls the rest.
+     */
+    DebugWindow :: class {
+    public:
+        visible~ bool = true;
+        focused~ bool = false;
+        page~ string!;
+        filter~ string!;
+        scroll~ usize = 0;
+        shiftHeld~ bool = false;
+        visibleRowCount~ usize = 1;
+        tabBoxes~ Array<HitBox>! = [];
+        tabNames~ Array<string!>! = [];
+        windowBox~ HitBox = HitBox { };
+        filterBox~ HitBox = HitBox { };
+        background~ lantern:::core:::Color = lantern:::core:::Color { r: 0.03f, g: 0.035f, b: 0.06f, a: 0.9f };
+        tabColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.1f, g: 0.11f, b: 0.17f, a: 1.0f };
+        selectedTabColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.24f, g: 0.28f, b: 0.45f, a: 1.0f };
+        focusColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.45f, g: 0.62f, b: 1.0f, a: 1.0f };
+        borderColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.22f, g: 0.24f, b: 0.34f, a: 1.0f };
+        groupColor~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 0.82f, b: 0.3f, a: 1.0f };
+        nameColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.7f, g: 0.72f, b: 0.8f, a: 1.0f };
+        valueColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.95f, g: 0.95f, b: 0.97f, a: 1.0f };
+        dimColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.5f, g: 0.52f, b: 0.62f, a: 1.0f };
+        errorColor~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 0.4f, b: 0.35f, a: 1.0f };
+
+        DebugWindow~: () {
+            page = `${ALL_PAGE}`;
+            filter = ``;
+        }
+
+        !DebugWindow~: () {
+            delete page;
+            delete filter;
+            delete tabBoxes;
+            tabNames.freeAll();
+        }
+
+        /**
+         * Shows the window if hidden and hides it if shown. Hiding it gives the game its input back.
+         */
+        Toggle~: () -> void {
+            visible = !visible;
+            if !visible {
+                focused = false;
+            }
+        }
+
+        /**
+         * Chooses the page called `name`, from the top.
+         */
+        SelectPage~: (name: string) -> void {
+            if page != name {
+                delete page;
+                page = `${name}`;
+                scroll = 0;
+            }
+        }
+
+        /**
+         * Replaces the filter text and goes back to the top.
+         */
+        SetFilter~: (text: string) -> void {
+            delete filter;
+            filter = `${text}`;
+            scroll = 0;
+        }
+
+        /**
+         * Moves to the next page (`step` 1) or the one before (`step` -1) among the tabs the filter leaves, wrapping round.
+         */
+        StepPage~: (step: i32, values: lantern:::core:::DebugValues*, assignments: PageAssignments*) -> void {
+            summary: PageSummary*! = SummarisePages(values, assignments, filter);
+            defer delete summary;
+            count: usize = summary->names.length();
+            current~ usize = 0;
+            if found := summary->IndexOf(page) {
+                current = found;
+            }
+            target~ usize = 0;
+            if step > 0 {
+                target = (current + 1) % count;
+            } else {
+                target = (current + count - 1) % count;
+            }
+            SelectPage(summary->names[target]);
+        }
+
+        /**
+         * Scrolls by `rows` lines down (positive) or up. The next draw stops it at the last row.
+         */
+        ScrollBy~: (rows: i32) -> void {
+            if rows < 0 {
+                amount: usize = usize(0 - rows);
+                if amount > scroll {
+                    scroll = 0;
+                } else {
+                    scroll -= amount;
+                }
+            } else {
+                scroll += usize(rows);
+            }
+        }
+
+        /**
+         * Scrolls by a wheel turn: `deltaY` is positive away from the user, which is up the page.
+         */
+        ScrollWheel~: (deltaY: f32) -> void {
+            if deltaY > 0.0f {
+                ScrollBy(-3);
+            } else if deltaY < 0.0f {
+                ScrollBy(3);
+            }
+        }
+
+        /**
+         * Handles a key going down and returns true when the window used it (so the game must not).
+         *
+         * F3 focuses and unfocuses a visible window. While focused: letters, digits and space type into the filter and
+         * Backspace removes the last one; Tab, Right and Left move between pages (Shift+Tab goes back); Up and Down scroll a line and
+         * Shift with either scrolls a page; Enter clears the filter; Escape clears the filter, or unfocuses when there is none.
+         */
+        HandleKey~: (key: lantern:::core:::KeyCode, repeat: bool, values: lantern:::core:::DebugValues*, assignments: PageAssignments*) -> bool {
+            if key == lantern:::core:::KeyCode:::LeftShift || key == lantern:::core:::KeyCode:::RightShift {
+                shiftHeld = true;
+                return false;
+            }
+            if key == lantern:::core:::KeyCode:::F3 {
+                if visible && !repeat {
+                    focused = !focused;
+                    return true;
+                }
+                return false;
+            }
+            if !visible || !focused {
+                return false;
+            }
+            if key == lantern:::core:::KeyCode:::Escape {
+                if filter.length() > 0 {
+                    SetFilter("");
+                } else {
+                    focused = false;
+                }
+                return true;
+            }
+            if key == lantern:::core:::KeyCode:::Enter {
+                SetFilter("");
+                return true;
+            }
+            if key == lantern:::core:::KeyCode:::Backspace {
+                if filter.length() > 0 {
+                    shortened: string! = `${filter.substring(0, filter.length() - 1)}`;
+                    SetFilter(shortened);
+                    delete shortened;
+                }
+                return true;
+            }
+            if key == lantern:::core:::KeyCode:::Tab {
+                if shiftHeld {
+                    StepPage(-1, values, assignments);
+                } else {
+                    StepPage(1, values, assignments);
+                }
+                return true;
+            }
+            if key == lantern:::core:::KeyCode:::Right {
+                StepPage(1, values, assignments);
+                return true;
+            }
+            if key == lantern:::core:::KeyCode:::Left {
+                StepPage(-1, values, assignments);
+                return true;
+            }
+            if key == lantern:::core:::KeyCode:::Up || key == lantern:::core:::KeyCode:::Down {
+                amount~ i32 = 1;
+                if shiftHeld {
+                    amount = i32(visibleRowCount);
+                }
+                if key == lantern:::core:::KeyCode:::Up {
+                    amount = 0 - amount;
+                }
+                ScrollBy(amount);
+                return true;
+            }
+            if typed := TypedCharacter(key) {
+                if filter.length() < 40 {
+                    extended: string! = `${filter}${typed}`;
+                    SetFilter(extended);
+                    delete extended;
+                }
+                return true;
+            }
+            return true;
+        }
+
+        /**
+         * Handles a key coming up. Only the shift keys matter.
+         */
+        HandleKeyUp~: (key: lantern:::core:::KeyCode) -> void {
+            if key == lantern:::core:::KeyCode:::LeftShift || key == lantern:::core:::KeyCode:::RightShift {
+                shiftHeld = false;
+            }
+        }
+
+        /**
+         * True when `point` (in screen pixels) is over the window as it was last drawn.
+         */
+        Covers :: (point: Vec2) -> bool {
+            return visible && windowBox.Contains(point);
+        }
+
+        /**
+         * Handles a left click at `point` and returns true when it landed on the window (so the game's UI must not see it).
+         * A click on a tab chooses that page and one on the filter box focuses it; any click on the window focuses it.
+         */
+        HandleClick~: (point: Vec2) -> bool {
+            if !Covers(point) {
+                return false;
+            }
+            focused = true;
+            for index~ usize = 0; index < tabBoxes.length(); index++ {
+                if tabBoxes[index].Contains(point) {
+                    name: string! = `${tabNames[index]}`;
+                    SelectPage(name);
+                    delete name;
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Adds the window to the overlay. `topLeft` is the window's corner and `screen` the size of the screen in pixels; the
+         * window takes what fits of them: up to 84 characters wide but never more than 31% of the screen, so it clears the game's own HUD and a pause menu, and up to 24 rows tall. `scale` multiplies the 8-pixel font.
+         */
+        Draw~: (values: lantern:::core:::DebugValues*, assignments: PageAssignments*, overlay: lantern:::renderer:::Overlay~*, screen: Vec2, scale: f32) -> void {
+            if !visible {
+                return;
+            }
+            glyph: f32 = f32(lantern:::renderer:::GLYPH_SIZE) * scale;
+            lineHeight: f32 = glyph * 1.5f;
+            margin: f32 = glyph;
+            padding: f32 = glyph * 0.75f;
+            width: f32 = Math:::min(screen.x - margin * 2.0f, Math:::min(glyph * 84.0f, screen.x * 0.31f));
+            chrome: f32 = padding * 2.0f + lineHeight * 3.0f + glyph * 0.5f;
+            height: f32 = Math:::min(screen.y - margin * 2.0f, chrome + lineHeight * 24.0f);
+            topLeft: Vec2 = Vec2 { x: margin, y: margin };
+            if width < glyph * 24.0f || height < chrome + lineHeight {
+                windowBox = HitBox { };
+                return;
+            }
+            windowBox = HitBox { minimum: topLeft, maximum: topLeft + Vec2 { x: width, y: height } };
+
+            filterLower: string! = filter.toLower();
+            defer delete filterLower;
+            summary: PageSummary*! = SummarisePages(values, assignments, filterLower);
+            defer delete summary;
+            if summary->IndexOf(page) == null {
+                SelectPage(ALL_PAGE);
+            }
+            rows: Array<DebugRow>! = CollectRows(values, assignments, page, filterLower);
+            defer delete rows;
+
+            bodyHeight: f32 = height - chrome;
+            visibleRows: usize = usize(Math:::max(bodyHeight / lineHeight, 1.0f));
+            visibleRowCount = visibleRows;
+            maxScroll~ usize = 0;
+            if rows.length() > visibleRows {
+                maxScroll = rows.length() - visibleRows;
+            }
+            if scroll > maxScroll {
+                scroll = maxScroll;
+            }
+
+            border~ lantern:::core:::Color = borderColor;
+            if focused {
+                border = focusColor;
+            }
+            overlay->Rect(topLeft - Vec2 { x: 1.0f, y: 1.0f }, topLeft + Vec2 { x: width + 1.0f, y: height + 1.0f }, border);
+            overlay->Rect(topLeft, topLeft + Vec2 { x: width, y: height }, background);
+
+            left: f32 = topLeft.x + padding;
+            right: f32 = topLeft.x + width - padding;
+            cursorY~ f32 = topLeft.y + padding;
+
+            selectedPage~ usize = 0;
+            if found := summary->IndexOf(page) {
+                selectedPage = found;
+            }
+            title: string! = `Debug  ${summary->counts[0]} values  page ${selectedPage + 1}/${summary->names.length()}`;
+            overlay->Text(title, Vec2 { x: left, y: cursorY }, scale, groupColor);
+            filterWidth: f32 = Math:::min(glyph * 30.0f, (right - left) - f32(CharacterCount(title) + 2) * glyph);
+            delete title;
+            filterMinimum: Vec2 = Vec2 { x: right - filterWidth, y: cursorY - glyph * 0.25f };
+            filterMaximum: Vec2 = Vec2 { x: right, y: cursorY + glyph * 1.25f };
+            filterBox = HitBox { minimum: filterMinimum, maximum: filterMaximum };
+            overlay->Rect(filterMinimum, filterMaximum, border);
+            overlay->Rect(filterMinimum + Vec2 { x: 1.0f, y: 1.0f }, filterMaximum - Vec2 { x: 1.0f, y: 1.0f }, tabColor);
+            filterCharacters: usize = usize(Math:::max(filterWidth / glyph - 3.0f, 1.0f));
+            if filter.length() == 0 {
+                hint~ string = "type to filter";
+                if !focused {
+                    hint = "F3 to filter";
+                }
+                overlay->Text(hint, filterMinimum + Vec2 { x: glyph * 0.5f, y: glyph * 0.25f }, scale, dimColor);
+            } else {
+                overlay->Text(CutToCharacters(filter, filterCharacters), filterMinimum + Vec2 { x: glyph * 0.5f, y: glyph * 0.25f }, scale, valueColor);
+            }
+            if focused {
+                caretCharacters: usize = SmallerCount(CharacterCount(filter), filterCharacters);
+                caretX: f32 = filterMinimum.x + glyph * 0.5f + f32(caretCharacters) * glyph;
+                overlay->Rect(Vec2 { x: caretX, y: filterMinimum.y + glyph * 0.2f }, Vec2 { x: caretX + glyph * 0.5f, y: filterMinimum.y + glyph * 1.0f + glyph * 0.05f }, focusColor);
+            }
+            cursorY += lineHeight;
+
+            DrawTabs(summary, overlay, Vec2 { x: left, y: cursorY }, right, scale, glyph, lineHeight);
+            cursorY += lineHeight + glyph * 0.5f;
+
+            overlay->Rect(Vec2 { x: left, y: cursorY - glyph * 0.25f }, Vec2 { x: right, y: cursorY - glyph * 0.25f + 1.0f }, borderColor);
+
+            hasScrollbar: bool = rows.length() > visibleRows;
+            valueRight~ f32 = right;
+            if hasScrollbar {
+                valueRight = right - glyph * 1.5f;
+            }
+            widestName~ usize = 0;
+            for rowIndex~ usize = 0; rowIndex < rows.length(); rowIndex++ {
+                if !rows[rowIndex].isHeading {
+                    widestName = LargerCount(widestName, CharacterCount(lantern:::core:::DebugName(values->PathAt(rows[rowIndex].valueIndex))));
+                }
+            }
+            availableCharacters: usize = usize((valueRight - left) / glyph);
+            nameCharacters: usize = SmallerCount(widestName + 2, availableCharacters / 2);
+            valueCharacters: usize = availableCharacters - nameCharacters - 1;
+            valueX: f32 = left + f32(nameCharacters + 1) * glyph;
+
+            bodyTop: f32 = cursorY;
+            lastRow: usize = SmallerCount(scroll + visibleRows, rows.length());
+            for rowIndex~ usize = scroll; rowIndex < lastRow; rowIndex++ {
+                row: DebugRow = rows[rowIndex];
+                path: string = values->PathAt(row.valueIndex);
+                group: string = lantern:::core:::DebugGroup(path);
+                rowY: f32 = cursorY;
+                if row.isHeading {
+                    overlay->Text(CutToCharacters(group, availableCharacters), Vec2 { x: left, y: rowY }, scale, groupColor);
+                } else {
+                    color~ lantern:::core:::Color = valueColor;
+                    if group == ERROR_GROUP {
+                        color = errorColor;
+                    }
+                    overlay->Text(CutToCharacters(lantern:::core:::DebugName(path), nameCharacters - 1), Vec2 { x: left + glyph, y: rowY }, scale, nameColor);
+                    shown: string! = values->DisplayAt(row.valueIndex);
+                    overlay->Text(CutToCharacters(shown, valueCharacters), Vec2 { x: valueX, y: rowY }, scale, color);
+                    delete shown;
+                }
+                cursorY += lineHeight;
+            }
+            if rows.length() == 0 {
+                message~ string = "no values yet";
+                if filter.length() > 0 {
+                    message = "nothing matches the filter";
+                }
+                overlay->Text(message, Vec2 { x: left, y: bodyTop }, scale, dimColor);
+            }
+            if hasScrollbar {
+                trackTop: f32 = bodyTop;
+                trackHeight: f32 = f32(visibleRows) * lineHeight;
+                trackX: f32 = right - glyph * 0.5f;
+                overlay->Rect(Vec2 { x: trackX, y: trackTop }, Vec2 { x: trackX + glyph * 0.5f, y: trackTop + trackHeight }, tabColor);
+                thumbHeight: f32 = Math:::max(trackHeight * f32(visibleRows) / f32(rows.length()), glyph);
+                thumbTop: f32 = trackTop + (trackHeight - thumbHeight) * f32(scroll) / f32(maxScroll);
+                overlay->Rect(Vec2 { x: trackX, y: thumbTop }, Vec2 { x: trackX + glyph * 0.5f, y: thumbTop + thumbHeight }, selectedTabColor);
+            }
+
+            footerY: f32 = topLeft.y + height - padding - glyph;
+            first~ usize = 0;
+            if rows.length() > 0 {
+                first = scroll + 1;
+            }
+            position: string! = `${first}-${lastRow} of ${rows.length()}`;
+            overlay->Text(position, Vec2 { x: left, y: footerY }, scale, dimColor);
+            positionWidth: usize = CharacterCount(position) + 3;
+            delete position;
+            hints~ string = "F3 to navigate";
+            if focused {
+                hints = "Tab pages  Up/Down scroll  Esc back";
+            }
+            hintCharacters~ usize = usize((right - left) / glyph);
+            if hintCharacters > positionWidth {
+                hintCharacters -= positionWidth;
+            } else {
+                hintCharacters = 0;
+            }
+            cutHints: string = CutToCharacters(hints, hintCharacters);
+            overlay->Text(cutHints, Vec2 { x: right - f32(CharacterCount(cutHints)) * glyph, y: footerY }, scale, dimColor);
+        }
+
+        /**
+         * The tab row, starting at `topLeft` and stopping before `right`: it begins at the first tab that lets the chosen one fit,
+         * so with many pages the row scrolls along with the selection. Each tab's box is kept for clicks.
+         */
+        DrawTabs~: (summary: PageSummary*, overlay: lantern:::renderer:::Overlay~*, topLeft: Vec2, right: f32, scale: f32, glyph: f32, lineHeight: f32) -> void {
+            tabBoxes.clear();
+            tabNames.freeAll();
+            tabNames = [];
+            selected~ usize = 0;
+            if found := summary->IndexOf(page) {
+                selected = found;
+            }
+            gap: f32 = glyph * 0.5f;
+            first~ usize = 0;
+            while first < selected {
+                used~ f32 = 0.0f;
+                for index~ usize = first; index <= selected; index++ {
+                    used += TabWidth(summary, index, glyph) + gap;
+                }
+                if topLeft.x + used - gap <= right {
+                    break;
+                }
+                first += 1;
+            }
+            cursorX~ f32 = topLeft.x;
+            for index~ usize = first; index < summary->names.length(); index++ {
+                tabWidth: f32 = TabWidth(summary, index, glyph);
+                if cursorX + tabWidth > right {
+                    break;
+                }
+                minimum: Vec2 = Vec2 { x: cursorX, y: topLeft.y - glyph * 0.25f };
+                maximum: Vec2 = Vec2 { x: cursorX + tabWidth, y: topLeft.y + glyph * 1.25f };
+                color~ lantern:::core:::Color = tabColor;
+                if index == selected {
+                    color = selectedTabColor;
+                }
+                overlay->Rect(minimum, maximum, color);
+                tabTextColor~ lantern:::core:::Color = nameColor;
+                if summary->names[index] == ERROR_GROUP {
+                    tabTextColor = errorColor;
+                } else if index == selected {
+                    tabTextColor = valueColor;
+                }
+                overlay->Text(summary->names[index], Vec2 { x: cursorX + glyph * 0.5f, y: topLeft.y }, scale, tabTextColor);
+                countText: string! = `${summary->counts[index]}`;
+                countX: f32 = cursorX + glyph * 1.0f + f32(CharacterCount(summary->names[index])) * glyph;
+                overlay->Text(countText, Vec2 { x: countX, y: topLeft.y }, scale, dimColor);
+                delete countText;
+                tabBoxes.push(HitBox { minimum: minimum, maximum: maximum });
+                tabNames.push(`${summary->names[index]}`);
+                cursorX += tabWidth + gap;
+            }
+        }
+
+        /**
+         * The width of a tab: its name, its count and a little room.
+         */
+        TabWidth :: (summary: PageSummary*, index: usize, glyph: f32) -> f32 {
+            countText: string! = `${summary->counts[index]}`;
+            characters: usize = CharacterCount(summary->names[index]) + CharacterCount(countText);
+            delete countText;
+            return f32(characters) * glyph + glyph * 2.0f;
+        }
+    }
+
+    /**
+     * The lines of the page `page`: for each group on it, a heading and then its values that match `filter` (lower case). The
+     * groups come in the order their first value was published.
+     */
+    CollectRows :: (values: lantern:::core:::DebugValues*, assignments: PageAssignments*, page: string, filter: string) -> Array<DebugRow>! {
+        groups~ Array<string!>! = [];
+        for index~ usize = 0; index < values->Length(); index++ {
+            group: string = lantern:::core:::DebugGroup(values->PathAt(index));
+            if OnPage(values, assignments, index, page, filter) && !HoldsText(groups, group) {
+                groups.push(`${group}`);
+            }
+        }
+        rows~ Array<DebugRow>! = [];
+        for group in groups {
+            heading~ bool = true;
+            for index~ usize = 0; index < values->Length(); index++ {
+                if lantern:::core:::DebugGroup(values->PathAt(index)) != group {
+                    continue;
+                }
+                if !OnPage(values, assignments, index, page, filter) {
+                    continue;
+                }
+                if heading {
+                    rows.push(DebugRow { valueIndex: index, isHeading: true });
+                    heading = false;
+                }
+                rows.push(DebugRow { valueIndex: index, isHeading: false });
+            }
+        }
+        groups.freeAll();
+        return rows!;
+    }
+
+    /**
+     * True when the value at `index` is shown on `page` under `filter`.
+     */
+    OnPage :: (values: lantern:::core:::DebugValues*, assignments: PageAssignments*, index: usize, page: string, filter: string) -> bool {
+        if !ValueMatches(values, index, filter) {
+            return false;
+        }
+        if page == ALL_PAGE {
+            return true;
+        }
+        valuePage: string! = assignments->PageFor(lantern:::core:::DebugGroup(values->PathAt(index)));
+        defer delete valuePage;
+        return valuePage == page;
+    }
+
+    /**
+     * True when `texts` holds `text`.
+     */
+    HoldsText :: (texts: Array<string!>, text: string) -> bool {
+        for held in texts {
+            if held == text {
+                return true;
+            }
+        }
+        return false;
+    }
+}

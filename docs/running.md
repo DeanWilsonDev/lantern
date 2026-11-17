@@ -107,7 +107,8 @@ mist run game ../games/platformer
 | F2, right stick click | Show or hide the collision view |
 | Escape, gamepad Start | Pause |
 | Up, Down, Enter, Space | Menu: move, confirm |
-| F1 | Show or hide the debug HUD (frame time, script time, draw counts) |
+| F1 | Show or hide the debug window: pages of frame, audio, renderer, camera, player and other values |
+| F3 | Focus the debug window to filter, change page and scroll (see `debug-window.md`) |
 | F5 | Reload the game's `.nyx`, `.chaos` and `.cosmos` files from disk |
 
 The main menu offers Play (the jump course), The streets and The streets, later (the streets in Chapter 3's look, with thorns). A script edit needs no rebuild: save and
@@ -123,7 +124,7 @@ These environment variables are read by the engine and the game:
 | `LANTERN_LEVEL` | A world file inside the assets directory to start on, such as `worlds/streets.world.json`, used when the menu has not picked a level. A level picked from the menu (such as The streets) takes precedence. The editor's Play button sets it. |
 | `LANTERN_ASSETS` | The assets directory, overriding `game.json`'s `assets`. |
 | `LANTERN_AUTOPLAY=1` | The platformer plays itself (a scripted pilot), for smoke runs and screenshots. |
-| `LANTERN_DEBUG_HUD=1` | Start with the debug HUD showing. |
+| `LANTERN_DEBUG_HUD=1` | Start with the debug window showing. |
 | `LANTERN_COLLISION_VIEW=1` | Start with the platformer's collision overlay showing (nearby triangles, the player's capsule, ground normal, velocity and gem trigger spheres). F2 toggles it in game. |
 | `LANTERN_SSR` | `0` turns screen-space reflections off, `1` turns them on (at medium cost) whatever the quality level; see `docs/screen-space-reflections.md`. |
 | `LANTERN_VSYNC=0` | Turn vertical sync off, to see raw frame time. The world editor honours it too: it starts with vertical sync off, and Settings, Graphics, Frame rate turns it on or off while it runs. |
