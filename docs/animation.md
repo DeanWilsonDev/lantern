@@ -18,6 +18,9 @@ code, so nothing needs importing to see it work.
 - **AnimationSystem** (`entities/AnimationSystem.nox`): updates every animator each frame and adds its skinned draw, with the
   joint palette, to the render world.
 
+The mannequin's poses are written as angles in degrees about x, y and z. Facing -z, a positive x angle swings a hanging
+limb forwards: a shin bends back with a negative angle and a forearm bends forwards with a positive one.
+
 ## In the renderer
 
 A skinned mesh has a second vertex buffer: four joint indices and four weights per vertex (`SkinVertex`, 8 bytes). A draw with
