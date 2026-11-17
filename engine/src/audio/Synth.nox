@@ -21,6 +21,14 @@ lantern:::synth :: namespace {
     LOOP_SECONDS: f32 : 8.0f;
 
     /**
+     * The average loudness (root mean square) of an ambience bed and of a music stem, before the bus and layer gains.
+     * Both sit well under the loudest a footstep or menu sound reaches (peak 0.7), so a bed is a backdrop and a few of
+     * them together stay clear of the limiter.
+     */
+    BED_RMS: f32 : 0.05f;
+    STEM_RMS: f32 : 0.07f;
+
+    /**
      * A tiny deterministic noise generator (xorshift). `Next` returns a number from -1 to 1; the same seed gives the
      * same sequence on every machine, which keeps tests and screenshots repeatable.
      */
@@ -177,6 +185,31 @@ lantern:::synth :: namespace {
     }
 
     /**
+     * Scales `buffer` so its average loudness (root mean square) is `rms`, then turns it down further if that would
+     * push its loudest sample past `ceiling`. Beds and stems are set by loudness, not by their peak: noise has a low
+     * peak for how loud it is, so a bed set to a high peak is a loud, constant hiss.
+     */
+    NormaliseLoudness :: (buffer: Array<f32~>, rms: f32, ceiling: f32) -> void {
+        sumOfSquares~ f64 = 0.0f;
+        loudest~ f32 = 0.0f;
+        for sample in buffer {
+            sumOfSquares = sumOfSquares + f64(sample) * f64(sample);
+            loudest = Math:::max(loudest, Math:::abs(sample));
+        }
+        if loudest < 0.00001f {
+            return;
+        }
+        current: f32 = Math:::sqrt(f32(sumOfSquares / f64(buffer.length())));
+        scale~ f32 = rms / current;
+        if loudest * scale > ceiling {
+            scale = ceiling / loudest;
+        }
+        for index~ usize = 0; index < buffer.length(); index++ {
+            buffer[index] = buffer[index] * scale;
+        }
+    }
+
+    /**
      * Turns mono samples into a sound (stereo, both channels the same), which is what the mixer stores.
      */
     ToSound :: (mono: Array<f32>) -> lantern:::audio:::SoundData*! {
@@ -268,7 +301,7 @@ lantern:::synth :: namespace {
         }
         looped~ Array<f32>! = Looped(shaped, blendSeconds);
         delete shaped;
-        Normalise(looped, 0.8f);
+        NormaliseLoudness(looped, BED_RMS, 0.5f);
         return looped!;
     }
 
@@ -293,7 +326,7 @@ lantern:::synth :: namespace {
         delete rumble;
         looped~ Array<f32>! = Looped(hum, blendSeconds);
         delete hum;
-        Normalise(looped, 0.8f);
+        NormaliseLoudness(looped, BED_RMS, 0.5f);
         return looped!;
     }
 
@@ -311,7 +344,7 @@ lantern:::synth :: namespace {
                 pad[index] = pad[index] + Math:::sin(Math:::TAU * frequency * seconds) * 0.2f * swell;
             }
         }
-        Normalise(pad, 0.6f);
+        NormaliseLoudness(pad, STEM_RMS, 0.5f);
         return pad!;
     }
 
@@ -331,7 +364,7 @@ lantern:::synth :: namespace {
             tone = tone + Math:::sin(Math:::TAU * high * seconds) * 0.12f * pulse;
             drone[index] = tone * (0.7f + 0.3f * pulse);
         }
-        Normalise(drone, 0.6f);
+        NormaliseLoudness(drone, STEM_RMS, 0.5f);
         return drone!;
     }
 
@@ -346,7 +379,7 @@ lantern:::synth :: namespace {
             AddTone(figure, notes[index], 0.5f, f32(index), 1.6f, 0.35f);
             AddTone(figure, notes[index] * 2.0f, 0.12f, f32(index), 0.8f, 0.2f);
         }
-        Normalise(figure, 0.6f);
+        NormaliseLoudness(figure, STEM_RMS, 0.5f);
         return figure!;
     }
 
@@ -422,7 +455,7 @@ lantern:::synth :: namespace {
             return NoiseBed(80.0f, 700.0f, 0.5f, 0.6f, 7);
         }
         if name == "ambience_rain" {
-            return NoiseBed(900.0f, 7000.0f, 0.25f, 0.15f, 11);
+            return NoiseBed(500.0f, 3500.0f, 0.25f, 0.3f, 11);
         }
         if name == "ambience_city" {
             cityTones: f32[3] = [55.0f, 110.0f, 165.0f];

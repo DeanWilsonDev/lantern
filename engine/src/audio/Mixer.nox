@@ -111,13 +111,28 @@ lantern:::audio :: namespace {
     }
 
     /**
-     * Squeezes a sample into -1 to 1 with a gentle curve instead of cutting it off. When several loud sounds add
-     * up past 1, a hard cut makes a harsh crackle; this bends the peaks smoothly. Below about 0.5 it changes
-     * nothing you can hear.
+     * Where the limiter starts to bend a sample. Below it a sample passes through unchanged, so a quiet mix is not
+     * coloured at all.
+     */
+    LIMITER_KNEE: f32 : 0.8f;
+
+    /**
+     * Keeps a sample inside -1 to 1 without touching anything under `LIMITER_KNEE`. Above the knee the excess is bent
+     * toward 1 along a curve that starts with the same slope as the straight part, so there is no corner and the peaks
+     * of a loud mix are rounded instead of cut off.
      */
     SoftClip :: (sample: f32) -> f32 {
-        clamped: f32 = Math:::clamp(sample, -1.5f, 1.5f);
-        return clamped - clamped * clamped * clamped / 6.75f;
+        magnitude: f32 = Math:::abs(sample);
+        if magnitude <= LIMITER_KNEE {
+            return sample;
+        }
+        room: f32 = 1.0f - LIMITER_KNEE;
+        excess: f32 = magnitude - LIMITER_KNEE;
+        bent: f32 = LIMITER_KNEE + room * excess / (room + excess);
+        if sample < 0.0f {
+            return -bent;
+        }
+        return bent;
     }
 
     /**
@@ -529,7 +544,7 @@ lantern:::audio :: namespace {
          * Produces the next `frames` stereo frames as interleaved left and right samples. Every voice is added in: its
          * gains ramp across the block from where the last block ended, it steps through its sound at its pitch, a loop wraps
          * and a one-shot ends. Voices that have ended, or faded to nothing after a `StopVoice`, are removed. The sum goes
-         * through SoftClip last.
+         * through the limiter (`SoftClip`) last.
          */
         Mix~: (frames: usize) -> Array<f32>! {
             output~ Array<f32>! = [];
