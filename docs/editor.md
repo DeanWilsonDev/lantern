@@ -109,7 +109,7 @@ saves the rendered viewport.
 
 - **Menu bar**: File (new, open, recent files, save, save as, play, settings, quit), Edit
   (undo, redo, duplicate, duplicate along an axis, mirror, delete, snap, space, pivot),
-  Selection (all, invert, children, deselect, hide, unhide all, lock, unlock, unparent,
+  Selection (all, invert, children, similar, deselect, hide, unhide all, lock, unlock, unparent,
   group, align and distribute along an axis), View (frame, camera presets, bookmarks,
   grid, wireframe, colliders, markers, level bounds, hidden entities, stats, orthographic,
   align camera and selection), Entity (one entry per template, snap to ground, revert to and
