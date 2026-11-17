@@ -85,8 +85,7 @@ in the game script; the game already varies pitch and volume a little on each st
 
 ### Positional sound
 
-`SetListener(position, forward, up)` says where the camera is; the game calls it every frame (the platformer's audio
-director does, from the camera director's view). A positional sound is then heard relative to the listener:
+`SetListener(position, forward, up)` says where the camera is; the game calls it every frame. A positional sound is then heard relative to the listener:
 
 - **Distance.** Full volume inside `minDistance`, silent beyond `maxDistance`, and between them a smooth fall: the square
   of a straight line from 1 down to 0. Defaults are 2 m and 30 m. A tall, loud thing (a train) takes a larger range; a
