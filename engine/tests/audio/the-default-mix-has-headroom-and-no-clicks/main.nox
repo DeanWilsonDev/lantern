@@ -1,0 +1,78 @@
+lantern :: import lantern;
+
+Load :: (mixer: lantern:::audio:::Mixer~*, name: string) -> lantern:::core:::Handle<lantern:::audio:::SoundTag> {
+    made := lantern:::synth:::Make(name);
+    guard sound := made return lantern:::core:::Handle<lantern:::audio:::SoundTag> { };
+    handle: lantern:::core:::Handle<lantern:::audio:::SoundTag> = mixer->AddSound(sound);
+    delete made;
+    return handle;
+}
+
+Measure :: (label: string, mixed: Array<f32>, loudestRms: f32, loudestPeak: f32, loudestStep: f32) -> void {
+    peak~ f32 = 0.0f;
+    sumOfSquares~ f64 = 0.0f;
+    biggestStep~ f32 = 0.0f;
+    for index~ usize = 0; index < mixed.length(); index++ {
+        sample: f32 = mixed[index];
+        peak = Math:::max(peak, Math:::abs(sample));
+        sumOfSquares = sumOfSquares + f64(sample) * f64(sample);
+        if index >= 2 {
+            biggestStep = Math:::max(biggestStep, Math:::abs(sample - mixed[index - 2]));
+        }
+    }
+    root: f32 = Math:::sqrt(f32(sumOfSquares / f64(mixed.length())));
+    if root > loudestRms {
+        print(`${label} is too loud: rms ${root}`);
+    }
+    assert(root <= loudestRms, "a bed, stem or mix is quieter than its loudness ceiling");
+    if peak > loudestPeak {
+        print(`${label} peaks too high: ${peak}`);
+    }
+    assert(peak <= loudestPeak, "a bed, stem or mix stays under its peak ceiling");
+    if biggestStep > loudestStep {
+        print(`${label} jumps by ${biggestStep} between samples`);
+    }
+    assert(biggestStep <= loudestStep, "a bed, stem or mix has no jump between samples bigger than its ceiling");
+}
+
+main :: () -> i32 {
+    names := ["ambience_rain", "ambience_wind", "ambience_city", "ambience_station", "ambience_market", "music_calm", "music_tension", "music_companion"];
+    for name in names {
+        mixer := new lantern:::audio:::Mixer(48000);
+        for bus~ usize = 0; bus < lantern:::audio:::BUS_COUNT; bus++ {
+            mixer->SetBusVolume(bus, 1.0f);
+        }
+        sound := Load(mixer, name);
+        mixer->StartLoop(sound, lantern:::audio:::BUS_AMBIENCE, 1.0f, 1.0f, false, Vec3 { x: 0.0f, y: 0.0f, z: 0.0f }, 2.0f, 30.0f);
+        block: Array<f32>! = mixer->Mix(48000 * 8);
+        Measure(name, block, 0.08f, 0.35f, 0.15f);
+        delete block;
+        delete mixer;
+    }
+    streets := new lantern:::audio:::Mixer(48000);
+    rain := Load(streets, "ambience_rain");
+    city := Load(streets, "ambience_city");
+    calm := Load(streets, "music_calm");
+    origin := Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+    streets->StartLoop(rain, lantern:::audio:::BUS_AMBIENCE, 0.5f, 1.0f, false, origin, 2.0f, 30.0f);
+    streets->StartLoop(city, lantern:::audio:::BUS_AMBIENCE, 0.5f, 1.0f, false, origin, 2.0f, 30.0f);
+    streets->StartLoop(calm, lantern:::audio:::BUS_MUSIC, 1.0f, 1.0f, false, origin, 2.0f, 30.0f);
+    mixed: Array<f32>! = streets->Mix(48000 * 8);
+    Measure("streets at the default bus volumes", mixed, 0.05f, 0.3f, 0.08f);
+    delete mixed;
+    delete streets;
+    previous~ f32 = 0.0f;
+    for step~ usize = 0; step <= 400; step++ {
+        input: f32 = f32(step) * 0.01f;
+        output: f32 = lantern:::audio:::SoftClip(input);
+        assert(output <= 1.0f, "the limiter never goes past one");
+        assert(output >= previous, "the limiter never turns a louder sample into a quieter one");
+        assert(lantern:::audio:::SoftClip(-input) == -output, "the limiter treats both signs alike");
+        if input <= 0.8f {
+            assert(output == input, "a sample under the knee passes unchanged");
+        }
+        previous = output;
+    }
+    print("the default mix has headroom and no clicks");
+    return 0;
+}

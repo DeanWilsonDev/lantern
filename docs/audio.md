@@ -57,6 +57,8 @@ the same samples every time, on every machine.
 | `music_calm`, `music_tension`, `music_companion` | 8-second stems of one piece: a slow pad, a low drone with a clashing note and a pulse, and a soft figure that plays when the partner is near |
 | `ui_move`, `ui_select`, `ui_back`, `ui_error`, `ui_shutter` | menu sounds and the photo shutter |
 
+Beds are set to an average loudness of 0.05 and stems to 0.07 (not to a peak, which makes noise a loud hiss), and the mixer's limiter passes anything under 0.8 untouched and rounds only the excess toward 1.
+
 Loops are made seamless two ways. Every tone in a bed or stem is moved to a whole number of cycles per loop, so it is at
 the same phase at the end as at the start, and noise beds have their last second mixed into their first. All music stems
 are the same length and start in the same frame, so they stay in step.
