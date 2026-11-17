@@ -1,0 +1,53 @@
+lantern:::animation_support :: namespace {
+    /** True when two numbers are within a thousandth of each other. */
+    Near :: (left: f32, right: f32) -> bool {
+        return Math:::abs(left - right) < 0.001f;
+    }
+
+    /** True when two points are within a thousandth of each other on every axis. */
+    NearPoint :: (left: Vec3, right: Vec3) -> bool {
+        return Near(left.x, right.x) && Near(left.y, right.y) && Near(left.z, right.z);
+    }
+
+    /**
+     * A rig of a root and a two-part arm, one metre per part, standing straight up. It has three clips: `rest` holds the
+     * arm straight, `raise` swings the upper arm a quarter turn about z over one second, and `wave` does the same over half a
+     * second and does not loop.
+     */
+    MakeArmRig :: () -> lantern:::animation:::Rig*! {
+        rig := new lantern:::animation:::Rig();
+        rig->skeleton->AddJoint("root", -1, lantern:::animation:::JointTransform { });
+        rig->skeleton->AddJoint(
+            "upper",
+            0,
+            lantern:::animation:::JointTransform:::At(Vec3 { y: 1.0f })
+        );
+        rig->skeleton->AddJoint(
+            "lower",
+            1,
+            lantern:::animation:::JointTransform:::At(Vec3 { y: 1.0f })
+        );
+        quarterTurn: Quaternion = Quaternion:::fromAxisAngle(Vec3 { z: 1.0f }, Math:::PI * 0.5f);
+        rest := new lantern:::animation:::AnimationClip("rest", 1.0f);
+        rest->AddKey(1, 0.0f, Vec3 { y: 1.0f }, Quaternion { });
+        rest->AddKey(1, 1.0f, Vec3 { y: 1.0f }, Quaternion { });
+        rig->AddClip(rest!);
+        raise := new lantern:::animation:::AnimationClip("raise", 1.0f);
+        raise->AddKey(1, 0.0f, Vec3 { y: 1.0f }, Quaternion { });
+        raise->AddKey(1, 1.0f, Vec3 { y: 1.0f }, quarterTurn);
+        rig->AddClip(raise!);
+        wave := new lantern:::animation:::AnimationClip("wave", 0.5f);
+        wave->AddKey(1, 0.0f, Vec3 { y: 1.0f }, Quaternion { });
+        wave->AddKey(1, 0.5f, Vec3 { y: 1.0f }, quarterTurn);
+        rig->AddClip(wave!);
+        return rig!;
+    }
+
+    /** Where the arm's tip (the lower joint) is in model space for the animator's latest pose. */
+    TipOf :: (rig: lantern:::animation:::Rig*, animator: lantern:::animation:::Animator*) -> Vec3 {
+        matrices: Array<Mat4>! = rig->skeleton->ModelMatrices(animator->pose);
+        tip: Vec3 = lantern:::core:::TransformPoint3(matrices[2], Vec3 { });
+        delete matrices;
+        return tip;
+    }
+}

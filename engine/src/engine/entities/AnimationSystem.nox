@@ -1,0 +1,121 @@
+lantern:::engine :: namespace {
+    /**
+     * Every rig and animator a game has made, and how they reach the screen. A game makes a rig (`lantern::animation`
+     * in Nyx), gives an entity an animator for it, and sets the animator's parameters from its own code. Each frame the
+     * system advances every animator, and `Extract` adds a skinned draw for each animated entity at its interpolated
+     * transform, with the animator's joint palette beside it.
+     *
+     * An animated entity's `MeshRenderer` still says how it looks (tint, material, visibility); the system only swaps the
+     * plain draw for the skinned one, so everything else about the entity works as it does for any mesh.
+     */
+    AnimationSystem :: class {
+    public:
+        /** The rigs, by index. A rig is shared by every animator made from it. */
+        rigs~ Array<lantern:::animation:::Rig*!>! = [];
+        /** The skinned mesh of each rig, as the render backend knows it. */
+        rigMeshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
+        /** The animators, by index. */
+        animators~ Array<lantern:::animation:::Animator*!>! = [];
+        /** Which rig each animator plays. */
+        animatorRigs~ Array<i32>! = [];
+        /** The entity each animator moves. */
+        animatorEntities~ Array<lantern:::core:::Handle<EntityTag>>! = [];
+
+        /** An empty system. */
+        AnimationSystem~: () { }
+
+        /** Frees the rigs and animators. The render backend owns the meshes. */
+        !AnimationSystem~: () {
+            rigs.freeAll();
+            delete rigMeshes;
+            animators.freeAll();
+            delete animatorRigs;
+            delete animatorEntities;
+        }
+
+        /** Adds a rig and its skinned mesh, and returns the rig's index. */
+        AddRig~: (rig: lantern:::animation:::Rig*!, mesh: lantern:::core:::Handle<lantern:::renderer:::MeshTag>) -> i32 {
+            rigs.push(rig!);
+            rigMeshes.push(mesh);
+            return i32(rigs.length()) - 1;
+        }
+
+        /** Adds an animator that plays rig `rigIndex` on `entity`, and returns its index. */
+        AddAnimator~: (rigIndex: i32, entity: lantern:::core:::Handle<EntityTag>) -> i32 {
+            animators.push(new lantern:::animation:::Animator());
+            animatorRigs.push(rigIndex);
+            animatorEntities.push(entity);
+            return i32(animators.length()) - 1;
+        }
+
+        /** Forgets every animator, when the level's entities are removed. Rigs stay until `ClearRigs`. */
+        ClearAnimators~: () -> void {
+            animators.freeAll();
+            animators = [];
+            animatorRigs.clear();
+            animatorEntities.clear();
+        }
+
+        /** Forgets every animator and rig, for a new session. The caller frees the meshes. */
+        ClearRigs~: () -> void {
+            ClearAnimators();
+            rigs.freeAll();
+            rigs = [];
+            rigMeshes.clear();
+        }
+
+        /**
+         * Points an animator's character at a world-space position. The position is taken into the character's own space
+         * with the entity's world transform, so the look follows the character as it turns.
+         */
+        SetLook~: (entityWorld: World*, animator: i32, worldTarget: Vec3, weight: f32) -> void {
+            guard record := entityWorld->Get(animatorEntities[usize(animator)]) return;
+            guard inverse := record.WorldMatrix().inverse() return;
+            animators[usize(animator)]->SetLook(lantern:::core:::TransformPoint3(inverse, worldTarget), weight);
+        }
+
+        /** Advances every animator by `deltaTime` seconds. An animator whose entity is gone is skipped. */
+        Update~: (entityWorld: World*, deltaTime: f32) -> void {
+            for index~ usize = 0; index < animators.length(); index++ {
+                if !entityWorld->Contains(animatorEntities[index]) {
+                    continue;
+                }
+                animators[index]->Update(rigs[usize(animatorRigs[index])], deltaTime);
+            }
+        }
+
+        /**
+         * Adds a skinned draw to the render world for each animator whose entity is visible, at the entity's interpolated
+         * transform. Animators that have not been updated yet (no pose) are skipped.
+         */
+        Extract :: (entityWorld: World*, alpha: f32, renderWorld: lantern:::renderer:::RenderWorld~*) -> void {
+            for index~ usize = 0; index < animators.length(); index++ {
+                animator: lantern:::animation:::Animator* = animators[index];
+                if animator->pose.length() == 0 {
+                    continue;
+                }
+                if record := entityWorld->Get(animatorEntities[index]) {
+                    if meshRenderer := record.meshRenderer {
+                        if !meshRenderer.visible {
+                            continue;
+                        }
+                        rigIndex: usize = usize(animatorRigs[index]);
+                        palette: Array<Mat4>! = animator->Palette(rigs[rigIndex]);
+                        offset: i32 = renderWorld->AddJointPalette(palette);
+                        delete palette;
+                        renderWorld->draws.push(lantern:::renderer:::DrawItem {
+                            mesh: rigMeshes[rigIndex],
+                            texture: meshRenderer.texture,
+                            normalTexture: meshRenderer.normalTexture,
+                            transform: record.InterpolatedWorld(alpha),
+                            color: meshRenderer.color,
+                            material: meshRenderer.material,
+                            castsShadows: meshRenderer.castsShadows,
+                            jointOffset: offset
+                        });
+                    }
+                }
+            }
+        }
+    }
+}

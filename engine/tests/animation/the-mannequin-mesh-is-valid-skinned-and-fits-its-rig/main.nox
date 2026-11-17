@@ -1,0 +1,48 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    rig := lantern:::animation:::MannequinRig();
+    defer delete rig;
+    mesh := lantern:::animation:::MannequinMesh(rig);
+    defer delete mesh;
+    lantern:::meshchecks:::AssertOutwardAndCounterClockwise(mesh, "mannequin");
+    assert(mesh->IsSkinned(), "the mannequin is skinned");
+    assert(mesh->skin.length() == mesh->vertices.length(), "one skin entry per vertex");
+    assert(rig->skeleton->JointCount() == 17, "seventeen joints");
+    for entry in mesh->skin {
+        total: i32 = i32(entry.weights[0]) + i32(entry.weights[1]) + i32(entry.weights[2]) +
+            i32(entry.weights[3]);
+        assert(total == 255, "weights add up to 255");
+        assert(usize(entry.joints[0]) < rig->skeleton->JointCount(), "joints are real");
+    }
+    bounds: lantern:::core:::Aabb = mesh->Bounds();
+    assert(bounds.min.y > -0.01f && bounds.min.y < 0.05f, "the feet are on the ground");
+    assert(bounds.max.y > 1.7f && bounds.max.y < 1.85f, "the head is about 1.8 m up");
+    assert(bounds.min.z < -0.1f, "the feet point toward -z");
+    for clipName in ["idle", "walk", "run", "jump", "fall", "crouch", "wave", "reach"] {
+        assert(rig->FindClip(clipName) >= 0, "the clip exists");
+    }
+    walk: lantern:::animation:::AnimationClip* = rig->clips[usize(rig->FindClip("walk"))];
+    pose~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete pose;
+    walk->SampleInto(0.0f, true, rig->skeleton, pose);
+    first: Array<Mat4>! = rig->skeleton->ModelMatrices(pose);
+    defer delete first;
+    walk->SampleInto(0.5f, true, rig->skeleton, pose);
+    second: Array<Mat4>! = rig->skeleton->ModelMatrices(pose);
+    defer delete second;
+    rightFootEarly: Vec3 = lantern:::core:::TransformPoint3(
+        first[lantern:::animation:::MANNEQUIN_RIGHT_FOOT],
+        Vec3 { }
+    );
+    rightFootLate: Vec3 = lantern:::core:::TransformPoint3(
+        second[lantern:::animation:::MANNEQUIN_RIGHT_FOOT],
+        Vec3 { }
+    );
+    assert(
+        Math:::abs(rightFootEarly.z - rightFootLate.z) > 0.3f,
+        "the foot swings back and forth through the stride"
+    );
+    print("the mannequin fits its rig");
+    return 0;
+}

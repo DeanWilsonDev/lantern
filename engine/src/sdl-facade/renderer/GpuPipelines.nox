@@ -51,6 +51,11 @@ lantern:::gpu :: namespace {
          * bias stops a surface from shadowing itself, which would speckle it.
          */
         depthOnly~ bool = false;
+        /**
+         * Also read a second vertex buffer, in slot 1, of `SkinVertex`s (joint indices and weights, 8 bytes per vertex), as
+         * attributes 4 and 5. The skinned lit and shadow pipelines set it; the vertex shader blends a joint palette.
+         */
+        hasSkin~ bool = false;
     }
 
     /** The pipelines the renderer uses, created once at start-up. */
@@ -63,6 +68,10 @@ lantern:::gpu :: namespace {
         overlay~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Shadow maps: the lit meshes' geometry drawn into a depth texture alone, from a light's point of view. */
         shadow~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** The lit pipeline for skinned meshes: the same fragment shader, a vertex shader that blends a joint palette. */
+        litSkinned~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        /** The shadow pipeline for skinned meshes. */
+        shadowSkinned~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** The sky: a full-screen triangle at the far plane, drawn after the meshes into the scene texture. */
         sky~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         /** Bloom's shrink: halves a picture, blurring it. The first shrink also picks out the bright parts (a uniform). */
@@ -83,6 +92,12 @@ lantern:::gpu :: namespace {
             unsafe {
                 if lit != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, lit);
+                }
+                if litSkinned != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, litSkinned);
+                }
+                if shadowSkinned != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, shadowSkinned);
                 }
                 if lines != null {
                     Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, lines);
@@ -140,6 +155,35 @@ lantern:::gpu :: namespace {
             depthWrite: true,
             alphaBlend: false
         };
+    }
+
+    /**
+     * The lit pipeline for skinned meshes: `LitPipelineDescription` plus the skin buffer, with `lit-skinned.vert` and its
+     * third uniform block (the joint palette, slot 2). The fragment shader is the unskinned one.
+     */
+    LitSkinnedPipelineDescription :: () -> PipelineDescription {
+        description~ PipelineDescription = LitPipelineDescription();
+        description.vertex = ShaderDescription {
+            name: "lit-skinned",
+            stage: ShaderStageKind:::Vertex,
+            samplerCount: 0,
+            uniformBufferCount: 3
+        };
+        description.hasSkin = true;
+        return description;
+    }
+
+    /** The shadow pipeline for skinned meshes, so a bent character casts a bent shadow. */
+    ShadowSkinnedPipelineDescription :: () -> PipelineDescription {
+        description~ PipelineDescription = ShadowPipelineDescription();
+        description.vertex = ShaderDescription {
+            name: "shadow-skinned",
+            stage: ShaderStageKind:::Vertex,
+            samplerCount: 0,
+            uniformBufferCount: 3
+        };
+        description.hasSkin = true;
+        return description;
     }
 
     /**
@@ -308,11 +352,28 @@ lantern:::gpu :: namespace {
                 return Result<raw Sdl:::SDL_GPUGraphicsPipeline~*, string!>:::Err(message!);
             }
         }
-        attributes~ Sdl:::SDL_GPUVertexAttribute[4] = filled<Sdl:::SDL_GPUVertexAttribute, 4>(Sdl:::SDL_GPUVertexAttribute { });
-        attributeCount: u32 = description.attributeCount;
+        attributes~ Sdl:::SDL_GPUVertexAttribute[6] = filled<Sdl:::SDL_GPUVertexAttribute, 6>(Sdl:::SDL_GPUVertexAttribute { });
+        attributeCount~ u32 = description.attributeCount;
         for location~ u32 = 0; location < attributeCount; location++ {
             layout: VertexAttributeLayout = description.attributes[usize(location)];
             attributes[usize(location)] = Sdl:::SDL_GPUVertexAttribute { location: location, buffer_slot: 0, format: layout.format, offset: layout.offset };
+        }
+        vertexBufferCount~ u32 = 1;
+        if description.hasSkin {
+            attributes[4] = Sdl:::SDL_GPUVertexAttribute {
+                location: 4,
+                buffer_slot: 1,
+                format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4,
+                offset: 0
+            };
+            attributes[5] = Sdl:::SDL_GPUVertexAttribute {
+                location: 5,
+                buffer_slot: 1,
+                format: Sdl:::SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4_NORM,
+                offset: 4
+            };
+            attributeCount += 2;
+            vertexBufferCount = 2;
         }
         cullMode~ Sdl:::SDL_GPUCullMode = Sdl:::SDL_GPU_CULLMODE_NONE;
         if description.cullBackFaces {
@@ -326,24 +387,23 @@ lantern:::gpu :: namespace {
             depthBiasConstant = 2.0f;
             depthBiasSlope = 2.5f;
         }
-        vertexBufferCount~ u32 = 1;
         if description.noVertexBuffer {
             vertexBufferCount = 0;
         }
         pipeline~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
         unsafe {
-            bufferDescription := Sdl:::SDL_GPUVertexBufferDescription {
-                slot: 0,
-                pitch: description.stride,
-                input_rate: Sdl:::SDL_GPU_VERTEXINPUTRATE_VERTEX
-            };
+            bufferDescriptions: Sdl:::SDL_GPUVertexBufferDescription[2] = [
+                Sdl:::SDL_GPUVertexBufferDescription { slot: 0, pitch: description.stride, input_rate: Sdl:::SDL_GPU_VERTEXINPUTRATE_VERTEX },
+                Sdl:::SDL_GPUVertexBufferDescription { slot: 1, pitch: lantern:::renderer:::SKIN_STRIDE, input_rate: Sdl:::SDL_GPU_VERTEXINPUTRATE_VERTEX }
+            ];
+            firstBufferDescription: Sdl:::SDL_GPUVertexBufferDescription* = reinterpret<Sdl:::SDL_GPUVertexBufferDescription>(bufferDescriptions);
             colorTarget := Sdl:::SDL_GPUColorTargetDescription { format: colorFormat, blend_state: BlendState(description.alphaBlend, description.additiveBlend) };
             firstAttribute: Sdl:::SDL_GPUVertexAttribute* = reinterpret<Sdl:::SDL_GPUVertexAttribute>(attributes);
             info := Sdl:::SDL_GPUGraphicsPipelineCreateInfo {
                 vertex_shader: vertexShader,
                 fragment_shader: fragmentShader,
                 vertex_input_state: Sdl:::SDL_GPUVertexInputState {
-                    vertex_buffer_descriptions: bufferDescription,
+                    vertex_buffer_descriptions: firstBufferDescription,
                     num_vertex_buffers: vertexBufferCount,
                     vertex_attributes: firstAttribute,
                     num_vertex_attributes: attributeCount
@@ -418,6 +478,36 @@ lantern:::gpu :: namespace {
         when CreatePipeline(device, format, colorFormat, depthFormat, ShadowPipelineDescription()) {
             Result:::Ok(pipeline) -> {
                 pipelines.shadow = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(
+            device,
+            format,
+            hdrFormat,
+            depthFormat,
+            LitSkinnedPipelineDescription()
+        ) {
+            Result:::Ok(pipeline) -> {
+                pipelines.litSkinned = pipeline;
+            },
+            Result:::Err(message) -> {
+                pipelines.Release(device);
+                return Result<Pipelines, string!>:::Err(message!);
+            }
+        }
+        when CreatePipeline(
+            device,
+            format,
+            colorFormat,
+            depthFormat,
+            ShadowSkinnedPipelineDescription()
+        ) {
+            Result:::Ok(pipeline) -> {
+                pipelines.shadowSkinned = pipeline;
             },
             Result:::Err(message) -> {
                 pipelines.Release(device);

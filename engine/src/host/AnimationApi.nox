@@ -1,0 +1,253 @@
+lantern:::host :: namespace {
+    /**
+     * The animator with this script id, or null after failing the call when there is none. Ids are indices into the animation
+     * system and last until the level's entities are cleared.
+     */
+    LiveAnimator :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, index: usize) -> i32? {
+        id: i64 = context->I64(index);
+        if Stopped(context) {
+            return null;
+        }
+        unsafe {
+            if id >= 0 && usize(id) < state->animationSystem->animators.length() {
+                return i32(id);
+            }
+        }
+        message: string! = `no animator with id ${id}`;
+        NotFound(context, message);
+        delete message;
+        return null;
+    }
+
+    /** The state's index in an animator, or null after failing the call when it has no state of that name. */
+    FindAnimatorState :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, animator: i32, name: string) -> i32? {
+        unsafe {
+            found: i32 = state->animationSystem->animators[usize(animator)]->FindState(name);
+            if found >= 0 {
+                return found;
+            }
+        }
+        message: string! = `the animator has no state named ${name}`;
+        NotFound(context, message);
+        delete message;
+        return null;
+    }
+
+    /** The clip's index in the animator's rig, or null after failing the call when the rig has no clip of that name. */
+    FindRigClip :: (context: lantern:::nyx:::CallContext~*, state: raw EngineState~*, animator: i32, name: string) -> i32? {
+        unsafe {
+            rig: lantern:::animation:::Rig* = state->animationSystem->rigs[usize(state->animationSystem->animatorRigs[usize(animator)])];
+            found: i32 = rig->FindClip(name);
+            if found >= 0 {
+                return found;
+            }
+        }
+        message: string! = `the rig has no clip named ${name}`;
+        NotFound(context, message);
+        delete message;
+        return null;
+    }
+
+    /**
+     * Skeletal animation a game can drive from Nyx, as `lantern::animation`. A game makes a rig (`MannequinRig`), gives an
+     * entity an animator for it (`Spawn`), describes the character's states and the rules between them, and then only sets
+     * parameters (`SetFloat`, `SetBool`, `Trigger`); the engine blends and draws. The guide is `docs/animation.md`.
+     */
+    RegisterAnimationApi :: (runtime: lantern:::nyx:::Runtime~*, state: raw EngineState~*, math: MathTypes) -> lantern:::nyx:::NyxError*!? {
+        animationNamespace := new HostNamespace(runtime, "lantern::animation");
+        animationNamespace->Function("MannequinRig", "() -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            rig := lantern:::animation:::MannequinRig();
+            mesh := lantern:::animation:::MannequinMesh(rig);
+            defer delete mesh;
+            unsafe {
+                created := state->renderBackend->CreateMesh(mesh);
+                when created! {
+                    Result:::Ok(handle) -> {
+                        state->scriptMeshes.push(handle);
+                        context->ReturnI64(i64(state->animationSystem->AddRig(rig!, handle)));
+                    },
+                    Result:::Err(message) -> {
+                        delete rig;
+                        Invalid(context, message);
+                        delete message;
+                    }
+                }
+            }
+        });
+        animationNamespace->Function("Spawn", "(entity: i64, rig: i64, texture: i64, tint: string) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            rigId: i64 = context->I64(1);
+            texture: i64 = context->I64(2);
+            tint: lantern:::core:::Color = ColorArgument(context, 3);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                if rigId < 0 || usize(rigId) >= state->animationSystem->rigs.length() {
+                    message: string! = `no rig with id ${rigId}`;
+                    NotFound(context, message);
+                    delete message;
+                    return;
+                }
+                guard record ~= state->entityWorld->BorrowMutable(entity) return;
+                meshRenderer~ lantern:::engine:::MeshRenderer = lantern:::engine:::MeshRenderer:::Create(state->animationSystem->rigMeshes[usize(rigId)], HandleFromScript<lantern:::renderer:::TextureTag>(texture), tint);
+                meshRenderer.isAnimated = true;
+                record->meshRenderer = meshRenderer;
+                context->ReturnI64(i64(state->animationSystem->AddAnimator(i32(rigId), entity)));
+            }
+        });
+        animationNamespace->Function("AddState", "(animator: i64, state: string, clip: string, loops: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            stateName: string! = context->Text(1);
+            defer delete stateName;
+            clipName: string! = context->Text(2);
+            defer delete clipName;
+            loops: bool = context->Bool(3);
+            guard clip := FindRigClip(context, state, animator, clipName) return;
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->AddState(stateName, clip, loops);
+            }
+        });
+        animationNamespace->Function("AddBlendState", "(animator: i64, state: string, parameter: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            stateName: string! = context->Text(1);
+            defer delete stateName;
+            parameter: string! = context->Text(2);
+            defer delete parameter;
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->AddBlendState(stateName, parameter);
+            }
+        });
+        animationNamespace->Function("AddBlendClip", "(animator: i64, state: string, clip: string, threshold: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            stateName: string! = context->Text(1);
+            defer delete stateName;
+            clipName: string! = context->Text(2);
+            defer delete clipName;
+            threshold: f32 = context->F32(3);
+            guard stateIndex := FindAnimatorState(context, state, animator, stateName) return;
+            guard clip := FindRigClip(context, state, animator, clipName) return;
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->AddBlendClip(stateIndex, clip, threshold);
+            }
+        });
+        animationNamespace->Function("SetStateSpeed", "(animator: i64, state: string, speed: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            stateName: string! = context->Text(1);
+            defer delete stateName;
+            speed: f32 = context->F32(2);
+            guard stateIndex := FindAnimatorState(context, state, animator, stateName) return;
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->states[usize(stateIndex)]->speed = speed;
+            }
+        });
+        animationNamespace->Function("AddTransition", "(animator: i64, from: string, to: string, parameter: string, condition: string, threshold: f32, fadeSeconds: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            fromName: string! = context->Text(1);
+            defer delete fromName;
+            toName: string! = context->Text(2);
+            defer delete toName;
+            parameter: string! = context->Text(3);
+            defer delete parameter;
+            conditionName: string! = context->Text(4);
+            defer delete conditionName;
+            threshold: f32 = context->F32(5);
+            fade: f32 = context->F32(6);
+            if Stopped(context) {
+                return;
+            }
+            fromIndex~ i32 = -1;
+            if fromName.length() > 0 {
+                guard found := FindAnimatorState(context, state, animator, fromName) return;
+                fromIndex = found;
+            }
+            guard toIndex := FindAnimatorState(context, state, animator, toName) return;
+            condition~ lantern:::animation:::TransitionCondition = lantern:::animation:::TransitionCondition:::Greater;
+            if conditionName == "greater" {
+                condition = lantern:::animation:::TransitionCondition:::Greater;
+            } else if conditionName == "less" {
+                condition = lantern:::animation:::TransitionCondition:::Less;
+            } else if conditionName == "finished" {
+                condition = lantern:::animation:::TransitionCondition:::Finished;
+            } else if conditionName == "trigger" {
+                condition = lantern:::animation:::TransitionCondition:::Trigger;
+            } else {
+                message: string! = `the condition must be greater, less, finished or trigger, not ${conditionName}`;
+                Invalid(context, message);
+                delete message;
+                return;
+            }
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->AddTransition(fromIndex, toIndex, parameter, condition, threshold, fade);
+            }
+        });
+        animationNamespace->Function("SetFloat", "(animator: i64, parameter: string, value: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            parameter: string! = context->Text(1);
+            defer delete parameter;
+            value: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->SetParameter(parameter, value);
+            }
+        });
+        animationNamespace->Function("SetBool", "(animator: i64, parameter: string, value: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            parameter: string! = context->Text(1);
+            defer delete parameter;
+            value: bool = context->Bool(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->SetParameter(parameter, value ? 1.0f : 0.0f);
+            }
+        });
+        animationNamespace->Function("Trigger", "(animator: i64, parameter: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            parameter: string! = context->Text(1);
+            defer delete parameter;
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->SetParameter(parameter, 1.0f);
+            }
+        });
+        animationNamespace->Function("Play", "(animator: i64, state: string, fadeSeconds: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            stateName: string! = context->Text(1);
+            defer delete stateName;
+            fade: f32 = context->F32(2);
+            guard stateIndex := FindAnimatorState(context, state, animator, stateName) return;
+            unsafe {
+                state->animationSystem->animators[usize(animator)]->Play(stateIndex, fade);
+            }
+        });
+        animationNamespace->Function("CurrentState", "(animator: i64) -> string", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            unsafe {
+                context->ReturnText(state->animationSystem->animators[usize(animator)]->CurrentStateName());
+            }
+        });
+        animationNamespace->Function("SetLookTarget", "(animator: i64, target: lantern:::math:::Vec3, weight: f32) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            guard animator := LiveAnimator(context, state, 0) return;
+            target: Vec3 = Vec3Argument(context, 1, math);
+            weight: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->animationSystem->SetLook(state->entityWorld, animator, target, weight);
+            }
+        });
+        failure := animationNamespace->Finish();
+        delete animationNamespace;
+        return failure!;
+    }
+}

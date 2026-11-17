@@ -1004,7 +1004,6 @@ lantern:::gpu :: namespace {
                     cycle: true
                 };
                 pass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, null, 0, depthTargetInfo);
-                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.shadow);
                 for tileIndex~ usize = 0; tileIndex < tiles.length(); tileIndex++ {
                     column: u32 = u32(tileIndex) % columns;
                     row: u32 = u32(tileIndex) / columns;
@@ -1026,15 +1025,21 @@ lantern:::gpu :: namespace {
         RecordShadowTile~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, tile: lantern:::renderer:::ShadowTile, renderWorld: lantern:::renderer:::RenderWorld*, report: lantern:::renderer:::RenderReport~*) -> void {
             tileFrustum: lantern:::renderer:::Frustum = lantern:::renderer:::Frustum:::FromViewProjection(tile.viewProjection);
             tileUniforms := MatrixUniforms { matrix: tile.viewProjection.elements };
-            boundMesh~ u32 = NO_BINDING;
             unsafe {
-                PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(tileUniforms), 64);
-                for drawIndex~ usize = 0; drawIndex < renderWorld->draws.length(); drawIndex++ {
+                for passIndex~ u32 = 0; passIndex < 2; passIndex++ {
+                    isSkinnedPass: bool = passIndex == 1;
+                    Sdl:::SDL_BindGPUGraphicsPipeline(pass, isSkinnedPass ? pipelines.shadowSkinned : pipelines.shadow);
+                    PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(tileUniforms), 64);
+                    boundMesh~ u32 = NO_BINDING;
+                    for drawIndex~ usize = 0; drawIndex < renderWorld->draws.length(); drawIndex++ {
                     draw: lantern:::renderer:::DrawItem = renderWorld->draws[drawIndex];
                     if !draw.castsShadows {
                         continue;
                     }
                     if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
+                        if IsSkinnedDraw(draw, mesh) != isSkinnedPass {
+                            continue;
+                        }
                         if !tileFrustum.Intersects(mesh.bounds.Transformed(draw.transform)) {
                             continue;
                         }
@@ -1042,13 +1047,22 @@ lantern:::gpu :: namespace {
                             vertexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.vertexBuffer, offset: 0 };
                             indexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.indexBuffer, offset: 0 };
                             Sdl:::SDL_BindGPUVertexBuffers(pass, 0, vertexBinding, 1);
+                            if isSkinnedPass {
+                                skinBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.skinBuffer, offset: 0 };
+                                Sdl:::SDL_BindGPUVertexBuffers(pass, 1, skinBinding, 1);
+                            }
                             Sdl:::SDL_BindGPUIndexBuffer(pass, indexBinding, Sdl:::SDL_GPU_INDEXELEMENTSIZE_32BIT);
                             boundMesh = draw.mesh.Index();
                         }
                         objectUniforms := MatrixUniforms { matrix: draw.transform.elements };
                         PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 64);
+                        if isSkinnedPass {
+                            jointUniforms: JointUniforms = PackJointUniforms(renderWorld, draw.jointOffset);
+                            PushVertexUniforms(commandBuffer, 2, reinterpret<u8>(jointUniforms), 2048);
+                        }
                         Sdl:::SDL_DrawGPUIndexedPrimitives(pass, mesh.indexCount, 1, 0, 0, 0);
                         report->shadowDraws += 1;
+                    }
                     }
                 }
             }
@@ -1083,56 +1097,70 @@ lantern:::gpu :: namespace {
             localLightUniforms: LocalLightUniforms = PackLocalLights(renderWorld->lights, chosenLights, shadowPlan);
             shadowUniforms: ShadowUniforms = PackShadowUniforms(shadowPlan, renderWorld->camera.forward, renderWorld->shadows);
             unsafe {
-                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipelines.lit);
-                PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(frameUniforms), 80);
-                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 176);
-                PushFragmentUniforms(commandBuffer, 2, reinterpret<u8>(localLightUniforms), 528);
-                PushFragmentUniforms(commandBuffer, 3, reinterpret<u8>(shadowUniforms), 1024);
-                shadowBindings: Sdl:::SDL_GPUTextureSamplerBinding[2] = [
-                    Sdl:::SDL_GPUTextureSamplerBinding { texture: SunTextureOrFallback(shadowTargets), sampler: samplers.shadow },
-                    Sdl:::SDL_GPUTextureSamplerBinding { texture: LocalTextureOrFallback(shadowTargets), sampler: samplers.shadow }
-                ];
-                firstShadowBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(shadowBindings);
-                Sdl:::SDL_BindGPUFragmentSamplers(pass, 1, firstShadowBinding, 2);
-                boundMesh~ u32 = NO_BINDING;
-                boundTexture~ u32 = NO_BINDING;
-                textureBound~ bool = false;
-                for visible in visibleDraws {
-                    draw: lantern:::renderer:::DrawItem = renderWorld->draws[visible.drawIndex];
-                    if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
-                        if visible.meshIndex != boundMesh {
-                            vertexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.vertexBuffer, offset: 0 };
-                            indexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.indexBuffer, offset: 0 };
-                            Sdl:::SDL_BindGPUVertexBuffers(pass, 0, vertexBinding, 1);
-                            Sdl:::SDL_BindGPUIndexBuffer(pass, indexBinding, Sdl:::SDL_GPU_INDEXELEMENTSIZE_32BIT);
-                            boundMesh = visible.meshIndex;
+                for passIndex~ u32 = 0; passIndex < 2; passIndex++ {
+                    isSkinnedPass: bool = passIndex == 1;
+                    Sdl:::SDL_BindGPUGraphicsPipeline(pass, isSkinnedPass ? pipelines.litSkinned : pipelines.lit);
+                    PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(frameUniforms), 80);
+                    PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(lightUniforms), 176);
+                    PushFragmentUniforms(commandBuffer, 2, reinterpret<u8>(localLightUniforms), 528);
+                    PushFragmentUniforms(commandBuffer, 3, reinterpret<u8>(shadowUniforms), 1024);
+                    shadowBindings: Sdl:::SDL_GPUTextureSamplerBinding[2] = [
+                        Sdl:::SDL_GPUTextureSamplerBinding { texture: SunTextureOrFallback(shadowTargets), sampler: samplers.shadow },
+                        Sdl:::SDL_GPUTextureSamplerBinding { texture: LocalTextureOrFallback(shadowTargets), sampler: samplers.shadow }
+                    ];
+                    firstShadowBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(shadowBindings);
+                    Sdl:::SDL_BindGPUFragmentSamplers(pass, 1, firstShadowBinding, 2);
+                    boundMesh~ u32 = NO_BINDING;
+                    boundTexture~ u32 = NO_BINDING;
+                    textureBound~ bool = false;
+                    for visible in visibleDraws {
+                        draw: lantern:::renderer:::DrawItem = renderWorld->draws[visible.drawIndex];
+                        if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
+                            if IsSkinnedDraw(draw, mesh) != isSkinnedPass {
+                                continue;
+                            }
+                            if visible.meshIndex != boundMesh {
+                                vertexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.vertexBuffer, offset: 0 };
+                                indexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.indexBuffer, offset: 0 };
+                                Sdl:::SDL_BindGPUVertexBuffers(pass, 0, vertexBinding, 1);
+                                if isSkinnedPass {
+                                    skinBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.skinBuffer, offset: 0 };
+                                    Sdl:::SDL_BindGPUVertexBuffers(pass, 1, skinBinding, 1);
+                                }
+                                Sdl:::SDL_BindGPUIndexBuffer(pass, indexBinding, Sdl:::SDL_GPU_INDEXELEMENTSIZE_32BIT);
+                                boundMesh = visible.meshIndex;
+                            }
+                            if !textureBound || boundTexture != visible.textureKey {
+                                texture: GpuTexture = TextureOrWhite(draw.texture);
+                                samplerBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: texture.texture, sampler: texture.sampler };
+                                Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, samplerBinding, 1);
+                                boundTexture = visible.textureKey;
+                                textureBound = true;
+                            }
+                            normalStrength~ f32 = 0.0f;
+                            normalGpuTexture~ GpuTexture = whiteTexture;
+                            if draw.normalTexture != null {
+                                normalStrength = draw.material.normalStrength;
+                                normalGpuTexture = TextureOrWhite(draw.normalTexture);
+                            }
+                            normalBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: normalGpuTexture.texture, sampler: normalGpuTexture.sampler };
+                            Sdl:::SDL_BindGPUFragmentSamplers(pass, 3, normalBinding, 1);
+                            objectUniforms := ObjectUniforms { model: draw.transform.elements, normalMatrix: NormalMatrix4(draw.transform) };
+                            materialUniforms := MaterialUniforms {
+                                tint: draw.color.ToArray(),
+                                surface: [draw.material.metallic, draw.material.roughness, normalStrength, Math:::max(draw.material.wetness, renderWorld->worldWetness)],
+                                emissive: [draw.material.emissive.r, draw.material.emissive.g, draw.material.emissive.b, Math:::max(draw.material.puddles, renderWorld->worldPuddles)]
+                            };
+                            PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 128);
+                            if isSkinnedPass {
+                                jointUniforms: JointUniforms = PackJointUniforms(renderWorld, draw.jointOffset);
+                                PushVertexUniforms(commandBuffer, 2, reinterpret<u8>(jointUniforms), 2048);
+                            }
+                            PushFragmentUniforms(commandBuffer, 1, reinterpret<u8>(materialUniforms), 48);
+                            Sdl:::SDL_DrawGPUIndexedPrimitives(pass, mesh.indexCount, 1, 0, 0, 0);
+                            report->drawsSubmitted += 1;
+                            report->triangles += u64(mesh.indexCount / 3);
                         }
-                        if !textureBound || boundTexture != visible.textureKey {
-                            texture: GpuTexture = TextureOrWhite(draw.texture);
-                            samplerBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: texture.texture, sampler: texture.sampler };
-                            Sdl:::SDL_BindGPUFragmentSamplers(pass, 0, samplerBinding, 1);
-                            boundTexture = visible.textureKey;
-                            textureBound = true;
-                        }
-                        normalStrength~ f32 = 0.0f;
-                        normalGpuTexture~ GpuTexture = whiteTexture;
-                        if draw.normalTexture != null {
-                            normalStrength = draw.material.normalStrength;
-                            normalGpuTexture = TextureOrWhite(draw.normalTexture);
-                        }
-                        normalBinding := Sdl:::SDL_GPUTextureSamplerBinding { texture: normalGpuTexture.texture, sampler: normalGpuTexture.sampler };
-                        Sdl:::SDL_BindGPUFragmentSamplers(pass, 3, normalBinding, 1);
-                        objectUniforms := ObjectUniforms { model: draw.transform.elements, normalMatrix: NormalMatrix4(draw.transform) };
-                        materialUniforms := MaterialUniforms {
-                            tint: draw.color.ToArray(),
-                            surface: [draw.material.metallic, draw.material.roughness, normalStrength, Math:::max(draw.material.wetness, renderWorld->worldWetness)],
-                            emissive: [draw.material.emissive.r, draw.material.emissive.g, draw.material.emissive.b, Math:::max(draw.material.puddles, renderWorld->worldPuddles)]
-                        };
-                        PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 128);
-                        PushFragmentUniforms(commandBuffer, 1, reinterpret<u8>(materialUniforms), 48);
-                        Sdl:::SDL_DrawGPUIndexedPrimitives(pass, mesh.indexCount, 1, 0, 0, 0);
-                        report->drawsSubmitted += 1;
-                        report->triangles += u64(mesh.indexCount / 3);
                     }
                 }
             }

@@ -8,6 +8,15 @@ lantern:::copyvertices :: foreign "c" {
     memcpy :: (destination: raw u8~*, source: Array<lantern:::renderer:::Vertex>, byteCount: usize) -> raw u8~*;
 }
 
+/** C's `memcpy` for a skinned mesh's joint indices and weights. */
+lantern:::copyskin :: foreign "c" {
+    memcpy :: (
+        destination: raw u8~*,
+        source: Array<lantern:::renderer:::SkinVertex>,
+        byteCount: usize
+    ) -> raw u8~*;
+}
+
 /** C's `memcpy` for mesh indices. */
 lantern:::copyindices :: foreign "c" {
     memcpy :: (destination: raw u8~*, source: Array<u32>, byteCount: usize) -> raw u8~*;
@@ -55,6 +64,11 @@ lantern:::gpu :: namespace {
         vertexBuffer~ raw Sdl:::SDL_GPUBuffer~* = null;
         /** 32-bit indices into the vertex buffer, three per triangle, so shared corners are stored once. */
         indexBuffer~ raw Sdl:::SDL_GPUBuffer~* = null;
+        /**
+         * For a skinned mesh, the joint indices and weights (`SkinVertex`, 8 bytes per vertex) that bind to vertex buffer slot
+         * 1 beside `vertexBuffer`; null for a mesh that doesn't deform.
+         */
+        skinBuffer~ raw Sdl:::SDL_GPUBuffer~* = null;
         /** How many indices to draw: three times the triangle count. */
         indexCount~ u32 = 0;
         /** The axis-aligned box around the vertices in the mesh's own space, for culling. */
@@ -68,6 +82,9 @@ lantern:::gpu :: namespace {
                 }
                 if indexBuffer != null {
                     Sdl:::SDL_ReleaseGPUBuffer(device, indexBuffer);
+                }
+                if skinBuffer != null {
+                    Sdl:::SDL_ReleaseGPUBuffer(device, skinBuffer);
                 }
             }
         }
@@ -313,6 +330,16 @@ lantern:::gpu :: namespace {
     }
 
     /**
+     * The culling box for a skinned mesh: its bind-pose box grown by a metre each way, since an animated limb can swing well
+     * outside the pose the box was measured in, and a character that vanishes when an arm leaves its box would be worse
+     * than drawing a few extra.
+     */
+    SkinnedBounds :: (bindBounds: lantern:::core:::Aabb) -> lantern:::core:::Aabb {
+        margin: Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+        return lantern:::core:::Aabb { min: bindBounds.min - margin, max: bindBounds.max + margin };
+    }
+
+    /**
      * Creates a mesh's vertex and index buffers and fills them: map a transfer buffer, copy the data in, unmap, then a
      * copy pass on a command buffer of its own copies it to the GPU buffers. The upload is submitted but not waited
      * for; the GPU runs it before any later command buffer, so the mesh is ready by the next frame.
@@ -326,7 +353,17 @@ lantern:::gpu :: namespace {
             indexCount: u32(mesh->indices.length()),
             bounds: mesh->Bounds()
         };
-        if gpuMesh.vertexBuffer == null || gpuMesh.indexBuffer == null {
+        skinByteCount: u32 = u32(mesh->SkinByteLength());
+        if mesh->IsSkinned() {
+            gpuMesh.skinBuffer = CreateBuffer(
+                device,
+                Sdl:::SDL_GPU_BUFFERUSAGE_VERTEX,
+                skinByteCount
+            );
+            gpuMesh.bounds = SkinnedBounds(gpuMesh.bounds);
+        }
+        if gpuMesh.vertexBuffer == null || (mesh->IsSkinned() && gpuMesh.skinBuffer == null) ||
+            gpuMesh.indexBuffer == null {
             failure: string! = SdlFailure("SDL_CreateGPUBuffer");
             gpuMesh.Release(device);
             return Result<GpuMesh, string!>:::Err(failure!);
@@ -376,6 +413,26 @@ lantern:::gpu :: namespace {
                 gpuMesh.Release(device);
                 return Result<GpuMesh, string!>:::Err(failure!);
             }
+            skinTransfer~ raw Sdl:::SDL_GPUTransferBuffer~* = null;
+            if mesh->IsSkinned() {
+                skinTransfer = CreateTransferBuffer(device, skinByteCount, true);
+                skinMapped~ raw u8~* = null;
+                if skinTransfer != null {
+                    skinMapped = Sdl:::SDL_MapGPUTransferBuffer(device, skinTransfer, false);
+                }
+                if skinMapped == null {
+                    failure: string! = SdlFailure("SDL_MapGPUTransferBuffer");
+                    Sdl:::SDL_ReleaseGPUTransferBuffer(device, transfer);
+                    Sdl:::SDL_ReleaseGPUTransferBuffer(device, indexTransfer);
+                    if skinTransfer != null {
+                        Sdl:::SDL_ReleaseGPUTransferBuffer(device, skinTransfer);
+                    }
+                    gpuMesh.Release(device);
+                    return Result<GpuMesh, string!>:::Err(failure!);
+                }
+                lantern:::copyskin:::memcpy(skinMapped, mesh->skin, usize(skinByteCount));
+                Sdl:::SDL_UnmapGPUTransferBuffer(device, skinTransfer);
+            }
             copyPass := Sdl:::SDL_BeginGPUCopyPass(commandBuffer);
             vertexSource := Sdl:::SDL_GPUTransferBufferLocation { transfer_buffer: transfer, offset: 0 };
             vertexDestination := Sdl:::SDL_GPUBufferRegion { buffer: gpuMesh.vertexBuffer, offset: 0, size: vertexByteCount };
@@ -383,8 +440,23 @@ lantern:::gpu :: namespace {
             indexSource := Sdl:::SDL_GPUTransferBufferLocation { transfer_buffer: indexTransfer, offset: 0 };
             indexDestination := Sdl:::SDL_GPUBufferRegion { buffer: gpuMesh.indexBuffer, offset: 0, size: indexByteCount };
             Sdl:::SDL_UploadToGPUBuffer(copyPass, indexSource, indexDestination, false);
+            if skinTransfer != null {
+                skinSource := Sdl:::SDL_GPUTransferBufferLocation {
+                    transfer_buffer: skinTransfer,
+                    offset: 0
+                };
+                skinDestination := Sdl:::SDL_GPUBufferRegion {
+                    buffer: gpuMesh.skinBuffer,
+                    offset: 0,
+                    size: skinByteCount
+                };
+                Sdl:::SDL_UploadToGPUBuffer(copyPass, skinSource, skinDestination, false);
+            }
             Sdl:::SDL_EndGPUCopyPass(copyPass);
             Sdl:::SDL_ReleaseGPUTransferBuffer(device, indexTransfer);
+            if skinTransfer != null {
+                Sdl:::SDL_ReleaseGPUTransferBuffer(device, skinTransfer);
+            }
             if !SubmitUpload(commandBuffer, device, transfer) {
                 failure: string! = SdlFailure("SDL_SubmitGPUCommandBuffer");
                 gpuMesh.Release(device);

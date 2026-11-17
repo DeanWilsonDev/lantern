@@ -1,0 +1,317 @@
+lantern:::animation :: namespace {
+    /** The mannequin's joint indices, in the order `MannequinRig` adds them. */
+    MANNEQUIN_HIPS: usize : 0;
+    MANNEQUIN_SPINE: usize : 1;
+    MANNEQUIN_CHEST: usize : 2;
+    MANNEQUIN_NECK: usize : 3;
+    MANNEQUIN_HEAD: usize : 4;
+    MANNEQUIN_LEFT_UPPER_ARM: usize : 5;
+    MANNEQUIN_LEFT_FOREARM: usize : 6;
+    MANNEQUIN_LEFT_HAND: usize : 7;
+    MANNEQUIN_RIGHT_UPPER_ARM: usize : 8;
+    MANNEQUIN_RIGHT_FOREARM: usize : 9;
+    MANNEQUIN_RIGHT_HAND: usize : 10;
+    MANNEQUIN_LEFT_THIGH: usize : 11;
+    MANNEQUIN_LEFT_SHIN: usize : 12;
+    MANNEQUIN_LEFT_FOOT: usize : 13;
+    MANNEQUIN_RIGHT_THIGH: usize : 14;
+    MANNEQUIN_RIGHT_SHIN: usize : 15;
+    MANNEQUIN_RIGHT_FOOT: usize : 16;
+
+    /** The motions the mannequin's built-in clips are generated from. */
+    MannequinMotion :: enum {
+        /** Standing still and breathing. */
+        Idle,
+        /** A walking cycle, about 1.6 m a second at its own speed. */
+        Walk,
+        /** A running cycle, about 5 m a second at its own speed. */
+        Run,
+        /** Leaving the ground: legs tucked, arms up. Plays once. */
+        Jump,
+        /** Falling: arms out, legs hanging. */
+        Fall,
+        /** Crouching low with the arms forward. */
+        Crouch,
+        /** A raised arm waving. Plays once. */
+        Wave,
+        /** Hanging a little way into the air with the arms reaching for a handhold. */
+        Reach
+    }
+
+    /** An angle in degrees as radians. */
+    Degrees :: (degrees: f32) -> f32 {
+        return degrees * Math:::PI / 180.0f;
+    }
+
+    /** A rotation from three angles in degrees: about x (positive swings a limb that hangs down forwards), y, then z. */
+    Euler :: (xDegrees: f32, yDegrees: f32, zDegrees: f32) -> Quaternion {
+        return lantern:::core:::QuaternionFromEulerYxz(
+            Degrees(yDegrees),
+            Degrees(xDegrees),
+            Degrees(zDegrees)
+        );
+    }
+
+    /**
+     * The mannequin: a small humanoid, 1.8 m tall and facing -z like every Lantern character, with 17 joints (hips,
+     * a three-part spine and neck and head, and two arms and legs of three joints each), plus the clips `idle`, `walk`,
+     * `run`, `jump`, `fall`, `crouch`, `wave` and `reach`. It exists so a game has an animated character before it has
+     * authored art; `MannequinMesh` makes the skinned mesh that goes with the rig.
+     */
+    MannequinRig :: () -> Rig*! {
+        rig := new Rig();
+        skeleton: Skeleton~* = rig->skeleton;
+        hips: i32 = skeleton->AddJoint("hips", -1, JointTransform:::At(Vec3 { y: 0.95f }));
+        spine: i32 = skeleton->AddJoint("spine", hips, JointTransform:::At(Vec3 { y: 0.12f }));
+        chest: i32 = skeleton->AddJoint("chest", spine, JointTransform:::At(Vec3 { y: 0.18f }));
+        neck: i32 = skeleton->AddJoint("neck", chest, JointTransform:::At(Vec3 { y: 0.22f }));
+        skeleton->AddJoint("head", neck, JointTransform:::At(Vec3 { y: 0.08f }));
+        for side~ i32 = 0; side < 2; side++ {
+            sign: f32 = side == 0 ? -1.0f : 1.0f;
+            prefix: string = side == 0 ? "left" : "right";
+            upperName: string! = `${prefix}UpperArm`;
+            foreName: string! = `${prefix}Forearm`;
+            handName: string! = `${prefix}Hand`;
+            upper: i32 = skeleton->AddJoint(
+                upperName,
+                chest,
+                JointTransform:::At(Vec3 { x: sign * 0.21f, y: 0.12f })
+            );
+            fore: i32 = skeleton->AddJoint(
+                foreName,
+                upper,
+                JointTransform:::At(Vec3 { y: -0.28f })
+            );
+            skeleton->AddJoint(handName, fore, JointTransform:::At(Vec3 { y: -0.26f }));
+            delete upperName;
+            delete foreName;
+            delete handName;
+        }
+        for side~ i32 = 0; side < 2; side++ {
+            sign: f32 = side == 0 ? -1.0f : 1.0f;
+            prefix: string = side == 0 ? "left" : "right";
+            thighName: string! = `${prefix}Thigh`;
+            shinName: string! = `${prefix}Shin`;
+            footName: string! = `${prefix}Foot`;
+            thigh: i32 = skeleton->AddJoint(
+                thighName,
+                hips,
+                JointTransform:::At(Vec3 { x: sign * 0.1f, y: -0.04f })
+            );
+            shin: i32 = skeleton->AddJoint(
+                shinName,
+                thigh,
+                JointTransform:::At(Vec3 { y: -0.43f })
+            );
+            skeleton->AddJoint(footName, shin, JointTransform:::At(Vec3 { y: -0.4f }));
+            delete thighName;
+            delete shinName;
+            delete footName;
+        }
+        AddMannequinClip(rig, "idle", 3.0f, MannequinMotion:::Idle, 8);
+        AddMannequinClip(rig, "walk", 1.0f, MannequinMotion:::Walk, 8);
+        AddMannequinClip(rig, "run", 0.7f, MannequinMotion:::Run, 8);
+        AddMannequinClip(rig, "jump", 0.5f, MannequinMotion:::Jump, 4);
+        AddMannequinClip(rig, "fall", 1.0f, MannequinMotion:::Fall, 8);
+        AddMannequinClip(rig, "crouch", 1.0f, MannequinMotion:::Crouch, 2);
+        AddMannequinClip(rig, "wave", 1.2f, MannequinMotion:::Wave, 12);
+        AddMannequinClip(rig, "reach", 1.0f, MannequinMotion:::Reach, 8);
+        return rig!;
+    }
+
+    /**
+     * Bakes a motion into a clip: the motion is a formula for the pose at a phase from 0 to 1, evaluated at `keyCount + 1`
+     * evenly spaced times. A cycle's last key repeats its first (the phase wraps), so looping is seamless.
+     */
+    AddMannequinClip :: (
+        rig: Rig~*,
+        name: string,
+        duration: f32,
+        motion: MannequinMotion,
+        keyCount: i32
+    ) -> void {
+        clip := new AnimationClip(name, duration);
+        for key~ i32 = 0; key <= keyCount; key++ {
+            phase: f32 = f32(key) / f32(keyCount);
+            pose: Array<JointTransform>! = MannequinPose(rig->skeleton, motion, phase);
+            for joint~ usize = 0; joint < pose.length(); joint++ {
+                clip->AddKey(
+                    i32(joint),
+                    phase * duration,
+                    pose[joint].translation,
+                    pose[joint].rotation
+                );
+            }
+            delete pose;
+        }
+        rig->AddClip(clip!);
+    }
+
+    /** Replaces one joint's rotation in a pose. */
+    Rotate :: (pose: Array<JointTransform~>, joint: usize, rotation: Quaternion) -> void {
+        pose[joint].rotation = rotation;
+    }
+
+    /**
+     * The mannequin's pose for a motion at a phase. Angles are written in degrees about x, y and z; a positive x angle
+     * swings a hanging limb forwards, so walking is two thighs swinging in opposite directions with the knees
+     * bending as each leg passes under the body.
+     */
+    MannequinPose :: (
+        skeleton: Skeleton*,
+        motion: MannequinMotion,
+        phase: f32
+    ) -> Array<JointTransform>! {
+        pose~ Array<JointTransform>! = skeleton->RestPose();
+        turn: f32 = phase * 2.0f * Math:::PI;
+        sine: f32 = Math:::sin(turn);
+        cosine: f32 = Math:::cos(turn);
+        hipsHeight: f32 = skeleton->bindPose[MANNEQUIN_HIPS].translation.y;
+        when motion {
+            MannequinMotion:::Idle -> {
+                Rotate(pose, MANNEQUIN_SPINE, Euler(1.5f * sine, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_CHEST, Euler(1.5f * sine, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_HEAD, Euler(-1.5f * sine, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_UPPER_ARM, Euler(2.0f * sine, 0.0f, -4.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_UPPER_ARM, Euler(-2.0f * sine, 0.0f, 4.0f));
+                Rotate(pose, MANNEQUIN_LEFT_FOREARM, Euler(-8.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_FOREARM, Euler(-8.0f, 0.0f, 0.0f));
+                pose[MANNEQUIN_HIPS].translation = Vec3 { y: hipsHeight - 0.004f * (1.0f - cosine) };
+            },
+            MannequinMotion:::Walk -> {
+                StrideCycle(pose, turn, 30.0f, 55.0f, 28.0f, 22.0f, 0.0f, 0.02f, hipsHeight);
+            },
+            MannequinMotion:::Run -> {
+                StrideCycle(pose, turn, 52.0f, 105.0f, 55.0f, 85.0f, 12.0f, 0.045f, hipsHeight);
+            },
+            MannequinMotion:::Jump -> {
+                lift: f32 = Math:::min(phase * 2.0f, 1.0f);
+                Rotate(pose, MANNEQUIN_LEFT_THIGH, Euler(60.0f * lift, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_THIGH, Euler(15.0f * lift, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_SHIN, Euler(-85.0f * lift, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_SHIN, Euler(-40.0f * lift, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_UPPER_ARM, Euler(120.0f * lift, 0.0f, -15.0f * lift));
+                Rotate(pose, MANNEQUIN_RIGHT_UPPER_ARM, Euler(120.0f * lift, 0.0f, 15.0f * lift));
+                Rotate(pose, MANNEQUIN_LEFT_FOREARM, Euler(-20.0f * lift, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_FOREARM, Euler(-20.0f * lift, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_SPINE, Euler(-6.0f * lift, 0.0f, 0.0f));
+            },
+            MannequinMotion:::Fall -> {
+                Rotate(pose, MANNEQUIN_LEFT_UPPER_ARM, Euler(10.0f * sine, 0.0f, -75.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_UPPER_ARM, Euler(-10.0f * sine, 0.0f, 75.0f));
+                Rotate(pose, MANNEQUIN_LEFT_FOREARM, Euler(-25.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_FOREARM, Euler(-25.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_THIGH, Euler(18.0f + 6.0f * sine, 0.0f, -4.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_THIGH, Euler(-8.0f - 6.0f * sine, 0.0f, 4.0f));
+                Rotate(pose, MANNEQUIN_LEFT_SHIN, Euler(-30.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_SHIN, Euler(-18.0f, 0.0f, 0.0f));
+            },
+            MannequinMotion:::Crouch -> {
+                Rotate(pose, MANNEQUIN_LEFT_THIGH, Euler(78.0f, 0.0f, -6.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_THIGH, Euler(78.0f, 0.0f, 6.0f));
+                Rotate(pose, MANNEQUIN_LEFT_SHIN, Euler(-120.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_SHIN, Euler(-120.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_FOOT, Euler(40.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_FOOT, Euler(40.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_SPINE, Euler(-22.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_CHEST, Euler(-12.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_HEAD, Euler(24.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_UPPER_ARM, Euler(55.0f, 0.0f, -8.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_UPPER_ARM, Euler(55.0f, 0.0f, 8.0f));
+                Rotate(pose, MANNEQUIN_LEFT_FOREARM, Euler(-35.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_FOREARM, Euler(-35.0f, 0.0f, 0.0f));
+                pose[MANNEQUIN_HIPS].translation = Vec3 { y: 0.52f, z: 0.06f };
+            },
+            MannequinMotion:::Wave -> {
+                raise: f32 = Math:::min(Math:::min(phase * 5.0f, (1.0f - phase) * 5.0f), 1.0f);
+                Rotate(pose, MANNEQUIN_RIGHT_UPPER_ARM, Euler(20.0f * raise, 0.0f, 150.0f * raise));
+                Rotate(
+                    pose,
+                    MANNEQUIN_RIGHT_FOREARM,
+                    Euler(0.0f, 0.0f, (-20.0f + 28.0f * Math:::sin(turn * 3.0f)) * raise)
+                );
+                Rotate(pose, MANNEQUIN_CHEST, Euler(0.0f, 0.0f, -4.0f * raise));
+                Rotate(pose, MANNEQUIN_HEAD, Euler(0.0f, 0.0f, 6.0f * raise));
+            },
+            MannequinMotion:::Reach -> {
+                Rotate(pose, MANNEQUIN_LEFT_UPPER_ARM, Euler(165.0f, 0.0f, -10.0f + 3.0f * sine));
+                Rotate(pose, MANNEQUIN_RIGHT_UPPER_ARM, Euler(165.0f, 0.0f, 10.0f - 3.0f * sine));
+                Rotate(pose, MANNEQUIN_LEFT_FOREARM, Euler(-12.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_FOREARM, Euler(-12.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_THIGH, Euler(10.0f + 6.0f * sine, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_THIGH, Euler(10.0f - 6.0f * sine, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_LEFT_SHIN, Euler(-22.0f, 0.0f, 0.0f));
+                Rotate(pose, MANNEQUIN_RIGHT_SHIN, Euler(-22.0f, 0.0f, 0.0f));
+            }
+        }
+        return pose!;
+    }
+
+    /**
+     * A walking or running cycle. `turn` is the phase in radians; the legs swing `legSwing` degrees from the hip and bend
+     * the knee up to `kneeBend` as they pass; the arms swing `armSwing` the opposite way to the leg on their side with the
+     * elbows bent `elbowBend`; the body leans forward `lean` degrees, rises and falls `bounce` metres twice a cycle and twists
+     * a few degrees with each step.
+     */
+    StrideCycle :: (
+        pose: Array<JointTransform~>,
+        turn: f32,
+        legSwing: f32,
+        kneeBend: f32,
+        armSwing: f32,
+        elbowBend: f32,
+        lean: f32,
+        bounce: f32,
+        hipsHeight: f32
+    ) -> void {
+        rightPhase: f32 = turn;
+        leftPhase: f32 = turn + Math:::PI;
+        Rotate(pose, MANNEQUIN_RIGHT_THIGH, Euler(legSwing * Math:::sin(rightPhase), 0.0f, 0.0f));
+        Rotate(pose, MANNEQUIN_LEFT_THIGH, Euler(legSwing * Math:::sin(leftPhase), 0.0f, 0.0f));
+        Rotate(
+            pose,
+            MANNEQUIN_RIGHT_SHIN,
+            Euler(-(6.0f + kneeBend * Math:::max(0.0f, Math:::cos(rightPhase))), 0.0f, 0.0f)
+        );
+        Rotate(
+            pose,
+            MANNEQUIN_LEFT_SHIN,
+            Euler(-(6.0f + kneeBend * Math:::max(0.0f, Math:::cos(leftPhase))), 0.0f, 0.0f)
+        );
+        Rotate(pose, MANNEQUIN_RIGHT_FOOT, Euler(8.0f * Math:::sin(rightPhase - 0.8f), 0.0f, 0.0f));
+        Rotate(pose, MANNEQUIN_LEFT_FOOT, Euler(8.0f * Math:::sin(leftPhase - 0.8f), 0.0f, 0.0f));
+        Rotate(
+            pose,
+            MANNEQUIN_RIGHT_UPPER_ARM,
+            Euler(-armSwing * Math:::sin(rightPhase), 0.0f, 5.0f)
+        );
+        Rotate(
+            pose,
+            MANNEQUIN_LEFT_UPPER_ARM,
+            Euler(-armSwing * Math:::sin(leftPhase), 0.0f, -5.0f)
+        );
+        Rotate(
+            pose,
+            MANNEQUIN_RIGHT_FOREARM,
+            Euler(
+                -(elbowBend + 0.4f * elbowBend * Math:::max(0.0f, -Math:::sin(rightPhase))),
+                0.0f,
+                0.0f
+            )
+        );
+        Rotate(
+            pose,
+            MANNEQUIN_LEFT_FOREARM,
+            Euler(
+                -(elbowBend + 0.4f * elbowBend * Math:::max(0.0f, -Math:::sin(leftPhase))),
+                0.0f,
+                0.0f
+            )
+        );
+        Rotate(pose, MANNEQUIN_HIPS, Euler(0.0f, 5.0f * Math:::sin(turn), 0.0f));
+        Rotate(pose, MANNEQUIN_SPINE, Euler(-lean * 0.5f, -3.0f * Math:::sin(turn), 0.0f));
+        Rotate(pose, MANNEQUIN_CHEST, Euler(-lean * 0.5f, -4.0f * Math:::sin(turn), 0.0f));
+        Rotate(pose, MANNEQUIN_HEAD, Euler(lean * 0.7f, 6.0f * Math:::sin(turn), 0.0f));
+        pose[MANNEQUIN_HIPS].translation = Vec3 { y: hipsHeight - bounce + bounce * Math:::cos(turn * 2.0f) };
+    }
+}

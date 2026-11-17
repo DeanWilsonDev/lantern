@@ -21,6 +21,7 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`game-api.md`](game-api.md) | Every host function and type a Nyx game can call with its signature, examples from the platformer, and the hooks the engine calls. |
 | [`adding-a-level-and-a-mechanic.md`](adding-a-level-and-a-mechanic.md) | A tutorial: make a level, put it on the menu, then add a mechanic through an entity, a system, an event and a rule, and test it. |
 | [`crimson-and-thorn-slice.md`](crimson-and-thorn-slice.md) | Which design mechanics the platformer takes on, in what order, and where each lives in `games/platformer/`. |
+| [`animation.md`](animation.md) | Skeletons, clips, the animator's states and blending, GPU skinning, the Nyx API and the look-at layer. |
 | [`gameplay-prototypes.md`](gameplay-prototypes.md) | Twelve gameplay ideas, the companion's command model, the six prototype rooms, the crossing level and every tunable. |
 | [`grounded-adventure.md`](grounded-adventure.md) | The grounded feel, player-only climbing, the word and food minigames, the station and its trains, and every tunable. |
 | [`grounded-adventure-ideas.md`](grounded-adventure-ideas.md) | Five more ideas to test for the action-adventure direction, with how each would be fun and what it costs. |

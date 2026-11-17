@@ -1,0 +1,142 @@
+// A two-part arm skinned to a root, an upper joint and a lower joint, drawn straight up and then with the upper joint turned a
+// quarter turn. Straight, the lit pixels sit on both sides of the middle of the picture about equally; bent, the arm
+// points to the left, so nearly all of them are on the left. The same bent pose is also drawn as a shadow caster to check
+// that the skinned shadow pipeline runs, and an identity palette is checked to draw exactly what the mesh draws unskinned.
+lantern :: import lantern;
+
+LitPixelsOnSides :: (pixels: Array<u8>, width: u32, height: u32) -> u32[2] {
+    counts~ u32[2] = [0, 0];
+    for y~ u32 = 0; y < height; y++ {
+        for x~ u32 = 0; x < width; x++ {
+            offset: usize = usize((y * width + x) * 4);
+            if pixels[offset] > 40 || pixels[offset + 1] > 40 || pixels[offset + 2] > 40 {
+                if x < width / 2 {
+                    counts[0] += 1;
+                } else {
+                    counts[1] += 1;
+                }
+            }
+        }
+    }
+    return counts;
+}
+
+NewWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->post.ambientOcclusionEnabled = false;
+    world->post.antiAliasingEnabled = false;
+    world->light = lantern:::renderer:::DirectionalLight {
+        direction: Vec3 { x: 0.0f, y: -1.0f, z: -1.0f },
+        color: lantern:::core:::Color:::Black(),
+        ambient: lantern:::core:::Color:::Rgb(0.8f, 0.8f, 0.8f),
+        groundAmbient: lantern:::core:::Color:::Rgb(0.8f, 0.8f, 0.8f)
+    };
+    world->clearColor = lantern:::core:::Color:::Black();
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 1.0f, z: 6.0f }, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+    return world!;
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            rig := lantern:::animation_support:::MakeArmRig();
+            defer delete rig;
+            armData := new lantern:::renderer:::MeshData();
+            defer delete armData;
+            lantern:::animation:::AppendSkinnedTube(armData, rig->skeleton, 1, 2, 0, false, 0.15f, 0.15f);
+            assert(armData->IsSkinned(), "the arm has skin data");
+            skinned~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(armData) {
+                Result:::Ok(handle) -> {
+                    skinned = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            floorData := lantern:::renderer:::Plane(20.0f, 20.0f);
+            defer delete floorData;
+            floor~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(floorData) {
+                Result:::Ok(handle) -> {
+                    floor = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            animator := new lantern:::animation:::Animator();
+            defer delete animator;
+            blend: i32 = animator->AddBlendState("lift", "amount");
+            animator->AddBlendClip(blend, 0, 0.0f);
+            animator->AddBlendClip(blend, 1, 1.0f);
+            size: u32 = 128;
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            sides~ u32[2][2] = [[0, 0], [0, 0]];
+            for variant~ usize = 0; variant < 2; variant++ {
+                animator->SetParameter("amount", variant == 0 ? 0.0f : 1.0f);
+                animator->Update(rig, 0.0f);
+                if variant == 1 {
+                    animator->Update(rig, 0.9f);
+                }
+                world := NewWorld();
+                defer delete world;
+                palette: Array<Mat4>! = animator->Palette(rig);
+                defer delete palette;
+                offset: i32 = world->AddJointPalette(palette);
+                world->draws.push(lantern:::renderer:::DrawItem { mesh: skinned, transform: Mat4 { }, color: lantern:::core:::Color:::White(), jointOffset: offset });
+                when renderer->RenderOffscreen(world, size, size, pixels) {
+                    Result:::Ok(report) -> {
+                        assert(report.drawsSubmitted == 1, "the skinned arm was drawn");
+                        sides[variant] = LitPixelsOnSides(pixels, size, size);
+                    },
+                    Result:::Err(message) -> {
+                        print(message);
+                        delete message;
+                        return 1;
+                    }
+                }
+            }
+            assert(sides[0][0] > 50 && sides[0][1] > 50, "the straight arm is lit on both sides");
+            assert(sides[1][0] > 50 && sides[1][1] < sides[1][0] / 8, "the bent arm lies to the left");
+            floorWorld := NewWorld();
+            defer delete floorWorld;
+            floorWorld->light.castsShadows = true;
+            floorWorld->light.direction = lantern:::core:::Normalize3(Vec3 { x: 0.3f, y: -1.0f, z: -0.2f });
+            floorWorld->light.color = lantern:::core:::Color:::Rgb(1.0f, 1.0f, 1.0f);
+            floorWorld->draws.push(lantern:::renderer:::DrawItem { mesh: floor, transform: Mat4 { }, color: lantern:::core:::Color:::White() });
+            shadowPalette: Array<Mat4>! = animator->Palette(rig);
+            defer delete shadowPalette;
+            shadowOffset: i32 = floorWorld->AddJointPalette(shadowPalette);
+            floorWorld->draws.push(lantern:::renderer:::DrawItem { mesh: skinned, transform: Mat4 { }, color: lantern:::core:::Color:::White(), jointOffset: shadowOffset });
+            when renderer->RenderOffscreen(floorWorld, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    assert(report.shadowDraws > 0, "the skinned arm was drawn into the shadow map");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            print("a skinned mesh bends with its palette");
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        }
+    }
+    return 0;
+}

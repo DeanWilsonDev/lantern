@@ -1,6 +1,7 @@
 AdventureTuning :: import AdventureTuning;
 PlayerTuning :: import PlayerTuning;
 GameAssets :: import GameAssets;
+CharacterAnimator :: import CharacterAnimator;
 Math :: import standard:::Math;
 
 // The player: an engine character controller, the entities that show it (a capsule body with
@@ -16,10 +17,10 @@ Math :: import standard:::Math;
 Player :: class {
 public:
     root~ i64 = 0;
-    // The two meshes that make up the body, so photo mode can hide them while the camera is at the
-    // player's eyes (otherwise the lens would sit inside the capsule).
-    bodyMesh~ i64 = 0;
-    visorMesh~ i64 = 0;
+    // The animated body. Photo mode hides it while the camera is at the player's eyes (otherwise
+    // the lens would sit inside the head).
+    animation~ CharacterAnimator = new CharacterAnimator();
+    isAnimationReady~ bool = false;
     blobCenter~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
     blobRadius~ f32 = 0.0f;       // 0 when there is no floor below to put a shadow on
     spawn~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
@@ -47,24 +48,13 @@ public:
         easedDirection = lantern:::math:::Vec3:::Zero();
         recoverySecondsLeft = 0.0f;
 
-        // The root sits at the feet; the capsule mesh is centred, so the body is a child lifted
-        // by half the height.
+        // The root sits at the feet, and so does the mannequin, whose origin is at its feet.
         // Parenting means a child's position is relative to its parent: moving and turning the
-        // root carries the body and visor with it, so Move() only has to place one entity.
+        // root carries the body with it, so Move() only has to place one entity.
         root = lantern:::world:::Spawn("player", spawnPosition);
-        body := lantern:::world:::Spawn("player_body", { y: PlayerTuning:::HEIGHT * 0.5f });
-        lantern:::world:::SetTexturedMesh(body, assets.playerMesh, assets.playerTexture, "E8A33D");
-        lantern:::world:::SetParent(body, root);
-        // A visor on the body's front (-Z), so you can see which way the player faces.
-        // Its position is relative to the body's centre: 0.42 m up (eye level, halfway to the
-        // top of the capsule) and 0.3 m forward, just inside the 0.35 m radius so it pokes out of the
-        // curved surface. The unit cube is scaled into a flat bar 0.4 x 0.14 x 0.16 m.
-        visor := lantern:::world:::Spawn("player_visor", { y: 0.42f, z: -0.3f });
-        lantern:::world:::SetMesh(visor, assets.unitCubeMesh, "203040");
-        lantern:::world:::SetScale(visor, { x: 0.4f, y: 0.14f, z: 0.16f });
-        lantern:::world:::SetParent(visor, body);
-        bodyMesh = body;
-        visorMesh = visor;
+        animation = new CharacterAnimator();
+        animation.Create(root, "player_body", assets.mannequinRig, assets.playerTexture, "E8A33D");
+        isAnimationReady = true;
     }
 
     // Switches the player between the platformer feel Spawn gives (false) and the grounded feel
@@ -88,12 +78,10 @@ public:
         }
     }
 
-    // Shows or hides the player's body. Visibility belongs to a mesh, not to a branch of the tree,
-    // so the body and the visor are each told.
+    // Shows or hides the player's body. Visibility belongs to a mesh, not to a branch of the tree.
     SetBodyVisible~: (isVisible: bool) -> void {
-        guard bodyMesh != 0;
-        lantern:::world:::SetVisible(bodyMesh, isVisible);
-        lantern:::world:::SetVisible(visorMesh, isVisible);
+        guard isAnimationReady;
+        animation.SetVisible(isVisible);
     }
 
     // Back at `position` (a checkpoint, or the level's spawn point), at rest, facing forward.
@@ -105,6 +93,7 @@ public:
         facingYaw = 0.0f;
         lantern:::world:::Teleport(root, position);
         lantern:::world:::SetYaw(root, facingYaw);
+        animation.Forget();
     }
 
     // Puts the player's feet where a swing says they are. The Anchor moves the player along its arc
@@ -114,6 +103,7 @@ public:
         facingYaw = yaw;
         lantern:::world:::SetPosition(root, feet);
         lantern:::world:::SetYaw(root, facingYaw);
+        animation.Observe(feet, false, 0.0f);
         PlaceShadow();
     }
 
@@ -167,6 +157,11 @@ public:
         }
         lantern:::world:::SetPosition(root, controller.FeetPosition());
         lantern:::world:::SetYaw(root, facingYaw);
+        // Tell the animator what happened; it picks the clips. The controller says on the step a jump starts.
+        if step.Jumped() {
+            animation.Jump();
+        }
+        animation.Observe(controller.FeetPosition(), controller.IsGrounded(), dt);
         PlaceShadow();
         return step;
     }
