@@ -35,6 +35,7 @@ NightLights :: import NightLights;
 PhotoMode :: import PhotoMode;
 Player :: import Player;
 Partner :: import Partner;
+NavigationDynamics :: import NavigationDynamics;
 PartnerTuning :: import PartnerTuning;
 PlayerTuning :: import PlayerTuning;
 StreetsAutopilot :: import StreetsAutopilot;
@@ -199,6 +200,7 @@ private:
     static PROTOTYPE_WORD_MARKET_PATH :: "worlds/prototypes/word-market.world.json";
     static STATION_PATH :: "worlds/the-station.world.json";
     static PROTOTYPE_CAMERA_ROOM_PATH :: "worlds/prototypes/the-camera-room.world.json";
+    static PROTOTYPE_LIFT_PATH :: "worlds/prototypes/the-lift.world.json";
     static PROTOTYPE_FLOW_PATH :: "worlds/prototypes/flow-and-fragile.world.json";
     static ROOFTOPS_PATH :: "worlds/rooftops.world.json";
     static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
@@ -242,6 +244,8 @@ private:
     // The companion who works beside you (game-entities/partner.nyx), in the prototype rooms. A level has
     // either her or the route-following companion above, depending on its markers.
     partner~ Partner = new Partner();
+    // What moves in the level, as the partner's navigation graph sees it (game-systems/navigation-dynamics.nyx).
+    navigationDynamics~ NavigationDynamics = new NavigationDynamics();
     switchSystem~ SwitchSystem = new SwitchSystem();
     // The grounded adventure prototypes (docs/gameplay-prototypes.md): the player's climbing, the word and food
     // minigames, and the danger on a train's track. `seenClimbRestartCount` is the rules' restart count when the
@@ -292,6 +296,8 @@ private:
         companion.Spawn(level.companionStops, level.anchors, assets.mannequinRig, assets.playerTexture);
         if level.hasPartner {
             partner.Spawn(level.partnerStart, assets.mannequinRig, assets.playerTexture, level.teamBeats);
+            navigationDynamics.Register(level.gates, level.crumbles, level.platforms);
+            partner.UseNavigationDynamics(navigationDynamics);
         } else {
             partner.isPresent = false;
         }
@@ -540,6 +546,7 @@ private:
         }
         activeChannels := ActiveChannels();
         if partner.isPresent {
+            navigationDynamics.Update();
             partner.RememberTrail(player.FeetPosition(), player.controller.IsGrounded());
             partner.Update(player.FeetPosition(), player.controller.IsGrounded(), activeChannels, dt);
             if partner.TakePullRequest() {
@@ -759,6 +766,7 @@ private:
             PlayWordMarket -> { PlayLevel(PROTOTYPE_WORD_MARKET_PATH); },
             PlayTheStation -> { PlayLevel(STATION_PATH); },
             PlayTheCameraRoom -> { PlayLevel(PROTOTYPE_CAMERA_ROOM_PATH); },
+            PlayTheLift -> { PlayLevel(PROTOTYPE_LIFT_PATH); },
             PlayStreetsLater -> { PlayLevel(STREETS_LATER_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {

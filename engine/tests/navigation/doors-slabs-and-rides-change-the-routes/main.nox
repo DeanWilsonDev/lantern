@@ -1,0 +1,126 @@
+lantern :: import lantern;
+
+Ground :: (
+    world: lantern:::physics:::CollisionWorld~*,
+    minimumX: f32,
+    maximumX: f32,
+    halfDepth: f32
+) -> void {
+    world->AddStaticBox(
+        Vec3 { x: (minimumX + maximumX) * 0.5f, y: -0.5f, z: 0.0f },
+        Vec3 { x: (maximumX - minimumX) * 0.5f, y: 0.5f, z: halfDepth }
+    );
+}
+
+Pathfinder :: (world: lantern:::physics:::CollisionWorld*) -> lantern:::navigation:::NavigationMesh*! {
+    mesh := new lantern:::navigation:::NavigationMesh();
+    mesh->Build(world, lantern:::navigation:::NavigationAgent { });
+    return mesh!;
+}
+
+FeaturePoints :: (path: lantern:::navigation:::NavigationPath*, feature: i32) -> i32 {
+    found~ i32 = 0;
+    for pointFeature in path->features {
+        if pointFeature == feature {
+            found += 1;
+        }
+    }
+    return found;
+}
+
+main :: () -> i32 {
+    left: Vec3 = Vec3 { x: -7.0f, y: 0.0f, z: 0.0f };
+    right: Vec3 = Vec3 { x: 7.0f, y: 0.0f, z: 0.0f };
+
+    corridor := new lantern:::physics:::CollisionWorld();
+    defer delete corridor;
+    Ground(corridor, -10.0f, 10.0f, 1.0f);
+    corridorMesh := Pathfinder(corridor);
+    defer delete corridorMesh;
+    door := corridorMesh->AddGate(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }, Vec3 { x: 0.2f, y: 1.0f, z: 1.2f }, false);
+    assert(door == 0, "the first feature is feature 0");
+    shutRoute := corridorMesh->FindRoute(corridor, left, right, true);
+    defer delete shutRoute;
+    assert(shutRoute->isComplete, "with no way round, the route goes through the shut door");
+    assert(FeaturePoints(shutRoute, door) > 0, "and marks the point in the door, so the walker knows to wait");
+    assert(shutRoute->features[0] == lantern:::navigation:::NO_FEATURE, "the way to the door is free");
+    corridorMesh->SetFeatureAvailable(door, true);
+    openRoute := corridorMesh->FindRoute(corridor, left, right, true);
+    defer delete openRoute;
+    assert(openRoute->isComplete, "an open door is a way through");
+    assert(FeaturePoints(openRoute, door) == 0, "and nothing to wait for");
+    assert(corridorMesh->Revision() == 1, "opening the door is one change");
+    corridorMesh->SetFeatureAvailable(door, true);
+    assert(corridorMesh->Revision() == 1, "opening an open door is none");
+
+    hall := new lantern:::physics:::CollisionWorld();
+    defer delete hall;
+    Ground(hall, -10.0f, 10.0f, 5.0f);
+    hallMesh := Pathfinder(hall);
+    defer delete hallMesh;
+    hallDoor := hallMesh->AddGate(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }, Vec3 { x: 0.2f, y: 1.0f, z: 1.2f }, false);
+    aroundRoute := hallMesh->FindRoute(hall, left, right, true);
+    defer delete aroundRoute;
+    assert(aroundRoute->isComplete, "a hall with room beside the door has a way round it");
+    assert(FeaturePoints(aroundRoute, hallDoor) == 0, "so she doesn't wait for the door");
+
+    pit := new lantern:::physics:::CollisionWorld();
+    defer delete pit;
+    Ground(pit, -10.0f, -1.0f, 4.0f);
+    Ground(pit, 3.0f, 10.0f, 4.0f);
+    pitMesh := Pathfinder(pit);
+    defer delete pitMesh;
+    noBridge := pitMesh->FindRoute(pit, left, right, true);
+    defer delete noBridge;
+    assert(!noBridge->isComplete, "a four metre pit is too wide to jump");
+    slab := pitMesh->AddSurface(
+        pit,
+        Vec3 { x: 1.0f, y: -0.15f, z: 0.0f },
+        Vec3 { x: 2.0f, y: 0.15f, z: 4.0f },
+        true,
+        true,
+        false
+    );
+    overSlab := pitMesh->FindRoute(pit, left, right, true);
+    defer delete overSlab;
+    assert(overSlab->isComplete, "a slab over the pit is a way across");
+    refused := pitMesh->FindRoute(pit, left, right, false);
+    defer delete refused;
+    assert(!refused->isComplete, "unless the walker won't use fragile ground");
+    pitMesh->SetFeatureAvailable(slab, false);
+    broken := pitMesh->FindRoute(pit, left, right, true);
+    defer delete broken;
+    assert(!broken->isComplete, "a slab that has broken is not a way across");
+    pitMesh->SetFeatureAvailable(slab, true);
+    mended := pitMesh->FindRoute(pit, left, right, true);
+    defer delete mended;
+    assert(mended->isComplete, "and is one again when it comes back");
+
+    chasm := new lantern:::physics:::CollisionWorld();
+    defer delete chasm;
+    Ground(chasm, -12.0f, -4.0f, 4.0f);
+    Ground(chasm, 4.0f, 12.0f, 4.0f);
+    chasmMesh := Pathfinder(chasm);
+    defer delete chasmMesh;
+    lift := chasmMesh->AddRide(Vec3 { x: -3.0f, y: 0.0f, z: 0.0f }, Vec3 { x: 3.0f, y: 0.0f, z: 0.0f }, 2.5f);
+    assert(lift >= 0, "both ends of the trip have a landing");
+    ridden := chasmMesh->FindRoute(chasm, Vec3 { x: -8.0f, y: 0.0f, z: 0.0f }, Vec3 { x: 8.0f, y: 0.0f, z: 0.0f }, true);
+    defer delete ridden;
+    assert(ridden->isComplete, "a platform across the chasm is a way over");
+    rideKinds~ i32 = 0;
+    for kind in ridden->kinds {
+        if kind == lantern:::navigation:::LINK_RIDE {
+            rideKinds += 1;
+        }
+    }
+    assert(rideKinds == 1, "with one ride link");
+    assert(FeaturePoints(ridden, lift) == 1, "that names the platform");
+    chasmMesh->SetFeatureAvailable(lift, false);
+    stopped := chasmMesh->FindRoute(chasm, Vec3 { x: -8.0f, y: 0.0f, z: 0.0f }, Vec3 { x: 8.0f, y: 0.0f, z: 0.0f }, true);
+    defer delete stopped;
+    assert(!stopped->isComplete, "a platform that doesn't run is no way over");
+    nowhere := chasmMesh->AddRide(Vec3 { x: 0.0f, y: 0.0f, z: 30.0f }, Vec3 { x: 3.0f, y: 0.0f, z: 0.0f }, 2.5f);
+    assert(nowhere == -1, "a trip with no landing at one end isn't a ride");
+    print("doors, slabs and rides change the routes");
+    return 0;
+}

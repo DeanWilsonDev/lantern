@@ -35,7 +35,7 @@ lantern:::host :: namespace {
     }
 
     /**
-     * Declares the route type: `Count`, `Point`, `Link` and `IsComplete`.
+     * Declares the route type: `Count`, `Point`, `Link`, `Feature` and `IsComplete`.
      */
     DeclareNavigationPathType :: (math: MathTypes) -> lantern:::nyx:::HostType*! {
         paths := new lantern:::nyx:::HostType(NAVIGATION_PATH_TYPE_NAME);
@@ -79,11 +79,27 @@ lantern:::host :: namespace {
                 context->ReturnI32(found->path->kinds[usize(index)]);
             }
         });
+        paths->Method("Feature", "(index: i32) -> i32", true, new (context: lantern:::nyx:::CallContext~*) -> void {
+            index: i32 = context->I32(0);
+            if Stopped(context) {
+                return;
+            }
+            if found ~= NavigationPathOf(context) {
+                if index < 0 || index >= found->path->Length() {
+                    message: string! = `the route has no point ${index}`;
+                    NotFound(context, message);
+                    delete message;
+                    return;
+                }
+                context->ReturnI32(found->path->features[usize(index)]);
+            }
+        });
         return paths!;
     }
 
     /**
-     * Registers the route type and `lantern:::navigation`: `Build`, `Clear`, `NodeCount`, `FindPath` and `IsReachable`.
+     * Registers the route type and `lantern:::navigation`: `Build`, `Clear`, `NodeCount`, `FindPath`, `FindRoute`, `IsReachable` and the
+     * features that change after the build (`AddGate`, `AddSurface`, `AddRide`, `SetFeatureAvailable`, `IsFeatureAvailable`, `Revision`).
      */
     RegisterNavigationApi :: (
         runtime: lantern:::nyx:::Runtime~*,
@@ -138,6 +154,97 @@ lantern:::host :: namespace {
             unsafe {
                 found := state->navigationMesh->FindPath(state->collision, from, to);
                 context->ReturnObject(pathTypeHandle, new ScriptNavigationPath(found!));
+            }
+        });
+        navigationFunctions->Function("FindRoute", "(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3, allowFragile: bool) -> lantern:::navigation:::Path", new (context: lantern:::nyx:::CallContext~*) -> void [
+            state,
+            math,
+            pathTypeHandle
+        ] {
+            from: Vec3 = Vec3Argument(context, 0, math);
+            to: Vec3 = Vec3Argument(context, 1, math);
+            allowFragile: bool = context->Bool(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                found := state->navigationMesh->FindRoute(state->collision, from, to, allowFragile);
+                context->ReturnObject(pathTypeHandle, new ScriptNavigationPath(found!));
+            }
+        });
+        navigationFunctions->Function("AddGate", "(center: lantern:::math:::Vec3, halfExtents: lantern:::math:::Vec3, isOpen: bool) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [
+            state,
+            math
+        ] {
+            center: Vec3 = Vec3Argument(context, 0, math);
+            halfExtents: Vec3 = Vec3Argument(context, 1, math);
+            isOpen: bool = context->Bool(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                context->ReturnI32(state->navigationMesh->AddGate(center, halfExtents, isOpen));
+            }
+        });
+        navigationFunctions->Function("AddSurface", "(center: lantern:::math:::Vec3, halfExtents: lantern:::math:::Vec3, isOpen: bool, isFragile: bool, canBeWaitedFor: bool) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [
+            state,
+            math
+        ] {
+            center: Vec3 = Vec3Argument(context, 0, math);
+            halfExtents: Vec3 = Vec3Argument(context, 1, math);
+            isOpen: bool = context->Bool(2);
+            isFragile: bool = context->Bool(3);
+            canBeWaitedFor: bool = context->Bool(4);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                context->ReturnI32(state->navigationMesh->AddSurface(
+                    state->collision,
+                    center,
+                    halfExtents,
+                    isOpen,
+                    isFragile,
+                    canBeWaitedFor
+                ));
+            }
+        });
+        navigationFunctions->Function("AddRide", "(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3, reach: f32) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [
+            state,
+            math
+        ] {
+            from: Vec3 = Vec3Argument(context, 0, math);
+            to: Vec3 = Vec3Argument(context, 1, math);
+            reach: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                context->ReturnI32(state->navigationMesh->AddRide(from, to, reach));
+            }
+        });
+        navigationFunctions->Function("SetFeatureAvailable", "(feature: i32, isAvailable: bool) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            feature: i32 = context->I32(0);
+            isAvailable: bool = context->Bool(1);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                state->navigationMesh->SetFeatureAvailable(feature, isAvailable);
+            }
+        });
+        navigationFunctions->Function("IsFeatureAvailable", "(feature: i32) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            feature: i32 = context->I32(0);
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                context->ReturnBool(state->navigationMesh->IsFeatureAvailable(feature));
+            }
+        });
+        navigationFunctions->Function("Revision", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI32(state->navigationMesh->Revision());
             }
         });
         navigationFunctions->Function("IsReachable", "(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [
