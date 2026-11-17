@@ -307,6 +307,7 @@ Skeletal animation (see `docs/animation.md`). Ids are small integers valid until
 | Function | Does |
 | --- | --- |
 | `MannequinRig() -> i64` | Builds the humanoid rig and its mesh. Make it once, share it. |
+| `LoadRig(path, scale, yawDegrees) -> i64` | Loads a skinned, animated character from a glTF file under the assets folder (its first skin, its meshes and every animation as a clip) and returns a rig. `scale` and `yawDegrees` stand the model the way Lantern's characters stand (a model facing +z wants 180). |
 | `Spawn(entity, rig, texture, tint) -> i64` | Makes the entity an animated, skinned body and returns its animator. |
 | `AddState(animator, state, clip, loops)` | A state that plays one clip. |
 | `AddBlendState(animator, state, parameter)` | A state that mixes clips by a float parameter. |
@@ -317,6 +318,7 @@ Skeletal animation (see `docs/animation.md`). Ids are small integers valid until
 | `Play(animator, state, fadeSeconds)` | Force a crossfade into a state. |
 | `CurrentState(animator) -> string` | The state playing. |
 | `SetLookTarget(animator, target, weight)` | Turn chest, neck and head toward a world point. |
+| `SetFootPlacement(animator, enabled)` | Plant the feet on the real ground under them (stairs, slopes) while `enabled`; switch it off in the air. |
 
 ## Examples
 

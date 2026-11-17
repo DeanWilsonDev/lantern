@@ -271,6 +271,24 @@ lantern:::animation :: namespace {
             return Math:::max(lowDuration + (highDuration - lowDuration) * bracket.amount, 0.001f);
         }
 
+        /**
+         * How much faster or slower than the clips' own speed a blend state plays to keep the feet from sliding: the
+         * parameter's value (the character's speed) over the ground speed of the clips being mixed, between 0.6 and 1.6.
+         * 1 for a state whose clips don't say how fast they travel, and for a character that is nearly still.
+         */
+        StrideRate :: (rig: Rig*, state: i32) -> f32 {
+            current: AnimationState* = states[usize(state)];
+            guard current->parameter >= 0 return 1.0f;
+            value: f32 = parameterValues[usize(current->parameter)];
+            bracket: BlendBracket = Bracket(state, value);
+            lowSpeed: f32 = rig->clips[usize(current->clipIndices[bracket.low])]->groundSpeed;
+            highSpeed: f32 = rig->clips[usize(current->clipIndices[bracket.high])]->groundSpeed;
+            guard lowSpeed > 0.0f && highSpeed > 0.0f return 1.0f;
+            travelled: f32 = lowSpeed + (highSpeed - lowSpeed) * bracket.amount;
+            guard travelled > 0.2f && value > 0.2f return 1.0f;
+            return Math:::clamp(value / travelled, 0.6f, 1.6f);
+        }
+
         /** The local pose of a state at `phase` (0 to 1) as a new array the caller owns. */
         SampleState :: (rig: Rig*, state: i32, phase: f32) -> Array<JointTransform>! {
             current: AnimationState* = states[usize(state)];
@@ -453,7 +471,7 @@ lantern:::animation :: namespace {
 
         Advanced :: (rig: Rig*, state: i32, phase: f32, deltaTime: f32) -> f32 {
             current: AnimationState* = states[usize(state)];
-            next: f32 = phase + deltaTime * current->speed / StateDuration(rig, state);
+            next: f32 = phase + deltaTime * current->speed * StrideRate(rig, state) / StateDuration(rig, state);
             if current->loops {
                 return next - Math:::floor(next);
             }

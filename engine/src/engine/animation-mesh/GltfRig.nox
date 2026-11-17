@@ -1,0 +1,733 @@
+Cgltf :: import Cgltf;
+
+/** `memmove` declared to view cgltf's array of nodes as an indexable Nox array (the copy is zero bytes). */
+lantern:::gltfnodestructs :: foreign "c" {
+    memmove :: (destination: raw Cgltf:::cgltf_node~*, source: raw Cgltf:::cgltf_node~*, byteCount: usize) -> raw Cgltf:::cgltf_node[1048576]*;
+}
+
+/** `memmove` declared to view cgltf's array of animations as an indexable Nox array (the copy is zero bytes). */
+lantern:::gltfanimations :: foreign "c" {
+    memmove :: (destination: raw Cgltf:::cgltf_animation~*, source: raw Cgltf:::cgltf_animation~*, byteCount: usize) -> raw Cgltf:::cgltf_animation[1048576]*;
+}
+
+/** `memmove` declared to view an animation's array of channels as an indexable Nox array (the copy is zero bytes). */
+lantern:::gltfchannels :: foreign "c" {
+    memmove :: (destination: raw Cgltf:::cgltf_animation_channel~*, source: raw Cgltf:::cgltf_animation_channel~*, byteCount: usize) -> raw Cgltf:::cgltf_animation_channel[1048576]*;
+}
+
+lantern:::animation :: namespace {
+    Cgltf :: import Cgltf;
+
+    /**
+     * How a glTF character is turned into Lantern's: a size and a facing, so a file authored in other units and facing
+     * another way arrives the way the game's characters stand (1.8 m tall, facing -z, origin at the feet).
+     */
+    GltfRigOptions :: struct {
+        /** Multiplies every position and length. A model modelled in centimetres wants 0.01. */
+        scale~ f32 = 1.0f;
+        /** Turns the model about the up axis, in radians. glTF models usually face +z; Lantern's face -z, which is pi. */
+        yawRadians~ f32 = 0.0f;
+        /** Slides the model up or down so the lowest point of its bind pose is at y = 0. */
+        feetOnGround~ bool = true;
+    }
+
+    /**
+     * A skinned character read from a glTF file: its skeleton with the clips, and the mesh bound to it. Whoever receives it
+     * owns both: the rig goes into the animation system with `AddRig`, and the mesh is uploaded to the render backend and
+     * then deleted.
+     */
+    GltfRig :: struct {
+        /** The skeleton and the clips. */
+        rig~ Rig*!;
+        /** The skinned mesh. */
+        mesh~ lantern:::renderer:::MeshData*!;
+    }
+
+    /** One glTF animation channel that moves a joint: its key times, its values and how to mix them. */
+    RigChannel :: class {
+    public:
+        /** The joint it moves, as an index in the skeleton. */
+        joint~ i32 = 0;
+        /** True for a rotation channel, false for a translation channel. */
+        isRotation~ bool = false;
+        /** True when the value holds until the next key instead of blending. */
+        isStep~ bool = false;
+        /** The time of each key, in seconds. */
+        times~ Array<f32>! = [];
+        /** The value at each key: x, y, z, and w for a rotation. */
+        values~ Array<Vec4>! = [];
+
+        /** A channel with no keys yet. */
+        RigChannel~: () { }
+
+        /** Frees the keys. */
+        !RigChannel~: () {
+            delete times;
+            delete values;
+        }
+
+        /** The channel's value at `time`: held before the first key and after the last, mixed between two. */
+        Sample :: (time: f32) -> Vec4 {
+            last: usize = times.length() - 1;
+            if time <= times[0] {
+                return values[0];
+            }
+            if time >= times[last] {
+                return values[last];
+            }
+            index~ usize = 0;
+            while times[index + 1] < time {
+                index += 1;
+            }
+            if isStep {
+                return values[index];
+            }
+            amount: f32 = (time - times[index]) / (times[index + 1] - times[index]);
+            before: Vec4 = values[index];
+            after: Vec4 = values[index + 1];
+            if isRotation {
+                mixed: Quaternion = lantern:::core:::QuaternionSlerp(
+                    Quaternion { x: before.x, y: before.y, z: before.z, w: before.w },
+                    Quaternion { x: after.x, y: after.y, z: after.z, w: after.w },
+                    amount
+                );
+                return Vec4 { x: mixed.x, y: mixed.y, z: mixed.z, w: mixed.w };
+            }
+            return Vec4 {
+                x: before.x + (after.x - before.x) * amount,
+                y: before.y + (after.y - before.y) * amount,
+                z: before.z + (after.z - before.z) * amount,
+                w: 0.0f
+            };
+        }
+    }
+
+    /**
+     * Where a root joint's parent chain puts it, folded together with the options' scale and turn: a point moves to
+     * `translation + rotation * (scale * point)`. Joints below a root need none of it; the root's scale and rotation carry
+     * down the chain.
+     */
+    RootBase :: struct {
+        translation~ Vec3 = Vec3 { };
+        rotation~ Quaternion = Quaternion { };
+        scale~ Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+    }
+
+    /** One glTF joint after it has been put in the skeleton's order. */
+    RigJoint :: struct {
+        /** The joint's index in the skin's own list, which the vertices' JOINTS_0 values refer to. */
+        skinIndex~ usize = 0;
+        /** The glTF node's index, which animation channels refer to. */
+        nodeIndex~ usize = 0;
+        /** The parent's index in the skeleton, or -1 for a root. */
+        parent~ i32 = -1;
+        /** The joint's rest transform relative to its parent, as the file has it. */
+        local~ JointTransform = JointTransform { };
+        /** Where a root sits in model space; the identity for any other joint. */
+        base~ RootBase = RootBase { };
+    }
+
+    /** A glTF failure, prefixed with the file it came from when there is one. */
+    GltfRigFailure :: (errorPrefix: string, message: string!) -> Result<GltfRig, string!> {
+        if errorPrefix.length() == 0 {
+            return Result<GltfRig, string!>:::Err(message!);
+        }
+        prefixed: string! = `${errorPrefix}: ${message}`;
+        delete message;
+        return Result<GltfRig, string!>:::Err(prefixed!);
+    }
+
+    /**
+     * Loads a skinned, animated character from a `.glb` or `.gltf` file: the first skin's joints become a skeleton, each
+     * animation becomes a clip, and the meshes bound to the skin become one skinned mesh. A glTF skin is the same idea as
+     * the mannequin's: a tree of joints, and vertices that each follow up to four of them by weight.
+     *
+     * What the importer takes: joints (at most `MAX_JOINTS`), positions, normals, the first texture coordinates, vertex
+     * colours times the material's base colour, JOINTS_0 and WEIGHTS_0, and translation and rotation channels with linear
+     * or step interpolation (a cubic spline channel is read at its keys, without tangents). What it leaves: scale
+     * channels, morph targets, textures and nodes between joints that are not joints themselves.
+     */
+    LoadGltfRig :: (path: string, options: GltfRigOptions) -> Result<GltfRig, string!> {
+        parseOptions~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
+        data~ raw Cgltf:::cgltf_data~* = null;
+        result~ u32 = 0;
+        unsafe {
+            result = Cgltf:::cgltf_parse_file(parseOptions, path, data);
+        }
+        if result != Cgltf:::cgltf_result_success {
+            return GltfRigFailure(path, `not valid glTF: ${lantern:::renderer:::GltfResultName(result)}`);
+        }
+        return RigFromParsedGltf(data, path, "", path, options);
+    }
+
+    /** The same as `LoadGltfRig` for a file already in memory; external buffers are found relative to `baseDirectory`. */
+    GltfRigFromBytes :: (bytes: Array<u8>, baseDirectory: string, options: GltfRigOptions) -> Result<GltfRig, string!> {
+        parseOptions~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
+        data~ raw Cgltf:::cgltf_data~* = null;
+        result~ u32 = 0;
+        unsafe {
+            result = lantern:::gltfmemory:::cgltf_parse(parseOptions, bytes, bytes.length(), data);
+        }
+        if result != Cgltf:::cgltf_result_success {
+            return GltfRigFailure("", `not valid glTF: ${lantern:::renderer:::GltfResultName(result)}`);
+        }
+        return RigFromParsedGltf(data, baseDirectory, "/", "", options);
+    }
+
+    /** Loads the buffers, validates the file, builds the rig and frees cgltf's data. */
+    RigFromParsedGltf :: (
+        data: raw Cgltf:::cgltf_data~*,
+        bufferPathStart: string,
+        bufferPathEnd: string,
+        errorPrefix: string,
+        options: GltfRigOptions
+    ) -> Result<GltfRig, string!> {
+        bufferBase: string! = bufferPathStart + bufferPathEnd;
+        loadOptions~ Cgltf:::cgltf_options = Cgltf:::cgltf_options { };
+        loadResult~ u32 = 0;
+        validateResult~ u32 = 0;
+        skinCount~ usize = 0;
+        unsafe {
+            loadResult = Cgltf:::cgltf_load_buffers(loadOptions, data, bufferBase);
+        }
+        delete bufferBase;
+        unsafe {
+            if loadResult == Cgltf:::cgltf_result_success {
+                validateResult = Cgltf:::cgltf_validate(data);
+            }
+            skinCount = data->skins_count;
+        }
+        problem~ string!? = null;
+        if loadResult != Cgltf:::cgltf_result_success {
+            problem = `buffers: ${lantern:::renderer:::GltfResultName(loadResult)}`;
+        } else if validateResult != Cgltf:::cgltf_result_success {
+            problem = `not valid glTF: ${lantern:::renderer:::GltfResultName(validateResult)}`;
+        } else if skinCount == 0 {
+            problem = "the file has no skin, so there is nothing to animate" + "";
+        }
+        if message := problem {
+            text: string! = message + "";
+            delete problem;
+            unsafe {
+                Cgltf:::cgltf_free(data);
+            }
+            return GltfRigFailure(errorPrefix, text!);
+        }
+        built: Result<GltfRig, string!> = BuildRig(data, options);
+        unsafe {
+            Cgltf:::cgltf_free(data);
+        }
+        when built! {
+            Result:::Ok(character) -> {
+                return Result<GltfRig, string!>:::Ok(character!);
+            },
+            Result:::Err(message) -> {
+                return GltfRigFailure(errorPrefix, message!);
+            }
+        }
+    }
+
+    /** The first three components. */
+    RigVec3Of :: (value: Vec4) -> Vec3 {
+        return Vec3 { x: value.x, y: value.y, z: value.z };
+    }
+
+    /** Each component of `first` times the same component of `second`. */
+    ScaleEachAxis :: (first: Vec3, second: Vec3) -> Vec3 {
+        return Vec3 { x: first.x * second.x, y: first.y * second.y, z: first.z * second.z };
+    }
+
+    /** A joint's transform as it is in model space: roots are carried by their base, other joints are as they are. */
+    PlaceRigJoint :: (joint: RigJoint, translation: Vec3, rotation: Quaternion) -> JointTransform {
+        if joint.parent >= 0 {
+            return JointTransform { translation: translation, rotation: rotation, scale: joint.local.scale };
+        }
+        return JointTransform {
+            translation: joint.base.translation + joint.base.rotation.rotate(ScaleEachAxis(joint.base.scale, translation)),
+            rotation: joint.base.rotation * rotation,
+            scale: ScaleEachAxis(joint.base.scale, joint.local.scale)
+        };
+    }
+
+    /** The skeleton index a glTF node has, or -1 when it is not a joint. */
+    SkeletonIndexOfNode :: (joints: Array<RigJoint>, nodeIndex: usize) -> i32 {
+        for index~ usize = 0; index < joints.length(); index++ {
+            if joints[index].nodeIndex == nodeIndex {
+                return i32(index);
+            }
+        }
+        return -1;
+    }
+
+    /** Which place in the skeleton a skin joint has, or -1. */
+    SkeletonIndexOfSkinJoint :: (joints: Array<RigJoint>, skinIndex: usize) -> i32 {
+        for index~ usize = 0; index < joints.length(); index++ {
+            if joints[index].skinIndex == skinIndex {
+                return i32(index);
+            }
+        }
+        return -1;
+    }
+
+    /** Builds the character from a parsed, validated file. */
+    BuildRig :: (data: raw Cgltf:::cgltf_data~*, options: GltfRigOptions) -> Result<GltfRig, string!> {
+        joints~ Array<RigJoint>! = [];
+        defer delete joints;
+        problem~ string!? = ReadJoints(data, options, joints);
+        if message := problem {
+            text: string! = message + "";
+            delete problem;
+            return Result<GltfRig, string!>:::Err(text!);
+        }
+        mesh := new lantern:::renderer:::MeshData();
+        problem = ReadSkinnedMesh(data, options, joints, mesh);
+        if message := problem {
+            text: string! = message + "";
+            delete problem;
+            delete mesh;
+            return Result<GltfRig, string!>:::Err(text!);
+        }
+        if options.feetOnGround {
+            lowest~ f32 = mesh->vertices[0].position[1];
+            for vertex in mesh->vertices {
+                lowest = Math:::min(lowest, vertex.position[1]);
+            }
+            for index~ usize = 0; index < mesh->vertices.length(); index++ {
+                mesh->vertices[index].position[1] -= lowest;
+            }
+            for index~ usize = 0; index < joints.length(); index++ {
+                if joints[index].parent < 0 {
+                    joints[index].base.translation.y -= lowest;
+                }
+            }
+        }
+        invalid: string!? = mesh->Validate();
+        if message := invalid {
+            text: string! = `no usable skinned triangles: ${message}`;
+            delete invalid;
+            delete mesh;
+            return Result<GltfRig, string!>:::Err(text!);
+        }
+        rig := new Rig();
+        for joint in joints {
+            placed: JointTransform = PlaceRigJoint(joint, joint.local.translation, joint.local.rotation);
+            jointName: string! = JointName(data, joint.nodeIndex);
+            rig->skeleton->AddJoint(jointName, joint.parent, placed);
+            delete jointName;
+        }
+        problem = ReadClips(data, joints, rig);
+        if message := problem {
+            text: string! = message + "";
+            delete problem;
+            delete rig;
+            delete mesh;
+            return Result<GltfRig, string!>:::Err(text!);
+        }
+        return Result<GltfRig, string!>:::Ok(GltfRig { rig: rig!, mesh: mesh! });
+    }
+
+    /** A joint's name from its node, or `jointN` when the node has none. */
+    JointName :: (data: raw Cgltf:::cgltf_data~*, nodeIndex: usize) -> string! {
+        name~ string! = `joint${nodeIndex}`;
+        unsafe {
+            nodes := lantern:::gltfnodestructs:::memmove(data->nodes, data->nodes, 0);
+            node: raw Cgltf:::cgltf_node* = nodes^*[nodeIndex];
+            if node->name != null {
+                delete name;
+                name = copyCString(node->name);
+            }
+        }
+        return name!;
+    }
+
+    /**
+     * Reads the first skin's joints into `joints` in parents-first order, with each joint's rest transform and, for
+     * roots, where they sit in model space. Returns a message when the skin cannot be used.
+     */
+    ReadJoints :: (data: raw Cgltf:::cgltf_data~*, options: GltfRigOptions, joints: Array<RigJoint>!~*) -> string!? {
+        skinJointCount~ usize = 0;
+        unsafe {
+            skinJointCount = data->skins->joints_count;
+        }
+        if skinJointCount == 0 {
+            return "the skin has no joints" + "";
+        }
+        if skinJointCount > MAX_JOINTS {
+            return `the skin has ${skinJointCount} joints and Lantern's limit is ${MAX_JOINTS}`;
+        }
+        skinNodeIndices~ Array<usize>! = [];
+        defer delete skinNodeIndices;
+        skinParents~ Array<i32>! = [];
+        defer delete skinParents;
+        unsafe {
+            listed := lantern:::gltfnodes:::memmove(data->skins->joints, data->skins->joints, 0);
+            for skinIndex~ usize = 0; skinIndex < skinJointCount; skinIndex += 1 {
+                skinNodeIndices.push(Cgltf:::cgltf_node_index(data, listed^*[skinIndex].node));
+            }
+            for skinIndex~ usize = 0; skinIndex < skinJointCount; skinIndex += 1 {
+                parentSkinIndex~ i32 = -1;
+                walk~ raw Cgltf:::cgltf_node~* = listed^*[skinIndex].node->parent;
+                while walk != null && parentSkinIndex < 0 {
+                    walkIndex: usize = Cgltf:::cgltf_node_index(data, walk);
+                    for candidate~ usize = 0; candidate < skinJointCount; candidate += 1 {
+                        if skinNodeIndices[candidate] == walkIndex {
+                            parentSkinIndex = i32(candidate);
+                        }
+                    }
+                    walk = walk->parent;
+                }
+                skinParents.push(parentSkinIndex);
+            }
+        }
+        emitted~ Array<bool>! = [];
+        defer delete emitted;
+        for skinIndex~ usize = 0; skinIndex < skinJointCount; skinIndex += 1 {
+            emitted.push(false);
+        }
+        yawTurn: Quaternion = lantern:::core:::QuaternionFromRotationY(options.yawRadians);
+        while joints->length() < skinJointCount {
+            progressed~ bool = false;
+            for skinIndex~ usize = 0; skinIndex < skinJointCount; skinIndex += 1 {
+                if emitted[skinIndex] {
+                    continue;
+                }
+                parentSkin: i32 = skinParents[skinIndex];
+                if parentSkin >= 0 && !emitted[usize(parentSkin)] {
+                    continue;
+                }
+                joint~ RigJoint = RigJoint { skinIndex: skinIndex, nodeIndex: skinNodeIndices[skinIndex] };
+                if parentSkin >= 0 {
+                    joint.parent = SkeletonIndexOfSkinJoint(joints->borrow(), usize(parentSkin));
+                }
+                local~ Mat4 = Mat4 { };
+                ancestor~ Mat4 = Mat4 { };
+                unsafe {
+                    nodes := lantern:::gltfnodestructs:::memmove(data->nodes, data->nodes, 0);
+                    node: raw Cgltf:::cgltf_node* = nodes^*[joint.nodeIndex];
+                    Cgltf:::cgltf_node_transform_local(node, local.elements[0]);
+                    if joint.parent < 0 && node->parent != null {
+                        Cgltf:::cgltf_node_transform_world(node->parent, ancestor.elements[0]);
+                    }
+                }
+                parts: lantern:::core:::MatrixParts = lantern:::core:::DecomposeMatrix(local);
+                joint.local = JointTransform { translation: parts.translation, rotation: parts.rotation, scale: parts.scale };
+                if joint.parent < 0 {
+                    ancestorParts: lantern:::core:::MatrixParts = lantern:::core:::DecomposeMatrix(ancestor);
+                    joint.base = RootBase {
+                        translation: yawTurn.rotate(ancestorParts.translation * options.scale),
+                        rotation: yawTurn * ancestorParts.rotation,
+                        scale: ancestorParts.scale * options.scale
+                    };
+                }
+                joints->push(joint);
+                emitted[skinIndex] = true;
+                progressed = true;
+            }
+            if !progressed {
+                return "the skin's joints do not form a tree" + "";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reads every triangle primitive of every mesh node bound to the first skin into `mesh`, with the vertices turned and
+     * scaled by the options, and the joint indices of each vertex changed from the skin's order to the skeleton's.
+     */
+    ReadSkinnedMesh :: (
+        data: raw Cgltf:::cgltf_data~*,
+        options: GltfRigOptions,
+        joints: Array<RigJoint>,
+        mesh: lantern:::renderer:::MeshData~*
+    ) -> string!? {
+        nodeCount~ usize = 0;
+        unsafe {
+            nodeCount = data->nodes_count;
+        }
+        yawTurn: Quaternion = lantern:::core:::QuaternionFromRotationY(options.yawRadians);
+        for nodeIndex~ usize = 0; nodeIndex < nodeCount; nodeIndex += 1 {
+            nodePrimitiveCount~ usize = 0;
+            nodeMesh~ raw Cgltf:::cgltf_mesh~* = null;
+            isSkinned~ bool = false;
+            unsafe {
+                nodes := lantern:::gltfnodestructs:::memmove(data->nodes, data->nodes, 0);
+                node: raw Cgltf:::cgltf_node* = nodes^*[nodeIndex];
+                if node->mesh != null && node->skin != null && Cgltf:::cgltf_skin_index(data, node->skin) == 0 {
+                    isSkinned = true;
+                    nodeMesh = node->mesh;
+                    nodePrimitiveCount = nodeMesh->primitives_count;
+                }
+            }
+            if !isSkinned {
+                continue;
+            }
+            for primitiveIndex~ usize = 0; primitiveIndex < nodePrimitiveCount; primitiveIndex += 1 {
+                problem~ string!? = null;
+                unsafe {
+                    primitives := lantern:::gltfprimitives:::memmove(nodeMesh->primitives, nodeMesh->primitives, 0);
+                    primitive: raw Cgltf:::cgltf_primitive* = primitives^*[primitiveIndex];
+                    if primitive->type != Cgltf:::cgltf_primitive_type_triangles {
+                        lantern:::core:::Log(lantern:::core:::LogLevel:::Warn, "assets", "skipping a non-triangle primitive");
+                    } else {
+                        problem = ReadSkinnedPrimitive(primitive, options.scale, yawTurn, joints, mesh);
+                    }
+                }
+                if problem != null {
+                    return problem!;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Adds one skinned primitive to `mesh`. */
+    ReadSkinnedPrimitive :: (
+        primitive: raw Cgltf:::cgltf_primitive*,
+        scale: f32,
+        yawTurn: Quaternion,
+        joints: Array<RigJoint>,
+        mesh: lantern:::renderer:::MeshData~*
+    ) -> string!? {
+        positionAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        normalAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        uvAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        colorAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        jointAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        weightAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        baseColor~ Vec4 = Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f };
+        vertexCount~ usize = 0;
+        unsafe {
+            positionAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_position, 0);
+            normalAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_normal, 0);
+            uvAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_texcoord, 0);
+            colorAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_color, 0);
+            jointAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_joints, 0);
+            weightAccessor = Cgltf:::cgltf_find_accessor(primitive, Cgltf:::cgltf_attribute_type_weights, 0);
+            material: raw Cgltf:::cgltf_material~* = primitive->material;
+            if material != null {
+                factor := material->pbr_metallic_roughness.base_color_factor;
+                if material->has_pbr_metallic_roughness != 0 {
+                    baseColor = Vec4 { x: factor[0], y: factor[1], z: factor[2], w: factor[3] };
+                }
+            }
+            if positionAccessor != null {
+                vertexCount = positionAccessor->count;
+            }
+        }
+        if positionAccessor == null {
+            return "a skinned primitive has no POSITION" + "";
+        }
+        if jointAccessor == null || weightAccessor == null {
+            return "a skinned primitive needs JOINTS_0 and WEIGHTS_0" + "";
+        }
+        positions: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(positionAccessor, 3, vertexCount, Vec4 { });
+        defer delete positions;
+        normals: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(normalAccessor, 3, vertexCount, Vec4 { y: 1.0f });
+        defer delete normals;
+        uvs: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(uvAccessor, 2, vertexCount, Vec4 { });
+        defer delete uvs;
+        rawColors: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(colorAccessor, 4, vertexCount, Vec4 { x: 1.0f, y: 1.0f, z: 1.0f, w: 1.0f });
+        defer delete rawColors;
+        skinJoints: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(jointAccessor, 4, vertexCount, Vec4 { });
+        defer delete skinJoints;
+        skinWeights: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(weightAccessor, 4, vertexCount, Vec4 { x: 1.0f });
+        defer delete skinWeights;
+        indices: Array<u32>! = lantern:::renderer:::PrimitiveIndices(primitive, vertexCount);
+        defer delete indices;
+        for index in indices {
+            if usize(index) >= vertexCount {
+                return "an index is out of range" + "";
+            }
+        }
+        base: u32 = u32(mesh->vertices.length());
+        for vertexIndex~ usize = 0; vertexIndex < vertexCount; vertexIndex += 1 {
+            position: Vec3 = yawTurn.rotate(RigVec3Of(positions[vertexIndex]) * scale);
+            normal: Vec3 = lantern:::core:::NormalizeOr3(yawTurn.rotate(RigVec3Of(normals[vertexIndex])), Vec3 { y: 1.0f });
+            color: Vec4 = Vec4 {
+                x: rawColors[vertexIndex].x * baseColor.x,
+                y: rawColors[vertexIndex].y * baseColor.y,
+                z: rawColors[vertexIndex].z * baseColor.z,
+                w: rawColors[vertexIndex].w * baseColor.w
+            };
+            mesh->vertices.push(lantern:::renderer:::Vertex:::Create(position, normal, Vec2 { x: uvs[vertexIndex].x, y: uvs[vertexIndex].y }, color));
+            skinned: lantern:::renderer:::SkinVertex = ByteSkin(skinJoints[vertexIndex], skinWeights[vertexIndex], joints);
+            mesh->skin.push(skinned);
+        }
+        for index in indices {
+            mesh->indices.push(base + index);
+        }
+        return null;
+    }
+
+    /**
+     * Four joints and weights as one vertex's skin: the joint numbers changed from the skin's order to the skeleton's, and
+     * the weights made to add up to 255 as bytes. A vertex with no weight at all follows its first joint.
+     */
+    ByteSkin :: (skinJoints: Vec4, skinWeights: Vec4, joints: Array<RigJoint>) -> lantern:::renderer:::SkinVertex {
+        wantedJoints: f32[4] = [skinJoints.x, skinJoints.y, skinJoints.z, skinJoints.w];
+        wantedWeights: f32[4] = [skinWeights.x, skinWeights.y, skinWeights.z, skinWeights.w];
+        total: f32 = wantedWeights[0] + wantedWeights[1] + wantedWeights[2] + wantedWeights[3];
+        result~ lantern:::renderer:::SkinVertex = lantern:::renderer:::SkinVertex { };
+        if total <= 0.0001f {
+            result.joints[0] = u8(Math:::max(SkeletonIndexOfSkinJoint(joints, usize(wantedJoints[0])), 0));
+            return result;
+        }
+        used~ i32 = 0;
+        for slot~ usize = 1; slot < 4; slot += 1 {
+            byteWeight: i32 = i32(wantedWeights[slot] / total * 255.0f + 0.5f);
+            result.joints[slot] = u8(Math:::max(SkeletonIndexOfSkinJoint(joints, usize(wantedJoints[slot])), 0));
+            result.weights[slot] = u8(byteWeight);
+            used += byteWeight;
+        }
+        result.joints[0] = u8(Math:::max(SkeletonIndexOfSkinJoint(joints, usize(wantedJoints[0])), 0));
+        result.weights[0] = u8(Math:::max(255 - used, 0));
+        return result;
+    }
+
+    /** Reads each animation as a clip of the rig. */
+    ReadClips :: (data: raw Cgltf:::cgltf_data~*, joints: Array<RigJoint>, rig: Rig~*) -> string!? {
+        animationCount~ usize = 0;
+        unsafe {
+            animationCount = data->animations_count;
+        }
+        for animationIndex~ usize = 0; animationIndex < animationCount; animationIndex += 1 {
+            channels~ Array<RigChannel*!>! = [];
+            clipName~ string! = `clip${animationIndex}`;
+            channelCount~ usize = 0;
+            unsafe {
+                animations := lantern:::gltfanimations:::memmove(data->animations, data->animations, 0);
+                animationData: raw Cgltf:::cgltf_animation* = animations^*[animationIndex];
+                if animationData->name != null {
+                    delete clipName;
+                    clipName = copyCString(animationData->name);
+                }
+                channelCount = animationData->channels_count;
+            }
+            for channelIndex~ usize = 0; channelIndex < channelCount; channelIndex += 1 {
+                channels.push(ReadChannel(data, joints, animationIndex, channelIndex));
+            }
+            duration~ f32 = 0.001f;
+            for channel in channels {
+                if channel->times.length() > 0 {
+                    duration = Math:::max(duration, channel->times[channel->times.length() - 1]);
+                }
+            }
+            clip := new AnimationClip(clipName, duration);
+            delete clipName;
+            for jointIndex~ usize = 0; jointIndex < joints.length(); jointIndex += 1 {
+                AddJointKeys(clip, joints[jointIndex], i32(jointIndex), channels);
+            }
+            rig->AddClip(clip!);
+            channels.freeAll();
+        }
+        return null;
+    }
+
+    /** One channel as keys. A channel that does not move a joint by translation or rotation has joint -1 and no keys. */
+    ReadChannel :: (data: raw Cgltf:::cgltf_data~*, joints: Array<RigJoint>, animationIndex: usize, channelIndex: usize) -> RigChannel*! {
+        result := new RigChannel();
+        result->joint = -1;
+        targetIndex~ usize = 0;
+        isRotation~ bool = false;
+        isStep~ bool = false;
+        isCubic~ bool = false;
+        inputAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        outputAccessor~ raw Cgltf:::cgltf_accessor* = null;
+        isUsable~ bool = false;
+        unsafe {
+            animations := lantern:::gltfanimations:::memmove(data->animations, data->animations, 0);
+            animationData: raw Cgltf:::cgltf_animation* = animations^*[animationIndex];
+            channels := lantern:::gltfchannels:::memmove(animationData->channels, animationData->channels, 0);
+            channel: raw Cgltf:::cgltf_animation_channel* = channels^*[channelIndex];
+            if channel->target_node != null && (channel->target_path == Cgltf:::cgltf_animation_path_type_translation || channel->target_path == Cgltf:::cgltf_animation_path_type_rotation) {
+                isUsable = true;
+                targetIndex = Cgltf:::cgltf_node_index(data, channel->target_node);
+                isRotation = channel->target_path == Cgltf:::cgltf_animation_path_type_rotation;
+                isStep = channel->sampler->interpolation == Cgltf:::cgltf_interpolation_type_step;
+                isCubic = channel->sampler->interpolation == Cgltf:::cgltf_interpolation_type_cubic_spline;
+                inputAccessor = channel->sampler->input;
+                outputAccessor = channel->sampler->output;
+            }
+        }
+        if !isUsable {
+            return result!;
+        }
+        joint: i32 = SkeletonIndexOfNode(joints, targetIndex);
+        if joint < 0 {
+            return result!;
+        }
+        keyCount~ usize = 0;
+        unsafe {
+            keyCount = inputAccessor->count;
+        }
+        if keyCount == 0 {
+            return result!;
+        }
+        valueStride: usize = isCubic ? 3 : 1;
+        valueOffset: usize = isCubic ? 1 : 0;
+        times: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(inputAccessor, 1, keyCount, Vec4 { });
+        defer delete times;
+        components: usize = isRotation ? 4 : 3;
+        values: Array<Vec4>! = lantern:::renderer:::UnpackAccessorFloats(outputAccessor, components, keyCount * valueStride, Vec4 { });
+        defer delete values;
+        result->joint = joint;
+        result->isRotation = isRotation;
+        result->isStep = isStep;
+        for key~ usize = 0; key < keyCount; key += 1 {
+            result->times.push(times[key].x);
+            result->values.push(values[key * valueStride + valueOffset]);
+        }
+        return result!;
+    }
+
+    /** Adds the keys of one joint to a clip: at every time either of the joint's channels has a key. */
+    AddJointKeys :: (clip: AnimationClip~*, joint: RigJoint, jointIndex: i32, channels: Array<RigChannel*!>) -> void {
+        moving~ Array<RigChannel*>! = [];
+        defer delete moving;
+        keyTimes~ Array<f32>! = [];
+        defer delete keyTimes;
+        for channel in channels {
+            if channel->joint != jointIndex {
+                continue;
+            }
+            moving.push(channel);
+            for time in channel->times {
+                isKnown~ bool = false;
+                for known in keyTimes {
+                    if Math:::abs(known - time) < 0.00001f {
+                        isKnown = true;
+                    }
+                }
+                if !isKnown {
+                    keyTimes.push(time);
+                }
+            }
+        }
+        if moving.length() == 0 {
+            return;
+        }
+        for first~ usize = 0; first < keyTimes.length(); first += 1 {
+            for second~ usize = first + 1; second < keyTimes.length(); second += 1 {
+                if keyTimes[second] < keyTimes[first] {
+                    swapped: f32 = keyTimes[first];
+                    keyTimes[first] = keyTimes[second];
+                    keyTimes[second] = swapped;
+                }
+            }
+        }
+        for time in keyTimes {
+            translation~ Vec3 = joint.local.translation;
+            rotation~ Quaternion = joint.local.rotation;
+            for channel in moving {
+                value: Vec4 = channel->Sample(time);
+                if channel->isRotation {
+                    rotation = Quaternion { x: value.x, y: value.y, z: value.z, w: value.w }.normalized();
+                } else {
+                    translation = RigVec3Of(value);
+                }
+            }
+            placed: JointTransform = PlaceRigJoint(joint, translation, rotation);
+            clip->AddKey(jointIndex, time, placed.translation, placed.rotation);
+        }
+    }
+}
