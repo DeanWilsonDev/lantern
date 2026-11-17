@@ -149,7 +149,7 @@ No test needs a sound card.
 
 - `Mixer` tests call `Mix(frames)` and look at the samples (`engine/tests/audio/`): buses, falloff and pan, fades, pitch,
   the generated sounds.
-- `AudioSystem` with no sink mixes into nothing (`engine/tests/engine/`).
+- `AudioSystem` with no sink returns from `Update` before it mixes, so voices do not advance there; a headless test calls `Mixer.Mix` itself to advance fades and stops (`engine/tests/engine/`).
 - `engine/tests/host/the-music-and-ambience-follow-the-game` runs the game's director and footsteps on a headless host.
 - The SDL output is opened with the `dummy` audio driver (`engine/tests/sdl/audio-output-queues-pushed-frames/`), which
   accepts samples and discards them.
