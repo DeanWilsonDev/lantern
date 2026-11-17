@@ -121,6 +121,28 @@ lantern:::audio:::StopLayer("ambience:wind", 3.0f);
 The mixer plays up to 64 voices. When all are busy the oldest one-shot is dropped; loops are never dropped for a new
 sound.
 
+## In the platformer
+
+Two systems in `games/platformer/game-systems/` use the calls above. The engine knows nothing of them.
+
+- **`AudioDirector`** (`audio-director.nyx`) runs every frame from `OnRender`. It sets the listener from the camera,
+  starts the level's ambience beds (`city`, `rain`, `wind`, `station` or `market`, chosen by the `ambience` property on the
+  level's spawn) and crossfades from the last level's over 3 seconds. It also eases four music layers: `theme` in the
+  menus, `calm` while playing, `tension` while a watcher's beam is on the player, and `companion` while the partner is
+  between 6 and 14 m away. Pausing ducks the music.
+- **`FootstepSystem`** (`footstep-system.nyx`) plays `footstep_<surface>` at each walker's feet once per stride. The
+  surface comes from the spawn's `surface` property, else the chapter's default. A block with `surface` and
+  `surface_radius` patches the ground near it.
+- **UI sounds**: menu buttons play `ui_move` on focus and `ui_select` on press, pausing plays `ui_select` and resuming
+  `ui_back`, and the photo shutter plays `ui_shutter`, then `pickup` when a sight is ready or `ui_error` when not.
+- `StopAllLayers(seconds)` ends every named loop; leaving the game calls it, and so does a new session.
+
+`LANTERN_DEBUG_HUD` and the debug values `Audio/Ambience`, `Audio/Theme`, `Audio/Calm`, `Audio/Tension`,
+`Audio/Companion`, `Audio/Surface` and `Audio/Footsteps` show what the director and footsteps are doing.
+
+`menu_move.wav` and `menu_select.wav` are no longer loaded; use `ui_move.wav` and `ui_select.wav`. Every generated name
+is loaded by `LoadGeneratedSounds` in `game-assets/game-assets.nyx`, so a file at `assets/sounds/<name>.wav` replaces it.
+
 ## Testing without a device
 
 No test needs a sound card.
@@ -128,6 +150,7 @@ No test needs a sound card.
 - `Mixer` tests call `Mix(frames)` and look at the samples (`engine/tests/audio/`): buses, falloff and pan, fades, pitch,
   the generated sounds.
 - `AudioSystem` with no sink mixes into nothing (`engine/tests/engine/`).
+- `engine/tests/host/the-music-and-ambience-follow-the-game` runs the game's director and footsteps on a headless host.
 - The SDL output is opened with the `dummy` audio driver (`engine/tests/sdl/audio-output-queues-pushed-frames/`), which
   accepts samples and discards them.
 

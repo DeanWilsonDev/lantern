@@ -1,0 +1,75 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+Level :: (host: lantern:::host:::GameHost*, name: string) -> f32 {
+    return lantern:::testing:::ParseDecimalOrFail(lantern:::testing:::DebugText(host, name), name);
+}
+
+HighestTensionWithin :: (host: lantern:::host:::GameHost~*, platform: lantern:::testing:::ScriptedPlatform~*, frameLoop: lantern:::engine:::GameLoop~*, frames: i32) -> f32 {
+    highest~ f32 = 0.0f;
+    for round~ i32 = 0; round < frames / 10; round++ {
+        lantern:::testing:::WaitFrames(host, platform, frameLoop, 10);
+        highest = Math:::max(highest, Level(host, "Audio/Tension"));
+    }
+    return highest;
+}
+
+main :: () -> i32 {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, false);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+
+    lantern:::testing:::RunFrames(frameLoop, platform, host, 240);
+    lantern:::testing:::AssertNoScriptError(host, "behind the menu");
+    lantern:::testing:::ExpectWithState(host, Level(host, "Audio/Theme") > 0.95f, "the title screen plays its theme");
+    lantern:::testing:::ExpectWithState(host, Level(host, "Audio/Calm") == 0.0f, "and none of the stems");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Audio/Ambience") == "wind ", "a level that names no ambience gets the open air");
+    lantern:::testing:::ExpectWithState(host, host->state->audioSystemInstance->IsLoopPlaying("music:calm") && host->state->audioSystemInstance->IsLoopPlaying("music:tension") && host->state->audioSystemInstance->IsLoopPlaying("music:companion"), "the stems are all running, silent, so they stay in step");
+
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Enter);
+    lantern:::testing:::RunFrames(frameLoop, platform, host, 300);
+    lantern:::testing:::AssertNoScriptError(host, "after Play");
+    lantern:::testing:::ExpectWithState(host, Level(host, "Audio/Theme") < 0.05f && Level(host, "Audio/Calm") > 0.9f, "playing swaps the theme for the calm stem");
+    lantern:::testing:::ExpectWithState(host, Level(host, "Audio/Tension") == 0.0f && Level(host, "Audio/Companion") == 0.0f, "with no danger and no company");
+
+    lantern:::testing:::HoldKeyAndRun(host, platform, frameLoop, lantern:::core:::KeyCode:::W, 150);
+    lantern:::testing:::AssertNoScriptError(host, "after walking");
+    steps: i32 = i32(Level(host, "Audio/Footsteps"));
+    lantern:::testing:::ExpectWithState(host, steps >= 4, "walking makes footsteps");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Audio/Surface") == "stone", "on stone");
+
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Escape);
+    lantern:::testing:::RunFrames(frameLoop, platform, host, 240);
+    lantern:::testing:::ExpectWithState(host, Level(host, "Audio/Calm") < 0.4f, "pausing ducks the music");
+    delete frameLoop;
+    delete platform;
+    delete host;
+
+    host2 := lantern:::testing:::StartPlatformer(manifest, false);
+    platform2 := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop2 := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::OpenPrototypeRoom(host2, platform2, frameLoop2, 5);
+    lantern:::testing:::AssertNoScriptError(host2, "after choosing the watcher");
+    lantern:::testing:::ExpectWithState(host2, lantern:::testing:::DebugText(host2, "Audio/Ambience") == "city rain ", "the prototype rooms are in the streets");
+    lantern:::testing:::ExpectWithState(host2, HighestTensionWithin(host2, platform2, frameLoop2, 900) > 0.15f, "a beam sweeping toward the player builds tension");
+    delete frameLoop2;
+    delete platform2;
+    delete host2;
+
+    host3 := lantern:::testing:::StartPlatformer(manifest, false);
+    platform3 := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop3 := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::OpenPrototypeRoom(host3, platform3, frameLoop3, 1);
+    lantern:::testing:::WaitFrames(host3, platform3, frameLoop3, 300);
+    lantern:::testing:::AssertNoScriptError(host3, "after choosing the first room");
+    lantern:::testing:::ExpectWithState(host3, Level(host3, "Audio/Companion") > 0.2f, "with her in earshot the companion stem plays");
+    lantern:::testing:::ExpectWithState(host3, Level(host3, "Audio/Tension") < 0.05f, "and nothing is watching");
+    delete frameLoop3;
+    delete platform3;
+    delete host3;
+    delete manifest;
+    print("the music and ambience follow the game");
+    return 0;
+}

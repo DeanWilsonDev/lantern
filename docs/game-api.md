@@ -286,6 +286,7 @@ components (`lantern:::ui`); `lantern:::overlay:::` is for quick text and rectan
 | `lantern:::audio:::StartEmitter(emitter, sound, bus, position, volume, minDistance, maxDistance) -> bool` | a named looping sound at a point |
 | `lantern:::audio:::FadeLayer(layer, level, seconds)`, `MoveEmitter(emitter, position)`, `StopLayer(layer, seconds)` | change or end a named loop; a stop fades out first |
 | `lantern:::audio:::LayerLevel(layer) -> f32`, `IsPlaying(layer) -> bool` | read a named loop |
+| `lantern:::audio:::StopAllLayers(seconds)` | fade out every named loop; a new game session also stops them |
 | `lantern:::audio:::PlayMusic(name)`, `lantern:::audio:::StopMusic()` | one looping track on the `music` bus |
 
 The sounds, the buses and the generated placeholders are in [`audio.md`](audio.md).
@@ -660,6 +661,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `FadeLayer` | `(layer: string, level: f32, seconds: f32) -> void` |
 | `MoveEmitter` | `(emitter: string, position: lantern:::math:::Vec3) -> void` |
 | `StopLayer` | `(layer: string, seconds: f32) -> void` |
+| `StopAllLayers` | `(seconds: f32) -> void` |
 | `LayerLevel` | `(layer: string) -> f32` |
 | `IsPlaying` | `(layer: string) -> bool` |
 

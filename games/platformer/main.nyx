@@ -1,4 +1,6 @@
 AdventureTuning :: import AdventureTuning;
+AudioDirector :: import AudioDirector;
+FootstepSystem :: import FootstepSystem;
 AnchorSystem :: import AnchorSystem;
 ClimbOutcome :: import ClimbOutcome;
 ClimbSystem :: import ClimbSystem;
@@ -93,7 +95,6 @@ public:
         // after OnRender and moves focus between its buttons with these three actions.
         lantern:::ui:::SetNavigation(InputSettings:::MENU_UP, InputSettings:::MENU_DOWN, InputSettings:::MENU_CONFIRM);
         uiMount = lantern:::ui:::Mount("ui/game-screen.chaos", "GameScreen");
-        lantern:::audio:::PlayMusic("theme");
     }
 
     // Every fixed step, with `dt` always 1/60 s. Only the Playing state simulates, so pausing
@@ -155,6 +156,7 @@ public:
             // Behind the title screen there are no volumes: the camera only orbits.
             director.Frame(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds, camera, state != GameState:::MainMenu);
         }
+        UpdateAudio(frameSeconds);
         // The drawn lights follow their carriers' blended positions, like the camera does. The
         // reveal rule keeps reading the fixed-step positions (UpdateGlows).
         if companionGlow.isOn {
@@ -173,7 +175,7 @@ public:
     // Before the engine unloads the game, on quit or on F5. The engine releases everything the
     // game made anyway; this stops the music cleanly and empties the level.
     OnExit~: () -> void {
-        lantern:::audio:::StopMusic();
+        lantern:::audio:::StopAllLayers(0.0f);
         level.Unload();
     }
 
@@ -234,6 +236,10 @@ private:
     glowSystem~ GlowSystem = new GlowSystem();
     lanternSystem~ LanternSystem = new LanternSystem();
     thornSystem~ ThornSystem = new ThornSystem();
+    // What the game sounds like: the ambience, the music layers and the listener (game-systems/audio-director.nyx), and
+    // every walker's footsteps (game-systems/footstep-system.nyx). docs/audio.md explains both.
+    audioDirector~ AudioDirector = new AudioDirector();
+    footsteps~ FootstepSystem = new FootstepSystem();
     // Night: the small lights on lamps, posts and the goal. Photo mode: the second collectable.
     nightLights~ NightLights = new NightLights();
     photoMode~ PhotoMode = new PhotoMode();
@@ -284,6 +290,8 @@ private:
         guard loaded throw;
         // The level says which chapter it is, and the chapter sets the sky, fog and sun.
         ChapterLooks:::Apply(level.chapter);
+        footsteps.Start(level.surface, level.chapter);
+        audioDirector.Start(level.ambience, level.chapter, level.foodStalls);
         nightLights.Apply(level, assets.unitCubeMesh);
         photoMode.Start(assets.unitCubeMesh);
         director.Start();
@@ -325,12 +333,40 @@ private:
         }
     }
 
+    // Once per drawn frame, after the camera is placed: the listener is where the camera is, and the music and ambience follow
+    // what is happening (game-systems/audio-director.nyx). The title screen has no danger and no company.
+    UpdateAudio~: (frameSeconds: f32) -> void {
+        shown := director.Shown();
+        isMenu := state == GameState:::MainMenu;
+        hasCompanion := !isMenu && (partner.isPresent || level.companionStops.length() > 0);
+        companionAt := partner.isPresent ? partner.position : companion.position;
+        isOnDanger := !isMenu && trainSystem.IsOnTrack(level.trains, player.FeetPosition());
+        audioDirector.Frame(frameSeconds, isMenu, state == GameState:::Paused, shown.eye, shown.Forward(), player.controller.CapsuleCenter(), level.watchers, isOnDanger, hasCompanion, companionAt);
+    }
+
+    // One fixed step of footsteps for everyone who walks. Anyone climbing, swinging, mantling or in the air isn't stepping.
+    UpdateFootsteps~: (dt: f32) -> void {
+        isWalking := player.controller.IsGrounded() && !anchorSystem.isSwinging && !climbSystem.isClimbing && !mantleSystem.isMantling;
+        footsteps.StepPlayer(player.FeetPosition(), isWalking, dt);
+        if partner.isPresent {
+            footsteps.StepPartner(partner.position, partner.controller.IsGrounded(), dt);
+        }
+        if level.companionStops.length() > 0 {
+            footsteps.StepCompanion(companion.position, dt);
+        }
+    }
+
     GlowHeight :: () -> lantern:::math:::Vec3 {
         lift: lantern:::math:::Vec3 = { y: GLOW_HEIGHT };
         return lift;
     }
 
     SetState~: (next: GameState) -> void {
+        if next == GameState:::Paused {
+            lantern:::audio:::PlayOn("ui_select", "ui", 0.8f, 0.9f);
+        } else if state == GameState:::Paused && next == GameState:::Playing {
+            lantern:::audio:::PlayOn("ui_back", "ui", 0.8f, 1.0f);
+        }
         state = next;
         ui.Show(next);
         // The mouse is captured (hidden, and its motion turned into camera look) only while
@@ -419,6 +455,7 @@ private:
         UpdatePuzzle(dt);
         UpdateCrumbles(dt);
         UpdateAdventure(stick, dt);
+        UpdateFootsteps(dt);
         gemSystem.DetectTouches(level.gems, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         checkpointSystem.DetectReached(level.checkpoints, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), events);
         goalSystem.DetectReached(level.goals, controller.CapsuleCenter(), controller.HalfSegment(), controller.Radius(), IsTeamTogether(), events);
@@ -803,6 +840,13 @@ private:
         lantern:::debug:::SetValue("Camera/FieldOfView", `${director.Shown().fieldOfViewDegrees:.1f}`);
         shownEye := director.Shown().eye;
         lantern:::debug:::SetValue("Camera/Eye", `${shownEye.x:.2f}, ${shownEye.y:.2f}, ${shownEye.z:.2f}`);
+        lantern:::debug:::SetValue("Audio/Ambience", audioDirector.AmbienceText());
+        lantern:::debug:::SetValue("Audio/Theme", `${audioDirector.MusicLevel(0):.2f}`);
+        lantern:::debug:::SetValue("Audio/Calm", `${audioDirector.MusicLevel(1):.2f}`);
+        lantern:::debug:::SetValue("Audio/Tension", `${audioDirector.MusicLevel(2):.2f}`);
+        lantern:::debug:::SetValue("Audio/Companion", `${audioDirector.MusicLevel(3):.2f}`);
+        lantern:::debug:::SetValue("Audio/Surface", footsteps.lastSurface);
+        lantern:::debug:::SetValue("Audio/Footsteps", `${footsteps.stepCount:d}`);
         lantern:::debug:::SetValue("Game/Gems", `${rules.collected:d} / ${level.gems.length():d}`);
         respawn := rules.respawnPosition;
         lantern:::debug:::SetValue("Game/Respawn", `${respawn.x:.2f}, ${respawn.y:.2f}, ${respawn.z:.2f}`);
