@@ -2,6 +2,7 @@ EditorDocument :: import EditorDocument;
 EditorLayout :: import EditorLayout;
 EditorModel :: import EditorModel;
 EditorOverlays :: import EditorOverlays;
+SettingsUi :: import SettingsUi;
 
 // Every command the person can run, by a short name: from the menus, the right click menu, the command
 // palette and the keyboard shortcuts, which all end up in RunCommand. It also handles the questions that
@@ -59,6 +60,9 @@ public:
             "frameSelection" -> { editorFrameSelection(); },
             "frameAll" -> { editorFrameAll(); },
             "toggleGrid" -> ToggleViewOption("grid"),
+            "gridLarger" -> StepGridSpacing(1),
+            "gridSmaller" -> StepGridSpacing(-1),
+            "isolate" -> IsolateSelection(),
             "toggleWireframe" -> ToggleViewOption("wireframe"),
             "toggleColliders" -> ToggleViewOption("colliders"),
             "toggleMarkers" -> ToggleViewOption("markers"),
@@ -202,6 +206,36 @@ public:
     // Flips a View menu option between true and false.
     ToggleViewOption :: (name: string) -> void {
         editorSetViewOption(name, editorViewOption(name) == "true" ? "false" : "true");
+    }
+
+    IsolateSelection :: () -> void {
+        kept~ Array<i64> = [];
+        for row~ i32 = 0; row < editorOutlineCount(); row++ {
+            id := editorOutlineId(row);
+            if editorIsSelected(id) {
+                kept.add(id);
+            }
+        }
+        editorInvertSelection();
+        editorHideSelection();
+        editorClearSelection();
+        for id in kept {
+            editorSelect(id, true);
+        }
+    }
+
+    StepGridSpacing :: (direction: i32) -> void {
+        spacings := SettingsUi:::GridSpacings();
+        current := editorViewOption("grid_spacing");
+        position~ i32 = 0;
+        for index~ i32 = 0; index < spacings.length(); index++ {
+            if spacings[index] == current {
+                position = index;
+            }
+        }
+        next := position + direction;
+        guard next >= 0 && next < spacings.length() return;
+        editorSetViewOption("grid_spacing", spacings[next]);
     }
 
     // The folder of level files in the assets folder.
