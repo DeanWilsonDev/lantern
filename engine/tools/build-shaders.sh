@@ -13,7 +13,7 @@ shader_files=(
     shadow.vert shadow.frag shadow-skinned.vert
     fullscreen.vert sky.vert sky.frag
     bloom-downsample.frag bloom-upsample.frag composite.frag fxaa.frag
-    ao.frag ao-blur.frag
+    ao.frag ao-blur.frag ssr.frag
 )
 for shader_file in "${shader_files[@]}"; do
     source_file="$shader_directory/$shader_file"

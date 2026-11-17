@@ -5,6 +5,9 @@
 //
 //   colour = ambient + sun + every local light + emissive, then faded into the fog colour with distance
 //
+// The surface buffer (surface-common.glsl) gets this pixel's final normal (a puddle's is straight up), roughness and f0, so the
+// screen-space reflection pass can trace a mirror ray from it.
+//
 // A wet material (material.surface.w) is darker and glossier, and on wet ground facing up some of the surface is a puddle
 // (material.emissive.w): flat, dark and almost a mirror. See WetnessMask and the wetness block in main.
 //
@@ -42,6 +45,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "sky-common.glsl"
+#include "surface-common.glsl"
 
 const float PI = 3.14159265359;
 // Must match MAX_LOCAL_LIGHTS in RenderWorld.nox.
@@ -135,6 +139,8 @@ layout(location = 3) in vec4 surface_color;
 
 // The colour written to the colour target.
 layout(location = 0) out vec4 output_color;
+// The surface buffer's pixel: normal, roughness and reflectance, for the screen-space reflection pass (surface-common.glsl).
+layout(location = 1) out vec4 output_surface;
 
 // The GGX normal distribution: how much of the surface's microscopic mirrors face along the half vector. Rougher
 // surfaces (larger alpha) spread it out, giving a broad dim highlight.
@@ -301,18 +307,6 @@ float LocalShadow(LocalLight local, vec3 position, vec3 normal, vec3 light_to_po
     return FilteredShadow(local_shadow_map, atlas_uv, reference_depth - 0.0001, texel, tile_minimum, tile_maximum);
 }
 
-// The split-sum approximation of a surface's response to light arriving from every direction (Karis, "Physically Based
-// Shading on Mobile"): how much of a distant light the specular colour keeps, as a scale and a bias that depend on the
-// roughness and the angle to the viewer. A fit to numbers that would otherwise need a lookup texture.
-vec3 EnvironmentBrdf(vec3 specular_color, float roughness, float normal_dot_view) {
-    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
-    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
-    vec4 r = roughness * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * normal_dot_view)) * r.x + r.y;
-    vec2 scale_and_bias = vec2(-1.04, 1.04) * a004 + r.zw;
-    return specular_color * scale_and_bias.x + scale_and_bias.y;
-}
-
 // A texture holds its normals as plain bytes, but the albedo-style upload decodes them as sRGB. Encoding again returns the
 // bytes the file held.
 vec3 LinearToSrgbExact(vec3 linear) {
@@ -450,4 +444,5 @@ void main() {
     // composite.frag tone maps it to the screen's range and encodes it to sRGB.
     // Meshes are opaque: the lit pipeline doesn't blend, so alpha is written as 1.
     output_color = vec4(lit, 1.0);
+    output_surface = PackSurface(normal, roughness, f0);
 }

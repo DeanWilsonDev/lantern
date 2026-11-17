@@ -54,9 +54,9 @@ runs before the lighting, so every light sees the darker, smoother, flatter surf
 
 - A few dozen ALU operations and four hash lookups per pixel, only for draws with wetness. It is not changed by the
   quality level.
-- **A puddle reflects the sky and the lights' highlights, not the scene.** The buildings and the player do not appear in
-  it. At night the sky is dark, so a puddle reads as a dark patch with a bright streak under each lamp. Reflecting the
-  scene needs screen-space reflections or a reflection probe, which are not built (`next-renderer-ideas` on the board).
+- **A puddle reflects what is on screen, and the sky elsewhere.** Buildings, lamps and characters appear in it through
+  screen-space reflections (`screen-space-reflections.md`); what is off screen, or hidden from the camera, falls back to
+  the sky and the lamp highlights. On the low quality level reflections are off and a puddle shows the sky only.
 - The puddle pattern is fixed in world space, so it does not move or ripple, and a moving platform carries no puddles
   of its own: they appear where the noise is high wherever the surface is.
 - The editor's material inspector has no wetness field yet.

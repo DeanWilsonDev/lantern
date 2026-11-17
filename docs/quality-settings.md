@@ -19,6 +19,7 @@ medium, which is what the platformer runs. A game calls it once from `OnStart`, 
 | Anti-aliasing (FXAA) | off | on | on |
 | Ambient occlusion | off | on | on |
 | Light shafts | off | on | on |
+| Screen-space reflections (ray steps) | off | on (24) | on (48) |
 | Shadow filter lookups per pixel | 4 | 12 | 20 |
 | Particle budget (live particles) | 64 | 256 | 512 |
 
@@ -77,11 +78,12 @@ thing at a time in this order, which is roughly what each costs, highest first:
 2. **Bloom** off. Nine passes, but at half the frame's size and smaller, so cheaper than its count suggests.
 3. **Shadows**: a smaller `distance` first (fewer casters per cascade), then smaller map sizes, then fewer filter samples,
    then fewer shadowed lamps. Each tile redraws the casters inside it.
-4. **Light shafts** off. 24 depth reads per pixel.
-5. **Anti-aliasing** off. One pass.
-6. **Particle budget**: `SetQuality("low")` caps it at 64.
+4. **Screen-space reflections** off. One full-screen pass, glossy pixels only (see `screen-space-reflections.md`).
+5. **Light shafts** off. 24 depth reads per pixel.
+6. **Anti-aliasing** off. One pass.
+7. **Particle budget**: `SetQuality("low")` caps it at 64.
 
-`SetQuality("low")` does 1, 2, 4 and 5 in one call and cuts the shadow filter to 4 lookups.
+`SetQuality("low")` does 1, 2, 4, 5 and 6 in one call and cuts the shadow filter to 4 lookups.
 
 These are counts of work. They haven't been timed on a real GPU: the cloud machine used for development has only a software
 Vulkan driver. If the order is wrong on your hardware, change it and tell the board (`known-gaps.md`).

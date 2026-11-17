@@ -1653,3 +1653,15 @@ reviewed by Dean; the numbers want playing. Cards: `engine-follow-ups/grounded-c
   it, so the verdict is the same.
 - **D-141: a photo is judged against the lens at rest.** The lens blends in over 0.2 s; the verdict, and so a photo taken in
   that fifth of a second, is judged against where it ends up.
+- **D-152: screen-space reflections replace the sky reflection by a difference, so a miss changes nothing.** The lit shader
+  still adds the sky reflection. The reflection pass adds `reflected - sky` weighted by a confidence, so a ray that leaves
+  the screen or finds nothing leaves the sky in place and the picture is never worse than before.
+- **D-153: the surface buffer is a second colour target, not a G-buffer.** Lighting stays forward. Lit, skinned lit and sky
+  write octahedral normal, roughness and reflectance; skinned characters therefore reflect and are reflected with no
+  extra shader. With reflections off the target's store is DONT_CARE.
+- **D-154: low quality turns reflections off; medium is 24 steps and high 48.** `LANTERN_SSR=1` forces them on at medium
+  cost, `0` forces them off. The editor Graphics tab has a checkbox and the quality levels set it. Not timed on a real
+  GPU: the development machine has only a software driver.
+- **D-155: the underside of things is a known limit.** The depth buffer has only the nearest surface, so floating objects
+  reflect their visible front only. Hit thickness grows with distance to make thin walls catch, at the price of some
+  jitter noise. Dean should look at it on a real GPU before more is spent on it.

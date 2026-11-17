@@ -19,6 +19,7 @@ frame.
 | Colour grade | `colour-grade.md` | a few ALU ops |
 | Particles | `particles.md` | one line per live particle |
 | Normal maps | `normal-maps.md` | one sample for draws that have a map |
+| Screen-space reflections | `screen-space-reflections.md` | one full-screen pass, glossy pixels only |
 | Wet surfaces and puddles | `wet-surfaces.md` | a few ALU ops and a noise lookup for wet draws |
 
 ## What each quality level sets
@@ -29,6 +30,7 @@ frame.
 | Anti-aliasing | off | on | on |
 | Ambient occlusion | off | on | on |
 | Light shafts | off | on | on |
+| Screen-space reflections | off | on | on |
 | Shadow filter samples | 4 | 12 | 20 |
 | Particle budget | 64 | 256 | 512 |
 
