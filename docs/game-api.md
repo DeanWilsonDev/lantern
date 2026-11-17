@@ -140,8 +140,9 @@ the game decides what a kind means.
 | `new lantern:::physics:::CharacterController(radius, height, feet: Vec3)` | a kinematic capsule: walks, jumps, climbs steps, rides platforms |
 | `controller.Step(moveDirection: Vec3, jumpPressed, jumpHeld, dt) -> lantern:::physics:::ControllerStep` | one fixed step; `Jumped()`, `Landed()`, `LandingSpeed()`, `HitCeiling()` |
 | `controller.Teleport(feet)`, `FeetPosition()`, `CapsuleCenter()`, `Velocity()`, `GroundNormal()`, `IsGrounded()` | |
+| `controller.FindLedge(direction) -> bool`, `LedgeStandPoint()` | a wall ahead with a walkable top between a step and 1.9 m above the feet and room to stand: true, and `LedgeStandPoint()` is where the feet end up (the game hauls the player there; see "Mantling" in gameplay-prototypes.md) |
 | `controller.Radius()`, `Height()`, `HalfSegment()` | the capsule's axis is `CapsuleCenter() ± HalfSegment()` in y |
-| `controller.SetWalkSpeed(m/s)`, `SetJumpHeight(m)`, `SetGravity(m/s²)` | feel; the rest of `ControllerSettings` is engine tuning |
+| `controller.SetWalkSpeed(m/s)`, `SetJumpHeight(m)`, `SetGravity(m/s²)`, `SetKeepsPlatformSpeedInAir(bool)` | feel (the last: a jump or walk off a moving platform keeps the platform's sideways speed until landing, off by default); the rest of `ControllerSettings` is engine tuning |
 
 ## Navigation
 
@@ -308,6 +309,7 @@ Skeletal animation (see `docs/animation.md`). Ids are small integers valid until
 | Function | Does |
 | --- | --- |
 | `MannequinRig() -> i64` | Builds the humanoid rig and its mesh. Make it once, share it. |
+| `LoadRig(path, scale, yawDegrees) -> i64` | Loads a skinned, animated character from a glTF file under the assets folder (its first skin, its meshes and every animation as a clip) and returns a rig. `scale` and `yawDegrees` stand the model the way Lantern's characters stand (a model facing +z wants 180). |
 | `Spawn(entity, rig, texture, tint) -> i64` | Makes the entity an animated, skinned body and returns its animator. |
 | `AddState(animator, state, clip, loops)` | A state that plays one clip. |
 | `AddBlendState(animator, state, parameter)` | A state that mixes clips by a float parameter. |
@@ -318,6 +320,7 @@ Skeletal animation (see `docs/animation.md`). Ids are small integers valid until
 | `Play(animator, state, fadeSeconds)` | Force a crossfade into a state. |
 | `CurrentState(animator) -> string` | The state playing. |
 | `SetLookTarget(animator, target, weight)` | Turn chest, neck and head toward a world point. |
+| `SetFootPlacement(animator, enabled)` | Plant the feet on the real ground under them (stairs, slopes) while `enabled`; switch it off in the air. |
 
 ## Examples
 
@@ -738,6 +741,8 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | constructor `constructor` | `(radius: f32, height: f32, feet: lantern:::math:::Vec3) -> void` |
 | method `Step` | `(moveDirection: lantern:::math:::Vec3, jumpPressed: bool, jumpHeld: bool, dt: f32) -> lantern:::physics:::ControllerStep` |
 | method `Teleport` | `(feet: lantern:::math:::Vec3) -> void` |
+| method `FindLedge` | `(direction: lantern:::math:::Vec3) -> bool` |
+| method `LedgeStandPoint` | `() -> lantern:::math:::Vec3` |
 | method `FeetPosition` | `() -> lantern:::math:::Vec3` |
 | method `CapsuleCenter` | `() -> lantern:::math:::Vec3` |
 | method `Velocity` | `() -> lantern:::math:::Vec3` |
@@ -749,6 +754,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | method `SetWalkSpeed` | `(metresPerSecond: f32) -> void` |
 | method `SetJumpHeight` | `(metres: f32) -> void` |
 | method `SetGravity` | `(metresPerSecondSquared: f32) -> void` |
+| method `SetKeepsPlatformSpeedInAir` | `(enabled: bool) -> void` |
 
 #### `lantern:::ui:::Element`
 

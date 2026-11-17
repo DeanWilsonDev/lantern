@@ -1,7 +1,7 @@
 # Skeletal animation
 
 Characters move their bodies with a skeleton: a tree of joints, clips that pose it over time, and an animator that picks and
-blends clips from a few facts the game reports. The player and the companion wear the mannequin, a 17-joint humanoid built in
+blends clips from a few facts the game reports. The player, the companion and the team room's partner wear the mannequin, a 17-joint humanoid built in
 code, so nothing needs importing to see it work.
 
 ## The pieces
@@ -47,9 +47,58 @@ never plays a clip itself. `docs/game-api.md` lists every function.
 animator's limit (75 degrees) and shared 0.2, 0.3 and 0.5 between chest, neck and head, and the weight and target are smoothed so
 glances ease in and out. The companion looks at the player while they are within 12 m.
 
+## Foot placement
+
+On uneven ground the clips alone would put feet in the air or through the step. After an animator has made its pose, the
+feet are planted on the ground they are really over (`FootPlacer`, `engine/src/engine/animation/FootPlacement.nox`):
+
+1. Each frame the host casts a ray straight down at each foot, from 0.5 m above the character's own ground, and tells the
+   animation system what it hit (`PlaceAnimatedFeet`, `engine/src/host/FootPlacementHost.nox`).
+2. The height of each surface, relative to the ground under the character's origin, is smoothed (14 per second).
+3. The hips drop by the deepest drop under a planted foot. Each planted ankle is moved to its surface with two-bone IK
+   (`SolveTwoBoneLeg`: the law of cosines for the knee, then a swing of the thigh; the knee bends toward the character's front)
+   and the foot is tilted to the surface's slope.
+
+A foot that is in the air in the animation (the swing of a stride, a jump or a fall) is left alone: a foot's weight is 1 at
+6 cm above its resting height and 0 at 22 cm. A game turns the whole thing on with `SetFootPlacement(animator, true)`;
+`CharacterAnimator` does, and switches it off while the character is in the air. A skeleton needs joints named `leftThigh`,
+`leftShin`, `leftFoot` and the right ones (as the mannequin's are); any other rig is left as it is.
+
+## Footsliding
+
+A clip knows how fast its feet carry a character when played as authored (`AnimationClip.groundSpeed`, in metres a second;
+0 means unknown). A blend state mixes two neighbouring clips by the character's speed, and plays at that speed divided by the
+mixed ground speed, between 0.6 and 1.6, so a run played at 5 m/s with a 3.7 m/s run clip plays 1.34 times as fast and the
+planted foot keeps up with the ground. Below 0.2 m/s, or when a clip does not say, it plays as authored.
+
+## Importing a character from glTF
+
+```nyx
+rig := lantern:::animation:::LoadRig("characters/runner.glb", 1.0f, 180.0f);
+animator := lantern:::animation:::Spawn(entity, rig, texture, "FFFFFF");
+lantern:::animation:::AddState(animator, "idle", "Idle", true);
+```
+
+`LoadRig(path, scale, yawDegrees)` reads the first skin of a `.glb` or `.gltf` file under the assets folder and returns a rig
+like `MannequinRig()` does. A model facing +z, as glTF models usually do, wants a yaw of 180 to face Lantern's -z; a model
+modelled in centimetres wants a scale of 0.01. The model is put with its feet on the ground. In Nox,
+`lantern:::animation:::LoadGltfRig(path, options)` and `GltfRigFromBytes(bytes, directory, options)` return the skeleton, clips
+and mesh to place yourself.
+
+What comes across:
+
+- **Joints:** the first skin's joints become the skeleton, parents first, named from their nodes, at most 32 (a larger skin is
+  an error that says so). The armature node above the root joint is folded into the root.
+- **The mesh:** every triangle primitive of every mesh node that uses the skin, with positions, normals, the first texture
+  coordinates, vertex colours times the material's base colour, and four joints and weights a vertex.
+- **Clips:** every animation becomes a clip named for it, from translation and rotation channels with linear or step
+  interpolation. Cubic spline channels are read at their keys without tangents.
+
+What does not: scale channels, morph targets, textures (a game gives the texture), and non-joint nodes between two joints.
+
 ## Not built yet
 
-- Foot placement on slopes and stairs (a two-bone IK pass over the finished pose).
-- Importing skins and animations from glTF; the mannequin's clips come from formulas.
-- The partner in the team room still wears a capsule.
+- Locking a planted foot to the world during its stance (foot placement matches the ground's height and slope, and stride
+  matching keeps the feet near the ground's speed, but a foot can still drift a little on a turn).
+- Moving platforms: the ray sees the platform, but the platform's own motion is not carried into the feet.
 - More than 32 joints, additive layers and masks (a wave over a run), and animation events (footstep sounds).

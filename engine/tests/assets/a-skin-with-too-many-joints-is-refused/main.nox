@@ -1,0 +1,47 @@
+lantern :: import lantern;
+
+/** A glTF text file with a chain of `jointCount` joint nodes and a skin over all of them, and no mesh. */
+ChainJson :: (jointCount: usize) -> string! {
+    json~ string! = "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[" + "";
+    for joint~ usize = 0; joint < jointCount; joint += 1 {
+        json += `{"name":"joint${joint}"`;
+        if joint + 1 < jointCount {
+            json += `,"children":[${joint + 1}]`;
+        }
+        json += joint + 1 < jointCount ? "}," : "}";
+    }
+    json += "],\"skins\":[{\"joints\":[";
+    for joint~ usize = 0; joint < jointCount; joint += 1 {
+        separator: string = joint == 0 ? "" : ",";
+        piece: string! = `${separator}${joint}`;
+        json += piece;
+        delete piece;
+    }
+    json += "]}]}";
+    return json!;
+}
+
+main :: () -> i32 {
+    options: lantern:::animation:::GltfRigOptions = lantern:::animation:::GltfRigOptions { };
+    tooMany: string! = ChainJson(lantern:::animation:::MAX_JOINTS + 1);
+    defer delete tooMany;
+    bytes~ Array<u8>! = [];
+    defer delete bytes;
+    for index~ usize = 0; index < tooMany.length(); index += 1 {
+        bytes.push(tooMany.byteAt(index));
+    }
+    when lantern:::animation:::GltfRigFromBytes(bytes, ".", options) {
+        Result:::Ok(loaded) -> {
+            character~ lantern:::animation:::GltfRig = loaded!;
+            delete character.rig;
+            delete character.mesh;
+            assert(false, "a skin with 33 joints is refused");
+        },
+        Result:::Err(message) -> {
+            assert(message.contains("33 joints") && message.contains("limit"), "the message says how many joints and what the limit is");
+            delete message;
+        }
+    }
+    print("a skin with too many joints is refused");
+    return 0;
+}

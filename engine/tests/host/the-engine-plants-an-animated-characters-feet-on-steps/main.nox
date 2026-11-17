@@ -1,0 +1,52 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Setup :: () -> i64 { rig := lantern:::animation:::MannequinRig(); body := lantern:::world:::Spawn(\"body\", lantern:::math:::Vec3:::Zero()); animator := lantern:::animation:::Spawn(body, rig, 0, \"FFFFFF\"); lantern:::animation:::AddState(animator, \"idle\", \"idle\", true); lantern:::animation:::SetFootPlacement(animator, true); return animator; }\nSwitchOff :: (animator: i64) -> void { lantern:::animation:::SetFootPlacement(animator, false); }";
+
+Settle :: (state: lantern:::host:::EngineState*, frames: i32) -> void {
+    for frame~ i32 = 0; frame < frames; frame++ {
+        unsafe {
+            state->animationSystem->Update(state->entityWorld, 0.016f);
+            lantern:::host:::PlaceAnimatedFeet(state->animationSystem, state->entityWorld, state->collision, 0.016f);
+        }
+    }
+}
+
+FeetHeights :: (state: lantern:::host:::EngineState*) -> Array<f32>! {
+    heights~ Array<f32>! = [];
+    feet: Array<Vec3>! = state->animationSystem->FootWorldPositions(state->entityWorld, 0);
+    for foot in feet {
+        heights.push(foot.y);
+    }
+    delete feet;
+    return heights!;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    gameUi := lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    created := lantern:::testing:::ValueOrFail(program->CallFunction("Setup", noArguments));
+    delete noArguments;
+    animator: i64 = lantern:::testing:::I64OrFail(created->I64());
+    delete created;
+    assert(animator == 0, "the script made the first animator");
+
+    state->collision->AddStaticBox(Vec3 { x: -0.1f, y: 0.075f, z: 0.0f }, Vec3 { x: 0.09f, y: 0.075f, z: 0.3f });
+    state->collision->AddStaticBox(Vec3 { x: 0.1f, y: -0.5f, z: 0.0f }, Vec3 { x: 0.5f, y: 0.5f, z: 0.5f });
+    Settle(state, 90);
+    heights: Array<f32>! = FeetHeights(state);
+    assert(heights.length() == 2, "a mannequin has two feet to place");
+    assert(Math:::abs(heights[0] - 0.23f) < 0.02f, "the left ankle rests on the 15 cm step (ankle 8 cm above the sole)");
+    assert(Math:::abs(heights[1] - 0.08f) < 0.02f, "the right ankle rests on the floor");
+    delete heights;
+    print("the engine plants an animated character's feet on steps");
+    delete program;
+    delete runtime;
+    delete gameUi;
+    delete state;
+    return 0;
+}

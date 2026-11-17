@@ -2,6 +2,7 @@ AdventureTuning :: import AdventureTuning;
 AnchorSystem :: import AnchorSystem;
 ClimbOutcome :: import ClimbOutcome;
 ClimbSystem :: import ClimbSystem;
+MantleSystem :: import MantleSystem;
 MinigameSystem :: import MinigameSystem;
 TrainSystem :: import TrainSystem;
 Autopilot :: import Autopilot;
@@ -246,6 +247,7 @@ private:
     // minigames, and the danger on a train's track. `seenClimbRestartCount` is the rules' restart count when the
     // minigames were last put back, so a restart (R) resets them too.
     climbSystem~ ClimbSystem = new ClimbSystem();
+    mantleSystem~ MantleSystem = new MantleSystem();
     minigames~ MinigameSystem = new MinigameSystem();
     trainSystem~ TrainSystem = new TrainSystem();
     seenClimbRestartCount~ i32 = 0;
@@ -285,10 +287,11 @@ private:
         // A level can ask for the grounded feel with its spawn's `movement` property (settings/adventure-tuning.nyx).
         player.UseGroundedFeel(level.isGroundedFeel);
         climbSystem.Release();
+        mantleSystem.Release();
         minigames.Start(level.wordTokens, level.foodStalls);
         companion.Spawn(level.companionStops, level.anchors, assets.mannequinRig, assets.playerTexture);
         if level.hasPartner {
-            partner.Spawn(level.partnerStart, assets.playerMesh, assets.playerTexture, level.teamBeats);
+            partner.Spawn(level.partnerStart, assets.mannequinRig, assets.playerTexture, level.teamBeats);
         } else {
             partner.isPresent = false;
         }
@@ -344,6 +347,7 @@ private:
         if rules.restartCount != seenClimbRestartCount {
             seenClimbRestartCount = rules.restartCount;
             climbSystem.Release();
+        mantleSystem.Release();
             minigames.Start(level.wordTokens, level.foodStalls);
         }
         for platform: MovingPlatform in level.platforms {
@@ -400,6 +404,8 @@ private:
             }
         } else if climbSystem.isClimbing {
             StepClimb(stick, jumpPressed, dt);
+        } else if mantleSystem.isMantling || TryStartMantle(stick) {
+            StepMantle(dt);
         } else {
             MovePlayer(stick, jumpPressed, jumpHeld, dt);
         }
@@ -441,6 +447,28 @@ private:
         gemSystem.Animate(level.gems, simulationSeconds);
         for word in level.wordTokens {
             word.Animate(simulationSeconds);
+        }
+    }
+
+    // A jump that ends against a ledge hauls the player up onto it (game-systems/mantle-system.nyx). The way they push
+    // is the stick turned to the world by the camera, as Player.Move does; the engine says whether a ledge is there.
+    TryStartMantle~: (stick: lantern:::math:::Vec2) -> bool {
+        guard !isAutoplay && !photoMode.isActive && !isLaunchAirborne return false;
+        pushed := director.Forward() * stick.y + director.Right() * stick.x;
+        guard player.CanMantleToward(pushed) return false;
+        mantleSystem.Start(player.FeetPosition(), player.LedgeStandPoint(), pushed.Yaw());
+        lantern:::audio:::Play("jump", 0.3f);
+        return true;
+    }
+
+    // One step of a haul: the system says where the feet are and the player is put there, as for a climb.
+    StepMantle~: (dt: f32) -> void {
+        finished := mantleSystem.Advance(dt);
+        player.SwingTo(mantleSystem.feet, mantleSystem.yaw);
+        companion.Update(player.FeetPosition(), false, dt);
+        if finished {
+            Dust:::Puff(player.FeetPosition(), 8, 1.0f, 0.2f);
+            lantern:::audio:::Play("land", 0.4f);
         }
     }
 
@@ -826,6 +854,7 @@ private:
         }
         lantern:::debug:::SetValue("Climb/Holding", climbSystem.isClimbing ? "yes" : "no");
         lantern:::debug:::SetValue("Climb/Height", `${climbSystem.height:.2f}`);
+        lantern:::debug:::SetValue("Mantle/Active", mantleSystem.isMantling ? "yes" : "no");
         lantern:::debug:::SetValue("Minigames/Words", `${minigames.wordsFound:d} / ${level.wordTokens.length():d}`);
         lantern:::debug:::SetValue("Minigames/Meals", `${minigames.mealsFinished:d} / ${level.foodStalls.length():d}`);
         lantern:::debug:::SetValue("Player/Feel", level.isGroundedFeel ? "grounded" : "platformer");

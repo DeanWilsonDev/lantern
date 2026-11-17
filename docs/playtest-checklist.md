@@ -24,7 +24,7 @@ time each way if you can. Everywhere, watch whether she gets lost, stuck on stai
 
 In **The streets** she walks the route ahead of you (the team partner above is only in the prototype rooms).
 
-- Does she feel like she is leading? Run past her and hang back: does she hurry on, or stop and hop to call you?
+- Does she feel like she is leading? Run past her and hang back: does she hurry on, or stop and wave to call you?
 - The first swing: does she swing first, so you can watch, and then wait for you on the far post? Does your own swing
   work the moment you are at the start post?
 - Is 10 m (16 m at a swing) a good distance for her to set off? Did she ever leave you behind or wait for nothing?
@@ -49,7 +49,7 @@ the jump is too low for the steps and crates.
 With the HUD on (F1) her path is drawn: green walk, orange drop, red jump. `Partner/Navigation` shows the node count and
 her point on the path.
 
-- Hand-off and the station: does she take the stairs without stalling? Does she ever stop and hop at the foot of a stair?
+- Hand-off and the station: does she take the stairs without stalling? Does she ever stop and wave at the foot of a stair?
 - Does she jump a gap or hop onto a low ledge when that is the shortest way, and never try to climb?
 - When you stand somewhere she can't reach (a pipe top, a roof), does she follow your trail instead of pressing into a wall?
 - Closed doors and crumbling slabs aren't in her graph: does she stand at a closed door, then find another way after a few

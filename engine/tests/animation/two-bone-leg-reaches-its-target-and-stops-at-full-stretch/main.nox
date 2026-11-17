@@ -1,0 +1,38 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    rig := lantern:::animation_support:::MakeLegRig();
+    defer delete rig;
+    leg: lantern:::animation:::LegJoints = lantern:::animation:::LegJoints { thigh: 1, shin: 2, foot: 3 };
+    forward: Vec3 = Vec3 { z: -1.0f };
+    pose~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete pose;
+
+    reachable: Vec3 = Vec3 { x: -0.1f, y: 0.25f, z: -0.2f };
+    lantern:::animation:::SolveTwoBoneLeg(rig->skeleton, pose, leg, reachable, forward);
+    assert(
+        lantern:::animation_support:::NearPoint(lantern:::animation_support:::JointPosition(rig, pose, 3), reachable),
+        "the ankle reaches a target the leg can reach"
+    );
+    knee: Vec3 = lantern:::animation_support:::JointPosition(rig, pose, 2);
+    hip: Vec3 = lantern:::animation_support:::JointPosition(rig, pose, 1);
+    assert(lantern:::animation_support:::Near((knee - hip).length(), 0.5f), "the thigh keeps its length");
+    assert(
+        lantern:::animation_support:::Near((lantern:::animation_support:::JointPosition(rig, pose, 3) - knee).length(), 0.5f),
+        "the shin keeps its length"
+    );
+    assert(knee.z < -0.05f, "the knee points the way the character faces");
+
+    far: Vec3 = Vec3 { x: -0.1f, y: -1.0f, z: 0.0f };
+    straight~ Array<lantern:::animation:::JointTransform>! = rig->skeleton->RestPose();
+    defer delete straight;
+    lantern:::animation:::SolveTwoBoneLeg(rig->skeleton, straight, leg, far, forward);
+    ankle: Vec3 = lantern:::animation_support:::JointPosition(rig, straight, 3);
+    assert(
+        lantern:::animation_support:::Near((ankle - hip).length(), 1.0f),
+        "a target out of reach leaves the leg at full stretch"
+    );
+    assert(Math:::abs(ankle.y) < 0.01f, "and the foot points at the target");
+    print("two-bone legs reach and stretch");
+    return 0;
+}
