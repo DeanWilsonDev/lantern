@@ -2,6 +2,7 @@ Anchor :: import Anchor;
 CompanionStop :: import CompanionStop;
 Math :: import standard:::Math;
 CharacterAnimator :: import CharacterAnimator;
+PartnerTuning :: import PartnerTuning;
 
 // The companion: a second character who leads the player along the level's route of stops. She
 // walks ahead to the next stop, waits there for the player, swings the Anchor first so the player
@@ -14,6 +15,9 @@ CharacterAnimator :: import CharacterAnimator;
 //   seconds, a wave that says "this way".
 // - A stop can hold her until the player has used the boost, and a swing stop sends her across the
 //   Anchor before the player.
+//
+// Between two stops she follows a route over the level's navigation graph (lantern:::navigation), so she goes round a wall
+// or up a stair instead of through it; with no complete route she walks the straight line, as she always did.
 //
 // Her movement is scripted rather than steered: she reads a list of stops, the level's Anchors and the
 // player's position, nothing else. That keeps her predictable, which matters when a puzzle depends on
@@ -42,6 +46,7 @@ public:
             swingAnchorIndexByStop.add(routeStop.isSwing ? FindAnchorBeside(routeStop.position) : -1);
         }
         guard stops.length() > 0;
+        lantern:::navigation:::Build(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, PartnerTuning:::NAV_STEP_HEIGHT, PartnerTuning:::NAV_MAX_DROP, PartnerTuning:::NAV_MAX_JUMP_UP, PartnerTuning:::NAV_MAX_JUMP_ACROSS);
         root = lantern:::world:::Spawn("companion", stops[0].position);
         animation = new CharacterAnimator();
         animation.Create(root, "companion_body", mannequinRig, bodyTexture, "E8506A");
@@ -55,6 +60,7 @@ public:
         stopIndex = Math:::clamp(index, 0, stops.length() - 1);
         position = stops[stopIndex].position;
         isWalking = false;
+        legPlannedFor = -1;
         waitedSeconds = 0.0f;
         isHoldingForBoost = stops[stopIndex].isBoost;
         isBoostJumpInFlight = false;
@@ -133,6 +139,11 @@ private:
     isHoldingAtLanding~ bool = false;
     isPausedForPlayer~ bool = false;
     nudgeSeconds~ f32 = 0.0f;
+    // The route over the navigation graph for the leg to the next stop: which leg it was planned for (or -1), its points
+    // and the one she is walking to. No points means the straight line.
+    legPlannedFor~ i32 = -1;
+    legPoints~ Array<lantern:::math:::Vec3> = [];
+    legIndex~ i32 = 0;
 
     // Her decision for this step: swing, walk, or wait at a stop and decide whether to set off.
     Advance~: (playerFeet: lantern:::math:::Vec3, isPlayerGrounded: bool, dt: f32) -> void {
@@ -278,22 +289,48 @@ private:
         }
     }
 
-    // Moves toward the next stop at that leg's speed. Moving in `speed x dt` steps and snapping
-    // to the target when closer than one step means she can't overshoot or jitter around it.
+    // Plans the leg to the next stop over the graph, once per leg. A route that doesn't reach the stop is dropped, and she
+    // walks the straight line.
+    PlanLeg~: () -> void {
+        legPlannedFor = stopIndex;
+        legPoints = [];
+        legIndex = 0;
+        found~ lantern:::navigation:::Path = lantern:::navigation:::FindRoute(position, stops[stopIndex + 1].position, false);
+        guard found.IsComplete() && found.Count() > 0;
+        for index~ i32 = 0; index < found.Count(); index++ {
+            legPoints.add(found.Point(index));
+        }
+    }
+
+    // Moves toward the next stop at that leg's speed, through the points of its route. Moving in `speed x dt` steps and
+    // snapping to the target when closer than one step means she can't overshoot or jitter around it.
     Walk~: (speedScale: f32, dt: f32) -> void {
+        if legPlannedFor != stopIndex {
+            PlanLeg();
+        }
         target := stops[stopIndex + 1];
-        toTarget := target.position - position;
         stepLength := stops[stopIndex].speedToNext * speedScale * dt;
-        if toTarget.Length() <= stepLength {
-            position = target.position;
-            stopIndex++;
-            isWalking = false;
-            waitedSeconds = 0.0f;
-            isHoldingForBoost = target.isBoost;
+        while legIndex < legPoints.length() && (legPoints[legIndex] - position).Horizontal().Length() < 0.05f {
+            legIndex++;
+        }
+        aim := legIndex < legPoints.length() ? legPoints[legIndex] : target.position;
+        toAim := aim - position;
+        if toAim.Length() <= stepLength {
+            position = aim;
+            if legIndex < legPoints.length() {
+                legIndex++;
+            }
+            if aim.DistanceTo(target.position) < 0.01f || legIndex >= legPoints.length() && legPoints.length() == 0 {
+                position = target.position;
+                stopIndex++;
+                isWalking = false;
+                waitedSeconds = 0.0f;
+                isHoldingForBoost = target.isBoost;
+            }
         } else {
-            position = position + toTarget.Normalized() * stepLength;
-            if toTarget.Horizontal().LengthSquared() > 0.01f {
-                lantern:::world:::SetYaw(root, toTarget.Yaw());
+            position = position + toAim.Normalized() * stepLength;
+            if toAim.Horizontal().LengthSquared() > 0.01f {
+                lantern:::world:::SetYaw(root, toAim.Yaw());
             }
         }
         lantern:::world:::SetPosition(root, position);

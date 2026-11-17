@@ -96,6 +96,7 @@ Every room has a **solo route** and a **companion route**; [`playtest-checklist.
 try both. Every room has a host test in `engine/tests/host/` that plays it with scripted keys.
 **11, the camera room**, is not a gameplay idea but a camera one: a straight path through camera volumes and shots, described in
 [`camera.md`](camera.md); it has no companion and no solo or companion route.
+**12, the lift**, tests the partner's navigation rather than a gameplay idea: a chasm too wide to jump with one moving platform across it. She waits for the platform, rides it and steps off; so can you. Tested by `the-lift-room`.
 
 | Room | File | Verbs | World kinds it uses |
 | --- | --- | --- | --- |

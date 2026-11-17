@@ -54,12 +54,37 @@ When `to` can't be reached the path is the way to the reachable node nearest it,
 - **Debug.** With the HUD on (F1), the path she is walking is drawn: green for walking, orange for a drop, red for a jump.
   The HUD shows `Partner/Navigation`, the node count and which point she is on.
 
+## Doors, bridges, slabs and lifts
+
+The graph is built from the static world, so the game adds what moves after the build
+(`games/platformer/game-systems/navigation-dynamics.nyx` does it for the platformer, and opens and shuts each part every
+step). Each is a **feature** with an open or shut state; a change counts as a new `Revision()`.
+
+| Feature | In the graph as | Open when |
+| --- | --- | --- |
+| Door (`AddGate`) | the nodes it stands on, blocked while it is shut | it has slid below her step |
+| Bridge or stair that a switch raises (`AddSurface`) | a patch of nodes on top of its box | it is up |
+| Crumbling slab (`AddSurface`, fragile) | a patch of nodes on top of its box | it is solid |
+| Moving platform (`AddRide`) | a ride link between the two landings of its trip | always |
+
+`FindRoute(from, to, allowFragile)` leaves out shut gates and open-less surfaces, so a route goes round a door when there
+is a way. When there isn't, it plans again through the shut doors and bridges that can be waited for. The points of such
+a route carry the feature (`Path.Feature(index)`), and the partner stands in front of a shut one until it opens. Fragile
+ground is only used when `allowFragile`: she allows it while she leads, and never while she follows. Stepping onto fragile
+ground or into a shut gate costs extra once per crossing.
+
+She rides a platform by watching it: she waits at the landing until its edge is within a metre and its top is level, steps
+on, stands still while it carries her, and steps off at the far landing when the platform is beside it. The debug HUD
+shows `leading (waiting)` in front of a door and `leading (riding)` on a platform, and draws a ride in blue.
+
 ## Where it stops
 
-- Moving bodies aren't in the graph (they aren't where they were when it was built). Paths run through a closed door and
-  ignore a crumbling slab. The rooms that use them still work because a path that is blocked is replaced by the `via`
-  route after two stuck checks; the follow-up card is `navigation-over-moving-platforms-and-gates`.
+- A path isn't replanned when the level changes, only when she is stuck or has none (a door that closes on her path leaves
+  her to the stuck check, then the `via` route). Crossing slabs she then can't come back over isn't modelled.
+- Moving bodies other than gates, slabs and platforms (the player pushing something, trains) aren't in the graph. A platform
+  with no `half_extents` property is taken to be 1.5 m wide.
 - The graph is built once, when the partner spawns. Static geometry that changes later isn't seen.
-- The streets and rooftops' scripted `Companion` (`companion.nyx`) still walks straight lines between her stops.
+- The streets' scripted `Companion` (`companion.nyx`) walks a route over the graph between stops, and the straight line when
+  there is none; she is still scripted, not a body with physics.
 - Link checks use sweeps of a capsule a quarter of her radius, so a path can squeeze closer to a wall than she really
   fits; she slides along the wall and the stuck check catches the rest.
