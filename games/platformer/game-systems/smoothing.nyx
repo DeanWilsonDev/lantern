@@ -1,0 +1,38 @@
+Math :: import standard:::Math;
+
+// Frame-rate independent easing, shared by the camera rig and the camera director.
+//
+// The obvious way to ease a value toward a goal is `value += (goal - value) * 0.1f` once per
+// frame. It looks right at 60 fps and wrong everywhere else: at 144 fps the value arrives more
+// than twice as fast, because the step is taken more than twice as often. The fix is to say how
+// long the easing takes, not how big each step is, and work out this frame's step from that.
+//
+// The measure used here is a half-life: the time it takes the remaining distance to halve. After
+// one half-life half the distance remains, after two a quarter, after three an eighth. A short
+// half-life is a snappy follow, a long one a lazy drift.
+//
+// `pow(0.5, dt / halfLife)` is the fraction of the distance that is still left after `dt`
+// seconds, and `1 - that` is the fraction covered. Covering it in one frame of 16 ms or in two
+// frames of 8 ms lands on exactly the same value, which is what "frame-rate independent" means.
+Smoothing :: namespace {
+    // How much of the remaining distance to cover this frame: 0 (none) to 1 (all of it). A half-life
+    // of zero or less means "no easing at all", so it returns 1 and the value snaps to its goal.
+    Amount :: (frameSeconds: f32, halfLifeSeconds: f32) -> f32 {
+        guard halfLifeSeconds > 0.0001f return 1.0f;
+        guard frameSeconds > 0.0f return 0.0f;
+        return 1.0f - Math:::pow(0.5f, frameSeconds / halfLifeSeconds);
+    }
+
+    // A number moved `amount` of the way from `from` to `to`.
+    Toward :: (from: f32, to: f32, amount: f32) -> f32 {
+        return from + (to - from) * amount;
+    }
+
+    // The same S-shaped curve the camera blends use: slow at the start, fast in the middle, slow at
+    // the end, so a blend neither lurches into motion nor stops dead. `progress` is 0 to 1 and the
+    // result is 0 to 1. It is 3p^2 - 2p^3, whose slope is zero at both ends.
+    SmoothStep :: (progress: f32) -> f32 {
+        clamped := Math:::clamp(progress, 0.0f, 1.0f);
+        return clamped * clamped * (3.0f - 2.0f * clamped);
+    }
+}

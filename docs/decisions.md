@@ -1615,3 +1615,41 @@ Dean (2026-11-17): skeletal animation for the player and companion. Nothing in t
   neck and head; a weight of 0 changes nothing, so a character that never looks costs nothing.
 - **D-132: the Rust trace test ignores the entity count.** The characters used to be a capsule and a visor (3 entities for the
   player); an animated body is one entity, so the count moved by one while every simulated column still matches.
+
+
+## The camera: follow, volumes, shots and blends
+
+Dean (2026-11-17): the game is more action-adventure than puzzle platformer, so the camera should follow smoothly, lead,
+sit over a shoulder, never clip walls, and be authored by level designers. All of this section is provisional and not
+reviewed by Dean; the numbers want playing. Cards: `engine-follow-ups/grounded-camera-and-authored-shots`.
+
+- **D-133: one director owns the camera.** Only `CameraDirector` calls `lantern:::camera`. The follow rig, a shot and the
+  photo lens each produce a `CameraPose` (a `data` value) and the director blends and shows one. Photo mode no longer calls
+  `LookAt` itself, so raising the camera blends in like any other change.
+- **D-134: the follow rig smooths, leads and sits over a shoulder.** The aim point follows the head with half-lives of 0.06 s
+  sideways and 0.22 s up and down (a jump lifts the view less than the player), leads the measured speed by 0.45 s up to
+  1.2 m (eased with a 0.3 s half-life), and sits 0.55 m over the right shoulder. All easing is by half-life, so it is the same
+  at 60 and 144 fps.
+- **D-135: collision covers the pivot as well as the boom.** A 0.25 m sphere is swept from the player's real head to the shifted
+  pivot, stopping 0.1 m short, then the boom is swept back from the pivot as before. The gap is the fix for a bug the
+  camera room's per-frame test found: a pivot left exactly touching a wall made the boom sweep start in contact, report no
+  room, and throw the lens in to the 0.6 m minimum in one frame. When a wall is within 55% of the shoulder shift and the
+  other side is clear (98%), the camera crosses to the other shoulder, and goes back after the first side has been clear for
+  0.8 s so a corner doesn't flicker it.
+- **D-136: volumes are axis-aligned boxes and change framing by easing.** Highest `priority` wins, then nearest the centre.
+  The settings ease with a half-life of a quarter of `blend`, so the change is done in about `blend` seconds. Boxes are not
+  turned by the entity's rotation, because the world API can't read an entity's rotation.
+- **D-137: a shot is a tripod, linked to a volume by number.** A `camera_shot` sits at its entity's position and looks at
+  `target` or, with `track`, at the follow pivot (already smoothed, so it doesn't twitch with footsteps). The volume's `shot`
+  names the shot's `number`, because the world API can't look an entity up by name. Shots are not collision checked.
+- **D-138: a change of what is on screen blends the pose, not the settings.** Follow to shot, shot to shot, shot to follow and
+  photo up or down blend from the pose on screen to the live new pose over `blend` seconds (`exit_blend` for leaving, which
+  defaults to `blend`) with a smooth-step curve. 0 is a cut. A volume can cut in and glide out.
+- **D-139: controls hold steady through a cut.** When the shown camera changes while the stick is pushed, the movement
+  heading stays what it was until the stick is let go, then follows the shot. Look input is ignored while a shot is showing.
+  Dean should judge whether fixed-camera controls (relative to the shot) feel right once the player lets go.
+- **D-140: the engine gains `SetFieldOfView`.** `LookAt` builds a new camera each call, so it now keeps the lens last set;
+  `SetFieldOfView(degrees)` is clamped to 10 to 120. The photo framing test still assumes 60 degrees and the photo lens sets
+  it, so the verdict is the same.
+- **D-141: a photo is judged against the lens at rest.** The lens blends in over 0.2 s; the verdict, and so a photo taken in
+  that fifth of a second, is judged against where it ends up.

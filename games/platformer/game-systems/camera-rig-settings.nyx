@@ -1,0 +1,63 @@
+Math :: import standard:::Math;
+Smoothing :: import Smoothing;
+
+// The numbers that say how the follow camera frames the player. One set is the game's default, and each camera volume
+// (game-entities/camera-volume.nyx) can carry its own: a narrow alley might pull the camera in close and low, an open
+// roof push it back and wide.
+//
+// It is a `data` type, a plain value: handing one around copies it. The rig never snaps from one set to another. The
+// director keeps a live copy and eases it toward whichever set applies (EaseToward, which returns the eased copy), so
+// walking into a volume is a smooth change of framing.
+CameraRigSettings :: data {
+    // Metres from the pivot back to the lens, before collision pulls it in.
+    distance: f32 = DEFAULT_DISTANCE;
+    // How far to one side the pivot sits, in metres. Positive is the player's right, so the camera looks past their
+    // right shoulder and they stand left of the middle of the screen. Zero is a camera dead behind them. The rig swaps it
+    // to the other side when a wall is in the way.
+    shoulder: f32 = DEFAULT_SHOULDER;
+    // Metres above the feet the camera aims at (about head height).
+    height: f32 = DEFAULT_HEIGHT;
+    // Added to the pitch the player has chosen, in radians. Negative lifts the camera higher.
+    pitchOffset: f32 = 0.0f;
+    // The lens: the vertical field of view in degrees.
+    fieldOfViewDegrees: f32 = DEFAULT_FIELD_OF_VIEW;
+    // The most, in metres, the camera may lead the player in the direction they are moving. Zero turns look-ahead off.
+    lookAhead: f32 = DEFAULT_LOOK_AHEAD;
+
+    static DEFAULT_DISTANCE :: 6.0f;
+    static DEFAULT_SHOULDER :: 0.55f;
+    static DEFAULT_HEIGHT :: 1.4f;           // about head height above the feet
+    static DEFAULT_FIELD_OF_VIEW :: 60.0f;
+    static DEFAULT_LOOK_AHEAD :: 1.2f;
+
+    // The settings an entity asks for: its properties, with the default for any it doesn't have. The property names are
+    // the ones a level designer sees in the world editor's inspector.
+    static FromEntity :: (entity: i64) -> CameraRigSettings {
+        return {
+            distance: NumberOr(entity, "distance", DEFAULT_DISTANCE),
+            shoulder: NumberOr(entity, "shoulder", DEFAULT_SHOULDER),
+            height: NumberOr(entity, "height", DEFAULT_HEIGHT),
+            pitchOffset: NumberOr(entity, "pitch_offset_degrees", 0.0f) * (Math:::PI / 180.0f),
+            fieldOfViewDegrees: NumberOr(entity, "fov", DEFAULT_FIELD_OF_VIEW),
+            lookAhead: NumberOr(entity, "look_ahead", DEFAULT_LOOK_AHEAD)
+        };
+    }
+
+    // These settings moved `amount` (0 to 1) of the way toward `goal`. The director picks `amount` from the frame time and
+    // the volume's blend, so the change takes the same time at any frame rate.
+    EaseToward :: (goal: CameraRigSettings, amount: f32) -> CameraRigSettings {
+        return {
+            distance: Smoothing:::Toward(distance, goal.distance, amount),
+            shoulder: Smoothing:::Toward(shoulder, goal.shoulder, amount),
+            height: Smoothing:::Toward(height, goal.height, amount),
+            pitchOffset: Smoothing:::Toward(pitchOffset, goal.pitchOffset, amount),
+            fieldOfViewDegrees: Smoothing:::Toward(fieldOfViewDegrees, goal.fieldOfViewDegrees, amount),
+            lookAhead: Smoothing:::Toward(lookAhead, goal.lookAhead, amount)
+        };
+    }
+
+    // A number property with a default for when the entity doesn't have it.
+    static NumberOr :: (entity: i64, name: string, fallback: f32) -> f32 {
+        return lantern:::world:::HasProperty(entity, name) ? lantern:::world:::NumberProperty(entity, name) : fallback;
+    }
+}

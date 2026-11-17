@@ -40,6 +40,7 @@ StreetsAutopilot :: import StreetsAutopilot;
 SwitchSystem :: import SwitchSystem;
 ThornSystem :: import ThornSystem;
 Watcher :: import Watcher;
+CameraDirector :: import CameraDirector;
 ThirdPersonCamera :: import ThirdPersonCamera;
 
 // The Lantern platformer. The engine calls the hooks below; everything
@@ -146,9 +147,11 @@ public:
     OnRender~: (alpha: f32, frameSeconds: f32) -> void {
         // With the camera raised for a photo, the lens is at the player's eyes instead of behind them.
         if photoMode.isActive {
-            photoMode.PlaceCamera(lantern:::world:::InterpolatedPosition(player.root, alpha), companion.position, companion.stops.length() > 0);
+            photoMode.PlaceCamera(lantern:::world:::InterpolatedPosition(player.root, alpha), companion.position, companion.stops.length() > 0, director, frameSeconds);
         } else {
-            camera.Follow(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds);
+            // The director places the follow camera, or the authored shot a camera volume asks for, and blends between them.
+            // Behind the title screen there are no volumes: the camera only orbits.
+            director.Frame(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds, camera, state != GameState:::MainMenu);
         }
         // The drawn lights follow their carriers' blended positions, like the camera does. The
         // reveal rule keeps reading the fixed-step positions (UpdateGlows).
@@ -194,6 +197,7 @@ private:
     static PROTOTYPE_CLIMB_PATH :: "worlds/prototypes/the-climb.world.json";
     static PROTOTYPE_WORD_MARKET_PATH :: "worlds/prototypes/word-market.world.json";
     static STATION_PATH :: "worlds/the-station.world.json";
+    static PROTOTYPE_CAMERA_ROOM_PATH :: "worlds/prototypes/the-camera-room.world.json";
     static PROTOTYPE_FLOW_PATH :: "worlds/prototypes/flow-and-fragile.world.json";
     static ROOFTOPS_PATH :: "worlds/rooftops.world.json";
     static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
@@ -218,6 +222,7 @@ private:
     levelLighting~ LevelLighting = new LevelLighting();
     player~ Player = new Player();
     camera~ ThirdPersonCamera = new ThirdPersonCamera();
+    director~ CameraDirector = new CameraDirector();
     gemSystem~ GemSystem = new GemSystem();
     anchorSystem~ AnchorSystem = new AnchorSystem();
     goalSystem~ GoalSystem = new GoalSystem();
@@ -275,6 +280,7 @@ private:
         ChapterLooks:::Apply(level.chapter);
         nightLights.Apply(level, assets.unitCubeMesh);
         photoMode.Start(assets.unitCubeMesh);
+        director.Start();
         player.Spawn(assets, level.spawnPosition);
         // A level can ask for the grounded feel with its spawn's `movement` property (settings/adventure-tuning.nyx).
         player.UseGroundedFeel(level.isGroundedFeel);
@@ -479,7 +485,8 @@ private:
         bounceHeight := BounceHeightUnderPlayer();
         launchHeight := boostReady ? PlayerTuning:::BOOST_JUMP_HEIGHT : bounceHeight;
         isLaunching := bounceHeight > 0.0f && !boostReady;
-        step := player.Move(stick, camera.Forward(), camera.Right(), jumpPressed || isLaunching, jumpHeld || isLaunching || isLaunchAirborne, launchHeight, dt);
+        director.UpdateMovementBasis(stick.Length(), camera);
+        step := player.Move(stick, director.Forward(), director.Right(), jumpPressed || isLaunching, jumpHeld || isLaunching || isLaunchAirborne, launchHeight, dt);
         if isLaunching {
             isLaunchAirborne = true;
         } else if step.Landed() {
@@ -664,7 +671,7 @@ private:
         //   radians per second a full push is.
         // Once both are "radians this frame" they can simply be added.
         stickLook := lantern:::input:::Vector(InputSettings:::LOOK_STICK) * (frameSeconds * PlayerTuning:::LOOK_STICK_SPEED);
-        if !photoMode.isActive {
+        if !photoMode.isActive && !director.IsShotShowing() {
             camera.Look(lantern:::input:::Vector(InputSettings:::LOOK_MOUSE) + stickLook);
         }
     }
@@ -723,6 +730,7 @@ private:
             PlayTheClimb -> { PlayLevel(PROTOTYPE_CLIMB_PATH); },
             PlayWordMarket -> { PlayLevel(PROTOTYPE_WORD_MARKET_PATH); },
             PlayTheStation -> { PlayLevel(STATION_PATH); },
+            PlayTheCameraRoom -> { PlayLevel(PROTOTYPE_CAMERA_ROOM_PATH); },
             PlayStreetsLater -> { PlayLevel(STREETS_LATER_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
@@ -751,6 +759,14 @@ private:
         lantern:::debug:::SetValue("Player/Grounded", controller.IsGrounded() ? "yes" : "no");
         lantern:::debug:::SetValue("Camera/Yaw", `${lantern:::angle:::ToDegrees(camera.yaw):.1f}`);
         lantern:::debug:::SetValue("Camera/Pitch", `${lantern:::angle:::ToDegrees(camera.pitch):.1f}`);
+        lantern:::debug:::SetValue("Camera/Mode", director.ModeName());
+        lantern:::debug:::SetValue("Camera/Volume", `${director.ActiveVolumeIndex():d}`);
+        lantern:::debug:::SetValue("Camera/Blending", director.IsBlending() ? "yes" : "no");
+        lantern:::debug:::SetValue("Camera/Shoulder", `${director.Settings().shoulder * camera.ShoulderSide():.2f}`);
+        lantern:::debug:::SetValue("Camera/Distance", `${director.Settings().distance:.2f}`);
+        lantern:::debug:::SetValue("Camera/FieldOfView", `${director.Shown().fieldOfViewDegrees:.1f}`);
+        shownEye := director.Shown().eye;
+        lantern:::debug:::SetValue("Camera/Eye", `${shownEye.x:.2f}, ${shownEye.y:.2f}, ${shownEye.z:.2f}`);
         lantern:::debug:::SetValue("Game/Gems", `${rules.collected:d} / ${level.gems.length():d}`);
         respawn := rules.respawnPosition;
         lantern:::debug:::SetValue("Game/Respawn", `${respawn.x:.2f}, ${respawn.y:.2f}, ${respawn.z:.2f}`);

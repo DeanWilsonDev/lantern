@@ -1,0 +1,55 @@
+Math :: import standard:::Math;
+Smoothing :: import Smoothing;
+
+// Where the camera is and what it looks at, as one value: the eye, the point it aims at, and the
+// lens (the vertical field of view in degrees). Everything that places the camera produces one of
+// these, and only the CameraDirector turns one into engine calls (`lantern:::camera:::LookAt` and
+// `SetFieldOfView`). Keeping a pose a plain value is what makes blending easy: two poses in, one
+// pose out, and nothing has to know where either came from.
+//
+// A pose has no roll. The camera's "up" is always the world's, which is what every camera in this
+// game wants and what `LookAt` does anyway.
+//
+// It is a `data` type, not a class: a pose is a value, so binding or returning one copies it, and a blend can never
+// change a pose somebody else is holding.
+CameraPose :: data {
+    eye: lantern:::math:::Vec3 = { };
+    target: lantern:::math:::Vec3 = { x: 0.0f, y: 0.0f, z: -1.0f };
+    fieldOfViewDegrees: f32 = 60.0f;
+
+    // A pose from its three parts.
+    static Of :: (eye: lantern:::math:::Vec3, target: lantern:::math:::Vec3, fieldOfViewDegrees: f32) -> CameraPose {
+        return { eye, target, fieldOfViewDegrees };
+    }
+
+    // The unit direction the camera looks.
+    Forward :: () -> lantern:::math:::Vec3 {
+        direction := target - eye;
+        guard direction.LengthSquared() > 0.000001f return { x: 0.0f, y: 0.0f, z: -1.0f };
+        return direction.Normalized();
+    }
+
+    // The compass heading of the view, in the same convention as the orbit camera's yaw: 0 looks
+    // toward -Z, and a positive yaw turns left. Forward() of a yaw is (-sin yaw, 0, -cos yaw), so
+    // the heading is atan2(-x, -z). A camera looking straight up or down has no heading, so it
+    // returns `fallback`.
+    Yaw :: (fallback: f32) -> f32 {
+        flat := Forward().Horizontal();
+        guard flat.LengthSquared() > 0.0001f return fallback;
+        return Math:::atan2(-flat.x, -flat.z);
+    }
+
+    // This pose moved `amount` (0 = this one, 1 = `other`) of the way toward `other`.
+    //
+    // The eye and the lens blend in a straight line. The view direction blends as a direction: the
+    // two forward vectors are mixed and renormalised, which turns smoothly the short way round
+    // without ever rolling. (Two views looking exactly opposite mix to nothing; then the new view
+    // wins outright, because there is no short way to turn.) The target is the blended eye plus the
+    // blended direction, so a blend never changes how far away the camera aims, only where.
+    Blended :: (other: CameraPose, amount: f32) -> CameraPose {
+        mixedEye := eye.Lerp(other.eye, amount);
+        mixedDirection := Forward().Lerp(other.Forward(), amount);
+        direction := mixedDirection.LengthSquared() > 0.0001f ? mixedDirection.Normalized() : other.Forward();
+        return CameraPose:::Of(mixedEye, mixedEye + direction, Smoothing:::Toward(fieldOfViewDegrees, other.fieldOfViewDegrees, amount));
+    }
+}

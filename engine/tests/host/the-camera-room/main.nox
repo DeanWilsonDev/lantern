@@ -1,0 +1,131 @@
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+EyeX :: (host: lantern:::host:::GameHost*) -> f32 {
+    return lantern:::testing:::FirstComponent(lantern:::testing:::DebugText(host, "Camera/Eye"));
+}
+
+EyeY :: (host: lantern:::host:::GameHost*) -> f32 {
+    return lantern:::testing:::SecondComponent(lantern:::testing:::DebugText(host, "Camera/Eye"));
+}
+
+EyeZ :: (host: lantern:::host:::GameHost*) -> f32 {
+    return lantern:::testing:::ThirdComponent(lantern:::testing:::DebugText(host, "Camera/Eye"));
+}
+
+Number :: (host: lantern:::host:::GameHost*, name: string) -> f32 {
+    return lantern:::testing:::ParseDecimalOrFail(lantern:::testing:::DebugText(host, name), name);
+}
+
+Abs :: (value: f32) -> f32 {
+    return value < 0.0f ? -value : value;
+}
+
+main :: () -> i32 {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, false);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::OpenPrototypeRoom(host, platform, frameLoop, 11);
+    lantern:::testing:::AssertNoScriptError(host, "after choosing the camera room");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Game/Level") == "worlds/prototypes/the-camera-room.world.json", "the prototypes menu starts the camera room");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Mode") == "follow", "the follow camera starts on screen");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Volume") == "-1", "the yard is in no camera volume");
+    lantern:::testing:::ExpectWithState(host, Abs(Number(host, "Camera/Shoulder") - 0.55f) < 0.01f, "the camera starts over the player's right shoulder");
+    lantern:::testing:::ExpectWithState(host, Abs(Number(host, "Camera/Distance") - 6.0f) < 0.01f, "the default distance is six metres");
+    lantern:::testing:::ExpectWithState(host, Abs(Number(host, "Camera/FieldOfView") - 60.0f) < 0.01f, "the default lens is 60 degrees");
+    eyeAtRest := EyeX(host);
+    lantern:::testing:::ExpectWithState(host, Abs(eyeAtRest - 0.55f) < 0.05f, "with the player at x 0 the lens sits at the shoulder's x");
+
+    lantern:::testing:::HoldKeyAndRun(host, platform, frameLoop, lantern:::core:::KeyCode:::W, 260);
+    lantern:::testing:::AssertNoScriptError(host, "walking into the alley");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Volume") != "-1", "the alley is a camera volume");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Mode") == "follow", "the alley changes the framing but is not a shot");
+    lantern:::testing:::ExpectWithState(host, Number(host, "Camera/Distance") < 3.8f, "the camera has moved in close in the alley");
+    lantern:::testing:::ExpectWithState(host, Number(host, "Camera/FieldOfView") < 56.0f, "and narrowed the lens");
+    lantern:::testing:::ExpectWithState(host, Abs(EyeX(host)) < 1.45f, "the lens is between the alley walls");
+
+    lantern:::testing:::HoldKeyAndRun(host, platform, frameLoop, lantern:::core:::KeyCode:::D, 130);
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::PlayerX(host) > 1.0f, "the player walked to the right wall");
+    lantern:::testing:::ExpectWithState(host, Number(host, "Camera/Shoulder") < -0.2f, "with the right wall beside them the camera swaps to the left shoulder");
+    lantern:::testing:::ExpectWithState(host, Abs(EyeX(host)) < 1.45f, "and the lens is still between the walls");
+
+    lantern:::testing:::HoldKeyAndRun(host, platform, frameLoop, lantern:::core:::KeyCode:::A, 140);
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::PlayerX(host) < -1.0f, "the player walked to the left wall");
+    lantern:::testing:::ExpectWithState(host, Number(host, "Camera/Shoulder") > 0.2f, "with the right side clear the camera is back on the right shoulder");
+    lantern:::testing:::ExpectWithState(host, Abs(EyeX(host)) < 1.45f, "still between the walls");
+
+    lantern:::testing:::HoldKeyAndRun(host, platform, frameLoop, lantern:::core:::KeyCode:::D, 20);
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(lantern:::core:::KeyCode:::W, false));
+    previousX~ f32 = EyeX(host);
+    previousY~ f32 = EyeY(host);
+    previousZ~ f32 = EyeZ(host);
+    largestStep~ f32 = 0.0f;
+    sawBlend~ bool = false;
+    sawShot~ bool = false;
+    for frame~ i32 = 0; frame < 220; frame++ {
+        lantern:::testing:::WaitFrames(host, platform, frameLoop, 1);
+        dx := EyeX(host) - previousX;
+        dy := EyeY(host) - previousY;
+        dz := EyeZ(host) - previousZ;
+        step := Math:::sqrt(dx * dx + dy * dy + dz * dz);
+        if step > largestStep {
+            largestStep = step;
+        }
+        previousX = EyeX(host);
+        previousY = EyeY(host);
+        previousZ = EyeZ(host);
+        if lantern:::testing:::DebugText(host, "Camera/Blending") == "yes" {
+            sawBlend = true;
+        }
+        if lantern:::testing:::DebugText(host, "Camera/Mode") == "shot 1" {
+            sawShot = true;
+        }
+    }
+    lantern:::testing:::AssertNoScriptError(host, "walking through the plaza");
+    lantern:::testing:::ExpectWithState(host, sawBlend, "the camera blended instead of cutting into the plaza shot");
+    lantern:::testing:::ExpectWithState(host, sawShot, "the plaza volume showed its shot");
+    lantern:::testing:::ExpectWithState(host, largestStep < 0.9f, "no frame moved the lens more than 0.9 m: the blend is smooth");
+    lantern:::testing:::ExpectWithState(host, Abs(lantern:::testing:::PlayerX(host)) < 1.5f, "the player kept walking straight through the cut: the controls did not flip");
+
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Mode") == "shot 1", "at the far side of the plaza the shot is still on screen");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Blending") == "no", "and the blend into it has finished");
+    lantern:::testing:::ExpectWithState(host, Abs(EyeX(host) - 7.0f) < 0.05f && Abs(EyeY(host) - 7.0f) < 0.05f && Abs(EyeZ(host) + 34.0f) < 0.05f, "the lens is where the level designer put the camera");
+    lantern:::testing:::ExpectWithState(host, Abs(Number(host, "Camera/FieldOfView") - 48.0f) < 0.1f, "with the shot's lens");
+
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 130);
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(lantern:::core:::KeyCode:::W));
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 200);
+    lantern:::testing:::AssertNoScriptError(host, "in the vista");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Mode") == "follow", "leaving the plaza the follow camera is back");
+    lantern:::testing:::ExpectWithState(host, Abs(Number(host, "Camera/Distance") - 9.5f) < 0.3f, "the vista pulls the camera back to 9.5 m");
+    lantern:::testing:::ExpectWithState(host, Abs(Number(host, "Camera/FieldOfView") - 68.0f) < 1.0f, "and widens the lens to 68 degrees");
+
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(lantern:::core:::KeyCode:::W, false));
+    cutFrames~ i32 = 0;
+    for frame~ i32 = 0; frame < 200; frame++ {
+        lantern:::testing:::WaitFrames(host, platform, frameLoop, 1);
+        if lantern:::testing:::DebugText(host, "Camera/Mode") == "shot 2" {
+            cutFrames = frame + 1;
+            break;
+        }
+    }
+    lantern:::testing:::ExpectWithState(host, cutFrames > 0, "walking on reaches the bridge's shot");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Camera/Blending") == "no", "the bridge shot is a cut: no blend");
+    lantern:::testing:::ExpectWithState(host, Abs(EyeX(host) - 12.0f) < 0.05f && Abs(EyeZ(host) + 75.0f) < 0.05f, "the very frame the player enters, the lens is at the shot's place");
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 40);
+    lantern:::testing:::ExpectWithState(host, Abs(lantern:::testing:::PlayerX(host)) < 1.4f, "pushing on through the cut the player walks straight along the bridge: the controls did not flip");
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(lantern:::core:::KeyCode:::W));
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 20);
+    startX := lantern:::testing:::PlayerX(host);
+    startZ := lantern:::testing:::PlayerZ(host);
+    lantern:::testing:::HoldKeyAndRun(host, platform, frameLoop, lantern:::core:::KeyCode:::D, 8);
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::PlayerZ(host) < startZ - 0.4f, "after letting go, the stick turns to the shot's view: right on the stick is along the bridge");
+    lantern:::testing:::ExpectWithState(host, Abs(lantern:::testing:::PlayerX(host) - startX) < 0.6f, "and not off its side");
+
+    lantern:::testing:::AssertNoScriptError(host, "at the end");
+
+    print("the camera room: volumes tune the framing, the shoulder swaps beside a wall, shots blend or cut, and the controls hold steady through a cut and follow the shot after it");
+    return 0;
+}

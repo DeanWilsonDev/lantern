@@ -1,0 +1,252 @@
+CameraPose :: import CameraPose;
+CameraRigSettings :: import CameraRigSettings;
+CameraShot :: import CameraShot;
+CameraVolume :: import CameraVolume;
+Math :: import standard:::Math;
+Smoothing :: import Smoothing;
+ThirdPersonCamera :: import ThirdPersonCamera;
+
+// The camera director decides what the camera shows, and is the one place the game tells the engine where the camera is
+// (`lantern:::camera:::LookAt` and `SetFieldOfView`). Everything else only offers it poses.
+//
+// Three things can be on screen:
+// - the follow camera (ThirdPersonCamera): behind and over the shoulder of the player, steered by the mouse or stick;
+// - an authored shot (CameraShot): a camera a level designer set up at a place, looking at a point or following the
+//   player, shown while the player stands in a camera volume that asks for it;
+// - the photo lens (PhotoMode): the player's eyes, while the camera is raised.
+//
+// Each frame, in order:
+// 1. Which camera volume is the player in? The highest priority wins (CameraVolume).
+// 2. The follow camera's settings (distance, shoulder, lens...) ease toward that volume's, or back to the default
+//    outside any. Easing, not snapping, so walking into a volume is a smooth change of framing.
+// 3. The follow camera works out its pose with those settings. It does this every frame, even while a shot is showing,
+//    so its smoothing stays warm and the way back is a glide, not a jump.
+// 4. The pose to show is the follow pose, the volume's shot, or the photo lens.
+// 5. When what is showing has just changed (follow to shot, shot to shot, shot to follow, photo up or down) the camera
+//    does not cut. It blends from the pose that was on screen to the new pose over the volume's `blend` seconds, with an
+//    S-shaped curve. The new pose is the live one, not a frozen copy, so a moving target is tracked throughout the
+//    blend. A blend of 0 is a cut.
+//
+// One more job: movement. The stick means "away from the camera", so a cut to a shot from the front would flip the
+// player's controls under their thumb. While a shot is showing, the director keeps reporting the heading the player
+// had when the cut began until they let go of the stick, and only then turns to the new view (UpdateMovementBasis).
+CameraDirector :: class {
+public:
+    // Reads the level's camera volumes and shots and puts the director back to its starting state. Call it after the
+    // level has loaded, because both are world entities.
+    Start~: () -> void {
+        volumes = [];
+        shots = [];
+        for entity: i64 in lantern:::world:::FindByKind("camera_volume") {
+            volumes.add(new CameraVolume(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("camera_shot") {
+            shots.add(new CameraShot(entity));
+        }
+        activeSettings = defaultSettings;
+        activeVolumeIndex = -1;
+        modeId = MODE_FOLLOW;
+        lastBlendSeconds = DEFAULT_BLEND_SECONDS;
+        hasDisplayed = false;
+        blendSeconds = 0.0f;
+        blendElapsed = 0.0f;
+        basisYaw = 0.0f;
+        isBasisLatched = false;
+        modeChangedSinceStep = false;
+        shotYaw = 0.0f;
+    }
+
+    // Per drawn frame, instead of ShowPhotoLens: places the follow camera, or the shot a volume asks for. `playerFeet` is
+    // the player's blended position. `useVolumes` is false behind the title screen, where the camera only orbits.
+    Frame~: (playerFeet: lantern:::math:::Vec3, frameSeconds: f32, camera~ ThirdPersonCamera, useVolumes: bool) -> void {
+        dt := Math:::clamp(frameSeconds, 0.0f, MAX_FRAME_SECONDS);
+        activeVolumeIndex = useVolumes ? VolumeAt(playerFeet) : -1;
+        goal~ CameraRigSettings = defaultSettings;
+        changeSeconds~ f32 = lastBlendSeconds;
+        shotNumberWanted~ i32 = 0;
+        if activeVolumeIndex >= 0 {
+            volume := volumes[activeVolumeIndex];
+            goal = volume.settings;
+            changeSeconds = volume.blendSeconds;
+            lastBlendSeconds = volume.exitBlendSeconds;
+            shotNumberWanted = volume.shotNumber;
+        }
+        // Settle in about the volume's blend time: four half-lives leave a sixteenth of the distance.
+        activeSettings = activeSettings.EaseToward(goal, Smoothing:::Amount(dt, changeSeconds * 0.25f));
+        followPose := camera.ComputePose(playerFeet, dt, activeSettings);
+
+        shotIndex := ShotIndexFor(shotNumberWanted);
+        if shotIndex >= 0 {
+            shotPose := shots[shotIndex].PoseFor(followPose.target);
+            shotYaw = shotPose.Yaw(camera.yaw);
+            Present(shotPose, shots[shotIndex].number, changeSeconds, dt);
+        } else {
+            Present(followPose, MODE_FOLLOW, changeSeconds, dt);
+        }
+    }
+
+    // Per drawn frame while the camera is raised for a photo: the lens at `eye` looking at `target`. It blends in over
+    // PHOTO_BLEND_SECONDS, and back out when the next Frame goes to the follow camera.
+    ShowPhotoLens~: (eye: lantern:::math:::Vec3, target: lantern:::math:::Vec3, fieldOfViewDegrees: f32, frameSeconds: f32) -> void {
+        Present(CameraPose:::Of(eye, target, fieldOfViewDegrees), MODE_PHOTO, PHOTO_BLEND_SECONDS, Math:::clamp(frameSeconds, 0.0f, MAX_FRAME_SECONDS));
+    }
+
+    // Per fixed step: which way "up" on the stick points. `stickLength` is how far the stick is pushed, 0 to 1.
+    // Normally that is the follow camera's own heading. When what the camera shows has just changed and the stick is
+    // already pushed, the old heading is kept until the stick is released, so a cut never turns the player round.
+    UpdateMovementBasis~: (stickLength: f32, camera: ThirdPersonCamera) -> void {
+        isPushing := stickLength > STICK_DEAD_ZONE;
+        if modeChangedSinceStep {
+            modeChangedSinceStep = false;
+            if isPushing {
+                isBasisLatched = true;
+            }
+        }
+        if !isPushing {
+            isBasisLatched = false;
+        }
+        guard !isBasisLatched;
+        basisYaw = modeId > MODE_FOLLOW ? shotYaw : camera.yaw;
+    }
+
+    // The horizontal directions the stick is mapped onto: the same maths as ThirdPersonCamera.Forward and Right, for the
+    // heading UpdateMovementBasis chose.
+    Forward :: () -> lantern:::math:::Vec3 {
+        return { x: -Math:::sin(basisYaw), z: -Math:::cos(basisYaw) };
+    }
+
+    Right :: () -> lantern:::math:::Vec3 {
+        return { x: Math:::cos(basisYaw), z: -Math:::sin(basisYaw) };
+    }
+
+    // True while an authored shot, not the follow camera, is what the player sees. The player's look input does nothing
+    // then, since it would turn a camera that isn't on screen.
+    IsShotShowing :: () -> bool {
+        return modeId > MODE_FOLLOW;
+    }
+
+    // True while the camera is still moving from one pose to another.
+    IsBlending :: () -> bool {
+        return blendSeconds > 0.0f && blendElapsed < blendSeconds;
+    }
+
+    // For the debug HUD and for tests.
+    ModeName :: () -> string {
+        guard modeId != MODE_PHOTO return "photo";
+        guard modeId > MODE_FOLLOW return "follow";
+        return `shot ${modeId:d}`;
+    }
+
+    VolumeCount :: () -> i32 {
+        return volumes.length();
+    }
+
+    ShotCount :: () -> i32 {
+        return shots.length();
+    }
+
+    ActiveVolumeIndex :: () -> i32 {
+        return activeVolumeIndex;
+    }
+
+    Settings :: () -> CameraRigSettings {
+        return activeSettings;
+    }
+
+    // The pose on screen this frame.
+    Shown :: () -> CameraPose {
+        return displayed;
+    }
+
+private:
+    static MODE_FOLLOW :: 0;
+    static MODE_PHOTO :: -1;
+    static MAX_FRAME_SECONDS :: 0.1f;
+    static DEFAULT_BLEND_SECONDS :: 1.2f;
+    static PHOTO_BLEND_SECONDS :: 0.2f;
+    static STICK_DEAD_ZONE :: 0.1f;
+    static PLAYER_CHEST :: 0.9f;         // metres above the feet: the point a volume must contain
+
+    volumes~ Array<CameraVolume> = [];
+    shots~ Array<CameraShot> = [];
+    defaultSettings: CameraRigSettings = { };
+    activeSettings~ CameraRigSettings = { };
+    activeVolumeIndex~ i32 = -1;
+    // How long coming back to the default takes: the exit blend of the volume the player was last in.
+    lastBlendSeconds~ f32 = DEFAULT_BLEND_SECONDS;
+    // What is showing: MODE_FOLLOW, MODE_PHOTO, or a shot's number (always above zero).
+    modeId~ i32 = MODE_FOLLOW;
+    hasDisplayed~ bool = false;
+    displayed~ CameraPose = { };
+    blendFrom~ CameraPose = { };
+    blendSeconds~ f32 = 0.0f;
+    blendElapsed~ f32 = 0.0f;
+    basisYaw~ f32 = 0.0f;
+    isBasisLatched~ bool = false;
+    modeChangedSinceStep~ bool = false;
+    shotYaw~ f32 = 0.0f;
+
+    Lift :: (metres: f32) -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: metres };
+        return lift;
+    }
+
+    // The index of the volume that applies at `playerFeet`, or -1. Highest priority first; between equals, the one the
+    // player is nearest the middle of.
+    VolumeAt :: (playerFeet: lantern:::math:::Vec3) -> i32 {
+        point := playerFeet + Lift(PLAYER_CHEST);
+        best~ i32 = -1;
+        bestPriority~ f32 = 0.0f;
+        bestDistance~ f32 = 0.0f;
+        index~ i32 = 0;
+        for volume: CameraVolume in volumes {
+            if volume.Contains(point) {
+                distance := volume.DistanceFromCentre(point);
+                if best < 0 || volume.priority > bestPriority || (volume.priority == bestPriority && distance < bestDistance) {
+                    best = index;
+                    bestPriority = volume.priority;
+                    bestDistance = distance;
+                }
+            }
+            index++;
+        }
+        return best;
+    }
+
+    // The index of the shot with this number, or -1 when `number` is zero or no shot has it.
+    ShotIndexFor :: (number: i32) -> i32 {
+        guard number > 0 return -1;
+        index~ i32 = 0;
+        for shot: CameraShot in shots {
+            if shot.number == number {
+                return index;
+            }
+            index++;
+        }
+        return -1;
+    }
+
+    // Puts `goal` on screen, blending from the pose that was showing when `newMode` differs from what was showing.
+    // `changeSeconds` is how long that blend takes.
+    Present~: (goal: CameraPose, newMode: i32, changeSeconds: f32, dt: f32) -> void {
+        if !hasDisplayed {
+            modeId = newMode;
+            blendSeconds = 0.0f;
+        } else if newMode != modeId {
+            modeId = newMode;
+            modeChangedSinceStep = true;
+            blendFrom = displayed;
+            blendSeconds = changeSeconds;
+            blendElapsed = 0.0f;
+        }
+        shown~ CameraPose = goal;
+        if IsBlending() {
+            blendElapsed += dt;
+            shown = blendFrom.Blended(goal, Smoothing:::SmoothStep(blendElapsed / blendSeconds));
+        }
+        displayed = shown;
+        hasDisplayed = true;
+        lantern:::camera:::SetFieldOfView(shown.fieldOfViewDegrees);
+        lantern:::camera:::LookAt(shown.eye, shown.target);
+    }
+}
