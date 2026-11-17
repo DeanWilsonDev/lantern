@@ -2,11 +2,41 @@ lantern:::navigation :: namespace {
     /**
      * The kinds of link between two nodes. A walk link is ordinary walking (steps and slopes included), a drop link walks
      * off an edge and falls to the ground below, and a jump link needs the jump button: a gap, or a ledge too high to step
-     * up. There is no climb link: the partner can't climb, so a way that needs climbing has no path.
+     * up. A ride link is a trip on a moving platform between its two landings. There is no climb link: the partner can't
+     * climb, so a way that needs climbing has no path.
      */
     LINK_WALK: i32 : 0;
     LINK_DROP: i32 : 1;
     LINK_JUMP: i32 : 2;
+    LINK_RIDE: i32 : 3;
+
+    /**
+     * The parts of the level that change after the graph is built. A gate is a volume of the static floor that a door
+     * shuts. A surface is a patch of floor that exists only while a slab or a bridge is there. A ride is a platform that
+     * carries a body between two landings.
+     */
+    FEATURE_GATE: i32 : 0;
+    FEATURE_SURFACE: i32 : 1;
+    FEATURE_RIDE: i32 : 2;
+    NO_FEATURE: i32 : -1;
+    ANY_FEATURE: i32 : -2;
+    /**
+     * Added to the cost of each time a route steps onto fragile ground or into a shut door or bridge to wait for it, and of
+     * waiting for a platform, so a route that needs none of them wins. It is charged once per crossing, not per node, or
+     * jumping over the fragile ground would look cheaper than walking it.
+     */
+    FRAGILE_COST_PENALTY: f32 : 6.0f;
+    WAIT_COST_PENALTY: f32 : 12.0f;
+    /**
+     * How far a surface's nodes may stand outside its box, so two slabs that meet share a column of nodes at the seam.
+     */
+    SURFACE_OVERLAP: f32 : 0.1f;
+    RIDE_COST_PENALTY: f32 : 8.0f;
+    /**
+     * How far from a gate's box a node still counts as in the way, in metres: the body's radius, so she stops short of a
+     * door instead of touching it.
+     */
+    GATE_HEIGHT_MARGIN: f32 : 0.5f;
 
     /**
      * The "no node" index, and the cost of an unreached node.
@@ -124,13 +154,15 @@ lantern:::navigation :: namespace {
     }
 
     /**
-     * A route: the places to walk to in order, how each is reached (a link kind) and whether the route gets all the way
-     * to where it was asked to go. An incomplete route ends at the reachable place nearest the goal.
+     * A route: the places to walk to in order, how each is reached (a link kind), which feature each depends on (the ride
+     * a ride point is on, or the shut gate or bridge a point is in, else NO_FEATURE) and whether the route gets all the
+     * way to where it was asked to go. An incomplete route ends at the reachable place nearest the goal.
      */
     NavigationPath :: class {
     public:
         points~ Array<Vec3>! = [];
         kinds~ Array<i32>! = [];
+        features~ Array<i32>! = [];
         isComplete~ bool = false;
 
         NavigationPath~: () { }
@@ -138,6 +170,7 @@ lantern:::navigation :: namespace {
         !NavigationPath~: () {
             delete points;
             delete kinds;
+            delete features;
         }
 
         Length :: () -> i32 {
@@ -241,6 +274,14 @@ lantern:::navigation :: namespace {
         linkKind~ Array<i32>! = [];
         linkCost~ Array<f32>! = [];
         linkNext~ Array<i32>! = [];
+        linkFeature~ Array<i32>! = [];
+        nodeFeature~ Array<i32>! = [];
+        featureKind~ Array<i32>! = [];
+        featureIsOpen~ Array<bool>! = [];
+        featureIsFragile~ Array<bool>! = [];
+        featureCanBeWaitedFor~ Array<bool>! = [];
+        revision~ i32 = 0;
+        edgeTargetFeature~ i32 = ANY_FEATURE;
 
         NavigationMesh~: () { }
 
@@ -255,6 +296,12 @@ lantern:::navigation :: namespace {
             delete linkKind;
             delete linkCost;
             delete linkNext;
+            delete linkFeature;
+            delete nodeFeature;
+            delete featureKind;
+            delete featureIsOpen;
+            delete featureIsFragile;
+            delete featureCanBeWaitedFor;
         }
 
         NodeCount :: () -> i32 {
@@ -320,6 +367,14 @@ lantern:::navigation :: namespace {
             linkKind.clear();
             linkCost.clear();
             linkNext.clear();
+            linkFeature.clear();
+            nodeFeature.clear();
+            featureKind.clear();
+            featureIsOpen.clear();
+            featureIsFragile.clear();
+            featureCanBeWaitedFor.clear();
+            revision = 0;
+            edgeTargetFeature = ANY_FEATURE;
             columnsX = 0;
             columnsZ = 0;
         }
@@ -364,14 +419,70 @@ lantern:::navigation :: namespace {
         }
 
         /**
-         * A route from `from` to `to`. Both are snapped to the nearest node. When `to` can't be reached the route goes to
-         * the reachable node nearest it and says so (`isComplete` false); when `from` is not near any node the route is
-         * empty.
+         * A route from `from` to `to` over the graph as it is now, with fragile ground allowed. See `FindRoute`.
          */
         FindPath :: (
             collisionWorld: lantern:::physics:::CollisionWorld*,
             from: Vec3,
             to: Vec3
+        ) -> NavigationPath*! {
+            return FindRoute(collisionWorld, from, to, true);
+        }
+
+        /**
+         * A route from `from` to `to`. Both are snapped to the nearest node. Gates that are shut and surfaces that are not
+         * there are left out, so the route goes round them when it can. When it can't, the route goes through the shut
+         * gates or the bridges that are down, and the points inside them carry the feature, so the walker can wait for it
+         * to open. Fragile ground is used only when `allowFragile`, and then it costs extra. When `to` can't be reached
+         * the route goes to the reachable node nearest it and says so (`isComplete` false); when `from` is not near any
+         * node the route is empty.
+         */
+        FindRoute :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3,
+            allowFragile: bool
+        ) -> NavigationPath*! {
+            direct := Plan(collisionWorld, from, to, allowFragile, false);
+            if direct->isComplete || featureKind.length() == 0 {
+                return direct!;
+            }
+            waiting := Plan(collisionWorld, from, to, allowFragile, true);
+            if waiting->isComplete {
+                delete direct;
+                return waiting!;
+            }
+            delete waiting;
+            return direct!;
+        }
+
+        /**
+         * Whether the walker may stand on `node`: it holds no feature, or its feature is open, or the search is allowed to
+         * wait for it. Fragile ground is out unless `allowFragile`.
+         */
+        IsNodeUsable :: (node: i32, allowFragile: bool, waitForShut: bool) -> bool {
+            feature: i32 = nodeFeature[usize(node)];
+            if feature == NO_FEATURE {
+                return true;
+            }
+            if featureIsFragile[usize(feature)] && !allowFragile {
+                return false;
+            }
+            if featureIsOpen[usize(feature)] {
+                return true;
+            }
+            return waitForShut && featureCanBeWaitedFor[usize(feature)];
+        }
+
+        /**
+         * One search over the graph: A* with a straight line estimate.
+         */
+        Plan :: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            from: Vec3,
+            to: Vec3,
+            allowFragile: bool,
+            waitForShut: bool
         ) -> NavigationPath*! {
             path := new NavigationPath();
             startNode: i32 = NearestNode(from);
@@ -383,16 +494,19 @@ lantern:::navigation :: namespace {
             cost~ Array<f32>! = [];
             cameFrom~ Array<i32>! = [];
             cameByLink~ Array<i32>! = [];
+            cameByFeature~ Array<i32>! = [];
             settled~ Array<bool>! = [];
             for index~ usize = 0; index < nodeTotal; index++ {
                 cost.push(UNREACHED_COST);
                 cameFrom.push(NO_NODE);
                 cameByLink.push(LINK_WALK);
+                cameByFeature.push(NO_FEATURE);
                 settled.push(false);
             }
             defer delete cost;
             defer delete cameFrom;
             defer delete cameByLink;
+            defer delete cameByFeature;
             defer delete settled;
             open := new OpenList();
             defer delete open;
@@ -420,12 +534,28 @@ lantern:::navigation :: namespace {
                 link~ i32 = nodeFirstLink[usize(current)];
                 while link != NO_NODE {
                     target: i32 = linkTarget[usize(link)];
-                    total: f32 = cost[usize(current)] + linkCost[usize(link)];
-                    if !settled[usize(target)] && total < cost[usize(target)] {
-                        cost[usize(target)] = total;
-                        cameFrom[usize(target)] = current;
-                        cameByLink[usize(target)] = linkKind[usize(link)];
-                        open->Push(target, total + (nodePositions[usize(target)] - to).length());
+                    linkOwner: i32 = linkFeature[usize(link)];
+                    isLinkOpen: bool = linkOwner == NO_FEATURE || featureIsOpen[usize(linkOwner)];
+                    if !settled[usize(target)] && isLinkOpen && IsNodeUsable(target, allowFragile, waitForShut) {
+                        total~ f32 = cost[usize(current)] + linkCost[usize(link)];
+                        targetFeature: i32 = nodeFeature[usize(target)];
+                        currentFeature: i32 = nodeFeature[usize(current)];
+                        if targetFeature != NO_FEATURE && targetFeature != currentFeature {
+                            isOnFragileGround: bool = currentFeature != NO_FEATURE && featureIsFragile[usize(currentFeature)];
+                            if featureIsFragile[usize(targetFeature)] && !isOnFragileGround {
+                                total += FRAGILE_COST_PENALTY;
+                            }
+                            if !featureIsOpen[usize(targetFeature)] {
+                                total += WAIT_COST_PENALTY;
+                            }
+                        }
+                        if total < cost[usize(target)] {
+                            cost[usize(target)] = total;
+                            cameFrom[usize(target)] = current;
+                            cameByLink[usize(target)] = linkKind[usize(link)];
+                            cameByFeature[usize(target)] = linkOwner;
+                            open->Push(target, total + (nodePositions[usize(target)] - to).length());
+                        }
                     }
                     link = linkNext[usize(link)];
                 }
@@ -433,30 +563,42 @@ lantern:::navigation :: namespace {
             endNode: i32 = reached ? goalNode : closest;
             chainPoints~ Array<Vec3>! = [];
             chainKinds~ Array<i32>! = [];
+            chainFeatures~ Array<i32>! = [];
             defer delete chainPoints;
             defer delete chainKinds;
+            defer delete chainFeatures;
             walking~ i32 = endNode;
             while walking != NO_NODE {
                 chainPoints.push(nodePositions[usize(walking)]);
                 chainKinds.push(cameByLink[usize(walking)]);
+                pointFeature~ i32 = cameByFeature[usize(walking)];
+                nodeOwner: i32 = nodeFeature[usize(walking)];
+                if pointFeature == NO_FEATURE && nodeOwner != NO_FEATURE && !featureIsOpen[usize(nodeOwner)] {
+                    pointFeature = nodeOwner;
+                }
+                chainFeatures.push(pointFeature);
                 walking = cameFrom[usize(walking)];
             }
             orderedPoints~ Array<Vec3>! = [];
             orderedKinds~ Array<i32>! = [];
+            orderedFeatures~ Array<i32>! = [];
             defer delete orderedPoints;
             defer delete orderedKinds;
+            defer delete orderedFeatures;
             for index~ usize = chainPoints.length(); index > 0; index-- {
                 orderedPoints.push(chainPoints[index - 1]);
                 orderedKinds.push(chainKinds[index - 1]);
+                orderedFeatures.push(chainFeatures[index - 1]);
             }
             first~ usize = 0;
             if orderedPoints.length() > 1 {
                 lead: Vec3 = orderedPoints[0] - from;
-                if Math:::sqrt(lead.x * lead.x + lead.z * lead.z) < agent.cellSize * 1.5f {
+                if Math:::sqrt(lead.x * lead.x + lead.z * lead.z) < agent.cellSize * 1.5f &&
+                    orderedFeatures[1] == NO_FEATURE && orderedKinds[1] == LINK_WALK {
                     first = 1;
                 }
             }
-            Smooth(collisionWorld, orderedPoints, orderedKinds, first, path);
+            Smooth(collisionWorld, orderedPoints, orderedKinds, orderedFeatures, first, path);
             path->isComplete = reached;
             if reached && path->points.length() > 0 {
                 lastPoint: Vec3 = path->points[path->points.length() - 1];
@@ -465,6 +607,7 @@ lantern:::navigation :: namespace {
                     Math:::abs(to.y - lastPoint.y) < SNAP_HEIGHT {
                     path->points.push(Vec3 { x: to.x, y: lastPoint.y, z: to.z });
                     path->kinds.push(LINK_WALK);
+                    path->features.push(NO_FEATURE);
                 }
             }
             return path!;
@@ -481,6 +624,253 @@ lantern:::navigation :: namespace {
             path := FindPath(collisionWorld, from, to);
             defer delete path;
             return path->isComplete;
+        }
+
+        /**
+         * How many features have been added.
+         */
+        FeatureCount :: () -> i32 {
+            return i32(featureKind.length());
+        }
+
+        /**
+         * How often a feature has changed between open and shut since the graph was built. A walker with a route plans again
+         * when this has moved.
+         */
+        Revision :: () -> i32 {
+            return revision;
+        }
+
+        /**
+         * Whether a feature is open now: a gate that is open, a surface that is there, a ride that runs. A feature that
+         * doesn't exist is shut.
+         */
+        IsFeatureAvailable :: (feature: i32) -> bool {
+            if feature < 0 || feature >= FeatureCount() {
+                return false;
+            }
+            return featureIsOpen[usize(feature)];
+        }
+
+        /**
+         * Opens or shuts a feature. A change counts as a new revision.
+         */
+        SetFeatureAvailable~: (feature: i32, isAvailable: bool) -> void {
+            if feature < 0 || feature >= FeatureCount() {
+                return;
+            }
+            if featureIsOpen[usize(feature)] != isAvailable {
+                featureIsOpen[usize(feature)] = isAvailable;
+                revision += 1;
+            }
+        }
+
+        NewFeature~: (kind: i32, isOpen: bool, isFragile: bool, canBeWaitedFor: bool) -> i32 {
+            feature: i32 = FeatureCount();
+            featureKind.push(kind);
+            featureIsOpen.push(isOpen);
+            featureIsFragile.push(isFragile);
+            featureCanBeWaitedFor.push(canBeWaitedFor);
+            return feature;
+        }
+
+        /**
+         * Adds a gate: a box of the level (a door) that blocks the floor inside it while it is shut. The graph was built
+         * from the static world, which has no door in it, so the nodes the door stands on are there already; this marks them
+         * with the feature, so a route avoids them while the door is shut. Nodes within the agent's radius of the box count,
+         * so a walker stops short of it. Returns the feature, to open and shut with `SetFeatureAvailable`.
+         */
+        AddGate~: (center: Vec3, halfExtents: Vec3, isOpen: bool) -> i32 {
+            feature: i32 = NewFeature(FEATURE_GATE, isOpen, false, true);
+            margin: f32 = agent.radius;
+            nodeTotal: i32 = NodeCount();
+            for node~ i32 = 0; node < nodeTotal; node++ {
+                if nodeFeature[usize(node)] != NO_FEATURE {
+                    continue;
+                }
+                position: Vec3 = nodePositions[usize(node)];
+                if Math:::abs(position.x - center.x) <= halfExtents.x + margin &&
+                    Math:::abs(position.z - center.z) <= halfExtents.z + margin &&
+                    position.y >= center.y - halfExtents.y - GATE_HEIGHT_MARGIN &&
+                    position.y <= center.y + halfExtents.y + 0.2f {
+                    nodeFeature[usize(node)] = feature;
+                }
+            }
+            return feature;
+        }
+
+        /**
+         * Adds a surface: floor on top of a box that isn't in the static world (a slab that crumbles, a bridge that is raised
+         * by a switch). Nodes go on the grid across the top of the box; they join each other and the neighbouring floor by
+         * walking, and the edges join the ground nearby by drops and jumps. The nodes are in the graph while the feature is
+         * open. A fragile surface is used only by a walker that allows it, and costs extra. `canBeWaitedFor` says a closed
+         * surface is worth waiting for (a bridge that comes up) and not one that has gone for good. Returns the feature.
+         */
+        AddSurface~: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            center: Vec3,
+            halfExtents: Vec3,
+            isOpen: bool,
+            isFragile: bool,
+            canBeWaitedFor: bool
+        ) -> i32 {
+            feature: i32 = NewFeature(FEATURE_SURFACE, isOpen, isFragile, canBeWaitedFor);
+            if columnsX == 0 {
+                return feature;
+            }
+            top: f32 = center.y + halfExtents.y;
+            inset: f32 = -SURFACE_OVERLAP;
+            firstNode: i32 = NodeCount();
+            minColumnX: i32 = i32(Math:::floor((center.x - halfExtents.x - originX) / agent.cellSize));
+            maxColumnX: i32 = i32(Math:::floor((center.x + halfExtents.x - originX) / agent.cellSize));
+            minColumnZ: i32 = i32(Math:::floor((center.z - halfExtents.z - originZ) / agent.cellSize));
+            maxColumnZ: i32 = i32(Math:::floor((center.z + halfExtents.z - originZ) / agent.cellSize));
+            for columnZ~ i32 = minColumnZ; columnZ <= maxColumnZ; columnZ++ {
+                for columnX~ i32 = minColumnX; columnX <= maxColumnX; columnX++ {
+                    if !InColumns(columnX, columnZ) {
+                        continue;
+                    }
+                    columnCenter: Vec3 = ColumnCenter(columnX, columnZ);
+                    if Math:::abs(columnCenter.x - center.x) > halfExtents.x - inset ||
+                        Math:::abs(columnCenter.z - center.z) > halfExtents.z - inset {
+                        continue;
+                    }
+                    node: i32 = NodeCount();
+                    nodePositions.push(Vec3 { x: columnCenter.x, y: top, z: columnCenter.z });
+                    nodeFirstLink.push(NO_NODE);
+                    nodeWalkLinks.push(0);
+                    nodeIsTight.push(false);
+                    nodeFeature.push(feature);
+                    columnIndex: usize = ColumnIndex(columnX, columnZ);
+                    nodeNextInColumn.push(columnHeads[columnIndex]);
+                    columnHeads[columnIndex] = node;
+                }
+            }
+            nodeTotal: i32 = NodeCount();
+            for node~ i32 = firstNode; node < nodeTotal; node++ {
+                LinkSurfaceNode(collisionWorld, node, feature);
+            }
+            for node~ i32 = firstNode; node < nodeTotal; node++ {
+                if nodeWalkLinks[usize(node)] < 4 {
+                    LinkEdgeNode(collisionWorld, node);
+                }
+            }
+            reach: f32 = agent.maxJumpAcross + agent.cellSize;
+            edgeTargetFeature = feature;
+            for node~ i32 = 0; node < firstNode; node++ {
+                if nodeWalkLinks[usize(node)] >= 4 {
+                    continue;
+                }
+                position: Vec3 = nodePositions[usize(node)];
+                if position.x < center.x - halfExtents.x - reach || position.x > center.x + halfExtents.x + reach ||
+                    position.z < center.z - halfExtents.z - reach || position.z > center.z + halfExtents.z + reach {
+                    continue;
+                }
+                LinkEdgeNode(collisionWorld, node);
+            }
+            edgeTargetFeature = ANY_FEATURE;
+            return feature;
+        }
+
+        /**
+         * Joins a surface node to the nodes in the eight columns around it that were there first: nodes of the same surface
+         * walk to each other, and other floor is walked to when the height change is a step and the body fits.
+         */
+        LinkSurfaceNode~: (
+            collisionWorld: lantern:::physics:::CollisionWorld*,
+            node: i32,
+            feature: i32
+        ) -> void {
+            position: Vec3 = nodePositions[usize(node)];
+            columnX: i32 = i32(Math:::floor((position.x - originX) / agent.cellSize));
+            columnZ: i32 = i32(Math:::floor((position.z - originZ) / agent.cellSize));
+            for offsetZ~ i32 = -1; offsetZ <= 1; offsetZ++ {
+                for offsetX~ i32 = -1; offsetX <= 1; offsetX++ {
+                    if offsetX == 0 && offsetZ == 0 {
+                        continue;
+                    }
+                    if !InColumns(columnX + offsetX, columnZ + offsetZ) {
+                        continue;
+                    }
+                    isDiagonal: bool = offsetX != 0 && offsetZ != 0;
+                    neighbour~ i32 = columnHeads[ColumnIndex(columnX + offsetX, columnZ + offsetZ)];
+                    while neighbour != NO_NODE {
+                        isEarlier: bool = neighbour < node;
+                        if isEarlier {
+                            neighbourPosition: Vec3 = nodePositions[usize(neighbour)];
+                            isSame: bool = nodeFeature[usize(neighbour)] == feature;
+                            rise: f32 = Math:::abs(neighbourPosition.y - position.y);
+                            if isSame || rise <= agent.stepHeight + 0.02f &&
+                                CanWalkBetween(collisionWorld, position, neighbourPosition) {
+                                distance: f32 = (neighbourPosition - position).length();
+                                AddLink(node, neighbour, LINK_WALK, distance);
+                                AddLink(neighbour, node, LINK_WALK, distance);
+                                if !isDiagonal {
+                                    nodeWalkLinks[usize(node)] += 1;
+                                    nodeWalkLinks[usize(neighbour)] += 1;
+                                }
+                            }
+                        }
+                        neighbour = nodeNextInColumn[usize(neighbour)];
+                    }
+                }
+            }
+        }
+
+        /**
+         * Adds a ride: a platform that carries a body between two landings. `from` and `to` are the two ends of its trip,
+         * a point on the platform at each. The nearest floor within `reach` of each (the landing beside the platform at
+         * that end) is joined to the other by a ride link, both ways. Returns the feature, or -1 when an end has no landing.
+         */
+        AddRide~: (from: Vec3, to: Vec3, reach: f32) -> i32 {
+            fromNode: i32 = NearestStaticNode(from, reach);
+            toNode: i32 = NearestStaticNode(to, reach);
+            if fromNode == NO_NODE || toNode == NO_NODE || fromNode == toNode {
+                return -1;
+            }
+            feature: i32 = NewFeature(FEATURE_RIDE, true, false, false);
+            cost: f32 = (nodePositions[usize(toNode)] - nodePositions[usize(fromNode)]).length() + RIDE_COST_PENALTY;
+            AddLink(fromNode, toNode, LINK_RIDE, cost);
+            linkFeature[linkFeature.length() - 1] = feature;
+            AddLink(toNode, fromNode, LINK_RIDE, cost);
+            linkFeature[linkFeature.length() - 1] = feature;
+            return feature;
+        }
+
+        /**
+         * The node of the static floor nearest `point` within `reach` along the ground and a body's step of height
+         * either way, or NO_NODE.
+         */
+        NearestStaticNode :: (point: Vec3, reach: f32) -> i32 {
+            if columnsX == 0 {
+                return NO_NODE;
+            }
+            cells: i32 = i32(Math:::ceil(reach / agent.cellSize));
+            centerX: i32 = i32(Math:::floor((point.x - originX) / agent.cellSize));
+            centerZ: i32 = i32(Math:::floor((point.z - originZ) / agent.cellSize));
+            best~ i32 = NO_NODE;
+            bestDistance~ f32 = reach;
+            for columnZ~ i32 = centerZ - cells; columnZ <= centerZ + cells; columnZ++ {
+                for columnX~ i32 = centerX - cells; columnX <= centerX + cells; columnX++ {
+                    if !InColumns(columnX, columnZ) {
+                        continue;
+                    }
+                    node~ i32 = columnHeads[ColumnIndex(columnX, columnZ)];
+                    while node != NO_NODE {
+                        position: Vec3 = nodePositions[usize(node)];
+                        flatX: f32 = position.x - point.x;
+                        flatZ: f32 = position.z - point.z;
+                        distance: f32 = Math:::sqrt(flatX * flatX + flatZ * flatZ);
+                        if nodeFeature[usize(node)] == NO_FEATURE && distance < bestDistance &&
+                            Math:::abs(position.y - point.y) <= agent.stepHeight + 0.3f {
+                            bestDistance = distance;
+                            best = node;
+                        }
+                        node = nodeNextInColumn[usize(node)];
+                    }
+                }
+            }
+            return best;
         }
 
         ColumnIndex :: (columnX: i32, columnZ: i32) -> usize {
@@ -565,6 +955,7 @@ lantern:::navigation :: namespace {
                 nodeFirstLink.push(NO_NODE);
                 nodeWalkLinks.push(0);
                 nodeIsTight.push(!HasClearance(collisionWorld, feet, agent.BodyCapsule()));
+                nodeFeature.push(NO_FEATURE);
                 if tail == NO_NODE {
                     head = node;
                 } else {
@@ -741,6 +1132,10 @@ lantern:::navigation :: namespace {
                     run: f32 = stepLength * f32(cells);
                     candidate~ i32 = columnHeads[ColumnIndex(targetX, targetZ)];
                     while candidate != NO_NODE && !linked {
+                        if edgeTargetFeature != ANY_FEATURE && nodeFeature[usize(candidate)] != edgeTargetFeature {
+                            candidate = nodeNextInColumn[usize(candidate)];
+                            continue;
+                        }
                         target: Vec3 = nodePositions[usize(candidate)];
                         rise: f32 = target.y - position.y;
                         if cells == 1 && Math:::abs(rise) <= agent.stepHeight + 0.02f {
@@ -847,6 +1242,7 @@ lantern:::navigation :: namespace {
             linkKind.push(kind);
             linkCost.push(cost);
             linkNext.push(nodeFirstLink[usize(from)]);
+            linkFeature.push(NO_FEATURE);
             nodeFirstLink[usize(from)] = link;
         }
 
@@ -859,6 +1255,7 @@ lantern:::navigation :: namespace {
             collisionWorld: lantern:::physics:::CollisionWorld*,
             points: Array<Vec3>,
             kinds: Array<i32>,
+            features: Array<i32>,
             first: usize,
             path: NavigationPath~*
         ) -> void {
@@ -869,6 +1266,7 @@ lantern:::navigation :: namespace {
             index~ usize = first;
             path->points.push(points[index]);
             path->kinds.push(LINK_WALK);
+            path->features.push(features[index]);
             while index + 1 < count {
                 best~ usize = index + 1;
                 limit~ usize = index + usize(SMOOTH_LOOKAHEAD_POINTS);
@@ -876,6 +1274,9 @@ lantern:::navigation :: namespace {
                     limit = count - 1;
                 }
                 for candidate~ usize = index + 2; candidate <= limit; candidate++ {
+                    if features[best] != NO_FEATURE || features[candidate] != NO_FEATURE {
+                        break;
+                    }
                     if kinds[candidate] != LINK_WALK || kinds[candidate - 1] != LINK_WALK &&
                         candidate - 1 > index {
                         break;
@@ -890,6 +1291,7 @@ lantern:::navigation :: namespace {
                 }
                 path->points.push(points[best]);
                 path->kinds.push(kinds[best]);
+                path->features.push(features[best]);
                 index = best;
             }
         }

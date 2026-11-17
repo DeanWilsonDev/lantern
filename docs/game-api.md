@@ -148,16 +148,22 @@ the game decides what a kind means.
 
 The engine samples the level's static collision into a graph of standable floors, joined by walk links (steps, stairs and
 slopes), drop links (walking off a ledge) and jump links (a gap, or a ledge too high to step). There are no climb links,
-so a way that needs climbing has no path. Moving bodies (doors, lifts, crumbling slabs) are not in the graph. Build it once
+so a way that needs climbing has no path. Doors, bridges, crumbling slabs and moving platforms are added after the build as features that open and shut. Build it once
 the level is loaded; the partner does it when she spawns. `docs/navigation.md` explains how it works.
 
 | Call | |
 |---|---|
 | `lantern:::navigation:::Build(radius, height, stepHeight, maxDrop, maxJumpUp, maxJumpAcross) -> i32` | samples the loaded level for a body of that size and returns the node count; 0 when there is no level |
 | `lantern:::navigation:::FindPath(from, to) -> lantern:::navigation:::Path` | a route; `from` and `to` snap to the nearest floor |
+| `lantern:::navigation:::FindRoute(from, to, allowFragile) -> lantern:::navigation:::Path` | a route that goes round shut doors, or through them (the points carry the feature) when there is no other way; fragile ground only when `allowFragile` |
+| `lantern:::navigation:::AddGate(center, halfExtents, isOpen) -> i32` | a door: blocks the floor inside the box while shut. Returns the feature |
+| `lantern:::navigation:::AddSurface(center, halfExtents, isOpen, isFragile, canBeWaitedFor) -> i32` | floor on top of a box that isn't in the static world (a slab, a bridge) while it is open |
+| `lantern:::navigation:::AddRide(from, to, reach) -> i32` | a moving platform's trip between two points on it; the floor within `reach` of each end becomes a landing. -1 when an end has none |
+| `lantern:::navigation:::SetFeatureAvailable(feature, isAvailable)`, `IsFeatureAvailable(feature) -> bool`, `Revision() -> i32` | open and shut a feature; `Revision` counts the changes. `Build` forgets every feature |
 | `lantern:::navigation:::IsReachable(from, to) -> bool`, `NodeCount() -> i32`, `Clear()` | |
 | `path.IsComplete() -> bool` | false when `to` can't be reached: the path then ends at the reachable place nearest it |
-| `path.Count() -> i32`, `path.Point(index) -> Vec3`, `path.Link(index) -> i32` | `Link` is how point `index` is reached: 0 walk, 1 drop, 2 jump. Call them through a `~` binding |
+| `path.Count() -> i32`, `path.Point(index) -> Vec3`, `path.Link(index) -> i32` | `Link` is how point `index` is reached: 0 walk, 1 drop, 2 jump, 3 ride. Call them through a `~` binding |
+| `path.Feature(index) -> i32` | the feature point `index` depends on (the ride it is on, or the shut gate or bridge it is in), else -1 |
 
 A jump point is reached by leaving the point before it with the jump button down. An empty path means `from` is not near
 any floor.
@@ -535,6 +541,13 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `Clear` | `() -> void` |
 | `NodeCount` | `() -> i32` |
 | `FindPath` | `(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> lantern:::navigation:::Path` |
+| `FindRoute` | `(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3, allowFragile: bool) -> lantern:::navigation:::Path` |
+| `AddGate` | `(center: lantern:::math:::Vec3, halfExtents: lantern:::math:::Vec3, isOpen: bool) -> i32` |
+| `AddSurface` | `(center: lantern:::math:::Vec3, halfExtents: lantern:::math:::Vec3, isOpen: bool, isFragile: bool, canBeWaitedFor: bool) -> i32` |
+| `AddRide` | `(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3, reach: f32) -> i32` |
+| `SetFeatureAvailable` | `(feature: i32, isAvailable: bool) -> void` |
+| `IsFeatureAvailable` | `(feature: i32) -> bool` |
+| `Revision` | `() -> i32` |
 | `IsReachable` | `(from: lantern:::math:::Vec3, to: lantern:::math:::Vec3) -> bool` |
 
 ### `lantern:::camera`
@@ -724,6 +737,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | method `IsComplete` | `() -> bool` |
 | method `Point` | `(index: i32) -> lantern:::math:::Vec3` |
 | method `Link` | `(index: i32) -> i32` |
+| method `Feature` | `(index: i32) -> i32` |
 
 #### `lantern:::physics:::ControllerStep`
 

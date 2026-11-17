@@ -1,6 +1,7 @@
 TeamBeat :: import TeamBeat;
 PartnerTuning :: import PartnerTuning;
 CharacterAnimator :: import CharacterAnimator;
+NavigationDynamics :: import NavigationDynamics;
 Math :: import standard:::Math;
 
 // What she is doing right now.
@@ -26,6 +27,9 @@ PartnerMode :: enum {
 // gaps; it never climbs. A beat's `via` places are the older, hand-made route, used when the graph has no path to the
 // beat (it knows only the static level, so a door or a lift that moves is not in it) and after the path has failed her.
 // What keeps her from being lost is a set of safety nets:
+// - the graph also holds what moves (game-systems/navigation-dynamics.nyx): she goes round a shut door when she can and
+//   otherwise waits in front of it, waits for a bridge or a stair that a switch raises, rides a moving platform across a
+//   gap when it is level with her landing, and crosses a crumbling slab only when she is leading;
 // - when she makes no progress on a path she plans it again, then falls back to the `via` route;
 // - she looks for ground ahead of every step and stops at an edge instead of walking off it;
 // - when she makes no progress she goes back to the beat she last stood at and tries again, and on
@@ -73,7 +77,7 @@ public:
     ModeName :: () -> string {
         return when mode <PartnerMode> {
             Waiting -> "waiting",
-            Leading -> isPaused ? "paused" : (isOnPath ? "leading (path)" : "leading"),
+            Leading -> isRiding ? "leading (riding)" : (isPaused ? "paused" : (isOnPath ? PathModeName() : "leading")),
             Acting -> "acting " + action,
             Following -> "following"
         };
@@ -85,6 +89,23 @@ public:
             return `${navigationNodes:d} nodes, no path`;
         }
         return `${navigationNodes:d} nodes, point ${pathIndex + 1:d} of ${pathPoints.length():d}`;
+    }
+
+    // What she is doing on her path, for the debug HUD and the tests.
+    PathModeName :: () -> string {
+        if isRiding {
+            return "leading (riding)";
+        }
+        if isWaitingAtDoor {
+            return "leading (waiting)";
+        }
+        return "leading (path)";
+    }
+
+    // Hands her what moves in the level: the doors, bridges, slabs and platforms the graph was told about. Without it she
+    // only knows the static floor.
+    UseNavigationDynamics~: (levelDynamics~ NavigationDynamics) -> void {
+        dynamics = levelDynamics;
     }
 
     IsOfferingBoost :: () -> bool {
@@ -172,6 +193,13 @@ private:
     pathFailures~ i32 = 0;
     replanSeconds~ f32 = 0.0f;
     isJumpHeld~ bool = false;
+    dynamics~ NavigationDynamics = new NavigationDynamics();
+    pathFeatures~ Array<i32> = [];
+    pathGoal~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    isPathForLeading~ bool = true;
+    seenRevision~ i32 = 0;
+    isWaitingAtDoor~ bool = false;
+    isRiding~ bool = false;
     actingSeconds~ f32 = 0.0f;
     isPaused~ bool = false;
     nudgeSeconds~ f32 = 0.0f;
@@ -201,9 +229,13 @@ private:
         isOnPath = false;
         pathPoints = [];
         pathKinds = [];
+        pathFeatures = [];
         pathIndex = 0;
         pathFailures = 0;
         isJumpHeld = false;
+        isWaitingAtDoor = false;
+        isRiding = false;
+        seenRevision = lantern:::navigation:::Revision();
     }
 
     // Waiting between beats: she sets off when the player is near, or has run past her toward the beat. A player who
@@ -232,7 +264,7 @@ private:
         route = beats[beatIndex].route;
         routeIndex = 0;
         pathFailures = 0;
-        isOnPath = PlanPath(beats[beatIndex].position);
+        isOnPath = PlanPath(beats[beatIndex].position, true);
         stuckSeconds = 0.0f;
         isPaused = false;
         nudgeSeconds = 0.0f;
@@ -259,12 +291,14 @@ private:
             Nudge(dt);
             return;
         }
+        PlanWhenTheLevelChanges(beat.position, true);
         if isOnPath {
-            moveTarget = pathPoints[pathIndex];
-        } else {
-            moveTarget = routeIndex < route.length() ? route[routeIndex] : beat.position;
+            AimAlongPath();
         }
-        wantsToMove = true;
+        if !isOnPath {
+            moveTarget = routeIndex < route.length() ? route[routeIndex] : beat.position;
+            wantsToMove = true;
+        }
         speedScale = isAhead && gap < PartnerTuning:::HURRY_LIMIT ? PartnerTuning:::HURRY_SPEED_SCALE : 1.0f;
     }
 
@@ -296,34 +330,101 @@ private:
             isOnPath = false;
         } else if gap > PartnerTuning:::FOLLOW_DISTANCE {
             replanSeconds += dt;
-            if isPlayerGrounded && (!isOnPath || replanSeconds >= PartnerTuning:::FOLLOW_REPLAN_SECONDS) {
+            if isPlayerGrounded && (!isOnPath || (!isRiding && replanSeconds >= PartnerTuning:::FOLLOW_REPLAN_SECONDS)) {
                 replanSeconds = 0.0f;
-                isOnPath = PlanPath(playerFeet);
+                isOnPath = PlanPath(playerFeet, false);
             }
             if isOnPath {
-                moveTarget = pathPoints[pathIndex];
-            } else {
-                moveTarget = NextTrailPoint(playerFeet);
+                AimAlongPath();
             }
-            wantsToMove = true;
+            if !isOnPath {
+                moveTarget = NextTrailPoint(playerFeet);
+                wantsToMove = true;
+            }
         } else {
             isOnPath = false;
         }
     }
 
     // Plans a path from where she stands to `goal`. True, and she follows it, when the graph has a way all the way there.
-    PlanPath~: (goal: lantern:::math:::Vec3) -> bool {
+    // While she leads she may cross fragile slabs, because they break behind her and the player finds another way; while
+    // she follows she never does. A way through a shut door or a bridge that is down counts: she waits for it.
+    PlanPath~: (goal: lantern:::math:::Vec3, isLeading: bool) -> bool {
         pathPoints = [];
         pathKinds = [];
+        pathFeatures = [];
         pathIndex = 0;
+        pathGoal = goal;
+        isPathForLeading = isLeading;
+        seenRevision = lantern:::navigation:::Revision();
         guard navigationNodes > 0 return false;
-        found~ lantern:::navigation:::Path = lantern:::navigation:::FindPath(position, goal);
+        found~ lantern:::navigation:::Path = lantern:::navigation:::FindRoute(position, goal, isLeading);
         guard found.IsComplete() && found.Count() > 0 return false;
         for index~ i32 = 0; index < found.Count(); index++ {
             pathPoints.add(found.Point(index));
             pathKinds.add(found.Link(index));
+            pathFeatures.add(found.Feature(index));
         }
         return true;
+    }
+
+    // With no path, because a door was shut or a bridge was down when she looked, she looks again once something in the
+    // level has opened or shut.
+    PlanWhenTheLevelChanges~: (goal: lantern:::math:::Vec3, isLeading: bool) -> void {
+        guard !isOnPath && lantern:::navigation:::Revision() != seenRevision && controller.IsGrounded();
+        isOnPath = PlanPath(goal, isLeading);
+    }
+
+    // Decides where this step's walk is aimed along her path, and whether she walks at all. She stands still in front of a
+    // shut door or a bridge that is down, and at a landing until the platform is level with it. Sets `isOnPath` false when
+    // the path can't be walked any more. A path stays good while things open and shut: a door she waits for opens, and a
+    // slab breaks behind her, so she plans again only when she has no path (see `PlanWhenTheLevelChanges`) or gets stuck.
+    AimAlongPath~: () -> void {
+        isWaitingAtDoor = false;
+        isRiding = false;
+        moveTarget = pathPoints[pathIndex];
+        wantsToMove = true;
+        if pathKinds[pathIndex] == PartnerTuning:::LINK_RIDE {
+            AimAtRide();
+            return;
+        }
+        feature := pathFeatures[pathIndex];
+        if feature >= 0 && !lantern:::navigation:::IsFeatureAvailable(feature) {
+            wantsToMove = false;
+            isWaitingAtDoor = true;
+        }
+    }
+
+    // The point she is walking to is the far landing of a ride, and the one before it is where she boards. She waits at
+    // the landing until the platform's edge is beside it, steps on, stands still while it carries her and steps off at the
+    // far landing once the platform is beside that.
+    AimAtRide~: () -> void {
+        rideIndex := dynamics.RideIndex(pathFeatures[pathIndex]);
+        if rideIndex < 0 || pathIndex == 0 {
+            isOnPath = false;
+            return;
+        }
+        landing := pathPoints[pathIndex - 1];
+        farLanding := pathPoints[pathIndex];
+        window := PartnerTuning:::RIDE_BOARD_WINDOW;
+        if dynamics.IsOnPlatform(rideIndex, position) {
+            isRiding = true;
+            if dynamics.IsPlatformAtLanding(rideIndex, farLanding, window) {
+                moveTarget = farLanding;
+            } else {
+                wantsToMove = false;
+            }
+            return;
+        }
+        if (farLanding - position).Horizontal().Length() < (landing - position).Horizontal().Length() {
+            moveTarget = farLanding;
+            return;
+        }
+        if dynamics.IsPlatformAtLanding(rideIndex, landing, window) {
+            moveTarget = dynamics.RideTop(rideIndex);
+        } else {
+            wantsToMove = false;
+        }
     }
 
     // Has she reached `target`, the next place she is walking to? On a path, a point on the way is reached more loosely
@@ -334,6 +435,9 @@ private:
             return flat < PartnerTuning:::ARRIVE_DISTANCE;
         }
         if (target.y - position.y) > PartnerTuning:::PATH_HEIGHT_REACHED || (position.y - target.y) > PartnerTuning:::PATH_HEIGHT_REACHED {
+            return false;
+        }
+        if pathKinds[pathIndex] == PartnerTuning:::LINK_RIDE && (target - pathPoints[pathIndex]).Length() > 0.01f {
             return false;
         }
         if pathIndex >= pathPoints.length() - 1 {
@@ -492,7 +596,7 @@ private:
         if mode == PartnerMode:::Leading && !hasFallen && isOnPath {
             pathFailures++;
             if pathFailures == 1 {
-                isOnPath = PlanPath(beats[beatIndex].position);
+                isOnPath = PlanPath(beats[beatIndex].position, true);
             } else {
                 isOnPath = false;
                 routeIndex = 0;
@@ -505,7 +609,7 @@ private:
             position = lastSafe;
             routeIndex = 0;
             if mode == PartnerMode:::Leading {
-                isOnPath = PlanPath(beats[beatIndex].position);
+                isOnPath = PlanPath(beats[beatIndex].position, true);
             }
             if mode == PartnerMode:::Acting {
                 action = "";
@@ -544,8 +648,8 @@ private:
         return best;
     }
 
-    // With the debug HUD on, the path she is walking: a line from her through each point still ahead, drops in orange and
-    // jumps in red.
+    // With the debug HUD on, the path she is walking: a line from her through each point still ahead, drops in orange,
+    // jumps in red and rides in blue.
     DrawPath :: () -> void {
         guard isOnPath && lantern:::debug:::IsHudVisible();
         lift: lantern:::math:::Vec3 = { y: 0.15f };
@@ -553,7 +657,7 @@ private:
         for index~ i32 = pathIndex; index < pathPoints.length(); index++ {
             point := pathPoints[index] + lift;
             kind := pathKinds[index];
-            color := kind == PartnerTuning:::LINK_JUMP ? "FF4040" : (kind == PartnerTuning:::LINK_DROP ? "FFA030" : "40FF80");
+            color := kind == PartnerTuning:::LINK_JUMP ? "FF4040" : (kind == PartnerTuning:::LINK_DROP ? "FFA030" : (kind == PartnerTuning:::LINK_RIDE ? "40A0FF" : "40FF80"));
             lantern:::debug:::Line(previous, point, color);
             lantern:::debug:::Sphere(point, 0.12f, color);
             previous = point;

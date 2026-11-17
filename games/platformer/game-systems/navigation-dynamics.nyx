@@ -1,0 +1,124 @@
+Gate :: import Gate;
+CrumblePlatform :: import CrumblePlatform;
+MovingPlatform :: import MovingPlatform;
+PartnerTuning :: import PartnerTuning;
+Math :: import standard:::Math;
+
+// The parts of a level that move, as the navigation graph sees them.
+//
+// The graph (lantern:::navigation) is built once from the level's static floor, so a door, a crumbling slab, a bridge
+// that a switch raises and a platform that carries you across a gap are not in it. This class tells the graph about
+// each of them after it is built (`Register`), and keeps the graph up to date as they change (`Update`):
+//
+// - A door is a gate: the floor it stands on is blocked while it is shut. A walker goes round a shut door when there is a
+//   way round, and otherwise waits in front of it.
+// - A bridge or a stair that comes up with a switch is a surface: floor that exists only while it is up. A walker
+//   waits for one, because it comes back.
+// - A crumbling slab is a fragile surface: floor while it is solid, and a walker only crosses it when she is the one
+//   leading, because it breaks behind her.
+// - A moving platform is a ride: a trip between the two landings it travels between.
+//
+// The walker is the Partner (game-entities/partner.nyx). She asks this class where a platform is, because the platform
+// is a game entity and the graph only knows the landings.
+NavigationDynamics :: class {
+public:
+    // Adds the level's gates, slabs and platforms to the graph. Call it right after `lantern:::navigation:::Build`,
+    // which forgets them. Trains aren't rides: nobody crosses a gap on one.
+    Register~: (levelGates~ Array<Gate>, levelCrumbles~ Array<CrumblePlatform>, levelPlatforms~ Array<MovingPlatform>) -> void {
+        gates = levelGates;
+        crumbles = levelCrumbles;
+        gateFeatures = [];
+        crumbleFeatures = [];
+        rideFeatures = [];
+        ridePlatforms = [];
+        rideHalfExtents = [];
+        for gate: Gate in gates {
+            if gate.isDoor {
+                gateFeatures.add(lantern:::navigation:::AddGate(gate.home, gate.halfExtents, gate.IsPassable()));
+            } else {
+                gateFeatures.add(lantern:::navigation:::AddSurface(gate.home, gate.halfExtents, gate.IsPassable(), false, true));
+            }
+        }
+        for slab: CrumblePlatform in crumbles {
+            crumbleFeatures.add(lantern:::navigation:::AddSurface(slab.home, slab.halfExtents, slab.phase == 0, true, false));
+        }
+        for platform~ MovingPlatform in levelPlatforms {
+            if lantern:::world:::HasProperty(platform.entity, "train") {
+                continue;
+            }
+            half := HalfExtentsOf(platform.entity);
+            lift: lantern:::math:::Vec3 = { y: half.y };
+            reach := Math:::max(half.x, half.z) + PartnerTuning:::RIDE_LANDING_REACH;
+            feature := lantern:::navigation:::AddRide(platform.start + lift, platform.start + platform.travel + lift, reach);
+            if feature >= 0 {
+                rideFeatures.add(feature);
+                ridePlatforms.add(platform);
+                rideHalfExtents.add(half);
+            }
+        }
+    }
+
+    // One fixed step: tells the graph which doors are open, which bridges are up and which slabs are still there.
+    Update~: () -> void {
+        for index~ i32 = 0; index < gates.length(); index++ {
+            lantern:::navigation:::SetFeatureAvailable(gateFeatures[index], gates[index].IsPassable());
+        }
+        for index~ i32 = 0; index < crumbles.length(); index++ {
+            lantern:::navigation:::SetFeatureAvailable(crumbleFeatures[index], crumbles[index].phase == 0);
+        }
+    }
+
+    // Which of the rides is the graph's `feature`, or -1.
+    RideIndex :: (feature: i32) -> i32 {
+        for index~ i32 = 0; index < rideFeatures.length(); index++ {
+            if rideFeatures[index] == feature {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    // Where the platform's top is now: the middle of it, at the height she stands at.
+    RideTop :: (index: i32) -> lantern:::math:::Vec3 {
+        lift: lantern:::math:::Vec3 = { y: rideHalfExtents[index].y };
+        return lantern:::world:::Position(ridePlatforms[index].entity) + lift;
+    }
+
+    // Is the platform beside `landing`, level with it, and close enough to step across? `window` is how far the platform's
+    // edge may be from the landing.
+    IsPlatformAtLanding :: (index: i32, landing: lantern:::math:::Vec3, window: f32) -> bool {
+        top := RideTop(index);
+        if Math:::abs(top.y - landing.y) > PartnerTuning:::RIDE_LEVEL_TOLERANCE {
+            return false;
+        }
+        half := rideHalfExtents[index];
+        overX := Math:::max(Math:::abs(landing.x - top.x) - half.x, 0.0f);
+        overZ := Math:::max(Math:::abs(landing.z - top.z) - half.z, 0.0f);
+        return Math:::sqrt(overX * overX + overZ * overZ) < window;
+    }
+
+    // Are `feet` on the platform's top?
+    IsOnPlatform :: (index: i32, feet: lantern:::math:::Vec3) -> bool {
+        top := RideTop(index);
+        half := rideHalfExtents[index];
+        return Math:::abs(feet.x - top.x) <= half.x && Math:::abs(feet.z - top.z) <= half.z && Math:::abs(feet.y - top.y) < PartnerTuning:::RIDE_LEVEL_TOLERANCE;
+    }
+
+private:
+    gates~ Array<Gate> = [];
+    crumbles~ Array<CrumblePlatform> = [];
+    gateFeatures~ Array<i32> = [];
+    crumbleFeatures~ Array<i32> = [];
+    rideFeatures~ Array<i32> = [];
+    ridePlatforms~ Array<MovingPlatform> = [];
+    rideHalfExtents~ Array<lantern:::math:::Vec3> = [];
+
+    // A platform's half sizes from its `half_extents` property, or a small square one when the world file doesn't say.
+    HalfExtentsOf :: (entity: i64) -> lantern:::math:::Vec3 {
+        if lantern:::world:::HasProperty(entity, "half_extents") {
+            return lantern:::world:::VectorProperty(entity, "half_extents");
+        }
+        fallback: lantern:::math:::Vec3 = { x: PartnerTuning:::RIDE_DEFAULT_HALF_WIDTH, y: PartnerTuning:::RIDE_DEFAULT_HALF_HEIGHT, z: PartnerTuning:::RIDE_DEFAULT_HALF_WIDTH };
+        return fallback;
+    }
+}
