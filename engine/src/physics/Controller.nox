@@ -17,6 +17,11 @@ lantern:::physics :: namespace {
      * How far above that point the ray starts, so it doesn't begin inside the surface.
      */
     WALKABLE_FACE_START_ABOVE: f32 : 0.05f;
+    /**
+     * How far above the highest mantle height FindLedge starts its downward rays, so they begin in the open air above
+     * the ledge's top.
+     */
+    LEDGE_PROBE_ABOVE: f32 : 0.3f;
 
     /**
      * Every number that decides how the character moves, in metres and seconds. A game changes the walk speed, jump height and gravity
@@ -39,6 +44,9 @@ lantern:::physics :: namespace {
         maxFallSpeed~ f32 = 30.0f;
         coyoteSeconds~ f32 = 0.1f;
         jumpBufferSeconds~ f32 = 0.12f;
+        mantleReach~ f32 = 0.5f;
+        mantleMaxHeight~ f32 = 1.9f;
+        keepsPlatformSpeedInAir~ bool = false;
 
         /**
          * The upward speed that reaches `jumpHeight` under `gravity`: v = sqrt(2 g h).
@@ -168,6 +176,9 @@ lantern:::physics :: namespace {
         secondsSinceGrounded~ f32 = lantern:::core:::INFINITY;
         jumpBufferRemaining~ f32 = 0.0f;
         risingFromJump~ bool = false;
+        groundVelocity~ Vec3 = Vec3 { };
+        airborneCarry~ Vec3 = Vec3 { };
+        ledgeStandPoint~ Vec3 = Vec3 { };
 
         static Create :: (settings: ControllerSettings, feetPosition: Vec3) -> CharacterController {
             return CharacterController { settings: settings, feetPosition: feetPosition };
@@ -185,6 +196,8 @@ lantern:::physics :: namespace {
             secondsSinceGrounded = lantern:::core:::INFINITY;
             jumpBufferRemaining = 0.0f;
             risingFromJump = false;
+            groundVelocity = Vec3 { };
+            airborneCarry = Vec3 { };
         }
 
         /**
@@ -218,6 +231,7 @@ lantern:::physics :: namespace {
             events~ ControllerEvents = ControllerEvents { };
             wasGrounded: bool = grounded;
 
+            groundVelocity = Vec3 { };
             if grounded {
                 if ground := groundCollider {
                     if !ground.isStatic {
@@ -225,9 +239,13 @@ lantern:::physics :: namespace {
                         carried: Vec3 = lantern:::core:::TransformPoint3(motion, feetPosition) - feetPosition;
                         if lantern:::core:::LengthSquared3(carried) > 0.0f {
                             MoveWithoutSliding(collisionWorld, carried, ground);
+                            groundVelocity = Horizontal(carried) / Math:::max(deltaSeconds, 0.000001f);
                         }
                     }
                 }
+            }
+            if grounded && settings.keepsPlatformSpeedInAir {
+                airborneCarry = groundVelocity;
             }
 
             if input.jumpPressed {
@@ -273,6 +291,9 @@ lantern:::physics :: namespace {
             }
 
             displacement~ Vec3 = velocity * deltaSeconds;
+            if !grounded {
+                displacement = displacement + airborneCarry * deltaSeconds;
+            }
             if grounded {
                 normal: Vec3 = groundNormal;
                 displacement.y = -(normal.x * displacement.x + normal.z * displacement.z) / Math:::max(normal.y, 0.001f);
@@ -293,6 +314,7 @@ lantern:::physics :: namespace {
             }
             if grounded {
                 velocity.y = 0.0f;
+                airborneCarry = Vec3 { };
                 if !wasGrounded {
                     events.landedWithSpeed = Math:::max(fallingSpeed, 0.0f);
                 }
@@ -383,6 +405,59 @@ lantern:::physics :: namespace {
             }
             SetCapsuleCenter(center);
             return events;
+        }
+
+        /**
+         * Looks for a ledge to haul up onto, toward `direction` (only its horizontal part counts). There must be a wall
+         * within `mantleReach`, and beyond it a walkable top that is higher than a step (the controller steps up
+         * to `stepHeight` by walking) and no higher than `mantleMaxHeight` above the feet, with room for the whole body
+         * standing on it. True when one is found; `ledgeStandPoint` is then where the feet end up. A body that is
+         * already on the ground in front of a low wall steps up it instead, so this only says yes above a step.
+         */
+        FindLedge~: (collisionWorld: CollisionWorld*, direction: Vec3) -> bool {
+            headingOrNull: Vec3? = TryNormalize3(Horizontal(direction));
+            guard headingOrNull return false;
+            heading: Vec3 = headingOrNull!;
+            reachDistance: f32 = settings.radius + settings.mantleReach;
+            center: Vec3 = CapsuleCenter();
+            wallHit: ShapeHit? = collisionWorld->CapsuleCast(settings.MovementCapsule(), center, heading * settings.mantleReach, null);
+            guard wallHit return false;
+            wall: ShapeHit = wallHit!;
+            if IsWalkable(wall.normal) {
+                return false;
+            }
+            above: f32 = settings.mantleMaxHeight + LEDGE_PROBE_ABOVE;
+            for depth~ f32 = settings.radius * 0.5f; depth <= reachDistance; depth += settings.radius * 0.5f {
+                origin: Vec3 = feetPosition + heading * depth + lantern:::core:::WorldUp() * above;
+                top: RayHit? = collisionWorld->Raycast(origin, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, above);
+                if top == null {
+                    continue;
+                }
+                topHit: RayHit = top ?? RayHit { };
+                if !IsWalkable(topHit.normal) {
+                    continue;
+                }
+                rise: f32 = topHit.point.y - feetPosition.y;
+                if rise <= settings.stepHeight || rise > settings.mantleMaxHeight {
+                    continue;
+                }
+                standPoint~ Vec3 = topHit.point + heading * (settings.radius * 0.6f);
+                standHit: RayHit? = collisionWorld->Raycast(standPoint + lantern:::core:::WorldUp() * LEDGE_PROBE_ABOVE, Vec3 { x: 0.0f, y: -1.0f, z: 0.0f }, LEDGE_PROBE_ABOVE * 2.0f);
+                if standHit != null {
+                    standPoint = (standHit ?? RayHit { }).point;
+                } else {
+                    standPoint = topHit.point;
+                }
+                bodyCenter: Vec3 = standPoint + lantern:::core:::WorldUp() * (settings.height * 0.5f + settings.skinWidth * 2.0f);
+                contacts: Array<Contact>! = collisionWorld->CapsuleContacts(settings.CapsuleShape(), bodyCenter, null);
+                roomForBody: bool = contacts.length() == 0;
+                delete contacts;
+                if roomForBody {
+                    ledgeStandPoint = standPoint;
+                    return true;
+                }
+            }
+            return false;
         }
 
         /**

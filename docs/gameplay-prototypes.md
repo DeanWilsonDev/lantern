@@ -106,6 +106,15 @@ try both. Every room has a host test in `engine/tests/host/` that plays it with 
 | 5 The watcher | `the-watcher` | hide behind pillars; or she lures the light unprompted | `watcher`, `team_beat` (`lure`) |
 | 6 Flow and fragile | `flow-and-fragile` | she leads over crumbling slabs; you take the stones | `crumble`, `team_beat` |
 
+## Mantling
+
+In the grounded feel, a jump that ends against a ledge between a step (0.3 m) and 1.9 m above the player's feet hauls them
+up onto it, as long as they are pushing toward it and the jump has reached its top. The haul takes 0.45 to 1 s: the body
+rises beside the wall, then moves onto the top. The room with a ledge to try it on is the climb room's loading dock, 1.3 m
+high, to the left of the spawn: too tall to step and too tall to jump onto. The companion never mantles; her navigation graph
+gives her a way round. Leaving a moving platform in the grounded feel also keeps its sideways speed until landing
+(decisions D-143 to D-145; the numbers are in `AdventureTuning`).
+
 ## The crossing: a fuller slice
 
 `worlds/the-crossing.world.json` is a chapter 2 level of about 210 m that plays after the rooftops and leads on to
