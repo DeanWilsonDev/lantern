@@ -51,6 +51,17 @@ When the editor starts it reads `assets/editor/palette.json`, then adds one temp
 
 Select a Silhouette in the asset browser and press **Edit** to open it in its own document tab, beside Level. The tab lists the Silhouette's components, the root first and its children indented below it, with each one's kind, and names the selected component with its resolved values, one line each (`transform.position: [0, 0, 0]`). For a variant (a Silhouette with an `@base`), each line is marked: `*` for a value the Silhouette sets itself, a space for one inherited from its base. A Silhouette with no base shows no marks. A preview of the Silhouette is drawn in the tab, with the same renderer as the asset browser's preview. Ctrl+W closes the tab. It reads the same templates the Add menu uses, so what the tab shows is what placing it would make.
 
+### Editing in the tab
+
+The tab edits the Silhouette's files directly, so there is no separate save: each change is written when you press the button, and the tab and the Add menu read the folder again straight away.
+
+- **Add a child.** Select the component the child should hang from and press one of `block`, `point_light`, `spot_light`, `gem` or `spawn`. A file is written in the parent's folder (`lamp.calamus` for a child of the root, `pole/lamp.calamus` for a child of `pole`) named after the kind, or `block2`, `block3` when that name is taken. It starts with its kind, a name and a position at its parent's origin.
+- **Rename.** Type a name and press **Rename**. Only the `name` line of that component's file is rewritten; the file keeps its place, so nothing that points at it breaks. A Silhouette with an `@base` can't be renamed this way yet.
+- **Delete.** **Delete** removes the selected component's file and everything under it. The root can't be deleted.
+- A component the Silhouette gets from its base has no file of its own, so it can't be renamed or deleted, and it can't take new children, in the variant. Change it in the base.
+
+Changing a Silhouette doesn't change the entities already placed in a world; it changes what is placed from then on.
+
 ## Calamus from Nox
 
 `lantern:::calamus` wraps Amanuensis's C API (`capi/` in the amanuensis repository), which `lantern-native` links: `ParseCalamus(text)` gives a `CalamusDocument` (header, `Resolve(baseJson)`), `WriteCalamus` writes an entity as Calamus text with `*` marks against a base, and `StableHash` is the hash Calamus records for a base. Values cross the boundary as JSON text.
@@ -58,6 +69,6 @@ Select a Silhouette in the asset browser and press **Edit** to open it in its ow
 ## Known gaps
 
 - The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
-- The Silhouette editor tab shows the components tree and each component's resolved values. Editing values, editing and saving Calamus files are not built. Visual scripting comes after them.
+- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. Editing a value, moving a component to another parent, creating a new Silhouette or a variant from the tab, and reverting a variant's value to its base are not built. Visual scripting comes after them.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.

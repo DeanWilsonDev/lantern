@@ -24,31 +24,26 @@ SilhouettePageUi :: namespace {
         return rows;
     }
 
-    PositionOf :: (components: Array<ComponentItem>, name: string) -> i32 {
-        for index~ i32 = 0; index < components.length(); index++ {
-            if components[index].name == name {
-                return index;
-            }
-        }
-        return 0;
-    }
-
     Chosen :: (components: Array<ComponentItem>, position: i32) -> ComponentItem {
         if position >= 0 && position < components.length() {
             return components[position];
         }
-        return ComponentItem { name: "", kind: "", depth: 0 };
+        return ComponentItem { position: 0, name: "", kind: "", depth: 0 };
     }
 }
 
 SilhouettePage :: () -> Penumbra:::Component {
     @context editor~ Editor;
     @signal chosenPosition~ i32 = 0;
+    @signal revision~ i32 = 0;
+    @signal editStatus~ string = "";
+    @signal renameText~ string = "";
     return (
         <frame ref="silhouette-page" class="entity-page">
             <slot>
                 !{(() -> Penumbra:::Component {
                     templateId := editor.tabs.silhouette;
+                    revisionNow := revision;
                     components := EditorModel:::Components(templateId);
                     chosen := SilhouettePageUi:::Chosen(components, chosenPosition);
                     return (
@@ -63,10 +58,10 @@ SilhouettePage :: () -> Penumbra:::Component {
                                     <text class="entity-page-heading">Components</text>
                                     <slot>
                                         !{components.map((item: ComponentItem) ->
-                                            <frame key={`silhouette-component-${item.name}-${item.depth}`}
-                                                   ref={`silhouette-component-${item.name}`}
-                                                   class={SilhouettePageUi:::ComponentClass(item.name == chosen.name)}
-                                                   onRelease={() -> { chosenPosition = SilhouettePageUi:::PositionOf(components, item.name); }}>
+                                            <frame key={`silhouette-component-${item.position}`}
+                                                   ref={`silhouette-component-${item.position}`}
+                                                   class={SilhouettePageUi:::ComponentClass(item.position == chosenPosition)}
+                                                   onRelease={() -> { chosenPosition = item.position; }}>
                                                 <text class="entity-page-component-name">{SilhouettePageUi:::Indented(item.name, item.depth)}</text>
                                                 <text class="entity-page-component-count">{item.kind}</text>
                                             </frame>)}
@@ -76,6 +71,45 @@ SilhouettePage :: () -> Penumbra:::Component {
                                     <text class="entity-page-heading">{chosen.name}</text>
                                     <text class="entity-page-kind">{`kind: ${chosen.kind}`}</text>
                                     <text class="entity-page-kind">{chosen.depth == 0 ? "the root of this Silhouette" : "a child of this Silhouette"}</text>
+                                    <frame class="field-row">
+                                        <input ref="silhouette-rename" class="field-input" text={renameText}
+                                               preferredWidth={140.0f}
+                                               onTextChange={(text: string) -> { renameText = text; }} />
+                                        <frame ref="silhouette-rename-button" class="small-button"
+                                               onRelease={() -> {
+                                                   editStatus = editorSilhouetteRenameComponent(templateId, chosenPosition, renameText);
+                                                   editorSetPreviewTemplate(templateId);
+                                                   revision = revision + 1;
+                                               }}>
+                                            <icon class="small-button-icon" icon="pencil" size={12.0f} />
+                                            <text class="small-button-label">Rename</text>
+                                        </frame>
+                                        <frame ref="silhouette-delete-button" class="small-button"
+                                               onRelease={() -> {
+                                                   editStatus = editorSilhouetteDeleteComponent(templateId, chosenPosition);
+                                                   chosenPosition = 0;
+                                                   editorSetPreviewTemplate(templateId);
+                                                   revision = revision + 1;
+                                               }}>
+                                            <icon class="small-button-icon" icon="trash" size={12.0f} />
+                                            <text class="small-button-label">Delete</text>
+                                        </frame>
+                                    </frame>
+                                    <frame class="field-row">
+                                        <slot>
+                                            !{["block", "point_light", "spot_light", "gem", "spawn"].map((kind: string) ->
+                                                <frame key={`silhouette-add-${kind}`} ref={`silhouette-add-${kind}`} class="small-button"
+                                                       onRelease={() -> {
+                                                           editStatus = editorSilhouetteAddChild(templateId, chosenPosition, kind);
+                                                           editorSetPreviewTemplate(templateId);
+                                                           revision = revision + 1;
+                                                       }}>
+                                                    <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                                    <text class="small-button-label">{kind}</text>
+                                                </frame>)}
+                                        </slot>
+                                    </frame>
+                                    <text ref="silhouette-status" class="entity-page-kind">{editStatus}</text>
                                     <text class="entity-page-kind">A variant marks the values it sets itself with *; the rest come from its base.</text>
                                     <viewport ref="silhouette-preview" class="asset-preview-viewport" renderer="preview" />
                                     <scroll ref="silhouette-values-scroll" class="entity-page-fields-scroll" wheelStep={60.0f}>

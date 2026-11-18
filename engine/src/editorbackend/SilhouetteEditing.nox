@@ -1,0 +1,264 @@
+lantern:::editorbackend :: namespace {
+    // Edits a Silhouette's files for the editor's Silhouette tab. Each function returns an error message,
+    // or null when it worked, and the caller reloads the Silhouette's palette template afterwards.
+    // A component is named by its dotted path inside the Silhouette: `lamp` is the file `lamp.calamus` in the
+    // Silhouette's folder, and `pole.lamp` is `pole/lamp.calamus`.
+
+    SILHOUETTE_FILE_EXTENSION: string : ".calamus";
+    SILHOUETTE_ROOT_FILE: string : "root.calamus";
+
+    // The folder of one Silhouette.
+    SilhouetteFolderOf :: (assetsDirectory: string, silhouetteName: string) -> string! {
+        return `${assetsDirectory}/${SILHOUETTES_FOLDER}/${silhouetteName}`;
+    }
+
+    // The path of a component without its extension: the folder holding its children.
+    ComponentStem :: (silhouetteFolder: string, componentPath: string) -> string! {
+        slashed: string! = componentPath.replace(".", "/");
+        defer delete slashed;
+        return `${silhouetteFolder}/${slashed}`;
+    }
+
+    // The file of a component: `root.calamus` for the root (an empty path), else its stem plus the extension.
+    ComponentFile :: (silhouetteFolder: string, componentPath: string) -> string! {
+        if componentPath.length() == 0 {
+            return `${silhouetteFolder}/${SILHOUETTE_ROOT_FILE}`;
+        }
+        stem: string! = ComponentStem(silhouetteFolder, componentPath);
+        defer delete stem;
+        return `${stem}${SILHOUETTE_FILE_EXTENSION}`;
+    }
+
+    // True when a component has a file of its own, which a component inherited from a base does not.
+    ComponentHasFile :: (silhouetteFolder: string, componentPath: string) -> bool {
+        file: string! = ComponentFile(silhouetteFolder, componentPath);
+        defer delete file;
+        return pathExists(file);
+    }
+
+    // A name a component can take: not empty, and with nothing that would break out of its quotes.
+    NameIsUsable :: (name: string) -> bool {
+        if name.trim().length() == 0 {
+            return false;
+        }
+        return !name.contains("\"") && !name.contains("\\") && !name.contains("\n");
+    }
+
+    // Removes a file, or says why not.
+    RemoveFileText :: (path: string) -> string!? {
+        when removeFile(path) {
+            Result:::Ok(removed) -> {
+                return null;
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${path}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+    }
+
+    // Removes a folder and everything in it.
+    RemoveTree :: (directory: string) -> string!? {
+        when lantern:::silhouette:::SortedEntries(directory) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(listed) -> {
+                entries~ Array<string!>! = listed!;
+                for entry in entries {
+                    child: string! = `${directory}/${entry}`;
+                    problem~ string!? = null;
+                    if directoryExists(child) {
+                        problem = RemoveTree(child);
+                    } else {
+                        problem = RemoveFileText(child);
+                    }
+                    delete child;
+                    if problem != null {
+                        entries.freeAll();
+                        return problem!;
+                    }
+                }
+                entries.freeAll();
+            }
+        }
+        when removeDirectory(directory) {
+            Result:::Ok(removed) -> {
+                return null;
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${directory}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+    }
+
+    // Writes a file, or says why not.
+    WriteFileText :: (path: string, text: string) -> string!? {
+        when writeTextFile(path, text) {
+            Result:::Ok(written) -> {
+                return null;
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${path}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+    }
+
+    // Adds a new child of `kind` under the component at `parentPath` (empty for the root). It gets the first
+    // free name from the kind: `block`, `block2`, `block3`... Returns an error message or null.
+    AddSilhouetteChild :: (assetsDirectory: string, silhouetteName: string, parentPath: string, kind: string) -> string!? {
+        if !NameIsUsable(kind) {
+            return "A child needs a kind.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if !directoryExists(silhouetteFolder) {
+            return `No Silhouette folder ${silhouetteFolder}.`.copy();
+        }
+        if !ComponentHasFile(silhouetteFolder, parentPath) {
+            return "That component comes from the base Silhouette, so it can't hold new children here.".copy();
+        }
+        childFolder~ string! = `${silhouetteFolder}`;
+        if parentPath.length() > 0 {
+            delete childFolder;
+            childFolder = ComponentStem(silhouetteFolder, parentPath);
+        }
+        defer delete childFolder;
+        when createDirectories(childFolder) {
+            Result:::Ok(created) -> { },
+            Result:::Err(error) -> {
+                failure: string! = `${childFolder}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        childName~ string! = `${kind}`;
+        defer delete childName;
+        number~ u32 = 1;
+        while true {
+            candidate: string! = `${childFolder}/${childName}${SILHOUETTE_FILE_EXTENSION}`;
+            taken~ bool = pathExists(candidate);
+            delete candidate;
+            candidateFolder: string! = `${childFolder}/${childName}`;
+            taken = taken || pathExists(candidateFolder);
+            delete candidateFolder;
+            if !taken {
+                break;
+            }
+            number += 1;
+            next: string! = `${kind}${number}`;
+            delete childName;
+            childName = next!;
+        }
+        text~ string! = "@version 1\n".copy();
+        text += "@type ";
+        text += kind;
+        text += "\n\n  name : \"";
+        text += childName;
+        text += "\"\n";
+        text += "  transform:\n";
+        text += "    position : [0.0, 0.0, 0.0]\n";
+        file: string! = `${childFolder}/${childName}${SILHOUETTE_FILE_EXTENSION}`;
+        problem: string!? = WriteFileText(file, text);
+        delete file;
+        delete text;
+        return problem!;
+    }
+
+    // Gives the component at `componentPath` a new `name` value, rewriting that one line of its file. A file with
+    // an `@base` line sets its name through a marked value, which this doesn't edit yet.
+    RenameSilhouetteComponent :: (assetsDirectory: string, silhouetteName: string, componentPath: string, newName: string) -> string!? {
+        if !NameIsUsable(newName) {
+            return "A name can't be empty or hold quotes or line breaks.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if !ComponentHasFile(silhouetteFolder, componentPath) {
+            return "That component comes from the base Silhouette, so it can't be renamed here.".copy();
+        }
+        file: string! = ComponentFile(silhouetteFolder, componentPath);
+        defer delete file;
+        when readTextFile(file) {
+            Result:::Err(error) -> {
+                failure: string! = `${file}: ${error.message()}`;
+                delete error;
+                return failure!;
+            },
+            Result:::Ok(original) -> {
+                defer delete original;
+                lines := original.lines();
+                defer delete lines;
+                rewritten~ string! = "".copy();
+                changed~ bool = false;
+                for line in lines {
+                    if line.startsWith("@base") {
+                        delete rewritten;
+                        return "This Silhouette is a variant, and a variant's own values can't be renamed here yet.".copy();
+                    }
+                    isNameLine: bool = line.startsWith("  name :") || line.startsWith("  name:") || line.startsWith("* name :");
+                    if isNameLine && !changed {
+                        rewritten += "  name : \"";
+                        rewritten += newName;
+                        rewritten += "\"\n";
+                        changed = true;
+                    } else {
+                        rewritten += line;
+                        rewritten += "\n";
+                    }
+                }
+                if !changed {
+                    delete rewritten;
+                    return "That file has no name line to change.".copy();
+                }
+                problem: string!? = WriteFileText(file, rewritten);
+                delete rewritten;
+                return problem!;
+            }
+        }
+    }
+
+    // Deletes a component and everything under it. The root can't be deleted, and nor can a component the
+    // Silhouette gets from its base.
+    DeleteSilhouetteComponent :: (assetsDirectory: string, silhouetteName: string, componentPath: string) -> string!? {
+        if componentPath.length() == 0 {
+            return "The root can't be deleted; delete the Silhouette instead.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if !ComponentHasFile(silhouetteFolder, componentPath) {
+            return "That component comes from the base Silhouette, so it can't be deleted here.".copy();
+        }
+        stem: string! = ComponentStem(silhouetteFolder, componentPath);
+        defer delete stem;
+        if directoryExists(stem) {
+            problem: string!? = RemoveTree(stem);
+            if problem != null {
+                return problem!;
+            }
+        }
+        file: string! = ComponentFile(silhouetteFolder, componentPath);
+        defer delete file;
+        return RemoveFileText(file);
+    }
+
+    // Reads a Silhouette's folder again and replaces its palette template, so the editor shows what the files say now.
+    // Returns an error message or null.
+    RefreshSilhouetteTemplate :: (palette: lantern:::editor:::Palette~*, assetsDirectory: string, silhouetteName: string) -> string!? {
+        library := new lantern:::silhouette:::SilhouetteLibrary(assetsDirectory);
+        defer delete library;
+        when SilhouetteTemplate(library, assetsDirectory, silhouetteName) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(template) -> {
+                palette->AddTemplate(template!);
+                return null;
+            }
+        }
+    }
+}
