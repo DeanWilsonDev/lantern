@@ -347,6 +347,20 @@ lantern:::host :: namespace {
          */
         SaveCapture~: (path: string, frame: lantern:::engine:::FrameContext) -> void {
             engineState: raw EngineState~* = StatePointer();
+            lastSlash~ usize? = null;
+            for position~ usize = 0; position < path.length(); position++ {
+                if path.byteAt(position) == u8(47) {
+                    lastSlash = position;
+                }
+            }
+            if slash := lastSlash {
+                folder: string! = `${path.substring(0, slash)}`;
+                when createDirectories(folder) {
+                    Result:::Ok(created) -> { },
+                    Result:::Err(error) -> { delete error; }
+                }
+                delete folder;
+            }
             unsafe {
                 captured := engineState->renderBackend->Capture(engineState->renderWorld, frame.window.pixelWidth, frame.window.pixelHeight);
                 when captured! {
@@ -531,11 +545,19 @@ lantern:::host :: namespace {
             engineState: raw EngineState~* = StatePointer();
             unsafe {
                 windowScale: f32 = Math:::max(Math:::round(engineState->uiScale * 0.5f), 1.0f);
-                engineState->debugWindow->Draw(engineState->debugValues, engineState->debugPages, engineState->renderWorld->overlay, engineState->screenSize, windowScale);
+                if engineState->pendingCapturePath == null {
+                    engineState->debugWindow->Draw(engineState->debugValues, engineState->debugPages, engineState->renderWorld->overlay, engineState->screenSize, windowScale);
+                }
             }
-            if running ~= session {
-                unsafe {
-                    running->DrawUi(engineState->renderWorld->overlay, engineState->screenSize, engineState->uiScale * 0.5f);
+            hasPendingCapture~ bool = false;
+            unsafe {
+                hasPendingCapture = engineState->pendingCapturePath != null;
+            }
+            if !hasPendingCapture {
+                if running ~= session {
+                    unsafe {
+                        running->DrawUi(engineState->renderWorld->overlay, engineState->screenSize, engineState->uiScale * 0.5f);
+                    }
                 }
             }
             unsafe {
@@ -567,6 +589,17 @@ lantern:::host :: namespace {
             }
             if report := reportFromRender {
                 lastFrameReport = report;
+            }
+            unsafe {
+                if hasPendingCapture {
+                    if pending := engineState->pendingCapturePath {
+                        target: string! = `${pending}`;
+                        delete engineState->pendingCapturePath;
+                        engineState->pendingCapturePath = null;
+                        SaveCapture(target, frame);
+                        delete target;
+                    }
+                }
             }
             if quit {
                 if path := capturePath {

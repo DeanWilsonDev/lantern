@@ -52,10 +52,11 @@ right), gives a position from -1 to 1 across the screen. The viewfinder frame is
 0.84. The field of view (60 degrees) is the renderer's `Camera` default; the game does not read it back, so it is written
 in `photo-mode.nyx` too.
 
-The engine needs nothing new for photo mode. Raycasts, the camera, the HUD and the world's properties already existed; photo mode is
-game code. What it doesn't do: it doesn't save the picture to a file. A counted photo is enough for the prototype; the
-engine can already write a frame to a PNG (`LANTERN_CAPTURE_PATH`), and a `lantern:::screen:::Capture(path)` would be the
-one new function a saved album needs.
+Photo mode needs one engine function, `lantern:::screen:::Capture(path)`. Every press of the shutter calls it with
+`photos/photo-N.png` (N counts from 1 each run, relative to the folder the game runs in). The next drawn frame leaves out
+the viewfinder, the HUD and the debug HUD, so the file is the world as the camera saw it, and the engine writes it as a PNG,
+creating the folder if needed. A photo that counted and one that didn't are both saved. Raycasts, the camera and the HUD
+already existed; everything else is game code.
 
 ## Adding a sight
 
