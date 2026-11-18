@@ -1,0 +1,52 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    library := new lantern:::silhouette:::SilhouetteLibrary("tests/support/silhouette-library");
+    defer delete library;
+    when lantern:::silhouette:::LoadScene(library, "tests/support/silhouette-library/scene", "scene") {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the scene should load");
+        },
+        Result:::Ok(loaded) -> {
+            defer delete loaded;
+            world: lantern:::world:::WorldFile* = loaded;
+            assert(world->entities.length() == 6, "an ice platform and a lamp pair with two lamp posts and their lights make six entities");
+
+            platform: lantern:::world:::WorldEntity* = world->entities[0];
+            assert(platform->id == 16, "the platform keeps its @id, which Calamus writes in hex");
+            assert(platform->kind == "block", "the platform is a block");
+            materialIsIce~ bool = false;
+            if material := platform->material {
+                materialIsIce = material == "ice";
+            }
+            assert(materialIsIce, "ice overrides the stone it is based on");
+            frictionValue: f32 = platform->NumberProperty("friction") ?? -1.0f;
+            assert(frictionValue == 0.05f, "the ice adds a friction property");
+            assert(platform->collider != null, "the platform follows the stone silhouette's collider");
+            assert(platform->transform.position.x == 4.0f, "the instance moves the platform");
+            assert(platform->shape != null, "the platform follows the stone silhouette's shape");
+
+            pair: lantern:::world:::WorldEntity* = world->entities[1];
+            assert(pair->id == 32 && pair->kind == "marker", "the pair keeps its @id and is a marker");
+            leftPost: lantern:::world:::WorldEntity* = world->entities[2];
+            leftLight: lantern:::world:::WorldEntity* = world->entities[3];
+            rightPost: lantern:::world:::WorldEntity* = world->entities[4];
+            rightLight: lantern:::world:::WorldEntity* = world->entities[5];
+            assert((leftPost->parent ?? 0) == pair->id, "a nested silhouette hangs under its parent");
+            assert((leftLight->parent ?? 0) == leftPost->id, "a silhouette's own child hangs under it");
+            assert((rightLight->parent ?? 0) == rightPost->id, "the right light hangs under the right post");
+            assert(leftPost->id == 33 && leftLight->id == 34 && rightPost->id == 35 && rightLight->id == 36, "children are numbered after the largest @id in file order");
+            assert(leftPost->name == "lamp post", "a nested silhouette keeps the name it was made with");
+            leftRadius: f32 = leftLight->NumberProperty("radius") ?? -1.0f;
+            rightRadius: f32 = rightLight->NumberProperty("radius") ?? -1.0f;
+            assert(leftRadius == 6.0f, "the lamp pair's patch widens the left light");
+            assert(rightRadius == 2.0f, "the scene's patch narrows the right light");
+            colour: Vec3? = leftLight->VectorProperty("colour");
+            assert(colour != null, "a light keeps the colour of the lamp post it is made from");
+            assert(rightPost->transform.position.x == 1.5f, "the right post sits where the pair put it");
+        }
+    }
+    print("a scene resolves silhouettes, chains, children and patches");
+    return 0;
+}

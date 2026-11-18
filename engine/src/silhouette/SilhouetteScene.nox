@@ -1,0 +1,233 @@
+lantern:::silhouette :: namespace {
+    /**
+     * The keys a Silhouette's values must not set, because the scene decides them: the world id, the parent link and
+     * the kind (which is the `@type` of the file).
+     */
+    ReservedKeys :: () -> Array<string>! {
+        return ["id", "parent", "kind"];
+    }
+
+    /**
+     * One entity as a world-file JSON object: the resolved values with the id, kind and parent put in front, and the
+     * name defaulted when the values have none.
+     */
+    WorldEntityJson :: (entity: SilhouetteEntity*, id: u64, parentId: u64?, fallbackName: string) -> Result<string!, string!> {
+        when lantern:::json:::Parse(entity->valuesJson) {
+            Result:::Err(message) -> {
+                failure: string! = `entity '${entity->path}': ${message}`;
+                delete message;
+                return Result<string!, string!>:::Err(failure!);
+            },
+            Result:::Ok(document) -> {
+                reserved: Array<string>! = ReservedKeys();
+                for key in reserved {
+                    if present := document->Member(document->root, key) {
+                        failure: string! = `entity '${entity->path}' sets '${key}', which the scene decides`;
+                        delete document;
+                        delete reserved;
+                        return Result<string!, string!>:::Err(failure!);
+                    }
+                }
+                delete reserved;
+                hasName~ bool = false;
+                if present := document->Member(document->root, "name") {
+                    hasName = true;
+                }
+                delete document;
+                quotedKind: string! = lantern:::json:::QuotedText(entity->typeName);
+                text~ string! = `{"id":${id},"kind":${quotedKind}`;
+                delete quotedKind;
+                if parent := parentId {
+                    extended: string! = `${text},"parent":${parent}`;
+                    delete text;
+                    text = extended!;
+                }
+                if !hasName {
+                    quotedName: string! = lantern:::json:::QuotedText(fallbackName);
+                    extended: string! = `${text},"name":${quotedName}`;
+                    delete text;
+                    text = extended!;
+                    delete quotedName;
+                }
+                body: string = entity->valuesJson.substring(1, entity->valuesJson.length() - 1);
+                if body == "}" {
+                    extended: string! = `${text}}`;
+                    delete text;
+                    text = extended!;
+                } else {
+                    extended: string! = `${text},${body}`;
+                    delete text;
+                    text = extended!;
+                }
+                return Result<string!, string!>:::Ok(text!);
+            }
+        }
+    }
+
+    /**
+     * The instances read from a scene folder, in file order: each root's world id and the entities it resolved to.
+     */
+    SceneBuild :: class {
+    public:
+        names~ Array<string!>! = [];
+        rootIds~ Array<u64>! = [];
+        instances~ Array<ResolvedSilhouette*!>! = [];
+        largestId~ u64 = 0;
+
+        SceneBuild~: () { }
+
+        !SceneBuild~: () {
+            names.freeAll();
+            delete rootIds;
+            instances.freeAll();
+        }
+
+        /**
+         * Reads every instance file in a folder. Returns the first problem, or null.
+         */
+        ReadInstances~: (library: SilhouetteLibrary*, sceneDirectory: string) -> string!? {
+            when SortedEntries(sceneDirectory) {
+                Result:::Err(message) -> {
+                    return message!;
+                },
+                Result:::Ok(listedEntries) -> {
+                entries~ Array<string!>! = listedEntries!;
+                    for entry in entries {
+                        stem: string!? = CalamusStem(entry);
+                        guard instanceName := stem continue;
+                        problem: string!? = ReadInstance(library, sceneDirectory, entry, instanceName);
+                        delete stem;
+                        if problem != null {
+                            entries.freeAll();
+                            return problem!;
+                        }
+                    }
+                    entries.freeAll();
+                }
+            }
+            return null;
+        }
+
+        ReadInstance~: (library: SilhouetteLibrary*, sceneDirectory: string, fileName: string, instanceName: string) -> string!? {
+            filePath: string! = `${sceneDirectory}/${fileName}`;
+            when ReadCalamusFile(filePath) {
+                Result:::Err(message) -> {
+                    delete filePath;
+                    return message!;
+                },
+                Result:::Ok(document) -> {
+                    rootId: u64? = document->Id();
+                    baseName: string!? = document->BaseName();
+                    if rootId == null || baseName == null {
+                        delete document;
+                        delete baseName;
+                        failure: string! = `${filePath}: an instance needs an @id and an @base`;
+                        delete filePath;
+                        return failure!;
+                    }
+                    delete baseName;
+                    holder := new ResolvedSilhouette(instanceName);
+                    chain~ Array<string!>! = [];
+                    problem: string!? = AddInstance(library, document, "", null, holder, chain);
+                    chain.freeAll();
+                    delete document;
+                    if problem != null {
+                        delete holder;
+                        delete filePath;
+                        return problem!;
+                    }
+                    overridesFolder: string! = `${sceneDirectory}/${instanceName}.overrides`;
+                    patchProblem: string!? = ApplyPatches(overridesFolder, holder);
+                    delete overridesFolder;
+                    if patchProblem != null {
+                        delete holder;
+                        delete filePath;
+                        return patchProblem!;
+                    }
+                    id: u64 = rootId ?? 0;
+                    if id > largestId {
+                        largestId = id;
+                    }
+                    names.push(`${instanceName}`);
+                    rootIds.push(id);
+                    instances.push(holder!);
+                    delete filePath;
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Reads a scene folder: every `.calamus` file in it is an instance of a Silhouette, with an `@id` (the world id of
+     * its root) and an `@base` (the Silhouette). An instance's children get the ids after the largest `@id`, in file
+     * order. A folder `<file>.overrides/` beside a file patches that instance's entities by their dotted paths. The
+     * result is an ordinary world file, validated like any other.
+     */
+    LoadScene :: (library: SilhouetteLibrary*, sceneDirectory: string, sceneName: string) -> Result<lantern:::world:::WorldFile*!, string!> {
+        build := new SceneBuild();
+        readProblem: string!? = build->ReadInstances(library, sceneDirectory);
+        if problem := readProblem {
+            failure: string! = `${problem}`;
+            delete readProblem;
+            delete build;
+            return Result<lantern:::world:::WorldFile*!, string!>:::Err(failure!);
+        }
+        nextId~ u64 = build->largestId + 1;
+        entityTexts~ Array<string!>! = [];
+        for instanceIndex~ usize = 0; instanceIndex < build->instances.length(); instanceIndex++ {
+            instance: ResolvedSilhouette* = build->instances[instanceIndex];
+            ids~ Array<u64>! = [];
+            for entity in instance->entities {
+                id~ u64 = nextId;
+                if entity->path.length() == 0 {
+                    id = build->rootIds[instanceIndex];
+                } else {
+                    nextId += 1;
+                }
+                ids.push(id);
+                parentId~ u64? = null;
+                if parentPath := entity->parentPath {
+                    if parentIndex := instance->IndexOf(parentPath) {
+                        parentId = ids[parentIndex];
+                    }
+                }
+                label: string! = JoinPath(build->names[instanceIndex], entity->path);
+                when WorldEntityJson(entity, id, parentId, label) {
+                    Result:::Ok(text) -> {
+                        delete label;
+                        entityTexts.push(text!);
+                    },
+                    Result:::Err(message) -> {
+                        delete label;
+                        delete ids;
+                        entityTexts.freeAll();
+                        delete build;
+                        return Result<lantern:::world:::WorldFile*!, string!>:::Err(message!);
+                    }
+                }
+            }
+            delete ids;
+        }
+        joined~ string! = "";
+        for index~ usize = 0; index < entityTexts.length(); index++ {
+            if index > 0 {
+                extendedComma: string! = `${joined},`;
+                delete joined;
+                joined = extendedComma!;
+            }
+            extendedJoined: string! = `${joined}${entityTexts[index]}`;
+            delete joined;
+            joined = extendedJoined!;
+        }
+        quotedName: string! = lantern:::json:::QuotedText(sceneName);
+        worldText: string! = `{"format_version":${lantern:::world:::CURRENT_FORMAT_VERSION},"name":${quotedName},"entities":[${joined}]}`;
+        delete quotedName;
+        delete joined;
+        entityTexts.freeAll();
+        delete build;
+        result: Result<lantern:::world:::WorldFile*!, string!> = lantern:::world:::FromJson(worldText, sceneDirectory);
+        delete worldText;
+        return result!;
+    }
+}

@@ -1,0 +1,51 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    baseJson: string = "{\"material\":\"stone\",\"friction\":0.8}";
+    entityJson: string = "{\"material\":\"stone\",\"friction\":0.05}";
+    when lantern:::calamus:::WriteCalamus("block", 1, 7, "silhouettes/platform_stone", entityJson, baseJson) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the entity should write");
+        },
+        Result:::Ok(text) -> {
+            assert(text.contains("* friction : 0.05 | 0.8"), "a changed field is marked with the value it replaced");
+            assert(text.contains("@base_hash"), "the base's hash is recorded");
+            when lantern:::calamus:::ParseCalamus(text) {
+                Result:::Err(message) -> {
+                    print(message);
+                    assert(false, "what was written should parse");
+                },
+                Result:::Ok(document) -> {
+                    assert(document->TypeName() == "block", "the type reads back");
+                    assert((document->Id() ?? 0) == 7, "the id reads back");
+                    when document->Resolve(baseJson) {
+                        Result:::Ok(resolved) -> {
+                            assert(resolved == "{\"material\":\"stone\",\"friction\":0.05}", "resolving over the base gives the entity back");
+                            delete resolved;
+                        },
+                        Result:::Err(message) -> {
+                            print(message);
+                            assert(false, "the document should resolve");
+                        }
+                    }
+                    delete document;
+                }
+            }
+            delete text;
+        }
+    }
+    broken: string = "@type door\n\tx : 1\n";
+    when lantern:::calamus:::ParseCalamus(broken) {
+        Result:::Ok(document) -> {
+            delete document;
+            assert(false, "a tab is a syntax error");
+        },
+        Result:::Err(message) -> {
+            assert(message.contains("line"), "a syntax error names its line");
+            delete message;
+        }
+    }
+    print("calamus writes marks and reads them back");
+    return 0;
+}
