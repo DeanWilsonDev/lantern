@@ -1373,9 +1373,66 @@ lantern:::editorapi :: namespace {
     export GraphAddNodeFromMenu :: (editorInstance: Editor~*, kind: string) -> string! {
         guard open ~= editorInstance->graphEditor return "".copy();
         function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
-        id: string! = lantern:::graphs:::AddNode(function, kind, f32(lantern:::graphs:::Snapped(open->menuWorldX)), f32(lantern:::graphs:::Snapped(open->menuWorldY)));
+        id: string! = lantern:::graphs:::AddMenuNode(function, kind, f32(lantern:::graphs:::Snapped(open->menuWorldX)), f32(lantern:::graphs:::Snapped(open->menuWorldY)));
         if id.length() > 0 {
             lantern:::graphs:::WireFromMenu(function, id, open->menuSourceNode, open->menuSourcePort, open->menuSourceIsExecution);
+            lantern:::graphs:::SelectNode(open, id);
+            open->Touch();
+        }
+        return id!;
+    }
+
+    // The open function's variables, one per line as `name<TAB>type<TAB>default`.
+    export GraphVariables :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        function: lantern:::graphs:::GraphFunction* = open->graph->functions[open->functionIndex];
+        text~ string! = "".copy();
+        for index~ usize = 0; index < function->variableNames.length(); index++ {
+            text += function->variableNames[index];
+            text += "\t";
+            text += function->variableTypes[index];
+            text += "\t";
+            text += function->variableDefaults[index];
+            text += "\n";
+        }
+        return text!;
+    }
+
+    // Adds a variable to the open function. An empty `initial` takes the type's default. Returns an error message or "".
+    export GraphAddVariable :: (editorInstance: Editor~*, name: string, typeName: string, initial: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "No graph is open.".copy();
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        problem: string!? = lantern:::graphs:::AddVariable(function, name, typeName, initial);
+        if problem != null {
+            return ProblemText(problem!);
+        }
+        delete problem;
+        open->Touch();
+        return "".copy();
+    }
+
+    // Removes a variable and the get and set nodes that named it. Returns false when there is none by that name.
+    export GraphRemoveVariable :: (editorInstance: Editor~*, name: string) -> bool {
+        guard open ~= editorInstance->graphEditor return false;
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        removed: bool = lantern:::graphs:::RemoveVariable(function, name);
+        if removed {
+            open->selected = "".copy();
+            open->Touch();
+        }
+        return removed;
+    }
+
+    // Adds a get or set node for a variable near the middle of what is showing and selects it. Returns its id.
+    export GraphAddVariableNode :: (editorInstance: Editor~*, kind: string, name: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "".copy();
+        centreX: i32 = open->WorldX(i32(editorInstance->graphCanvas->width / 2));
+        centreY: i32 = open->WorldY(i32(editorInstance->graphCanvas->height / 2));
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        line: string! = `${kind} ${name}`;
+        defer delete line;
+        id: string! = lantern:::graphs:::AddMenuNode(function, line, f32(lantern:::graphs:::Snapped(centreX)), f32(lantern:::graphs:::Snapped(centreY)));
+        if id.length() > 0 {
             lantern:::graphs:::SelectNode(open, id);
             open->Touch();
         }

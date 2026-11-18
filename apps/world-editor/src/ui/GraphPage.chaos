@@ -40,6 +40,7 @@ GraphPageUi :: namespace {
             "while" -> ["condition"],
             "when" -> ["a", "match0", "match1", "match2", "match3"],
             "set" -> ["name", "type", "value"],
+            "get" -> ["name"],
             "return" -> ["value"],
             "call" -> ["function", "name", "type", "arg0", "arg1", "arg2"],
             "nyx" -> ["text"],
@@ -87,6 +88,32 @@ GraphPageUi :: namespace {
         return selected ? "entity-page-component-selected" : "entity-page-component";
     }
 
+    VariableRows :: (text: string) -> Array<string> {
+        return Lines(text);
+    }
+
+    VariableName :: (row: string) -> string {
+        return row.split("\t")[0];
+    }
+
+    VariableLabel :: (row: string) -> string {
+        parts := row.split("\t");
+        return `${parts[0]}: ${parts[1]}`;
+    }
+
+    VariableDefaultText :: (typeName: string, text: string) -> string {
+        if typeName == "string" && !text.startsWith("\"") {
+            return `"${text}"`;
+        }
+        if typeName == "f32" && IsNumber(text) && !text.contains(".") {
+            return `${text}.0f`;
+        }
+        if typeName == "f32" && IsNumber(text) {
+            return `${text}f`;
+        }
+        return text;
+    }
+
     DirtyMark :: () -> string {
         return editorGraphIsDirty() ? " (unsaved)" : "";
     }
@@ -98,6 +125,9 @@ GraphPage :: () -> Penumbra:::Component {
     @signal pageStatus~ string = "";
     @signal newGraphName~ string = "";
     @signal newFunctionName~ string = "";
+    @signal newVariableName~ string = "";
+    @signal newVariableType~ string = "i32";
+    @signal newVariableDefault~ string = "";
     @signal chosenField~ string = "";
     @signal chosenNode~ string = "";
     @signal fieldText~ string = "";
@@ -182,6 +212,55 @@ GraphPage :: () -> Penumbra:::Component {
                                                }}>
                                             <icon class="small-button-icon" icon="plus" size={12.0f} />
                                             <text class="small-button-label">Add</text>
+                                        </frame>
+                                    </frame>
+                                    <text class="entity-page-heading">Variables</text>
+                                    <slot>
+                                        !{GraphPageUi:::VariableRows(editorGraphVariables()).map((row: string) ->
+                                            <frame key={`graph-variable-${GraphPageUi:::VariableName(row)}`} class="field-row">
+                                                <text class="entity-page-component-name">{GraphPageUi:::VariableLabel(row)}</text>
+                                                <frame ref={`graph-variable-get-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                                       onRelease={() -> {
+                                                           editorGraphAddVariableNode("get", GraphPageUi:::VariableName(row));
+                                                           revision = revision + 1;
+                                                       }}>
+                                                    <text class="small-button-label">Get</text>
+                                                </frame>
+                                                <frame ref={`graph-variable-set-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                                       onRelease={() -> {
+                                                           editorGraphAddVariableNode("set", GraphPageUi:::VariableName(row));
+                                                           revision = revision + 1;
+                                                       }}>
+                                                    <text class="small-button-label">Set</text>
+                                                </frame>
+                                                <frame ref={`graph-variable-remove-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                                       onRelease={() -> {
+                                                           editorGraphRemoveVariable(GraphPageUi:::VariableName(row));
+                                                           revision = revision + 1;
+                                                       }}>
+                                                    <icon class="small-button-icon" icon="trash" size={12.0f} />
+                                                </frame>
+                                            </frame>)}
+                                    </slot>
+                                    <frame class="field-row">
+                                        <input ref="graph-variable-name" class="field-input" text={newVariableName}
+                                               preferredWidth={70.0f}
+                                               onTextChange={(text: string) -> { newVariableName = text; }} />
+                                        <input ref="graph-variable-type" class="field-input" text={newVariableType}
+                                               preferredWidth={44.0f}
+                                               onTextChange={(text: string) -> { newVariableType = text; }} />
+                                        <input ref="graph-variable-default" class="field-input" text={newVariableDefault}
+                                               preferredWidth={44.0f}
+                                               onTextChange={(text: string) -> { newVariableDefault = text; }} />
+                                    </frame>
+                                    <frame class="field-row">
+                                        <frame ref="graph-add-variable-button" class="small-button"
+                                               onRelease={() -> {
+                                                   pageStatus = editorGraphAddVariable(newVariableName, newVariableType, newVariableDefault == "" ? "" : GraphPageUi:::VariableDefaultText(newVariableType, newVariableDefault));
+                                                   revision = revision + 1;
+                                               }}>
+                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                            <text class="small-button-label">Add variable (name, type, start)</text>
                                         </frame>
                                     </frame>
                                 </frame>

@@ -25,10 +25,6 @@ lantern:::graphs :: namespace {
         return list!;
     }
 
-    IsComparisonKind :: (kind: string) -> bool {
-        return kind == "less" || kind == "greater" || kind == "equal" || kind == "and" || kind == "or" || kind == "not";
-    }
-
     LikelyAfterExecution :: () -> Array<string>! {
         list~ Array<string>! = [];
         list.push("call");
@@ -78,6 +74,17 @@ lantern:::graphs :: namespace {
                 text += kind;
                 text += "\n";
             }
+            if function->variableNames.length() > 0 {
+                text += "-\n";
+                for variableName in function->variableNames {
+                    text += "get ";
+                    text += variableName;
+                    text += "\n";
+                    text += "set ";
+                    text += variableName;
+                    text += "\n";
+                }
+            }
             return text!;
         }
         likely~ Array<string>! = LikelyAfterValue();
@@ -97,6 +104,16 @@ lantern:::graphs :: namespace {
             result += "\n";
         }
         result += "-\n";
+        for variableName in function->variableNames {
+            result += "set ";
+            result += variableName;
+            result += "\n";
+        }
+        for variableName in function->variableNames {
+            result += "get ";
+            result += variableName;
+            result += "\n";
+        }
         for kind in all {
             alreadyListed~ bool = false;
             for chosen in likely {
@@ -110,6 +127,25 @@ lantern:::graphs :: namespace {
             }
         }
         return result!;
+    }
+
+    // Adds what a menu line names: a node kind, or `get name` and `set name` for a variable. Returns the new node's id, or "".
+    AddMenuNode :: (function: GraphFunction~*, line: string, x: f32, y: f32) -> string! {
+        if line.startsWith("get ") || line.startsWith("set ") {
+            variableName: string! = line.substring(4, line.length() - 4).copy();
+            defer delete variableName;
+            if function->IndexOfVariable(variableName) == null {
+                return "".copy();
+            }
+            nodeKind: string! = line.substring(0, 3).copy();
+            defer delete nodeKind;
+            id: string! = AddNode(function, nodeKind, x, y);
+            if position := function->IndexOfNode(id) {
+                function->nodes[position]->name = variableName.copy();
+            }
+            return id!;
+        }
+        return AddNode(function, line, x, y);
     }
 
     // Wires a node just added from the menu to the pin the menu was opened from. Returns false when nothing was wired.
