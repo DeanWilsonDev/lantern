@@ -6,7 +6,7 @@ lantern:::graphs :: namespace {
     HIT_PIN: i32 : 2;
 
     BUTTON_LEFT: u32 : 0;
-    BUTTON_RIGHT: u32 : 1;
+    BUTTON_RIGHT: u32 : 2;
 
     // What is under a screen point: a pin of a node, a node, or nothing.
     Hit :: class {
@@ -77,6 +77,19 @@ lantern:::graphs :: namespace {
         return -((-value + half) / GRID_STEP * GRID_STEP);
     }
 
+    // Asks the interface to open its add-node menu where the pointer is. With a source node the menu offers what can take
+    // that pin, and a node added from it is wired to it.
+    RequestMenu :: (graphEditor: GraphEditor~*, sourceNode: string, sourcePort: string, sourceIsExecution: bool) -> void {
+        graphEditor->menuWorldX = graphEditor->WorldX(graphEditor->pointerX);
+        graphEditor->menuWorldY = graphEditor->WorldY(graphEditor->pointerY);
+        delete graphEditor->menuSourceNode;
+        graphEditor->menuSourceNode = `${sourceNode}`;
+        delete graphEditor->menuSourcePort;
+        graphEditor->menuSourcePort = `${sourcePort}`;
+        graphEditor->menuSourceIsExecution = sourceIsExecution;
+        graphEditor->menuRequest += 1;
+    }
+
     // Joins the wire being dragged to what it was let go over.
     FinishWire :: (graphEditor: GraphEditor~*, target: Hit*) -> void {
         if graphEditor->graph->functions.length() == 0 {
@@ -130,6 +143,8 @@ lantern:::graphs :: namespace {
                     graphEditor->SetStatus("Disconnected.");
                 }
                 delete problem;
+            } else if hit->kind == HIT_NOTHING {
+                RequestMenu(graphEditor, "", "", false);
             }
             delete hit;
             return;
@@ -177,7 +192,15 @@ lantern:::graphs :: namespace {
         }
         if graphEditor->dragMode == DRAG_WIRE {
             target := HitAt(graphEditor, graphEditor->pointerX, graphEditor->pointerY);
+            sourceNode: string! = `${graphEditor->wireNode}`;
+            sourcePort: string! = `${graphEditor->wirePort}`;
+            sourceIsExecution: bool = graphEditor->wireIsExecution;
             FinishWire(graphEditor, target);
+            if target->kind == HIT_NOTHING {
+                RequestMenu(graphEditor, sourceNode, sourcePort, sourceIsExecution);
+            }
+            delete sourceNode;
+            delete sourcePort;
             delete target;
         } else if graphEditor->dragMode == DRAG_NODE && graphEditor->graph->functions.length() > 0 {
             function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
