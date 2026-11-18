@@ -272,3 +272,7 @@ The Assets panel shows a folder list on the left and the open folder as cards. S
 Beside Assets in the bottom panel (Alt+5, or Window > Silhouettes), this tab lists every Silhouette. The search box filters them by name; drag a card into the level, or select it and press Add to world, or Edit to open its editor.
 
 The Silhouette editor has three columns: the component tree with Add a child and Arrange on the left, a large preview with the selected component's values in the middle, and the actions on the right grouped as Component, Edit a value, Behaviour graph and This Silhouette.
+
+## Game lighting
+
+Show > Game Lighting (or Settings > Graphics) draws the viewport with the game's night look: its sky, fog, moon, ambient light, bloom and colour grade. Lights placed in the level light it as they will in the game. It shows the first chapter's night; other chapters, the day look and wet streets are not in the viewport yet.
