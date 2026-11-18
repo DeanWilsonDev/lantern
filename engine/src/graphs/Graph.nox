@@ -1,0 +1,279 @@
+// The model of a visual-scripting graph and the loader for its file (docs/visual-scripting.md). A graph is a set of functions,
+// each made of nodes. Nothing here runs a graph: `GraphNyx.nox` turns one into Nyx source and the Nyx runtime runs that.
+lantern:::graphs :: namespace {
+    // The prefix that marks a value reference as a literal. A node id or an input name can never start with it.
+    LITERAL_MARK: string : "#";
+
+    // One node of a function. Every field is text: an empty string means "not set". A value field (`a`, `b`, `value`,
+    // `condition`) is either a name (an input, a local or the id of a data node) or a literal marked by LITERAL_MARK.
+    GraphNode :: class {
+    public:
+        id~ string!;
+        kind~ string!;
+        next~ string!;
+        thenId~ string!;
+        elseId~ string!;
+        name~ string!;
+        typeName~ string!;
+        a~ string!;
+        b~ string!;
+        value~ string!;
+        condition~ string!;
+
+        GraphNode~: (newId: string, newKind: string) {
+            id = `${newId}`;
+            kind = `${newKind}`;
+            next = "".copy();
+            thenId = "".copy();
+            elseId = "".copy();
+            name = "".copy();
+            typeName = "".copy();
+            a = "".copy();
+            b = "".copy();
+            value = "".copy();
+            condition = "".copy();
+        }
+
+        !GraphNode~: () {
+            delete id;
+            delete kind;
+            delete next;
+            delete thenId;
+            delete elseId;
+            delete name;
+            delete typeName;
+            delete a;
+            delete b;
+            delete value;
+            delete condition;
+        }
+    }
+
+    // One function of a graph: its inputs, what it returns (empty for nothing) and its nodes.
+    GraphFunction :: class {
+    public:
+        name~ string!;
+        returns~ string!;
+        inputNames~ Array<string!>! = [];
+        inputTypes~ Array<string!>! = [];
+        nodes~ Array<GraphNode*!>! = [];
+
+        GraphFunction~: (newName: string) {
+            name = `${newName}`;
+            returns = "".copy();
+        }
+
+        !GraphFunction~: () {
+            delete name;
+            delete returns;
+            inputNames.freeAll();
+            inputTypes.freeAll();
+            nodes.freeAll();
+        }
+
+        // The index of the node with an id, or null.
+        IndexOfNode :: (nodeId: string) -> usize? {
+            for index~ usize = 0; index < nodes.length(); index++ {
+                if nodes[index]->id == nodeId {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        // The index of an input, or null.
+        IndexOfInput :: (inputName: string) -> usize? {
+            for index~ usize = 0; index < inputNames.length(); index++ {
+                if inputNames[index] == inputName {
+                    return index;
+                }
+            }
+            return null;
+        }
+    }
+
+    // A whole graph file: its name and its functions.
+    Graph :: class {
+    public:
+        name~ string!;
+        functions~ Array<GraphFunction*!>! = [];
+
+        Graph~: (newName: string) {
+            name = `${newName}`;
+        }
+
+        !Graph~: () {
+            delete name;
+            functions.freeAll();
+        }
+    }
+
+    // True for a name that is safe to write into Nyx source: letters, digits and underscores, not starting with a digit.
+    IsName :: (text: string) -> bool {
+        if text.length() == 0 {
+            return false;
+        }
+        for position~ usize = 0; position < text.length(); position++ {
+            byte: u8 = text.byteAt(position);
+            isLetter: bool = (byte >= 97 && byte <= 122) || (byte >= 65 && byte <= 90) || byte == 95;
+            isDigit: bool = byte >= 48 && byte <= 57;
+            if !isLetter && !(isDigit && position > 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The text of an object's member, or the empty string when it is missing or not text.
+    TextMember :: (document: lantern:::json:::JsonDocument*, object: u32, key: string) -> string! {
+        if member := document->Member(object, key) {
+            if document->Kind(member) == lantern:::json:::JsonKind:::Text {
+                return `${document->Text(member)}`;
+            }
+        }
+        return "".copy();
+    }
+
+    // A number written so Nyx reads it as an f32: `1` becomes `1.0f`.
+    FloatLiteral :: (written: string) -> string! {
+        text~ string! = `${written}`;
+        if !text.contains(".") && !text.contains("e") && !text.contains("E") {
+            text += ".0";
+        }
+        text += "f";
+        return text!;
+    }
+
+    // A value reference at a member: a name as text, or a literal as an object (`{ "f32": 1.0 }`, `{ "i32": 3 }`,
+    // `{ "bool": true }`, `{ "string": "hi" }`). The empty string when the member is missing or unreadable.
+    ReferenceMember :: (document: lantern:::json:::JsonDocument*, object: u32, key: string) -> string! {
+        memberAt: u32? = document->Member(object, key);
+        if memberAt == null {
+            return "".copy();
+        }
+        at~ u32 = 0;
+        if present := memberAt {
+            at = present;
+        }
+        kind: lantern:::json:::JsonKind = document->Kind(at);
+        if kind == lantern:::json:::JsonKind:::Text {
+            return `${document->Text(at)}`;
+        }
+        if kind != lantern:::json:::JsonKind:::Object {
+            return "".copy();
+        }
+        if floatAt := document->Member(at, "f32") {
+            written: string! = document->Write(floatAt);
+            literal: string! = FloatLiteral(written);
+            delete written;
+            text: string! = `${LITERAL_MARK}${literal}`;
+            delete literal;
+            return text!;
+        }
+        if integerAt := document->Member(at, "i32") {
+            written: string! = document->Write(integerAt);
+            text: string! = `${LITERAL_MARK}${written}`;
+            delete written;
+            return text!;
+        }
+        if booleanAt := document->Member(at, "bool") {
+            written: string! = document->Write(booleanAt);
+            text: string! = `${LITERAL_MARK}${written}`;
+            delete written;
+            return text!;
+        }
+        if textAt := document->Member(at, "string") {
+            quoted: string! = document->Write(textAt);
+            text: string! = `${LITERAL_MARK}${quoted}`;
+            delete quoted;
+            return text!;
+        }
+        return "".copy();
+    }
+
+    ReadNode :: (document: lantern:::json:::JsonDocument*, nodeAt: u32) -> GraphNode*! {
+        idText: string! = TextMember(document, nodeAt, "id");
+        kindText: string! = TextMember(document, nodeAt, "kind");
+        node := new GraphNode(idText, kindText);
+        delete idText;
+        delete kindText;
+        delete node->next;
+        node->next = TextMember(document, nodeAt, "next");
+        delete node->thenId;
+        node->thenId = TextMember(document, nodeAt, "then");
+        delete node->elseId;
+        node->elseId = TextMember(document, nodeAt, "else");
+        delete node->name;
+        node->name = TextMember(document, nodeAt, "name");
+        delete node->typeName;
+        node->typeName = TextMember(document, nodeAt, "type");
+        delete node->a;
+        node->a = ReferenceMember(document, nodeAt, "a");
+        delete node->b;
+        node->b = ReferenceMember(document, nodeAt, "b");
+        delete node->value;
+        node->value = ReferenceMember(document, nodeAt, "value");
+        delete node->condition;
+        node->condition = ReferenceMember(document, nodeAt, "condition");
+        return node!;
+    }
+
+    ReadFunction :: (document: lantern:::json:::JsonDocument*, functionAt: u32) -> GraphFunction*! {
+        nameText: string! = TextMember(document, functionAt, "name");
+        function := new GraphFunction(nameText);
+        delete nameText;
+        delete function->returns;
+        function->returns = TextMember(document, functionAt, "returns");
+        if inputsAt := document->Member(functionAt, "inputs") {
+            inputAt~ u32 = document->FirstChild(inputsAt);
+            for step~ usize = 0; step < usize(document->ChildCount(inputsAt)); step++ {
+                function->inputNames.push(TextMember(document, inputAt, "name"));
+                function->inputTypes.push(TextMember(document, inputAt, "type"));
+                inputAt = document->NextSibling(inputAt);
+            }
+        }
+        if nodesAt := document->Member(functionAt, "nodes") {
+            nodeAt~ u32 = document->FirstChild(nodesAt);
+            for step~ usize = 0; step < usize(document->ChildCount(nodesAt)); step++ {
+                function->nodes.push(ReadNode(document, nodeAt));
+                nodeAt = document->NextSibling(nodeAt);
+            }
+        }
+        return function!;
+    }
+
+    // Reads a graph from the text of its `.graph.json` file. The error says what is wrong with the file's shape; whether
+    // the graph makes sense is the generator's check.
+    LoadGraph :: (jsonText: string) -> Result<Graph*!, string!> {
+        when lantern:::json:::Parse(jsonText) {
+            Result:::Err(message) -> {
+                failure: string! = `graph file is not valid JSON: ${message}`;
+                delete message;
+                return Result<Graph*!, string!>:::Err(failure!);
+            },
+            Result:::Ok(document) -> {
+                if document->Kind(document->root) != lantern:::json:::JsonKind:::Object {
+                    delete document;
+                    return Result<Graph*!, string!>:::Err("a graph file must be an object".copy());
+                }
+                nameText: string! = TextMember(document, document->root, "graph");
+                if !IsName(nameText) {
+                    delete nameText;
+                    delete document;
+                    return Result<Graph*!, string!>:::Err("a graph needs a \"graph\" name of letters, digits and underscores".copy());
+                }
+                graph := new Graph(nameText);
+                delete nameText;
+                if functionsAt := document->Member(document->root, "functions") {
+                    functionAt~ u32 = document->FirstChild(functionsAt);
+                    for step~ usize = 0; step < usize(document->ChildCount(functionsAt)); step++ {
+                        graph->functions.push(ReadFunction(document, functionAt));
+                        functionAt = document->NextSibling(functionAt);
+                    }
+                }
+                delete document;
+                return Result<Graph*!, string!>:::Ok(graph!);
+            }
+        }
+    }
+}
