@@ -88,12 +88,36 @@ GraphPageUi :: namespace {
         return selected ? "entity-page-component-selected" : "entity-page-component";
     }
 
+    VariableTypes :: () -> Array<string> {
+        return ["bool", "i32", "i64", "f32", "f64", "string"];
+    }
+
+    SwatchClass :: (typeName: string) -> string {
+        if typeName == "bool" {
+            return "type-swatch-bool";
+        }
+        if typeName == "string" {
+            return "type-swatch-string";
+        }
+        if typeName.startsWith("f") {
+            return "type-swatch-float";
+        }
+        if typeName.startsWith("i") || typeName.startsWith("u") {
+            return "type-swatch-integer";
+        }
+        return "type-swatch-other";
+    }
+
     VariableRows :: (text: string) -> Array<string> {
         return Lines(text);
     }
 
     VariableName :: (row: string) -> string {
         return row.split("\t")[0];
+    }
+
+    VariableType :: (row: string) -> string {
+        return row.split("\t")[1];
     }
 
     VariableLabel :: (row: string) -> string {
@@ -128,6 +152,7 @@ GraphPage :: () -> Penumbra:::Component {
     @signal newVariableName~ string = "";
     @signal newVariableType~ string = "i32";
     @signal newVariableDefault~ string = "";
+    @signal typePickerOpen~ bool = false;
     @signal chosenField~ string = "";
     @signal chosenNode~ string = "";
     @signal fieldText~ string = "";
@@ -218,6 +243,7 @@ GraphPage :: () -> Penumbra:::Component {
                                     <slot>
                                         !{GraphPageUi:::VariableRows(editorGraphVariables()).map((row: string) ->
                                             <frame key={`graph-variable-${GraphPageUi:::VariableName(row)}`} class="field-row">
+                                                <frame class={GraphPageUi:::SwatchClass(GraphPageUi:::VariableType(row))} />
                                                 <text class="entity-page-component-name">{GraphPageUi:::VariableLabel(row)}</text>
                                                 <frame ref={`graph-variable-get-${GraphPageUi:::VariableName(row)}`} class="small-button"
                                                        onRelease={() -> {
@@ -246,13 +272,33 @@ GraphPage :: () -> Penumbra:::Component {
                                         <input ref="graph-variable-name" class="field-input" text={newVariableName}
                                                preferredWidth={70.0f}
                                                onTextChange={(text: string) -> { newVariableName = text; }} />
-                                        <input ref="graph-variable-type" class="field-input" text={newVariableType}
-                                               preferredWidth={44.0f}
-                                               onTextChange={(text: string) -> { newVariableType = text; }} />
+                                        <frame ref="graph-variable-type" class="type-picker"
+                                               onRelease={() -> { typePickerOpen = !typePickerOpen; }}>
+                                            <frame class={GraphPageUi:::SwatchClass(newVariableType)} />
+                                            <text class="small-button-label">{newVariableType}</text>
+                                            <icon class="small-button-icon" icon="chevron-down" size={10.0f} />
+                                        </frame>
                                         <input ref="graph-variable-default" class="field-input" text={newVariableDefault}
                                                preferredWidth={44.0f}
                                                onTextChange={(text: string) -> { newVariableDefault = text; }} />
                                     </frame>
+                                    <slot>
+                                        !{typePickerOpen
+                                            ? <frame key="type-list" class="type-list">
+                                                  <slot>
+                                                  !{GraphPageUi:::VariableTypes().map((typeName: string) ->
+                                                      <frame key={`type-${typeName}`} ref={`graph-type-${typeName}`} class="type-option"
+                                                             onRelease={() -> {
+                                                                 newVariableType = typeName;
+                                                                 typePickerOpen = false;
+                                                             }}>
+                                                          <frame class={GraphPageUi:::SwatchClass(typeName)} />
+                                                          <text class="entity-page-component-name">{typeName}</text>
+                                                      </frame>)}
+                                                  </slot>
+                                              </frame>
+                                            : <frame key="type-list-closed" />}
+                                    </slot>
                                     <frame class="field-row">
                                         <frame ref="graph-add-variable-button" class="small-button"
                                                onRelease={() -> {
