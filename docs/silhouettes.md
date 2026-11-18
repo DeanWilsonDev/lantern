@@ -60,6 +60,8 @@ The tab edits the Silhouette's files directly, so there is no separate save: eac
 - **Delete.** **Delete** removes the selected component's file and everything under it. The root can't be deleted.
 - A component the Silhouette gets from its base has no file of its own, so it can't be renamed or deleted, and it can't take new children, in the variant. Change it in the base.
 
+- **New Silhouette and New variant.** Type a name (lowercase letters, digits and underscores) and press **New Silhouette** for an empty block, or **New variant** for a variant of the Silhouette open in the tab. A variant's root has the open Silhouette as its `@base` and sets only its name and menu label, marked `*`, so it follows every later change to the base. The new Silhouette opens in the tab and appears in the asset browser. A name that is taken or not allowed is refused and the reason is shown under the buttons.
+
 Changing a Silhouette doesn't change the entities already placed in a world; it changes what is placed from then on.
 
 ## Calamus from Nox
@@ -69,6 +71,6 @@ Changing a Silhouette doesn't change the entities already placed in a world; it 
 ## Known gaps
 
 - The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
-- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. Editing a value, moving a component to another parent, creating a new Silhouette or a variant from the tab, and reverting a variant's value to its base are not built. Visual scripting comes after them.
+- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. Editing a value, moving a component to another parent, deleting or renaming a whole Silhouette, and reverting a variant's value to its base are not built. Visual scripting comes after them.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.
