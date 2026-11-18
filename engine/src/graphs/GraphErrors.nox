@@ -1,0 +1,66 @@
+lantern:::graphs :: namespace {
+    GENERATED_FOLDER: string : "/generated/";
+    GENERATED_HEADER: string : "// Generated from ";
+    GRAPH_FILE_SUFFIX: string : ".graph.json";
+
+    // "graph crumble_phase, node isIdle" for a line of a generated graph file (a `.nyx` under a `generated` folder whose
+    // first line says which graph wrote it), or "" when the file is not one, can't be read, or the line was written by no node.
+    DescribeGraphLine :: (generatedPath: string, lineNumber: i32) -> string! {
+        folderAt: usize? = generatedPath.lastIndexOf(GENERATED_FOLDER);
+        if folderAt == null || lineNumber < 1 {
+            return "".copy();
+        }
+        folderEnd~ usize = 0;
+        if present := folderAt {
+            folderEnd = present;
+        }
+        when readTextFile(generatedPath) {
+            Result:::Err(error) -> {
+                delete error;
+                return "".copy();
+            },
+            Result:::Ok(generatedText) -> {
+                defer delete generatedText;
+                headerLine: string = generatedText.lines()[0];
+                if !headerLine.startsWith(GENERATED_HEADER) {
+                    return "".copy();
+                }
+                rest: string = headerLine.substring(GENERATED_HEADER.length(), headerLine.length() - GENERATED_HEADER.length());
+                suffixAt: usize? = rest.indexOf(GRAPH_FILE_SUFFIX, 0);
+                if suffixAt == null {
+                    return "".copy();
+                }
+                graphName~ string = "";
+                if present := suffixAt {
+                    graphName = rest.substring(0, present);
+                }
+                graphPath: string! = `${generatedPath.substring(0, folderEnd)}/${graphName}${GRAPH_FILE_SUFFIX}`;
+                defer delete graphPath;
+                when readTextFile(graphPath) {
+                    Result:::Err(error) -> {
+                        delete error;
+                        return "".copy();
+                    },
+                    Result:::Ok(graphText) -> {
+                        defer delete graphText;
+                        when LoadGraph(graphText) {
+                            Result:::Err(message) -> {
+                                delete message;
+                                return "".copy();
+                            },
+                            Result:::Ok(graph) -> {
+                                defer delete graph;
+                                nodeId: string! = NodeAtLine(graph, u32(lineNumber));
+                                defer delete nodeId;
+                                if nodeId.length() == 0 {
+                                    return "".copy();
+                                }
+                                return `graph ${graphName}, node ${nodeId}`;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

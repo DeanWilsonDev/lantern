@@ -1777,3 +1777,7 @@ When `games/platformer/game-graphs/` exists beside the assets, the Graph tab lis
 ## D-197: a `when` node is a statement `when` over literal cases
 
 A `when` node has a subject (`a`), any number of cases (a match value and a wire each) and an optional `else`. It generates a statement `when` with block arms, so every arm may run a whole chain, and the arms are literal or computed values, never enum patterns. With no `else` it ends in `_`, which does nothing, so a value that matches no case just continues. Cases are stored as `cases: [{ "match": ..., "do": id }]` rather than parallel fields, so a file reads as what it means. Rejected: enum patterns and bindings (a graph has no types to name them with yet), and value-producing `when` (a data node, later if wanted).
+
+## D-198: a graph error is located by the generated file's own header
+
+When a script error's stack has a frame in a generated graph file, the game's error text adds `graph <name>, node <id>`. The graph is found from the first line of the generated file (`// Generated from <name>.graph.json`) and its folder (the file's `generated` folder's parent), and the node from `NodeAtLine`, so the runtime needs nothing new and no node ids are written into the Nyx. Rejected: writing `//@id` markers into the committed Nyx (noisy diffs) and a runtime hook for the node. Highlighting the node on the editor canvas is left until the editor can show a game's errors.
