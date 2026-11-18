@@ -107,13 +107,18 @@ saves the rendered viewport.
 
 ## The panels
 
+The outliner and the details panel are docked on the right, the viewport fills the middle and the content
+drawer (assets, console, history) sits under it. Each can be shown or hidden from the Window menu or with
+Alt + 1, 2 and 3, and the choice is remembered. F11 hides all of them for a clean viewport.
+
+
 - **Menu bar**: File (new, open, recent files, save, save as, play, settings, quit), Edit
   (undo, redo, duplicate, duplicate along an axis, mirror, delete, snap, space, pivot),
   Selection (all, invert, children, similar, isolate, deselect, hide, unhide all, lock, unlock, unparent,
   group, align and distribute along an axis), View (larger and smaller grid, frame, camera presets, bookmarks,
   grid, wireframe, colliders, markers, level bounds, hidden entities, stats, orthographic,
   align camera and selection), Entity (one entry per template, snap to ground, revert to and
-  apply to template), Window (which bottom panel is shown, the command palette) and Help
+  apply to template), Window (each panel with a tick and its shortcut, hide all panels, settings) and Help
   (controls, keyboard shortcuts, about).
 - **Toolbar**: file buttons, undo and redo, the move, rotate and scale tools, snap, world or
   local space, pivot, frame, duplicate, group, delete, play and stop, the camera preset
@@ -198,6 +203,9 @@ Anywhere in the editor:
 | Ctrl/Cmd + , | Settings |
 | Ctrl/Cmd + L / Shift + L / I | Lock / unlock / invert the selection |
 | Ctrl/Cmd + Q | Quit (asks about unsaved changes) |
+| Alt + 1 / 2 / 3 | Show or hide the outliner / details / content drawer |
+| Ctrl + Space, ` or Alt + 4 | Assets, console or history in the content drawer (again hides it) |
+| F11 | Hide every panel for a clean viewport, or bring them back |
 | Right click on an outliner row | Context menu |
 | Esc | Close the open menu, popup or dialog |
 

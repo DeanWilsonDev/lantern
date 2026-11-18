@@ -1,18 +1,99 @@
-// Layout choices that are remembered between runs. For now that is which panel is open at the bottom of
-// the window (assets, console or history).
+PanelVisibility :: import PanelVisibility;
+
+// Layout choices that are remembered between runs: which panels are shown (the outliner and the
+// details panel on the right, the content drawer under the viewport) and which tab the drawer is on
+// (assets, console or history). Hiding every panel (focusViewport) remembers what was shown so the same
+// command brings it back.
 EditorLayout :: class {
 public:
     @signal bottomPanel~ string = RememberedBottomPanel();
+    @signal outlinerVisible~ bool = RememberedFlag("ui.outliner");
+    @signal detailsVisible~ bool = RememberedFlag("ui.details");
+    @signal drawerVisible~ bool = RememberedFlag("ui.drawer");
 
-    // Shows a bottom panel and remembers the choice in the preferences.
+    focusSavedOutliner~ bool = true;
+    focusSavedDetails~ bool = true;
+    focusSavedDrawer~ bool = true;
+    focused~ bool = false;
+
+    // Shows a bottom panel on its tab and remembers the choice. Asking for the tab already showing hides the
+    // drawer, so one key opens and closes it; "none" hides it.
     ShowBottomPanel~: (panel: string) -> void {
+        if panel == "none" {
+            this.SetDrawer(false);
+            return;
+        }
+        if this.drawerVisible && this.bottomPanel == panel {
+            this.SetDrawer(false);
+            return;
+        }
         this.bottomPanel = panel;
         editorSetPreference("ui.bottomPanel", panel);
+        this.SetDrawer(true);
+    }
+
+    // Shows or hides a panel by name ("outliner", "details" or "drawer").
+    TogglePanel~: (panel: string) -> void {
+        this.focused = false;
+        when panel {
+            "outliner" -> this.SetOutliner(!this.outlinerVisible),
+            "details" -> this.SetDetails(!this.detailsVisible),
+            "drawer" -> this.SetDrawer(!this.drawerVisible),
+            default -> {}
+        }
+    }
+
+    // Hides every panel for a clean viewport, or brings back the ones that were shown.
+    ToggleFocus~: () -> void {
+        if this.focused {
+            this.focused = false;
+            this.SetOutliner(this.focusSavedOutliner);
+            this.SetDetails(this.focusSavedDetails);
+            this.SetDrawer(this.focusSavedDrawer);
+            return;
+        }
+        this.focusSavedOutliner = this.outlinerVisible;
+        this.focusSavedDetails = this.detailsVisible;
+        this.focusSavedDrawer = this.drawerVisible;
+        this.SetOutliner(false);
+        this.SetDetails(false);
+        this.SetDrawer(false);
+        this.focused = true;
+    }
+
+    // What is shown, as one value for the menus.
+    Visibility :: () -> PanelVisibility {
+        return PanelVisibility {
+            outliner: this.outlinerVisible,
+            details: this.detailsVisible,
+            drawer: this.drawerVisible,
+            bottomPanel: this.bottomPanel
+        };
+    }
+
+    SetOutliner~: (shown: bool) -> void {
+        this.outlinerVisible = shown;
+        editorSetPreference("ui.outliner", shown ? "1" : "0");
+    }
+
+    SetDetails~: (shown: bool) -> void {
+        this.detailsVisible = shown;
+        editorSetPreference("ui.details", shown ? "1" : "0");
+    }
+
+    SetDrawer~: (shown: bool) -> void {
+        this.drawerVisible = shown;
+        editorSetPreference("ui.drawer", shown ? "1" : "0");
     }
 
     // The panel saved last time, or "assets" the first time.
     static RememberedBottomPanel :: () -> string {
         remembered := editorPreference("ui.bottomPanel");
         return remembered == "" ? "assets" : remembered;
+    }
+
+    // A saved on or off, shown the first time.
+    static RememberedFlag :: (name: string) -> bool {
+        return editorPreference(name) != "0";
     }
 }
