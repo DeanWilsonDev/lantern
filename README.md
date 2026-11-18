@@ -54,4 +54,5 @@ crates/              the Rust engine the Nox engine was ported from (reference o
 ## Credits
 
 The 8x8 bitmap font is Daniel Hepper's public-domain `font8x8_basic`. The world editor's UI font is Inter, under the
-licence in `apps/world-editor/data/fonts/Inter-LICENSE.txt`.
+licence in `apps/world-editor/data/fonts/Inter-LICENSE.txt`. Actor (Thomas Junold, SIL Open Font License 1.1, in
+`apps/world-editor/data/fonts/Actor-LICENSE.txt`) is kept beside it for the Graph tab's look.

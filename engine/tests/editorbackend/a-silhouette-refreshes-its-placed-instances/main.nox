@@ -1,0 +1,44 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    session := lantern:::editorbackend:::OpenSession("../assets/editor/palette.json", "../assets", "../assets/worlds/course.world.json");
+    defer delete session;
+    session->SetViewportSize(Vec2 { x: 1280.0f, y: 720.0f });
+    refreshedNothing: usize = session->RefreshSilhouetteInstances();
+    assert(refreshedNothing == 0, "a level with no placed Silhouettes has nothing to refresh");
+
+    placed: u64? = session->AddEntity("lamp_post", false);
+    guard postKey := placed return 1;
+    changed854: bool = session->SetField(postKey, "material", "grass");
+    assert(changed854, "the post's material is changed in the level");
+    changed251: bool = session->SetField(postKey, "name", "Corner lamp");
+    assert(changed251, "the post is renamed in the level");
+    guard postIndex := session->World()->IndexOf(postKey) return 2;
+    lightKeyBefore: u64 = session->World()->entities[postIndex + 1]->id;
+    changed310: bool = session->SetField(lightKeyBefore, "name", "Corner light");
+    assert(changed310, "the light is renamed in the level");
+    entitiesBefore: usize = session->World()->entities.length();
+
+    refreshedCount: usize = session->RefreshSilhouetteInstances();
+    assert(refreshedCount == 1, "one placed Silhouette is refreshed");
+    assert(session->World()->entities.length() == entitiesBefore, "the post still has its one light");
+    guard refreshedIndex := session->World()->IndexOf(postKey) return 3;
+    refreshedPost: lantern:::world:::WorldEntity* = session->World()->entities[refreshedIndex];
+    assert(refreshedPost->name == "Corner lamp", "the post keeps its name");
+    guard postMaterial := refreshedPost->material return 4;
+    assert(postMaterial == "wall", "the post takes its material from the Silhouette again");
+    light: lantern:::world:::WorldEntity* = session->World()->entities[refreshedIndex + 1];
+    assert(light->kind == "point_light", "the light is rebuilt after the post");
+    assert(light->name == "Corner light", "the light keeps its name");
+    lightParent: u64 = light->parent ?? 0;
+    assert(lightParent == postKey, "the rebuilt light hangs from the post");
+
+    undone: bool = session->Undo();
+    assert(undone, "refreshing is one undo step");
+    guard undoneIndex := session->World()->IndexOf(postKey) return 5;
+    guard undoneMaterial := session->World()->entities[undoneIndex]->material return 6;
+    assert(undoneMaterial == "grass", "undo brings back the changed material");
+    assert(session->World()->entities.length() == entitiesBefore, "undo keeps the same entities");
+    print("a silhouette refreshes its placed instances");
+    return 0;
+}
