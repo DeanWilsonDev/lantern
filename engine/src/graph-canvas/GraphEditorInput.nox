@@ -260,8 +260,66 @@ lantern:::graphs :: namespace {
         graphEditor->generation += 1;
     }
 
-    // Delete removes the selected node. Returns true when the key was used.
-    KeyPressed :: (graphEditor: GraphEditor~*, keyName: string) -> bool {
+    // Adds a copy of the selected node a little down and to the right, with its values but none of its wires, and selects it.
+    DuplicateSelected :: (graphEditor: GraphEditor~*) -> bool {
+        if graphEditor->selected.length() == 0 || graphEditor->graph->functions.length() == 0 {
+            return false;
+        }
+        function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+        sourceIndex~ usize = 0;
+        found~ bool = false;
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            if function->nodes[index]->id == graphEditor->selected {
+                sourceIndex = index;
+                found = true;
+            }
+        }
+        if !found {
+            return false;
+        }
+        original: GraphNode* = function->nodes[sourceIndex];
+        newId: string! = AddNode(function, original->kind, original->x + 40.0f, original->y + 40.0f);
+        if newId.length() == 0 {
+            graphEditor->SetStatus("That node can't be duplicated.");
+            delete newId;
+            return true;
+        }
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            copy: GraphNode~* = function->nodes[index];
+            if copy->id == newId {
+                delete copy->name;
+                copy->name = `${original->name}`;
+                delete copy->typeName;
+                copy->typeName = `${original->typeName}`;
+                delete copy->a;
+                copy->a = `${original->a}`;
+                delete copy->b;
+                copy->b = `${original->b}`;
+                delete copy->value;
+                copy->value = `${original->value}`;
+                delete copy->condition;
+                copy->condition = `${original->condition}`;
+                delete copy->functionPath;
+                copy->functionPath = `${original->functionPath}`;
+                delete copy->text;
+                copy->text = `${original->text}`;
+                for argument in original->arguments {
+                    copy->arguments.push(`${argument}`);
+                }
+            }
+        }
+        SelectNode(graphEditor, newId);
+        delete newId;
+        graphEditor->Touch();
+        graphEditor->SetStatus("Node duplicated.");
+        return true;
+    }
+
+    // Delete removes the selected node and Ctrl+D (Cmd+D) duplicates it. Returns true when the key was used.
+    KeyPressed :: (graphEditor: GraphEditor~*, keyName: string, shortcut: bool) -> bool {
+        if shortcut && (keyName == "d" || keyName == "D") {
+            return DuplicateSelected(graphEditor);
+        }
         if (keyName == "Delete" || keyName == "Backspace") && graphEditor->selected.length() > 0 && graphEditor->graph->functions.length() > 0 {
             function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
             doomed: string! = `${graphEditor->selected}`;
