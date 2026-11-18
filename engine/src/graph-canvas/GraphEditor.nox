@@ -6,7 +6,10 @@ lantern:::graphs :: namespace {
     DRAG_PAN: i32 : 2;
     DRAG_WIRE: i32 : 3;
     GRID_STEP: i32 : 20;
-    MAX_ZOOM: i32 : 4;
+    ZOOM_ONE: i32 : 100;
+    MIN_ZOOM: i32 : 35;
+    MAX_ZOOM: i32 : 400;
+    MIN_TEXT_ZOOM: i32 : 70;
 
     COLOR_BACKGROUND: u32 : 1710878;
     COLOR_GRID: u32 : 2237223;
@@ -42,7 +45,7 @@ lantern:::graphs :: namespace {
     public:
         width~ u32 = 0;
         height~ u32 = 0;
-        zoom~ i32 = 2;
+        zoom~ i32 = 200;
         pixels~ Array<u8>! = [];
         fontMetrics~ Array<i32>! = [];
         fontSizeIndex~ i32 = -1;
@@ -54,9 +57,26 @@ lantern:::graphs :: namespace {
             delete fontMetrics;
         }
 
+        // Scales a length in graph units to pixels at the current zoom.
+        Scaled :: (value: i32) -> i32 {
+            return value * zoom / ZOOM_ONE;
+        }
+
+        // Which baked Actor size draws text at this zoom: seven pixels per graph unit of zoom, between the smallest and largest baked.
+        FontSizeIndex :: () -> i32 {
+            wanted~ i32 = (7 * zoom + 50) / ZOOM_ONE;
+            if wanted < GRAPH_FONT_FIRST_SIZE {
+                wanted = GRAPH_FONT_FIRST_SIZE;
+            }
+            if wanted > GRAPH_FONT_FIRST_SIZE + GRAPH_FONT_SIZES - 1 {
+                wanted = GRAPH_FONT_FIRST_SIZE + GRAPH_FONT_SIZES - 1;
+            }
+            return wanted - GRAPH_FONT_FIRST_SIZE;
+        }
+
         // Reads the glyph table for the current zoom, once per zoom change.
         LoadFont~: () -> void {
-            wanted: i32 = zoom - 1;
+            wanted: i32 = this->FontSizeIndex();
             if wanted == fontSizeIndex {
                 return;
             }
@@ -299,10 +319,10 @@ lantern:::graphs :: namespace {
         // A wire: an S curve that leaves the start to the right and enters the end from the left.
         Wire~: (fromX: i32, fromY: i32, toX: i32, toY: i32, color: u32) -> void {
             reach~ i32 = (toX - fromX) / 2;
-            if reach < 40 * zoom {
-                reach = 40 * zoom;
+            if reach < this->Scaled(40) {
+                reach = this->Scaled(40);
             }
-            thickness: f32 = 0.5f + f32(zoom) * 0.9f;
+            thickness: f32 = 0.5f + f32(zoom) * 0.9f / 100.0f;
             margin: i32 = i32(thickness) + 3;
             curveLeft: i32 = (fromX < toX ? fromX : toX) - reach - margin;
             curveRight: i32 = (fromX > toX ? fromX : toX) + reach + margin;
@@ -323,7 +343,7 @@ lantern:::graphs :: namespace {
             }
             spanX: i32 = toX > fromX ? toX - fromX : fromX - toX;
             spanY: i32 = toY > fromY ? toY - fromY : fromY - toY;
-            segments: i32 = (spanX + spanY) / (4 * zoom) + 12;
+            segments: i32 = (spanX + spanY) / (this->Scaled(4) + 1) + 12;
             previousX~ f32 = f32(fromX);
             previousY~ f32 = f32(fromY);
             for step~ i32 = 1; step <= segments; step++ {
@@ -350,7 +370,7 @@ lantern:::graphs :: namespace {
 
         // The font's ascent at this zoom, used to centre text on a line.
         fontAscent :: () -> i32 {
-            return GraphFontAscent(zoom - 1);
+            return GraphFontAscent(this->FontSizeIndex());
         }
 
         // The width of a line of text, in pixels.
@@ -369,7 +389,7 @@ lantern:::graphs :: namespace {
         Text~: (x: i32, baselineY: i32, text: string, color: u32, maxWidth: i32) -> void {
             this->LoadFont();
             metrics: Array<i32> = fontMetrics;
-            coverage: string = GraphFontCoverage(zoom - 1);
+            coverage: string = GraphFontCoverage(this->FontSizeIndex());
             cursor~ i32 = x * 16;
             for position~ usize = 0; position < text.length(); position++ {
                 byte: u8 = text.byteAt(position);
@@ -406,7 +426,7 @@ lantern:::graphs :: namespace {
         selected~ string!;
         panX~ i32 = 20;
         panY~ i32 = 20;
-        zoom~ i32 = 2;
+        zoom~ i32 = 200;
         pointerX~ i32 = 0;
         pointerY~ i32 = 0;
         dragMode~ i32 = 0;
@@ -469,21 +489,26 @@ lantern:::graphs :: namespace {
             generation += 1;
         }
 
+        // A length in graph units, in pixels at the current zoom.
+        Scaled :: (value: i32) -> i32 {
+            return value * zoom / ZOOM_ONE;
+        }
+
         // World coordinates to screen, and back.
         ScreenX :: (worldX: i32) -> i32 {
-            return (worldX + panX) * zoom;
+            return (worldX + panX) * zoom / ZOOM_ONE;
         }
 
         ScreenY :: (worldY: i32) -> i32 {
-            return (worldY + panY) * zoom;
+            return (worldY + panY) * zoom / ZOOM_ONE;
         }
 
         WorldX :: (screenX: i32) -> i32 {
-            return screenX / zoom - panX;
+            return screenX * ZOOM_ONE / zoom - panX;
         }
 
         WorldY :: (screenY: i32) -> i32 {
-            return screenY / zoom - panY;
+            return screenY * ZOOM_ONE / zoom - panY;
         }
     }
 }
