@@ -229,6 +229,10 @@ lantern:::editorapi :: namespace {
 
     export Save :: (editorInstance: Editor~*) -> bool {
         editorInstance->ClearApiStatus();
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        rebuilt: string!? = lantern:::editorbackend:::RebuildGameMaterials(assetsDirectory);
+        delete rebuilt;
+        delete assetsDirectory;
         return editorInstance->Session()->Save();
     }
 
@@ -562,6 +566,8 @@ lantern:::editorapi :: namespace {
         defer delete assetsDirectory;
         refreshed: string!? = lantern:::editorbackend:::RefreshSilhouetteTemplate(editorInstance->Session()->palette, assetsDirectory, templateId);
         editorInstance->Session()->paletteRevision += 1;
+        rebuilt: string!? = lantern:::editorbackend:::RebuildGameMaterials(assetsDirectory);
+        delete rebuilt;
         return ProblemText(refreshed!);
     }
 
@@ -805,6 +811,12 @@ lantern:::editorapi :: namespace {
 
     export AssetsDirectory :: (editorInstance: Editor*) -> string! {
         return editorInstance->backend->assetsDirectory.copy();
+    }
+
+    // What the content browser shows for a folder, one per line as `kind<TAB>label<TAB>path`. An empty folder lists the roots,
+    // and a non-empty `query` searches the folder (or every root) by name.
+    export AssetEntries :: (editorInstance: Editor*, folder: string, query: string) -> string! {
+        return lantern:::editorbackend:::ListAssetEntries(editorInstance->backend->assetsDirectory, folder, query);
     }
 
     // The gizmo's space, pivot mode and snap steps, by name (see Gizmo.nox for the names).
@@ -1263,14 +1275,14 @@ lantern:::editorapi :: namespace {
         }
     }
 
-    export GraphWheel :: (editorInstance: Editor~*, notches: f32) -> void {
+    export GraphWheel :: (editorInstance: Editor~*, notches: f32, notchesX: f32) -> void {
         guard open ~= editorInstance->graphEditor return;
-        lantern:::graphs:::WheelTurned(open, notches);
+        lantern:::graphs:::WheelTurned(open, notches, notchesX);
     }
 
-    export GraphKey :: (editorInstance: Editor~*, keyName: string) -> bool {
+    export GraphKey :: (editorInstance: Editor~*, keyName: string, shortcut: bool) -> bool {
         guard open ~= editorInstance->graphEditor return false;
-        return lantern:::graphs:::KeyPressed(open, keyName);
+        return lantern:::graphs:::KeyPressed(open, keyName, shortcut);
     }
 
     // Counts up on every change to the open graph or what is selected, so the interface redraws its panels.
@@ -1373,9 +1385,107 @@ lantern:::editorapi :: namespace {
     export GraphAddNodeFromMenu :: (editorInstance: Editor~*, kind: string) -> string! {
         guard open ~= editorInstance->graphEditor return "".copy();
         function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
-        id: string! = lantern:::graphs:::AddNode(function, kind, f32(lantern:::graphs:::Snapped(open->menuWorldX)), f32(lantern:::graphs:::Snapped(open->menuWorldY)));
+        if kind == "comment" {
+            commentIndex: usize = lantern:::graphs:::AddComment(function, "Comment", lantern:::graphs:::Snapped(open->menuWorldX), lantern:::graphs:::Snapped(open->menuWorldY));
+            delete open->selected;
+            open->selected = "".copy();
+            open->selectedComment = i32(commentIndex);
+            open->Touch();
+            return "comment".copy();
+        }
+        id: string! = lantern:::graphs:::AddMenuNode(function, kind, f32(lantern:::graphs:::Snapped(open->menuWorldX)), f32(lantern:::graphs:::Snapped(open->menuWorldY)));
         if id.length() > 0 {
             lantern:::graphs:::WireFromMenu(function, id, open->menuSourceNode, open->menuSourcePort, open->menuSourceIsExecution);
+            lantern:::graphs:::SelectNode(open, id);
+            open->Touch();
+        }
+        return id!;
+    }
+
+    // Which comment box is selected (its index), or -1.
+    export GraphCommentIndex :: (editorInstance: Editor*) -> i32 {
+        guard open := editorInstance->graphEditor return -1;
+        function: lantern:::graphs:::GraphFunction* = open->Function();
+        if open->selectedComment < 0 || usize(open->selectedComment) >= function->commentTexts.length() {
+            return -1;
+        }
+        return open->selectedComment;
+    }
+
+    export GraphCommentText :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        function: lantern:::graphs:::GraphFunction* = open->Function();
+        if open->selectedComment < 0 || usize(open->selectedComment) >= function->commentTexts.length() {
+            return "".copy();
+        }
+        return function->commentTexts[usize(open->selectedComment)].copy();
+    }
+
+    export GraphSetCommentText :: (editorInstance: Editor~*, text: string) -> void {
+        guard open ~= editorInstance->graphEditor return;
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        if open->selectedComment < 0 || usize(open->selectedComment) >= function->commentTexts.length() {
+            return;
+        }
+        index: usize = usize(open->selectedComment);
+        removedText := function->commentTexts.remove(index);
+        delete removedText;
+        function->commentTexts.insert(index, text.copy());
+        open->Touch();
+    }
+
+    // The open function's variables, one per line as `name<TAB>type<TAB>default`.
+    export GraphVariables :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        function: lantern:::graphs:::GraphFunction* = open->graph->functions[open->functionIndex];
+        text~ string! = "".copy();
+        for index~ usize = 0; index < function->variableNames.length(); index++ {
+            text += function->variableNames[index];
+            text += "\t";
+            text += function->variableTypes[index];
+            text += "\t";
+            text += function->variableDefaults[index];
+            text += "\n";
+        }
+        return text!;
+    }
+
+    // Adds a variable to the open function. An empty `initial` takes the type's default. Returns an error message or "".
+    export GraphAddVariable :: (editorInstance: Editor~*, name: string, typeName: string, initial: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "No graph is open.".copy();
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        problem: string!? = lantern:::graphs:::AddVariable(function, name, typeName, initial);
+        if problem != null {
+            return ProblemText(problem!);
+        }
+        delete problem;
+        open->Touch();
+        return "".copy();
+    }
+
+    // Removes a variable and the get and set nodes that named it. Returns false when there is none by that name.
+    export GraphRemoveVariable :: (editorInstance: Editor~*, name: string) -> bool {
+        guard open ~= editorInstance->graphEditor return false;
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        removed: bool = lantern:::graphs:::RemoveVariable(function, name);
+        if removed {
+            open->selected = "".copy();
+            open->Touch();
+        }
+        return removed;
+    }
+
+    // Adds a get or set node for a variable near the middle of what is showing and selects it. Returns its id.
+    export GraphAddVariableNode :: (editorInstance: Editor~*, kind: string, name: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "".copy();
+        centreX: i32 = open->WorldX(i32(editorInstance->graphCanvas->width / 2));
+        centreY: i32 = open->WorldY(i32(editorInstance->graphCanvas->height / 2));
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        line: string! = `${kind} ${name}`;
+        defer delete line;
+        stagger: i32 = i32(function->nodes.length() % 4) * 40;
+        id: string! = lantern:::graphs:::AddMenuNode(function, line, f32(lantern:::graphs:::Snapped(centreX + stagger)), f32(lantern:::graphs:::Snapped(centreY + stagger)));
+        if id.length() > 0 {
             lantern:::graphs:::SelectNode(open, id);
             open->Touch();
         }

@@ -1,0 +1,255 @@
+/**
+ * A material Silhouette: a Silhouette whose `@type` is `material`. It describes how a surface looks, and an entity's
+ * `material` name finds it by folder: `assets/silhouettes/NAME` first, then `assets/silhouettes/materials/NAME`. A name
+ * with no material Silhouette keeps meaning `textures/NAME.png`, as before.
+ *
+ * | Property | Meaning (default) |
+ * | --- | --- |
+ * | `texture` | the name of a texture in `textures/`, or "" for none |
+ * | `tint` | `#RRGGBB` multiplied into the texture ("#FFFFFF") |
+ * | `metallic` | 0 for paint, wood and stone, 1 for bare metal (0) |
+ * | `roughness` | 0 is a mirror, 1 is chalk (0.8) |
+ * | `emissive` | `#RRGGBB` light the surface gives off by itself ("#000000") |
+ */
+lantern:::silhouette :: namespace {
+    MATERIAL_TYPE_NAME: string : "material";
+    MATERIALS_FOLDER_NAME: string : "materials";
+
+    MaterialDefinition :: class {
+    public:
+        name~ string!;
+        texture~ string!;
+        tint~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f };
+        metallic~ f32 = 0.0f;
+        roughness~ f32 = 0.8f;
+        emissive~ lantern:::core:::Color = lantern:::core:::Color { r: 0.0f, g: 0.0f, b: 0.0f };
+
+        MaterialDefinition~: (newName: string) {
+            name = `${newName}`;
+            texture = "".copy();
+        }
+
+        !MaterialDefinition~: () {
+            delete name;
+            delete texture;
+        }
+
+        Look :: () -> lantern:::renderer:::MaterialLook {
+            return lantern:::renderer:::MaterialLook { material: RenderMaterial(), tint: tint };
+        }
+
+        /** The renderer material this definition describes. */
+        RenderMaterial :: () -> lantern:::renderer:::Material {
+            return lantern:::renderer:::Material { metallic: metallic, roughness: roughness, emissive: emissive };
+        }
+    }
+
+    /** Whether the Silhouette folder's root file declares `@type material`. */
+    IsMaterialSilhouetteFolder :: (folder: string) -> bool {
+        rootPath: string! = `${folder}/root.calamus`;
+        defer delete rootPath;
+        when ReadCalamusFile(rootPath) {
+            Result:::Err(message) -> {
+                delete message;
+                return false;
+            },
+            Result:::Ok(document) -> {
+                defer delete document;
+                typeName: string! = document->TypeName();
+                defer delete typeName;
+                return typeName == MATERIAL_TYPE_NAME;
+            }
+        }
+    }
+
+    /** The folder holding the material Silhouette called `name`, or null when there is none. */
+    MaterialFolderFor :: (assetsDirectory: string, name: string) -> string!? {
+        direct: string! = `${assetsDirectory}/silhouettes/${name}`;
+        directRoot: string! = `${direct}/root.calamus`;
+        directExists: bool = pathExists(directRoot);
+        delete directRoot;
+        if directExists {
+            return direct!;
+        }
+        delete direct;
+        nested: string! = `${assetsDirectory}/silhouettes/${MATERIALS_FOLDER_NAME}/${name}`;
+        nestedRoot: string! = `${nested}/root.calamus`;
+        nestedExists: bool = pathExists(nestedRoot);
+        delete nestedRoot;
+        if nestedExists {
+            return nested!;
+        }
+        delete nested;
+        return null;
+    }
+
+    /**
+     * Reads the material Silhouette called `name`. Null when no Silhouette of that name exists or it isn't of type
+     * `material`, so the caller falls back to the texture of the same name.
+     */
+    LoadMaterialSilhouette :: (assetsDirectory: string, name: string) -> MaterialDefinition*!? {
+        folder: string!? = MaterialFolderFor(assetsDirectory, name);
+        defer delete folder;
+        guard present := folder return null;
+        rootPath: string! = `${present}/root.calamus`;
+        defer delete rootPath;
+        when ReadCalamusFile(rootPath) {
+            Result:::Err(message) -> {
+                delete message;
+                return null;
+            },
+            Result:::Ok(document) -> {
+                defer delete document;
+                typeName: string! = document->TypeName();
+                defer delete typeName;
+                if typeName != MATERIAL_TYPE_NAME {
+                    return null;
+                }
+                when document->Resolve("") {
+                    Result:::Err(message) -> {
+                        delete message;
+                        return null;
+                    },
+                    Result:::Ok(valuesJson) -> {
+                        defer delete valuesJson;
+                        return ReadMaterialValues(name, valuesJson);
+                    }
+                }
+            }
+        }
+    }
+
+    ReadMaterialValues :: (name: string, valuesJson: string) -> MaterialDefinition*!? {
+        when lantern:::json:::Parse(valuesJson) {
+            Result:::Err(message) -> {
+                delete message;
+                return null;
+            },
+            Result:::Ok(parsed) -> {
+                defer delete parsed;
+                definition := new MaterialDefinition(name);
+                if propertiesAt := parsed->Member(parsed->root, "properties") {
+                    if at := parsed->Member(propertiesAt, "texture") {
+                        if parsed->Kind(at) == lantern:::json:::JsonKind:::Text {
+                            delete definition->texture;
+                            definition->texture = parsed->Text(at).copy();
+                        }
+                    }
+                    if at := parsed->Member(propertiesAt, "tint") {
+                        if parsed->Kind(at) == lantern:::json:::JsonKind:::Text {
+                            definition->tint = lantern:::world:::ParseHexColor(parsed->Text(at)) ?? definition->tint;
+                        }
+                    }
+                    if at := parsed->Member(propertiesAt, "emissive") {
+                        if parsed->Kind(at) == lantern:::json:::JsonKind:::Text {
+                            definition->emissive = lantern:::world:::ParseHexColor(parsed->Text(at)) ?? definition->emissive;
+                        }
+                    }
+                    if at := parsed->Member(propertiesAt, "metallic") {
+                        if parsed->Kind(at) == lantern:::json:::JsonKind:::Number {
+                            definition->metallic = f32(parsed->Node(at).number);
+                        }
+                    }
+                    if at := parsed->Member(propertiesAt, "roughness") {
+                        if parsed->Kind(at) == lantern:::json:::JsonKind:::Number {
+                            definition->roughness = f32(parsed->Node(at).number);
+                        }
+                    }
+                }
+                return definition!;
+            }
+        }
+    }
+
+    HexOf :: (color: lantern:::core:::Color) -> string! {
+        digits: string = "0123456789ABCDEF";
+        text~ string! = "".copy();
+        channels: f32[3] = [color.r, color.g, color.b];
+        for index~ usize = 0; index < 3; index++ {
+            clamped: f32 = Math:::clamp(channels[index], 0.0f, 1.0f);
+            byte: u32 = u32(clamped * 255.0f + 0.5f);
+            text += digits.substring(usize(byte / 16), 1);
+            text += digits.substring(usize(byte % 16), 1);
+        }
+        return text!;
+    }
+
+    NyxFloat :: (value: f32) -> string! {
+        text~ string! = `${value}`;
+        if !text.contains(".") {
+            text += ".0";
+        }
+        text += "f";
+        return text!;
+    }
+
+    MaterialRegistrations :: (assetsDirectory: string, folder: string) -> string! {
+        lines~ string! = "".copy();
+        if !directoryExists(folder) {
+            return lines!;
+        }
+        when SortedEntries(folder) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(listed) -> {
+                names~ Array<string!>! = listed!;
+                for name in names {
+                    entryPath: string! = `${folder}/${name}`;
+                    isMaterial: bool = directoryExists(entryPath) && IsMaterialSilhouetteFolder(entryPath);
+                    delete entryPath;
+                    if !isMaterial {
+                        continue;
+                    }
+                    loaded: MaterialDefinition*!? = LoadMaterialSilhouette(assetsDirectory, name);
+                    defer delete loaded;
+                    if definition := loaded {
+                        tintHex: string! = HexOf(definition->tint);
+                        emissiveHex: string! = HexOf(definition->emissive);
+                        textureCall: string! = definition->texture.length() == 0 ? "0".copy() : `Texture("textures/${definition->texture}.png")`;
+                        metallicText: string! = NyxFloat(definition->metallic);
+                        roughnessText: string! = NyxFloat(definition->roughness);
+                        lines += `        lantern:::world:::SetMaterialLook("${name}", ${textureCall}, "${tintHex}", ${metallicText}, ${roughnessText}, "${emissiveHex}");`;
+                        lines += "\n";
+                        delete tintHex;
+                        delete emissiveHex;
+                        delete textureCall;
+                        delete metallicText;
+                        delete roughnessText;
+                    }
+                }
+                names.freeAll();
+            }
+        }
+        return lines!;
+    }
+
+    /**
+     * The Nyx that registers every material Silhouette with the engine: `BakedMaterials:::Register()`. The game imports
+     * it, so the Silhouette files stay with the project and the built game carries only these calls.
+     */
+    GenerateMaterialsNyx :: (assetsDirectory: string) -> string! {
+        silhouettesFolder: string! = `${assetsDirectory}/silhouettes`;
+        defer delete silhouettesFolder;
+        nestedFolder: string! = `${silhouettesFolder}/${MATERIALS_FOLDER_NAME}`;
+        defer delete nestedFolder;
+        direct: string! = MaterialRegistrations(assetsDirectory, silhouettesFolder);
+        defer delete direct;
+        nested: string! = MaterialRegistrations(assetsDirectory, nestedFolder);
+        defer delete nested;
+        source~ string! = "// Generated from the material Silhouettes by lantern:::silhouette. Edit the Silhouettes, not this file.\n".copy();
+        source += "BakedMaterials :: namespace {\n";
+        source += "    Texture :: (path: string) -> i64 {\n";
+        source += "        return when lantern:::textures:::Load(path) {\n";
+        source += "            (texture) -> texture,\n";
+        source += "            override -> lantern:::textures:::Solid(\"FFFFFF\")\n";
+        source += "        };\n";
+        source += "    }\n\n";
+        source += "    Register :: () -> void {\n";
+        source += direct;
+        source += nested;
+        source += "    }\n";
+        source += "}\n";
+        return source!;
+    }
+}

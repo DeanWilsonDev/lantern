@@ -10,6 +10,18 @@ GraphNodeMenuProps :: data {
 }
 
 GraphNodeMenuUi :: namespace {
+    Filtered :: (kinds: Array<string>, filter: string) -> Array<string> {
+        guard filter != "" return kinds;
+        wanted := filter.toLower();
+        rows~ Array<string> = [];
+        for kind in kinds {
+            if kind != "-" && kind.toLower().contains(wanted) {
+                rows.add(kind);
+            }
+        }
+        return rows;
+    }
+
     Height :: (kinds: Array<string>) -> f32 {
         height~ f32 = EditorMenus:::POPUP_PADDING;
         for kind in kinds {
@@ -20,13 +32,21 @@ GraphNodeMenuUi :: namespace {
 }
 
 GraphNodeMenu :: (props: GraphNodeMenuProps) -> Penumbra:::Component {
+    @signal filter~ string = "";
+    shown := GraphNodeMenuUi:::Filtered(props.kinds, filter);
     return (
         <portal ref="graph-node-menu" x={props.x} y={props.y} width={EditorMenus:::POPUP_WIDTH}
-                height={GraphNodeMenuUi:::Height(props.kinds)} dismissOnOutsideClick={true}
+                height={GraphNodeMenuUi:::Height(shown) + EditorMenus:::ENTRY_HEIGHT} dismissOnOutsideClick={true}
                 onDismiss={props.onDismiss}>
             <frame class="menu-popup">
+                <frame class="search-row">
+                    <icon class="search-icon" icon="search" size={12.0f} />
+                    <input ref="graph-menu-search" class="search-input" text={filter}
+                           preferredWidth={150.0f}
+                           onTextChange={(text: string) -> { filter = text; }} />
+                </frame>
                 <slot>
-                    !{props.kinds.map((kind: string) ->
+                    !{shown.map((kind: string) ->
                         kind == "-"
                             ? <frame key="graph-menu-separator" class="menu-separator" />
                             : <frame key={`graph-menu-${kind}`} ref={`graph-menu-${kind}`} class="menu-entry"

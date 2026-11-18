@@ -11,6 +11,7 @@ lantern:::editor :: namespace {
     ViewportResources :: interface {
         ShapeMesh~ (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
         MaterialTexture~ (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? : 0;
+        MaterialLook~ (material: string?) -> lantern:::renderer:::MaterialLook? : 0;
         MarkerMeshHandle~ (mesh: MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
         FontTexture~ () -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? : 0;
     }
@@ -283,6 +284,9 @@ lantern:::editor :: namespace {
         renderWorld->fogStart = 150.0f;
         renderWorld->fogEnd = 500.0f;
         view: ViewOptions = session->view;
+        if view.gameLighting {
+            ApplyGameLook(renderWorld);
+        }
         renderWorld->post.bloomEnabled = view.bloom;
         renderWorld->post.ambientOcclusionEnabled = view.ambientOcclusion;
         renderWorld->post.antiAliasingEnabled = view.antiAliasing;
@@ -321,7 +325,14 @@ lantern:::editor :: namespace {
                             materialName = material;
                         }
                         texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = resources->MaterialTexture(materialName);
-                        renderWorld->Draw(mesh, texture, placed->worldMatrix, entity->TintColor());
+                        look: lantern:::renderer:::MaterialLook? = resources->MaterialLook(materialName);
+                        if found := look {
+                            entityTint: lantern:::core:::Color = entity->TintColor();
+                            combined: lantern:::core:::Color = lantern:::core:::Color:::Rgba(entityTint.r * found.tint.r, entityTint.g * found.tint.g, entityTint.b * found.tint.b, entityTint.a);
+                            renderWorld->DrawWithMaterial(mesh, texture, placed->worldMatrix, combined, found.material);
+                        } else {
+                            renderWorld->Draw(mesh, texture, placed->worldMatrix, entity->TintColor());
+                        }
                     }
                 }
                 if outline := outlineColor {

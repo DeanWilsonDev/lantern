@@ -1,9 +1,53 @@
 AssetCard :: import AssetCard;
+AssetFileCard :: import AssetFileCard;
 Editor :: import Editor;
 EditorModel :: import EditorModel;
 TemplateItem :: import TemplateItem;
 
+AssetEntry :: data {
+    kind: string;
+    label: string;
+    path: string;
+}
+
 AssetBrowserUi :: namespace {
+    Entries :: (folder: string, query: string) -> Array<AssetEntry> {
+        rows~ Array<AssetEntry> = [];
+        for line in editorAssetEntries(folder, query).split("\n") {
+            parts := line.split("\t");
+            if parts.length() == 3 {
+                rows.add(AssetEntry { kind: parts[0], label: parts[1], path: parts[2] });
+            }
+        }
+        return rows;
+    }
+
+    ParentOf :: (folder: string) -> string {
+        guard folder.contains("/") return "";
+        pieces := folder.split("/");
+        rest~ string = "";
+        for position~ i32 = 0; position < pieces.length() - 1; position++ {
+            rest = position == 0 ? pieces[0] : `${rest}/${pieces[position]}`;
+        }
+        return rest;
+    }
+
+    Title :: (folder: string, query: string) -> string {
+        if query != "" {
+            return `Search: ${query}`;
+        }
+        return folder == "" ? "Content" : folder.replace("/", "  >  ");
+    }
+
+    RootOf :: (folder: string) -> string {
+        guard folder.contains("/") return folder;
+        return folder.split("/")[0];
+    }
+
+    TreeClass :: (root: string, folder: string) -> string {
+        return RootOf(folder) == root ? "tree-row-selected" : "tree-row";
+    }
+
     InitialPreview :: () -> string {
         current := editorPreviewTemplate();
         guard current == "" return current;
@@ -17,21 +61,65 @@ AssetBrowserUi :: namespace {
 AssetBrowser :: () -> Penumbra:::Component {
     @context editor~ Editor;
     @signal preview~ string = AssetBrowserUi:::InitialPreview();
+    @signal folder~ string = "Silhouettes";
+    @signal query~ string = "";
+    @signal chosen~ string = "";
     Preview := (templateId: string) -> void {
         preview = templateId;
         editorSetPreviewTemplate(templateId);
     };
     return (
         <frame class="asset-browser">
-            <scroll ref="asset-scroll" class="asset-scroll" direction="horizontal" horizontalWheelStep={80.0f}>
-                <frame class="asset-cards">
+            <frame class="asset-tree">
+                <text class="entity-page-heading">Folders</text>
+                <scroll ref="asset-tree-scroll" class="asset-scroll" wheelStep={40.0f}>
+                <slot>
+                    !{AssetBrowserUi:::Entries("", "").map((root: AssetEntry) ->
+                        <frame key={`tree-${root.path}`} ref={`tree-${root.path}`} class={AssetBrowserUi:::TreeClass(root.path, folder)}
+                               onPress={() -> { folder = root.path; query = ""; }}>
+                            <icon class="asset-kind-icon" icon="folder" size={12.0f} />
+                            <text class="asset-label">{root.label}</text>
+                        </frame>)}
+                </slot>
+                </scroll>
+            </frame>
+            <frame class="asset-main">
+                <frame class="asset-bar">
+                    <frame ref="asset-up" class="small-button"
+                           onRelease={() -> { folder = AssetBrowserUi:::ParentOf(folder); query = ""; }}>
+                        <icon class="small-button-icon" icon="chevron-left" size={12.0f} />
+                    </frame>
                     <slot>
-                        !{EditorModel:::Templates().map((item: TemplateItem) ->
-                            <AssetCard key={item.id} item={item} selected={preview == item.id}
-                                       onSelect={() -> Preview(item.id)} />)}
+                        !{<text class="asset-path">{AssetBrowserUi:::Title(folder, query)}</text>}
                     </slot>
+                    <icon class="search-icon" icon="search" size={12.0f} />
+                    <input ref="asset-search" class="search-input" text={query}
+                           preferredWidth={150.0f}
+                           onTextChange={(text: string) -> { query = text; }} />
                 </frame>
-            </scroll>
+                <scroll ref="asset-scroll" class="asset-scroll" direction="horizontal" horizontalWheelStep={80.0f}>
+                    <frame class="asset-cards">
+                        <slot>
+                            !{AssetBrowserUi:::Entries(query == "" ? folder : "", query).map((entry: AssetEntry) ->
+                                entry.kind == "silhouette"
+                                    ? <AssetCard key={entry.path} item={TemplateItem { id: entry.label, label: entry.label, kind: "block" }}
+                                                 selected={preview == entry.label}
+                                                 onSelect={() -> Preview(entry.label)} />
+                                    : <AssetFileCard key={entry.path} kind={entry.kind} label={entry.label} selected={chosen == entry.path}
+                                                     onSelect={() -> {
+                                                         chosen = entry.path;
+                                                         if entry.kind == "folder" {
+                                                             folder = entry.path;
+                                                             query = "";
+                                                         } else if entry.kind == "graph" {
+                                                             editorGraphOpen(entry.label, false);
+                                                             editor.tabs.OpenGraphTab();
+                                                         }
+                                                     }} />)}
+                        </slot>
+                    </frame>
+                </scroll>
+            </frame>
             <frame class="asset-preview">
                 <viewport ref="asset-preview-viewport" class="asset-preview-viewport" renderer="preview" />
                 <frame class="asset-preview-actions">

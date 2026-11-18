@@ -1,0 +1,38 @@
+lantern:::editorbackend :: namespace {
+    MATERIALS_NYX_FILE: string : "BakedMaterials.nyx";
+
+    GameAssetsFolder :: (assetsDirectory: string) -> string!? {
+        found: string!? = WorkspaceRoot(assetsDirectory);
+        guard root := found return null;
+        folder: string! = `${root}/games/platformer/game-assets`;
+        delete found;
+        if !directoryExists(folder) {
+            delete folder;
+            return null;
+        }
+        return folder!;
+    }
+
+    // Writes (or with `writeFiles` false only checks) `<outputFolder>/BakedMaterials.nyx`. The Ok value is whether the file was
+    // out of date.
+    BuildGameMaterials :: (assetsDirectory: string, outputFolder: string, writeFiles: bool) -> Result<bool, string!> {
+        source: string! = lantern:::silhouette:::GenerateMaterialsNyx(assetsDirectory);
+        defer delete source;
+        return SyncOutput(outputFolder, MATERIALS_NYX_FILE, source, writeFiles);
+    }
+
+    // Rebuilds the game's baked materials when the game's folder is found beside the assets. Returns an error message, or null.
+    RebuildGameMaterials :: (assetsDirectory: string) -> string!? {
+        game: string!? = GameAssetsFolder(assetsDirectory);
+        guard folder := game return null;
+        defer delete game;
+        when BuildGameMaterials(assetsDirectory, folder, true) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(changed) -> {
+                return null;
+            }
+        }
+    }
+}

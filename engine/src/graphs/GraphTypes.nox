@@ -1,0 +1,102 @@
+// What type of value a graph reference carries, and the pin and wire colour for it (Blueprint's scheme: bool red, integers
+// teal, floats green, strings magenta, anything else blue, nothing wired grey).
+lantern:::graphs :: namespace {
+    COLOR_TYPE_BOOL: u32 : 14176079;
+    COLOR_TYPE_INTEGER: u32 : 5230792;
+    COLOR_TYPE_FLOAT: u32 : 8115810;
+    COLOR_TYPE_STRING: u32 : 14707912;
+    COLOR_TYPE_OTHER: u32 : 7321855;
+    COLOR_TYPE_NONE: u32 : 9209494;
+    TYPE_SEARCH_DEPTH: i32 : 8;
+
+    IsComparisonKind :: (kind: string) -> bool {
+        return kind == "less" || kind == "greater" || kind == "equal" || kind == "and" || kind == "or" || kind == "not";
+    }
+
+    // The type named by a literal reference such as `#true`, `#2`, `#0.6f` or `#"text"`, or "" when it isn't one.
+    LiteralType :: (reference: string) -> string {
+        if !reference.startsWith(LITERAL_MARK) || reference.length() < 2 {
+            return "";
+        }
+        body: string = reference.substring(1, reference.length() - 1);
+        if body == "true" || body == "false" {
+            return "bool";
+        }
+        if body.startsWith("\"") {
+            return "string";
+        }
+        if body.endsWith("f") {
+            return "f32";
+        }
+        if body.contains(".") {
+            return "f64";
+        }
+        return "i32";
+    }
+
+    // The type a reference (a literal, a node's id or a function input's name) gives, or "" when it can't be told.
+    ValueTypeOf :: (function: GraphFunction*, reference: string, depth: i32) -> string! {
+        if reference.length() == 0 || depth > TYPE_SEARCH_DEPTH {
+            return "".copy();
+        }
+        literal: string = LiteralType(reference);
+        if literal.length() > 0 {
+            return `${literal}`;
+        }
+        if inputIndex := function->IndexOfInput(reference) {
+            return `${function->inputTypes[inputIndex]}`;
+        }
+        if variableIndex := function->IndexOfVariable(reference) {
+            return `${function->variableTypes[variableIndex]}`;
+        }
+        if nodeIndex := function->IndexOfNode(reference) {
+            node: GraphNode* = function->nodes[nodeIndex];
+            if node->kind == "get" {
+                return ValueTypeOf(function, node->name, depth + 1);
+            }
+            if IsComparisonKind(node->kind) {
+                return "bool".copy();
+            }
+            if node->typeName.length() > 0 {
+                return `${node->typeName}`;
+            }
+            if node->kind == "reroute" {
+                return ValueTypeOf(function, node->a, depth + 1);
+            }
+            if OperatorFor(node->kind).length() > 0 {
+                first: string! = ValueTypeOf(function, node->a, depth + 1);
+                if first.length() > 0 {
+                    return first!;
+                }
+                delete first;
+                return ValueTypeOf(function, node->b, depth + 1);
+            }
+        }
+        for declaring in function->nodes {
+            if declaring->name == reference && declaring->typeName.length() > 0 {
+                return `${declaring->typeName}`;
+            }
+        }
+        return "".copy();
+    }
+
+    // The colour of a pin or wire carrying a type.
+    TypeColor :: (typeName: string) -> u32 {
+        if typeName.length() == 0 {
+            return COLOR_TYPE_NONE;
+        }
+        if typeName == "bool" {
+            return COLOR_TYPE_BOOL;
+        }
+        if typeName == "string" {
+            return COLOR_TYPE_STRING;
+        }
+        if typeName == "f32" || typeName == "f64" {
+            return COLOR_TYPE_FLOAT;
+        }
+        if typeName.startsWith("i") || typeName.startsWith("u") {
+            return COLOR_TYPE_INTEGER;
+        }
+        return COLOR_TYPE_OTHER;
+    }
+}

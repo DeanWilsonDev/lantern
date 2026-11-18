@@ -1,0 +1,74 @@
+lantern :: import lantern;
+
+AddedOk :: (function: lantern:::graphs:::GraphFunction~*, name: string, typeName: string, initial: string) -> bool {
+    problem: string!? = lantern:::graphs:::AddVariable(function, name, typeName, initial);
+    added: bool = problem == null;
+    delete problem;
+    return added;
+}
+
+main :: () -> i32 {
+    graph~ lantern:::graphs:::Graph*! = lantern:::graphs:::NewGraph("counter");
+    function~ lantern:::graphs:::GraphFunction~* = graph->functions[0];
+
+    assert(AddedOk(function, "count", "i32", ""), "a variable takes its type's default");
+    assert(AddedOk(function, "label", "string", "\"hi\""), "a variable takes a starting value");
+    assert(!AddedOk(function, "count", "i32", ""), "a second variable of the same name is refused");
+    assert(!AddedOk(function, "bad name", "i32", ""), "a name with a space is refused");
+    assert(function->variableDefaults[0] == "0", "the default for i32 is 0");
+
+    setId: string! = lantern:::graphs:::AddMenuNode(function, "set count", 100.0f, 100.0f);
+    assert(setId.length() > 0, "a set node is added for a variable");
+    getId: string! = lantern:::graphs:::AddMenuNode(function, "get count", 100.0f, 200.0f);
+    assert(getId.length() > 0, "a get node is added for a variable");
+    missing: string! = lantern:::graphs:::AddMenuNode(function, "get nothing", 0.0f, 0.0f);
+    assert(missing.length() == 0, "a get node for a missing variable adds nothing");
+    delete missing;
+
+    menu: string! = lantern:::graphs:::SuggestedKinds(function, "", false);
+    assert(menu.contains("get count\n"), "the menu offers a get for each variable");
+    assert(menu.contains("set label\n"), "the menu offers a set for each variable");
+    delete menu;
+
+    assert(lantern:::graphs:::SetPort(function, setId, "value", "#5") == null, "the set node takes a value");
+    assert(lantern:::graphs:::SetPort(function, "entry", "next", setId) == null, "the entry reaches the set node");
+    delete setId;
+    delete getId;
+
+    when lantern:::graphs:::GenerateNyx(graph) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "a graph with variables generates");
+            delete message;
+        },
+        Result:::Ok(text) -> {
+            assert(text.contains("count~ i32 = 0;"), "the variable is declared at the top of the function");
+            assert(text.contains("label~ string = \"hi\";"), "the string variable keeps its start");
+            assert(text.contains("count = 5;"), "the set node assigns");
+            delete text;
+        }
+    }
+
+    written: string! = lantern:::graphs:::WriteGraph(graph);
+    assert(written.contains("\"variables\""), "variables are written");
+    when lantern:::graphs:::LoadGraph(written) {
+        Result:::Err(message) -> {
+            delete message;
+            assert(false, "the written graph loads again");
+        },
+        Result:::Ok(loaded) -> {
+            again~ lantern:::graphs:::Graph*! = loaded!;
+            assert(again->functions[0]->variableNames.length() == 2, "both variables come back");
+            assert(again->functions[0]->variableTypes[1] == "string", "a variable keeps its type");
+            delete again;
+        }
+    }
+    delete written;
+
+    assert(lantern:::graphs:::RemoveVariable(function, "count"), "a variable is removed");
+    assert(function->IndexOfNode("set") == null, "its set node goes with it");
+    assert(!lantern:::graphs:::RemoveVariable(function, "count"), "removing it twice reports nothing removed");
+    delete graph;
+    print("a graph keeps variables like a blueprint");
+    return 0;
+}

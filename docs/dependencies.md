@@ -33,4 +33,4 @@ Language (`mist run build-shaders`); the compiled files are committed.
 - Linux: X11 or Wayland and ALSA, PulseAudio or PipeWire development headers so SDL3 can build those backends.
 - Only to recompile shaders: `glslangValidator` and `spirv-cross`.
 - No Rust toolchain is needed. Lantern had a Rust engine before the port to Nox; it was removed from the repository on
-  2026-11-18 (`D-208`).
+  2026-11-18 (`D-215`).

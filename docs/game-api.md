@@ -103,6 +103,7 @@ Defining an action twice is a script error (`the action 'jump' is defined twice`
 | `lantern:::world:::HasProperty(entity, key) -> bool` | |
 | `lantern:::world:::NumberProperty / TextProperty / VectorProperty(entity, key)` | world-file properties |
 | `lantern:::world:::SetMaterial(material, texture: i64)` | the texture world-file pieces with that material use (set before `Load`) |
+| `lantern:::world:::SetMaterialLook(material, texture: i64, tint, metallic: f32, roughness: f32, emissive)` | a material's texture (0 for none), tint, metallic, roughness and emissive colour (hex text); `BakedMaterials:::Register()` calls it for each material Silhouette |
 | `lantern:::world:::SetMesh(entity, mesh, tint)`, `SetTexturedMesh(entity, mesh, texture, tint)` | |
 | `lantern:::world:::SetTint(entity, tint)`, `SetVisible(entity, visible)`, `IsVisible(entity) -> bool` | |
 | `lantern:::world:::SetNormalMap(entity, texture, strength)` | fine surface bumps from a normal map, strength 0 to 4; see `normal-maps.md` |
@@ -194,6 +195,7 @@ any floor.
 | `lantern:::screen:::Width() / Height() -> f32` | pixels |
 | `lantern:::screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `lantern:::screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |
+| `lantern:::screen:::Capture(path)` | saves the next drawn frame as a PNG at `path` (its folder is created), without the UI or debug HUD |
 
 ### Sky, `lantern:::sky`
 

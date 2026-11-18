@@ -4,7 +4,7 @@ lantern:::graphs :: namespace {
     // The node kinds the tab offers.
     IsKnownKind :: (kind: string) -> bool {
         return kind == "entry" || kind == "branch" || kind == "while" || kind == "when" || kind == "set" || kind == "return" || kind == "call" || kind == "nyx"
-            || kind == "nyx_value" || OperatorFor(kind).length() > 0 || kind == "not";
+            || kind == "nyx_value" || kind == "get" || OperatorFor(kind).length() > 0 || kind == "not" || kind == "reroute";
     }
 
     IsExecutionPort :: (port: string) -> bool {
@@ -56,6 +56,30 @@ lantern:::graphs :: namespace {
         node->y = y;
         function->nodes.push(node!);
         return id!;
+    }
+
+    // Adds a comment box at a place and returns its index.
+    AddComment :: (function: GraphFunction~*, text: string, x: i32, y: i32) -> usize {
+        function->commentTexts.push(`${text}`);
+        function->commentXs.push(x);
+        function->commentYs.push(y);
+        function->commentWidths.push(240);
+        function->commentHeights.push(120);
+        return function->commentTexts.length() - 1;
+    }
+
+    // Removes a comment box. Returns false for an index past the end.
+    RemoveComment :: (function: GraphFunction~*, index: usize) -> bool {
+        if index >= function->commentTexts.length() {
+            return false;
+        }
+        removedText := function->commentTexts.remove(index);
+        delete removedText;
+        function->commentXs.remove(index);
+        function->commentYs.remove(index);
+        function->commentWidths.remove(index);
+        function->commentHeights.remove(index);
+        return true;
     }
 
     // Removes a node, and every wire that came from it. The entry can't be removed.
@@ -178,6 +202,80 @@ lantern:::graphs :: namespace {
         delete entryId;
         graph->functions.push(function!);
         return null;
+    }
+
+    // The Nyx text a new variable of a type starts as, or "" for a type with no obvious start.
+    DefaultFor :: (typeName: string) -> string {
+        if typeName == "bool" {
+            return "false";
+        }
+        if typeName == "string" {
+            return "\"\"";
+        }
+        if typeName == "f32" {
+            return "0.0f";
+        }
+        if typeName == "f64" {
+            return "0.0";
+        }
+        if typeName.startsWith("i") || typeName.startsWith("u") {
+            return "0";
+        }
+        return "";
+    }
+
+    // Adds a variable to a function. `initial` may be empty to take the type's default. Returns a message when it can't.
+    AddVariable :: (function: GraphFunction~*, name: string, typeName: string, initial: string) -> string!? {
+        if !IsName(name) {
+            return "a variable name is letters, digits and underscores".copy();
+        }
+        if function->IndexOfVariable(name) != null || function->IndexOfInput(name) != null {
+            return `the function already has a variable or input named ${name}`;
+        }
+        if typeName.length() == 0 {
+            return "a variable needs a type, such as bool, i32, f32 or string".copy();
+        }
+        start~ string = initial;
+        if start.length() == 0 {
+            start = DefaultFor(typeName);
+        }
+        if start.length() == 0 {
+            return `a ${typeName} variable needs a starting value`;
+        }
+        function->variableNames.push(`${name}`);
+        function->variableTypes.push(`${typeName}`);
+        function->variableDefaults.push(`${start}`);
+        return null;
+    }
+
+    // Removes a variable and every get or set node that named it. Returns false when there is no such variable.
+    RemoveVariable :: (function: GraphFunction~*, name: string) -> bool {
+        index: usize? = function->IndexOfVariable(name);
+        if index == null {
+            return false;
+        }
+        position~ usize = 0;
+        if present := index {
+            position = present;
+        }
+        removedName := function->variableNames.remove(position);
+        delete removedName;
+        removedType := function->variableTypes.remove(position);
+        delete removedType;
+        removedDefault := function->variableDefaults.remove(position);
+        delete removedDefault;
+        scan~ usize = 0;
+        while scan < function->nodes.length() {
+            candidate: GraphNode* = function->nodes[scan];
+            if (candidate->kind == "get" || candidate->kind == "set") && candidate->name == name {
+                doomed: string! = `${candidate->id}`;
+                RemoveNode(function, doomed);
+                delete doomed;
+            } else {
+                scan += 1;
+            }
+        }
+        return true;
     }
 
     // A new graph with one function, `Run`, holding an entry node.

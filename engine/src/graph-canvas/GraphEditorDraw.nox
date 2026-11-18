@@ -53,7 +53,10 @@ lantern:::graphs :: namespace {
     }
 
     DrawGrid :: (graphEditor: GraphEditor*, canvas: PixelCanvas~*) -> void {
-        step: i32 = GRID_STEP * graphEditor->zoom;
+        step: i32 = graphEditor->Scaled(GRID_STEP);
+        if step < 4 {
+            return;
+        }
         startX: i32 = graphEditor->ScreenX(0) % step;
         startY: i32 = graphEditor->ScreenY(0) % step;
         for x~ i32 = startX; x < i32(canvas->width); x += step {
@@ -65,6 +68,29 @@ lantern:::graphs :: namespace {
             row: i32 = (y - graphEditor->ScreenY(0)) / step;
             isMajor: bool = row % 5 == 0;
             canvas->Rectangle(0, y, i32(canvas->width), 1, isMajor ? COLOR_GRID_MAJOR : COLOR_GRID);
+        }
+    }
+
+    // The comment boxes, drawn behind the wires and nodes: a titled panel with the comment's text, and a handle to resize it.
+    DrawComments :: (graphEditor: GraphEditor*, canvas: PixelCanvas~*) -> void {
+        function: GraphFunction* = graphEditor->Function();
+        showText: bool = graphEditor->zoom >= MIN_TEXT_ZOOM;
+        for index~ usize = 0; index < function->commentTexts.length(); index++ {
+            left: i32 = graphEditor->ScreenX(function->commentXs[index]);
+            top: i32 = graphEditor->ScreenY(function->commentYs[index]);
+            boxWidth: i32 = graphEditor->Scaled(function->commentWidths[index]);
+            boxHeight: i32 = graphEditor->Scaled(function->commentHeights[index]);
+            titleHeight: i32 = graphEditor->Scaled(COMMENT_TITLE_HEIGHT);
+            isSelected: bool = graphEditor->selectedComment == i32(index);
+            canvas->Rectangle(left, top, boxWidth, boxHeight, COLOR_COMMENT);
+            canvas->Rectangle(left, top, boxWidth, titleHeight, COLOR_COMMENT_TITLE);
+            canvas->Outline(left, top, boxWidth, boxHeight, 1, isSelected ? COLOR_SELECTED : COLOR_NODE_EDGE);
+            handle: i32 = graphEditor->Scaled(COMMENT_HANDLE);
+            canvas->Rectangle(left + boxWidth - handle, top + boxHeight - 2, handle, 2, isSelected ? COLOR_SELECTED : COLOR_DIM_TEXT);
+            canvas->Rectangle(left + boxWidth - 2, top + boxHeight - handle, 2, handle, isSelected ? COLOR_SELECTED : COLOR_DIM_TEXT);
+            if showText {
+                canvas->Text(left + graphEditor->Scaled(8), top + titleHeight / 2 + canvas->fontAscent() * 35 / 100, function->commentTexts[index], COLOR_TEXT, boxWidth - graphEditor->Scaled(16));
+            }
         }
     }
 
@@ -80,13 +106,15 @@ lantern:::graphs :: namespace {
                     reference: string = PortReference(node, pin->port);
                     if targetIndex := function->IndexOfNode(reference) {
                         target: GraphNode* = function->nodes[targetIndex];
-                        canvas->Wire(PinScreenX(graphEditor, node, pin), PinScreenY(graphEditor, node, pin), graphEditor->ScreenX(i32(target->x)), graphEditor->ScreenY(i32(target->y)) + (HEADER_HEIGHT / 2) * graphEditor->zoom, COLOR_EXECUTION);
+                        canvas->Wire(PinScreenX(graphEditor, node, pin), PinScreenY(graphEditor, node, pin), graphEditor->ScreenX(i32(target->x)), graphEditor->ScreenY(i32(target->y)) + graphEditor->Scaled(HEADER_HEIGHT / 2), COLOR_EXECUTION);
                     }
                 } else if !pin->isOutput && !pin->isExecution {
                     reference: string = PortReference(node, pin->port);
                     if sourceIndex := function->IndexOfNode(reference) {
                         source: GraphNode* = function->nodes[sourceIndex];
-                        canvas->Wire(graphEditor->ScreenX(i32(source->x) + NODE_WIDTH), graphEditor->ScreenY(i32(source->y)) + (HEADER_HEIGHT / 2) * graphEditor->zoom, PinScreenX(graphEditor, node, pin), PinScreenY(graphEditor, node, pin), COLOR_VALUE);
+                        sourceType: string! = ValueTypeOf(function, source->id, 0);
+                        defer delete sourceType;
+                        canvas->Wire(graphEditor->ScreenX(i32(source->x) + NodeWidth(source->kind)), graphEditor->ScreenY(i32(source->y)) + graphEditor->Scaled(HEADER_HEIGHT / 2), PinScreenX(graphEditor, node, pin), PinScreenY(graphEditor, node, pin), TypeColor(sourceType));
                     }
                 }
             }
@@ -94,9 +122,9 @@ lantern:::graphs :: namespace {
         }
     }
 
-    DrawPin :: (graphEditor: GraphEditor*, canvas: PixelCanvas~*, x: i32, y: i32, isExecution: bool, isLinked: bool) -> void {
-        color: u32 = isExecution ? COLOR_EXECUTION : COLOR_VALUE;
-        zoom: f32 = f32(graphEditor->zoom);
+    DrawPin :: (graphEditor: GraphEditor*, canvas: PixelCanvas~*, x: i32, y: i32, isExecution: bool, isLinked: bool, valueColor: u32) -> void {
+        color: u32 = isExecution ? COLOR_EXECUTION : valueColor;
+        zoom: f32 = f32(graphEditor->zoom) / 100.0f;
         if isExecution {
             canvas->Arrow(f32(x), f32(y), 3.0f * zoom + 0.5f, color);
             return;
@@ -114,8 +142,8 @@ lantern:::graphs :: namespace {
         if node->kind == "call" && node->functionPath.length() > 0 {
             return `${node->functionPath}`;
         }
-        if node->kind == "set" && node->name.length() > 0 {
-            return `set ${node->name}`;
+        if (node->kind == "set" || node->kind == "get") && node->name.length() > 0 {
+            return `${node->kind} ${node->name}`;
         }
         return `${node->kind}`;
     }
@@ -124,28 +152,31 @@ lantern:::graphs :: namespace {
         function: GraphFunction* = graphEditor->Function();
         pins := PinsOf(function, node);
         zoom: i32 = graphEditor->zoom;
+        showText: bool = zoom >= MIN_TEXT_ZOOM;
         left: i32 = graphEditor->ScreenX(i32(node->x));
         top: i32 = graphEditor->ScreenY(i32(node->y));
-        nodeWidth: i32 = NODE_WIDTH * zoom;
-        nodeHeight: i32 = NodeHeight(pins) * zoom;
-        radius: i32 = 3 * zoom;
-        frame: i32 = zoom > 1 ? zoom / 2 + 1 : 1;
+        nodeWidth: i32 = graphEditor->Scaled(pins->width);
+        nodeHeight: i32 = graphEditor->Scaled(NodeHeight(pins));
+        radius: i32 = graphEditor->Scaled(3);
+        frame: i32 = zoom > 150 ? graphEditor->Scaled(1) + 1 : 1;
         isSelected: bool = node->id == graphEditor->selected;
         hasFailed: bool = graphEditor->failedNode.length() > 0 && node->id == graphEditor->failedNode;
         headerColor: u32 = HeaderColor(node->kind);
-        canvas->FillRounded(left + 2 * zoom, top + 3 * zoom, nodeWidth, nodeHeight, radius, true, COLOR_SHADOW, COLOR_SHADOW);
+        canvas->FillRounded(left + graphEditor->Scaled(2), top + graphEditor->Scaled(3), nodeWidth, nodeHeight, radius, true, COLOR_SHADOW, COLOR_SHADOW);
         edgeColor: u32 = isSelected ? COLOR_SELECTED : (hasFailed ? COLOR_FAILED : COLOR_NODE_EDGE);
-        outer: i32 = hasFailed ? frame + zoom : frame;
+        outer: i32 = hasFailed ? frame + graphEditor->Scaled(1) + 1 : frame;
         canvas->FillRounded(left - outer, top - outer, nodeWidth + 2 * outer, nodeHeight + 2 * outer, radius + outer, true, edgeColor, edgeColor);
         canvas->FillRounded(left, top, nodeWidth, nodeHeight, radius, true, COLOR_NODE, COLOR_NODE);
-        canvas->FillRounded(left, top, nodeWidth, HEADER_HEIGHT * zoom, radius, false, canvas->Mixed(headerColor, COLOR_TEXT, 1, 9), canvas->Mixed(headerColor, COLOR_SHADOW, 2, 5));
+        canvas->FillRounded(left, top, nodeWidth, graphEditor->Scaled(HEADER_HEIGHT), radius, false, canvas->Mixed(headerColor, COLOR_TEXT, 1, 9), canvas->Mixed(headerColor, COLOR_SHADOW, 2, 5));
         if hasFailed {
-            badge: f32 = 4.0f * f32(zoom);
+            badge: f32 = 4.0f * f32(zoom) / 100.0f;
             canvas->Disc(f32(left + nodeWidth), f32(top), badge, COLOR_FAILED);
             canvas->Text(left + nodeWidth - canvas->TextWidth("!") / 2, top + canvas->fontAscent() * 35 / 100, "!", COLOR_TEXT, nodeWidth);
         }
         title: string! = NodeTitle(node);
-        canvas->Text(left + 9 * zoom, top + HEADER_HEIGHT * zoom / 2 + canvas->fontAscent() * 35 / 100, title, COLOR_TEXT, nodeWidth - 18 * zoom);
+        if showText && !pins->isCompact {
+            canvas->Text(left + graphEditor->Scaled(9), top + graphEditor->Scaled(HEADER_HEIGHT) / 2 + canvas->fontAscent() * 35 / 100, title, COLOR_TEXT, nodeWidth - graphEditor->Scaled(18));
+        }
         delete title;
         for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
             pin: PinSlot* = pins->items[pinIndex];
@@ -159,14 +190,21 @@ lantern:::graphs :: namespace {
             } else {
                 isLinked = true;
             }
-            DrawPin(graphEditor, canvas, pinX, pinY, pin->isExecution, isLinked);
-            if pin->label.length() > 0 {
+            pinColor~ u32 = COLOR_TYPE_NONE;
+            if !pin->isExecution {
+                reference: string = pin->isOutput ? node->id : PortReference(node, pin->port);
+                pinType: string! = ValueTypeOf(function, reference, 0);
+                pinColor = TypeColor(pinType);
+                delete pinType;
+            }
+            DrawPin(graphEditor, canvas, pinX, pinY, pin->isExecution, isLinked, pinColor);
+            if showText && pin->label.length() > 0 {
                 labelBaseline: i32 = pinY + canvas->fontAscent() * 35 / 100;
                 if pin->isOutput {
-                    labelX: i32 = pinX - 8 * zoom - canvas->TextWidth(pin->label);
+                    labelX: i32 = pinX - graphEditor->Scaled(8) - canvas->TextWidth(pin->label);
                     canvas->Text(labelX, labelBaseline, pin->label, COLOR_DIM_TEXT, nodeWidth);
                 } else {
-                    canvas->Text(pinX + 8 * zoom, labelBaseline, pin->label, COLOR_DIM_TEXT, nodeWidth - 12 * zoom);
+                    canvas->Text(pinX + graphEditor->Scaled(8), labelBaseline, pin->label, COLOR_DIM_TEXT, nodeWidth - graphEditor->Scaled(12));
                 }
             }
         }
@@ -184,6 +222,7 @@ lantern:::graphs :: namespace {
             return;
         }
         DrawGrid(graphEditor, canvas);
+        DrawComments(graphEditor, canvas);
         DrawWires(graphEditor, canvas);
         function: GraphFunction* = graphEditor->Function();
         for index~ usize = 0; index < function->nodes.length(); index++ {
@@ -201,7 +240,9 @@ lantern:::graphs :: namespace {
                 for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
                     pin: PinSlot* = pins->items[pinIndex];
                     if pin->port == graphEditor->wirePort {
-                        canvas->Wire(PinScreenX(graphEditor, from, pin), PinScreenY(graphEditor, from, pin), graphEditor->pointerX, graphEditor->pointerY, pin->isExecution ? COLOR_EXECUTION : COLOR_VALUE);
+                        dragType: string! = ValueTypeOf(function, from->id, 0);
+                        canvas->Wire(PinScreenX(graphEditor, from, pin), PinScreenY(graphEditor, from, pin), graphEditor->pointerX, graphEditor->pointerY, pin->isExecution ? COLOR_EXECUTION : TypeColor(dragType));
+                        delete dragType;
                     }
                 }
                 delete pins;

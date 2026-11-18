@@ -49,7 +49,7 @@ lantern:::host :: namespace {
         guard material := entity->material return null;
         unsafe {
             texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = state->Material(material);
-            if texture == null {
+            if texture == null && state->LookOf(material) == null {
                 message: string! = `'${entity->name}': no texture for material '${material}'`;
                 lantern:::core:::LogWarn("world", message);
                 delete message;
@@ -92,7 +92,13 @@ lantern:::host :: namespace {
             when created! {
                 Result:::Ok(mesh) -> {
                     state->worldMeshes.push(mesh);
-                    meshRenderer: lantern:::engine:::MeshRenderer = lantern:::engine:::MeshRenderer:::Create(mesh, PieceTexture(state, entity), piece->tint);
+                    meshRenderer~ lantern:::engine:::MeshRenderer = lantern:::engine:::MeshRenderer:::Create(mesh, PieceTexture(state, entity), piece->tint);
+                    if materialName := entity->material {
+                        if look := state->LookOf(materialName) {
+                            meshRenderer.color = lantern:::core:::Color:::Rgba(piece->tint.r * look.tint.r, piece->tint.g * look.tint.g, piece->tint.b * look.tint.b, piece->tint.a);
+                            meshRenderer.material = look.material;
+                        }
+                    }
                     return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Ok(state->entityWorld->SpawnMesh(entity->name, GameScene(), transform, meshRenderer));
                 },
                 Result:::Err(message) -> {
@@ -369,6 +375,29 @@ lantern:::host :: namespace {
             }
             unsafe {
                 state->SetMaterial(material, HandleFromScript<lantern:::renderer:::TextureTag>(texture));
+            }
+        });
+        worldNamespace->Function("SetMaterialLook", "(material: string, texture: i64, tint: string, metallic: f32, roughness: f32, emissive: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            material: string! = context->Text(0);
+            defer delete material;
+            texture: i64 = context->I64(1);
+            tint: lantern:::core:::Color = ColorArgument(context, 2);
+            metallic: f32 = context->F32(3);
+            roughness: f32 = context->F32(4);
+            emissive: lantern:::core:::Color = ColorArgument(context, 5);
+            if Stopped(context) {
+                return;
+            }
+            look~ lantern:::renderer:::MaterialLook = lantern:::renderer:::MaterialLook { };
+            look.tint = tint;
+            look.material.metallic = metallic;
+            look.material.roughness = roughness;
+            look.material.emissive = emissive;
+            unsafe {
+                if texture != 0 {
+                    state->SetMaterial(material, HandleFromScript<lantern:::renderer:::TextureTag>(texture));
+                }
+                state->SetMaterialLook(material, look);
             }
         });
         worldNamespace->Function("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {

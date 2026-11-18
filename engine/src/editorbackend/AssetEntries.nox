@@ -1,0 +1,226 @@
+lantern:::editorbackend :: namespace {
+    MAX_ASSET_SEARCH_DEPTH: u32 : 6;
+
+    // The top-level folders of the content browser, one per line as `name<TAB>real folder`. A folder that doesn't exist is left out.
+    AssetRootLines :: (assetsDirectory: string) -> string! {
+        lines~ string! = "".copy();
+        workspace: string!? = WorkspaceRoot(assetsDirectory);
+        if root := workspace {
+            scripts: string! = `${root}/games/platformer`;
+            if directoryExists(scripts) {
+                lines += "Scripts\t";
+                lines += scripts;
+                lines += "\n";
+            }
+            delete scripts;
+        }
+        delete workspace;
+        graphFolder: string!? = GameGraphsFolder(assetsDirectory);
+        if graphsFolder := graphFolder {
+            lines += "Graphs\t";
+            lines += graphsFolder;
+            lines += "\n";
+        }
+        delete graphFolder;
+        names: Array<string>! = AssetRootNames();
+        defer delete names;
+        for name in names {
+            folder: string! = `${assetsDirectory}/${AssetRootFolder(name)}`;
+            if directoryExists(folder) {
+                lines += name;
+                lines += "\t";
+                lines += folder;
+                lines += "\n";
+            }
+            delete folder;
+        }
+        return lines!;
+    }
+
+    AssetRootNames :: () -> Array<string>! {
+        names~ Array<string>! = [];
+        names.push("Silhouettes");
+        names.push("Textures");
+        names.push("Models");
+        names.push("Sounds");
+        names.push("Music");
+        names.push("Worlds");
+        return names!;
+    }
+
+    AssetRootFolder :: (name: string) -> string {
+        if name == "Silhouettes" {
+            return "silhouettes";
+        }
+        if name == "Textures" {
+            return "textures";
+        }
+        if name == "Models" {
+            return "models";
+        }
+        if name == "Sounds" {
+            return "sounds";
+        }
+        if name == "Music" {
+            return "music";
+        }
+        if name == "Worlds" {
+            return "worlds";
+        }
+        return "";
+    }
+
+    // The real folder behind a virtual one (`Textures/props`), or "" when its root is unknown.
+    ResolveAssetFolder :: (assetsDirectory: string, virtualFolder: string) -> string! {
+        roots: string! = AssetRootLines(assetsDirectory);
+        defer delete roots;
+        slash: usize? = virtualFolder.indexOf("/", 0);
+        rootName~ string = virtualFolder;
+        rest~ string = "";
+        if position := slash {
+            rootName = virtualFolder.substring(0, position);
+            rest = virtualFolder.substring(position + 1, virtualFolder.length() - position - 1);
+        }
+        for line in roots.split("\n") {
+            fields := line.split("\t");
+            defer delete fields;
+            if fields.length() == 2 && fields[0] == rootName {
+                if rest.length() == 0 {
+                    return fields[1].copy();
+                }
+                return `${fields[1]}/${rest}`;
+            }
+        }
+        return "".copy();
+    }
+
+    // What a file or folder is, for the browser's icon and what it can do: `silhouette`, `script`, `graph`, `texture`,
+    // `mesh`, `sound`, `world`, `material`, `folder`, or "" for something the browser hides.
+    AssetKindOf :: (realPath: string, name: string, isFolder: bool) -> string {
+        if isFolder {
+            marker: string! = `${realPath}/root.calamus`;
+            isSilhouette: bool = pathExists(marker);
+            delete marker;
+            if isSilhouette && lantern:::silhouette:::IsMaterialSilhouetteFolder(realPath) {
+                return "material";
+            }
+            return isSilhouette ? "silhouette" : "folder";
+        }
+        if name.endsWith(".graph.json") {
+            return "graph";
+        }
+        if name.endsWith(".world.json") {
+            return "world";
+        }
+        if name.endsWith(".material.json") {
+            return "material";
+        }
+        if name.endsWith(".nyx") {
+            return "script";
+        }
+        if name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") {
+            return "texture";
+        }
+        if name.endsWith(".glb") || name.endsWith(".gltf") || name.endsWith(".obj") {
+            return "mesh";
+        }
+        if name.endsWith(".wav") || name.endsWith(".ogg") || name.endsWith(".mp3") {
+            return "sound";
+        }
+        return "";
+    }
+
+    AssetLabelOf :: (name: string, kind: string) -> string! {
+        if kind == "graph" {
+            return name.substring(0, name.length() - 11).copy();
+        }
+        if kind == "world" {
+            return name.substring(0, name.length() - 11).copy();
+        }
+        if kind == "material" && name.endsWith(".material.json") {
+            return name.substring(0, name.length() - 14).copy();
+        }
+        return name.copy();
+    }
+
+    AssetLinesIn :: (realFolder: string, virtualFolder: string, query: string, depth: u32) -> string! {
+        lines~ string! = "".copy();
+        when lantern:::silhouette:::SortedEntries(realFolder) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(listed) -> {
+                entries~ Array<string!>! = listed!;
+                for entry in entries {
+                    realPath: string! = `${realFolder}/${entry}`;
+                    virtualPath: string! = virtualFolder.length() == 0 ? entry.copy() : `${virtualFolder}/${entry}`;
+                    isFolder: bool = directoryExists(realPath);
+                    kind: string = AssetKindOf(realPath, entry, isFolder);
+                    if kind.length() > 0 {
+                        label: string! = AssetLabelOf(entry, kind);
+                        lowerLabel: string! = label.toLower();
+                        lowerQuery: string! = query.toLower();
+                        matches: bool = query.length() == 0 || lowerLabel.contains(lowerQuery);
+                        delete lowerLabel;
+                        delete lowerQuery;
+                        if matches && (query.length() == 0 || kind != "folder") {
+                            lines += kind;
+                            lines += "\t";
+                            lines += label;
+                            lines += "\t";
+                            lines += virtualPath;
+                            lines += "\n";
+                        }
+                        delete label;
+                        if isFolder && kind == "folder" && query.length() > 0 && depth < MAX_ASSET_SEARCH_DEPTH {
+                            nested: string! = AssetLinesIn(realPath, virtualPath, query, depth + 1);
+                            lines += nested;
+                            delete nested;
+                        }
+                    }
+                    delete virtualPath;
+                    delete realPath;
+                }
+                entries.freeAll();
+            }
+        }
+        return lines!;
+    }
+
+    // What the browser shows for a virtual folder, one per line as `kind<TAB>label<TAB>virtual path`. An empty folder lists the
+    // roots. A query searches that folder and everything inside it (every root, from the top).
+    ListAssetEntries :: (assetsDirectory: string, virtualFolder: string, query: string) -> string! {
+        lines~ string! = "".copy();
+        if virtualFolder.length() == 0 {
+            roots: string! = AssetRootLines(assetsDirectory);
+            defer delete roots;
+            for line in roots.split("\n") {
+                fields := line.split("\t");
+                defer delete fields;
+                if fields.length() != 2 {
+                    continue;
+                }
+                if query.length() == 0 {
+                    lines += "folder\t";
+                    lines += fields[0];
+                    lines += "\t";
+                    lines += fields[0];
+                    lines += "\n";
+                } else {
+                    found: string! = AssetLinesIn(fields[1], fields[0], query, 0);
+                    lines += found;
+                    delete found;
+                }
+            }
+            return lines!;
+        }
+        real: string! = ResolveAssetFolder(assetsDirectory, virtualFolder);
+        defer delete real;
+        if real.length() > 0 {
+            found: string! = AssetLinesIn(real, virtualFolder, query, 0);
+            lines += found;
+            delete found;
+        }
+        return lines!;
+    }
+}

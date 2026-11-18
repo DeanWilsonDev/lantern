@@ -24,10 +24,12 @@ lantern:::editorbackend :: namespace {
     public:
         name~ string!;
         texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
+        look~ lantern:::renderer:::MaterialLook? = null;
 
-        CachedMaterial~: (materialName: string, materialTexture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?) {
+        CachedMaterial~: (materialName: string, materialTexture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?, materialLook: lantern:::renderer:::MaterialLook?) {
             name = `${materialName}`;
             texture = materialTexture;
+            look = materialLook;
         }
 
         !CachedMaterial~: () {
@@ -159,6 +161,17 @@ lantern:::editorbackend :: namespace {
         // The texture for a material name, loaded from `textures/NAME.png` in the assets folder. A missing
         // or unreadable file falls back to a grey checker with a warning, so the entity is still visible. No
         // material gives null (untextured).
+        MaterialLook~: (material: string?) -> lantern:::renderer:::MaterialLook? {
+            guard name := material return null;
+            MaterialTexture(material);
+            for cached in materials {
+                if cached->name == name {
+                    return cached->look;
+                }
+            }
+            return null;
+        }
+
         MaterialTexture~: (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
             guard name := material return null;
             for cached in materials {
@@ -166,7 +179,22 @@ lantern:::editorbackend :: namespace {
                     return cached->texture;
                 }
             }
-            path: string! = `${assetsDirectory}/textures/${name}.png`;
+            textureName~ string! = name.copy();
+            look~ lantern:::renderer:::MaterialLook? = null;
+            loadedDefinition: lantern:::silhouette:::MaterialDefinition*!? = lantern:::silhouette:::LoadMaterialSilhouette(assetsDirectory, name);
+            if definition := loadedDefinition {
+                delete textureName;
+                textureName = definition->texture.copy();
+                look = definition->Look();
+            }
+            delete loadedDefinition;
+            if textureName.length() == 0 {
+                delete textureName;
+                materials.push(new CachedMaterial(name, null, look));
+                return null;
+            }
+            path: string! = `${assetsDirectory}/textures/${textureName}.png`;
+            delete textureName;
             data~ lantern:::renderer:::TextureData*!? = null;
             when lantern:::renderer:::TextureData:::LoadPng(path) {
                 Result:::Ok(loaded) -> {
@@ -196,7 +224,7 @@ lantern:::editorbackend :: namespace {
                 }
             }
             delete data;
-            materials.push(new CachedMaterial(name, texture));
+            materials.push(new CachedMaterial(name, texture, look));
             return texture;
         }
 

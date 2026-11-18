@@ -34,7 +34,7 @@ lantern:::graphs :: namespace {
             return hit!;
         }
         function: GraphFunction* = graphEditor->Function();
-        radius: i32 = PIN_HIT_RADIUS * graphEditor->zoom;
+        radius: i32 = graphEditor->Scaled(PIN_HIT_RADIUS);
         index~ usize = function->nodes.length();
         while index > 0 && hit->kind == HIT_NOTHING {
             index -= 1;
@@ -57,7 +57,7 @@ lantern:::graphs :: namespace {
             if hit->kind == HIT_NOTHING {
                 left: i32 = graphEditor->ScreenX(i32(node->x));
                 top: i32 = graphEditor->ScreenY(i32(node->y));
-                if screenX >= left && screenX < left + NODE_WIDTH * graphEditor->zoom && screenY >= top && screenY < top + NodeHeight(pins) * graphEditor->zoom {
+                if screenX >= left && screenX < left + graphEditor->Scaled(pins->width) && screenY >= top && screenY < top + graphEditor->Scaled(NodeHeight(pins)) {
                     hit->kind = HIT_NODE;
                     delete hit->nodeId;
                     hit->nodeId = `${node->id}`;
@@ -66,6 +66,31 @@ lantern:::graphs :: namespace {
             delete pins;
         }
         return hit!;
+    }
+
+    // The comment under a screen point, topmost first, as `index * 4 + part`, or -1 for none. The part is 1 for the title bar,
+    // 2 for the resize handle in the corner and 0 for the body.
+    CommentAt :: (graphEditor: GraphEditor*, screenX: i32, screenY: i32) -> i32 {
+        function: GraphFunction* = graphEditor->Function();
+        index~ usize = function->commentTexts.length();
+        while index > 0 {
+            index -= 1;
+            left: i32 = graphEditor->ScreenX(function->commentXs[index]);
+            top: i32 = graphEditor->ScreenY(function->commentYs[index]);
+            boxWidth: i32 = graphEditor->Scaled(function->commentWidths[index]);
+            boxHeight: i32 = graphEditor->Scaled(function->commentHeights[index]);
+            if screenX >= left && screenX < left + boxWidth && screenY >= top && screenY < top + boxHeight {
+                handle: i32 = graphEditor->Scaled(COMMENT_HANDLE);
+                part~ i32 = 0;
+                if screenX >= left + boxWidth - handle && screenY >= top + boxHeight - handle {
+                    part = 2;
+                } else if screenY < top + graphEditor->Scaled(COMMENT_TITLE_HEIGHT) {
+                    part = 1;
+                }
+                return i32(index) * 4 + part;
+            }
+        }
+        return -1;
     }
 
     // Snaps a coordinate to the grid.
@@ -153,6 +178,10 @@ lantern:::graphs :: namespace {
             delete hit;
             return;
         }
+        commentHit: i32 = hit->kind == HIT_NOTHING ? CommentAt(graphEditor, graphEditor->pointerX, graphEditor->pointerY) : -1;
+        if hit->kind != HIT_NOTHING {
+            graphEditor->selectedComment = -1;
+        }
         if hit->kind == HIT_PIN && hit->isOutput {
             graphEditor->dragMode = DRAG_WIRE;
             delete graphEditor->wireNode;
@@ -176,9 +205,30 @@ lantern:::graphs :: namespace {
                 graphEditor->dragOffsetX = graphEditor->WorldX(graphEditor->pointerX) - i32(grabbed->nodes[index]->x);
                 graphEditor->dragOffsetY = graphEditor->WorldY(graphEditor->pointerY) - i32(grabbed->nodes[index]->y);
             }
+        } else if commentHit >= 0 {
+            commentIndex: usize = usize(commentHit / 4);
+            part: i32 = commentHit % 4;
+            commentAnchorX: i32 = part == 2 ? function->commentWidths[commentIndex] : function->commentXs[commentIndex];
+            commentAnchorY: i32 = part == 2 ? function->commentHeights[commentIndex] : function->commentYs[commentIndex];
+            delete graphEditor->selected;
+            graphEditor->selected = "".copy();
+            graphEditor->selectedComment = i32(commentIndex);
+            graphEditor->generation += 1;
+            graphEditor->commentDragX = graphEditor->WorldX(graphEditor->pointerX) - commentAnchorX;
+            graphEditor->commentDragY = graphEditor->WorldY(graphEditor->pointerY) - commentAnchorY;
+            if part == 2 {
+                graphEditor->dragMode = DRAG_COMMENT_SIZE;
+            } else if part == 1 {
+                graphEditor->dragMode = DRAG_COMMENT;
+            } else {
+                graphEditor->dragMode = DRAG_PAN;
+                graphEditor->dragOffsetX = graphEditor->pointerX;
+                graphEditor->dragOffsetY = graphEditor->pointerY;
+            }
         } else {
             delete graphEditor->selected;
             graphEditor->selected = "".copy();
+            graphEditor->selectedComment = -1;
             graphEditor->generation += 1;
             graphEditor->dragMode = DRAG_PAN;
             graphEditor->dragOffsetX = graphEditor->pointerX;
@@ -211,6 +261,17 @@ lantern:::graphs :: namespace {
                 graphEditor->Touch();
             }
         }
+        if (graphEditor->dragMode == DRAG_COMMENT || graphEditor->dragMode == DRAG_COMMENT_SIZE) && graphEditor->graph->functions.length() > 0 && graphEditor->selectedComment >= 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            commentIndex: usize = usize(graphEditor->selectedComment);
+            if commentIndex < function->commentTexts.length() {
+                function->commentXs[commentIndex] = Snapped(function->commentXs[commentIndex]);
+                function->commentYs[commentIndex] = Snapped(function->commentYs[commentIndex]);
+                function->commentWidths[commentIndex] = Snapped(function->commentWidths[commentIndex]);
+                function->commentHeights[commentIndex] = Snapped(function->commentHeights[commentIndex]);
+                graphEditor->Touch();
+            }
+        }
         graphEditor->dragMode = DRAG_NONE;
     }
 
@@ -224,25 +285,127 @@ lantern:::graphs :: namespace {
                 function->nodes[index]->x = f32(graphEditor->WorldX(screenX) - graphEditor->dragOffsetX);
                 function->nodes[index]->y = f32(graphEditor->WorldY(screenY) - graphEditor->dragOffsetY);
             }
+        } else if graphEditor->dragMode == DRAG_COMMENT && graphEditor->graph->functions.length() > 0 && graphEditor->selectedComment >= 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            commentIndex: usize = usize(graphEditor->selectedComment);
+            if commentIndex < function->commentTexts.length() {
+                function->commentXs[commentIndex] = graphEditor->WorldX(screenX) - graphEditor->commentDragX;
+                function->commentYs[commentIndex] = graphEditor->WorldY(screenY) - graphEditor->commentDragY;
+            }
+        } else if graphEditor->dragMode == DRAG_COMMENT_SIZE && graphEditor->graph->functions.length() > 0 && graphEditor->selectedComment >= 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            commentIndex: usize = usize(graphEditor->selectedComment);
+            if commentIndex < function->commentTexts.length() {
+                newWidth: i32 = graphEditor->WorldX(screenX) - graphEditor->commentDragX;
+                newHeight: i32 = graphEditor->WorldY(screenY) - graphEditor->commentDragY;
+                function->commentWidths[commentIndex] = newWidth < COMMENT_MIN_WIDTH ? COMMENT_MIN_WIDTH : newWidth;
+                function->commentHeights[commentIndex] = newHeight < COMMENT_MIN_HEIGHT ? COMMENT_MIN_HEIGHT : newHeight;
+            }
         } else if graphEditor->dragMode == DRAG_PAN {
-            graphEditor->panX += (screenX - graphEditor->dragOffsetX) / graphEditor->zoom;
-            graphEditor->panY += (screenY - graphEditor->dragOffsetY) / graphEditor->zoom;
+            graphEditor->panX += (screenX - graphEditor->dragOffsetX) * ZOOM_ONE / graphEditor->zoom;
+            graphEditor->panY += (screenY - graphEditor->dragOffsetY) * ZOOM_ONE / graphEditor->zoom;
             graphEditor->dragOffsetX = screenX;
             graphEditor->dragOffsetY = screenY;
         }
     }
 
-    // The wheel changes the zoom by a whole step so text stays sharp.
-    WheelTurned :: (graphEditor: GraphEditor~*, notches: f32) -> void {
-        if notches > 0.0f && graphEditor->zoom < MAX_ZOOM {
-            graphEditor->zoom += 1;
-        } else if notches < 0.0f && graphEditor->zoom > 1 {
-            graphEditor->zoom -= 1;
+    // The wheel zooms by a few percent per notch about the pointer, so a trackpad's small steps give fine control; sideways
+    // scrolling pans. The graph point under the pointer stays under it.
+    WheelTurned :: (graphEditor: GraphEditor~*, notches: f32, notchesX: f32) -> void {
+        if notchesX != 0.0f {
+            graphEditor->panX -= i32(notchesX * 30.0f * f32(ZOOM_ONE) / f32(graphEditor->zoom));
+            graphEditor->generation += 1;
         }
+        if notches == 0.0f {
+            return;
+        }
+        anchorX: i32 = graphEditor->WorldX(graphEditor->pointerX);
+        anchorY: i32 = graphEditor->WorldY(graphEditor->pointerY);
+        wanted~ i32 = i32(f32(graphEditor->zoom) * (1.0f + 0.12f * notches));
+        if wanted == graphEditor->zoom {
+            wanted = notches > 0.0f ? graphEditor->zoom + 1 : graphEditor->zoom - 1;
+        }
+        if wanted < MIN_ZOOM {
+            wanted = MIN_ZOOM;
+        }
+        if wanted > MAX_ZOOM {
+            wanted = MAX_ZOOM;
+        }
+        graphEditor->zoom = wanted;
+        graphEditor->panX = graphEditor->pointerX * ZOOM_ONE / wanted - anchorX;
+        graphEditor->panY = graphEditor->pointerY * ZOOM_ONE / wanted - anchorY;
+        graphEditor->generation += 1;
     }
 
-    // Delete removes the selected node. Returns true when the key was used.
-    KeyPressed :: (graphEditor: GraphEditor~*, keyName: string) -> bool {
+    // Adds a copy of the selected node a little down and to the right, with its values but none of its wires, and selects it.
+    DuplicateSelected :: (graphEditor: GraphEditor~*) -> bool {
+        if graphEditor->selected.length() == 0 || graphEditor->graph->functions.length() == 0 {
+            return false;
+        }
+        function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+        sourceIndex~ usize = 0;
+        found~ bool = false;
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            if function->nodes[index]->id == graphEditor->selected {
+                sourceIndex = index;
+                found = true;
+            }
+        }
+        if !found {
+            return false;
+        }
+        original: GraphNode* = function->nodes[sourceIndex];
+        newId: string! = AddNode(function, original->kind, original->x + 40.0f, original->y + 40.0f);
+        if newId.length() == 0 {
+            graphEditor->SetStatus("That node can't be duplicated.");
+            delete newId;
+            return true;
+        }
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            copy: GraphNode~* = function->nodes[index];
+            if copy->id == newId {
+                delete copy->name;
+                copy->name = `${original->name}`;
+                delete copy->typeName;
+                copy->typeName = `${original->typeName}`;
+                delete copy->a;
+                copy->a = `${original->a}`;
+                delete copy->b;
+                copy->b = `${original->b}`;
+                delete copy->value;
+                copy->value = `${original->value}`;
+                delete copy->condition;
+                copy->condition = `${original->condition}`;
+                delete copy->functionPath;
+                copy->functionPath = `${original->functionPath}`;
+                delete copy->text;
+                copy->text = `${original->text}`;
+                for argument in original->arguments {
+                    copy->arguments.push(`${argument}`);
+                }
+            }
+        }
+        SelectNode(graphEditor, newId);
+        delete newId;
+        graphEditor->Touch();
+        graphEditor->SetStatus("Node duplicated.");
+        return true;
+    }
+
+    // Delete removes the selected node and Ctrl+D (Cmd+D) duplicates it. Returns true when the key was used.
+    KeyPressed :: (graphEditor: GraphEditor~*, keyName: string, shortcut: bool) -> bool {
+        if shortcut && (keyName == "d" || keyName == "D") {
+            return DuplicateSelected(graphEditor);
+        }
+        if (keyName == "Delete" || keyName == "Backspace") && graphEditor->selectedComment >= 0 && graphEditor->selected.length() == 0 && graphEditor->graph->functions.length() > 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            if RemoveComment(function, usize(graphEditor->selectedComment)) {
+                graphEditor->selectedComment = -1;
+                graphEditor->Touch();
+                graphEditor->SetStatus("Comment deleted.");
+            }
+            return true;
+        }
         if (keyName == "Delete" || keyName == "Backspace") && graphEditor->selected.length() > 0 && graphEditor->graph->functions.length() > 0 {
             function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
             doomed: string! = `${graphEditor->selected}`;
@@ -263,10 +426,11 @@ lantern:::graphs :: namespace {
     SelectNode :: (graphEditor: GraphEditor~*, nodeId: string) -> void {
         delete graphEditor->selected;
         graphEditor->selected = `${nodeId}`;
+        graphEditor->selectedComment = -1;
         graphEditor->generation += 1;
     }
 
-    // Picks the zoom and pan that show every node of the open function, at zoom 2 when they fit and zoom 1 when they don't.
+    // Picks the zoom and pan that show every node of the open function, as large as fits, up to twice normal size.
     FitToView :: (graphEditor: GraphEditor~*, canvasWidth: i32, canvasHeight: i32) -> void {
         function: GraphFunction* = graphEditor->graph->functions[graphEditor->functionIndex];
         if function->nodes.length() == 0 {
@@ -288,8 +452,8 @@ lantern:::graphs :: namespace {
             if nodeTop < top {
                 top = nodeTop;
             }
-            if nodeLeft + NODE_WIDTH > right {
-                right = nodeLeft + NODE_WIDTH;
+            if nodeLeft + NodeWidth(node->kind) > right {
+                right = nodeLeft + NodeWidth(node->kind);
             }
             if nodeTop + nodeHeight > bottom {
                 bottom = nodeTop + nodeHeight;
@@ -298,8 +462,16 @@ lantern:::graphs :: namespace {
         margin: i32 = 24;
         contentWidth: i32 = right - left + margin * 2;
         contentHeight: i32 = bottom - top + margin * 2;
-        fitsDoubled: bool = contentWidth * 2 <= canvasWidth && contentHeight * 2 <= canvasHeight;
-        graphEditor->zoom = when fitsDoubled { true -> 2, false -> 1 };
+        fitWidth: i32 = canvasWidth * ZOOM_ONE / contentWidth;
+        fitHeight: i32 = canvasHeight * ZOOM_ONE / contentHeight;
+        fitted~ i32 = fitWidth < fitHeight ? fitWidth : fitHeight;
+        if fitted > 200 {
+            fitted = 200;
+        }
+        if fitted < MIN_TEXT_ZOOM {
+            fitted = MIN_TEXT_ZOOM;
+        }
+        graphEditor->zoom = fitted;
         graphEditor->panX = margin - left;
         graphEditor->panY = margin - top;
     }

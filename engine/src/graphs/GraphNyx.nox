@@ -152,6 +152,9 @@ lantern:::graphs :: namespace {
                 delete right;
                 return joined!;
             }
+            if node->kind == "reroute" {
+                return Expression(function, emitter, node->a, depth + 1);
+            }
             if node->kind == "not" {
                 inner: string! = Expression(function, emitter, node->a, depth + 1);
                 negated: string! = `!${inner}`;
@@ -163,6 +166,13 @@ lantern:::graphs :: namespace {
                     return `${node->name}`;
                 }
                 return CallExpression(function, emitter, node, depth + 1);
+            }
+            if node->kind == "get" {
+                if function->IndexOfVariable(node->name) == null && function->IndexOfInput(node->name) == null && !emitter->IsDeclared(node->name) {
+                    emitter->Fail(function->name, `node '${node->id}' reads '${node->name}', which is not a variable, an input or a local`);
+                    return "".copy();
+                }
+                return `${node->name}`;
             }
             if node->kind == "nyx_value" {
                 if !IsBalanced(node->text) || node->text.length() == 0 {
@@ -356,6 +366,17 @@ lantern:::graphs :: namespace {
         if entryCount != 1 {
             emitter->Fail(function->name, `it needs exactly one entry node and has ${entryCount}`);
             return;
+        }
+        for variableIndex~ usize = 0; variableIndex < function->variableNames.length(); variableIndex++ {
+            variableName: string = function->variableNames[variableIndex];
+            variableType: string = function->variableTypes[variableIndex];
+            if !IsName(variableName) || variableType.length() == 0 {
+                emitter->Fail(function->name, "a variable needs a name and a type".copy());
+                return;
+            }
+            initial: string = function->variableDefaults[variableIndex];
+            emitter->Line(2, `${variableName}~ ${variableType} = ${initial};`);
+            emitter->declared.push(`${variableName}`);
         }
         EmitChain(function, emitter, function->nodes[usize(entryIndex)]->id, 2);
         emitter->SetCurrent("");
