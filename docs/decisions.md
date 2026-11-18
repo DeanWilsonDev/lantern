@@ -1765,3 +1765,7 @@ reviewed by Dean; the numbers want playing. Cards: `engine-follow-ups/grounded-c
 ## D-194: generated graph Nyx is committed
 
 The Nyx a game graph generates (`games/<name>/game-graphs/generated/<Name>.nyx`) is committed beside the graph. A game then runs from a plain checkout with no build step, and a diff shows what a graph change did to the Nyx. `mist run graphs` regenerates it, and a test fails when a committed file is stale. Rejected: build-only output, which would make every cloud thread and Dean's Mac run a generator before the game would load.
+
+## D-195: a scripted entity names its graph in two properties
+
+An entity of kind `scripted` carries `graph` and `function` text properties (`function` is `Update` when missing), and the game runs `GraphBehaviours:::Run(graph, function, entity, time)` for it each step. `GraphBehaviours.nyx` is generated beside the graphs because Nyx can't call a function by name. A behaviour function has the fixed shape `(entity: i64, time: f32) -> void`; it keeps no state of its own, so anything that must persist lives in the world through the host API. Rejected: a dotted `behaviour.graph` property (flat properties are what every other entity kind reads), and calling arbitrary graph signatures (the engine can't know the arguments).

@@ -1,6 +1,9 @@
 lantern:::editorbackend :: namespace {
     // Turns a game's graphs into the Nyx it imports: every `<graphsFolder>/<name>.graph.json` becomes
-    // `<outputFolder>/<Name>.nyx` (`crumble_phase` is `CrumblePhase.nyx`).
+    // `<outputFolder>/<Name>.nyx` (`crumble_phase` is `CrumblePhase.nyx`), and `GraphBehaviours.nyx` lets the game run a
+    // graph's behaviour function by name. A behaviour function is `Update :: (entity: i64, time: f32) -> void`.
+    BEHAVIOURS_FILE: string : "GraphBehaviours.nyx";
+
     GeneratedFileName :: (graphName: string) -> string! {
         namespaceName: string! = lantern:::graphs:::NamespaceName(graphName);
         name: string! = `${namespaceName}.nyx`;
@@ -32,6 +35,72 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // The `GraphBehaviours.Run` branches for the behaviour functions of one graph file.
+    BehaviourBranches :: (graphFile: string) -> string! {
+        branches~ string! = "".copy();
+        when readTextFile(graphFile) {
+            Result:::Err(error) -> {
+                delete error;
+            },
+            Result:::Ok(text) -> {
+                defer delete text;
+                when lantern:::graphs:::LoadGraph(text) {
+                    Result:::Err(message) -> {
+                        delete message;
+                    },
+                    Result:::Ok(graph) -> {
+                        namespaceName: string! = lantern:::graphs:::NamespaceName(graph->name);
+                        for index~ usize = 0; index < graph->functions.length(); index++ {
+                            function: lantern:::graphs:::GraphFunction* = graph->functions[index];
+                            isVoid: bool = function->returns.length() == 0 || function->returns == "void";
+                            if isVoid && function->inputNames.length() == 2 && function->inputNames[0] == "entity" && function->inputTypes[0] == "i64"
+                                && function->inputNames[1] == "time" && function->inputTypes[1] == "f32" {
+                                branches += `        if graph == "${graph->name}" && function == "${function->name}" {`;
+                                branches += "\n";
+                                branches += `            ${namespaceName}:::${function->name}(entity, time);`;
+                                branches += "\n";
+                                branches += "            return true;\n";
+                                branches += "        }\n";
+                            }
+                        }
+                        delete namespaceName;
+                        delete graph;
+                    }
+                }
+            }
+        }
+        return branches!;
+    }
+
+    // Writes `source` to `<outputFolder>/<fileName>` when it differs (or only reports that it differs when `writeFiles` is false).
+    // The Ok value is whether the file was out of date.
+    SyncOutput :: (outputFolder: string, fileName: string, source: string, writeFiles: bool) -> Result<bool, string!> {
+        outputFile: string! = `${outputFolder}/${fileName}`;
+        defer delete outputFile;
+        current~ string! = "".copy();
+        defer delete current;
+        when readTextFile(outputFile) {
+            Result:::Err(error) -> { delete error; },
+            Result:::Ok(existing) -> {
+                delete current;
+                current = existing!;
+            }
+        }
+        if current == source {
+            return Result<bool, string!>:::Ok(false);
+        }
+        if writeFiles {
+            problem: string!? = WriteFileText(outputFile, source);
+            if failed := problem {
+                message: string! = failed.copy();
+                delete problem;
+                return Result<bool, string!>:::Err(message!);
+            }
+            delete problem;
+        }
+        return Result<bool, string!>:::Ok(true);
+    }
+
     // Generates every graph in `graphsFolder` into `outputFolder`. With `writeFiles` false nothing is written, and the Ok text
     // lists the files that differ from what is on disk, one per line (empty when every file is current).
     BuildGameGraphs :: (graphsFolder: string, outputFolder: string, writeFiles: bool) -> Result<string!, string!> {
@@ -50,9 +119,13 @@ lantern:::editorbackend :: namespace {
                 }
             }
         }
+        branches~ string! = "".copy();
+        imports~ string! = "".copy();
         when lantern:::silhouette:::SortedEntries(graphsFolder) {
             Result:::Err(message) -> {
                 delete stale;
+                delete branches;
+                delete imports;
                 return Result<string!, string!>:::Err(message!);
             },
             Result:::Ok(listed) -> {
@@ -67,46 +140,44 @@ lantern:::editorbackend :: namespace {
                         Result:::Err(message) -> {
                             delete graphFile;
                             delete stale;
+                            delete branches;
+                            delete imports;
                             entries.freeAll();
                             return Result<string!, string!>:::Err(message!);
                         },
                         Result:::Ok(source) -> {
                             fileName: string! = GeneratedFileName(graphName);
-                            outputFile: string! = `${outputFolder}/${fileName}`;
-                            current~ string! = "".copy();
-                            when readTextFile(outputFile) {
-                                Result:::Err(error) -> { delete error; },
-                                Result:::Ok(existing) -> {
-                                    delete current;
-                                    current = existing!;
-                                }
-                            }
-                            if current != source {
-                                if stale.length() > 0 {
-                                    stale += "\n";
-                                }
-                                stale += fileName;
-                                if writeFiles {
-                                    problem: string!? = WriteFileText(outputFile, source);
-                                    if failed := problem {
-                                        message: string! = failed.copy();
-                                        delete problem;
-                                        delete current;
-                                        delete source;
-                                        delete fileName;
-                                        delete outputFile;
-                                        delete graphFile;
-                                        delete stale;
-                                        entries.freeAll();
-                                        return Result<string!, string!>:::Err(message!);
+                            when SyncOutput(outputFolder, fileName, source, writeFiles) {
+                                Result:::Err(message) -> {
+                                    delete fileName;
+                                    delete source;
+                                    delete graphFile;
+                                    delete stale;
+                                    delete branches;
+                                    delete imports;
+                                    entries.freeAll();
+                                    return Result<string!, string!>:::Err(message!);
+                                },
+                                Result:::Ok(changed) -> {
+                                    if changed {
+                                        if stale.length() > 0 {
+                                            stale += "\n";
+                                        }
+                                        stale += fileName;
                                     }
-                                    delete problem;
                                 }
                             }
-                            delete current;
-                            delete source;
                             delete fileName;
-                            delete outputFile;
+                            delete source;
+                            piece: string! = BehaviourBranches(graphFile);
+                            if piece.length() > 0 {
+                                namespaceName: string! = lantern:::graphs:::NamespaceName(graphName);
+                                imports += `${namespaceName} :: import ${namespaceName};`;
+                                imports += "\n";
+                                delete namespaceName;
+                            }
+                            branches += piece;
+                            delete piece;
                         }
                     }
                     delete graphFile;
@@ -114,6 +185,33 @@ lantern:::editorbackend :: namespace {
                 entries.freeAll();
             }
         }
+        behaviours~ string! = "// Generated by lantern:::editorbackend from the game's graphs. Edit the graphs, not this file.\n".copy();
+        behaviours += imports;
+        behaviours += "GraphBehaviours :: namespace {\n";
+        behaviours += "    // Runs a graph's behaviour function by name. False when no graph has one with that name.\n";
+        behaviours += "    Run :: (graph: string, function: string, entity: i64, time: f32) -> bool {\n";
+        behaviours += branches;
+        behaviours += "        return false;\n";
+        behaviours += "    }\n";
+        behaviours += "}\n";
+        delete branches;
+        delete imports;
+        when SyncOutput(outputFolder, BEHAVIOURS_FILE, behaviours, writeFiles) {
+            Result:::Err(message) -> {
+                delete behaviours;
+                delete stale;
+                return Result<string!, string!>:::Err(message!);
+            },
+            Result:::Ok(changed) -> {
+                if changed {
+                    if stale.length() > 0 {
+                        stale += "\n";
+                    }
+                    stale += BEHAVIOURS_FILE;
+                }
+            }
+        }
+        delete behaviours;
         return Result<string!, string!>:::Ok(stale!);
     }
 }
