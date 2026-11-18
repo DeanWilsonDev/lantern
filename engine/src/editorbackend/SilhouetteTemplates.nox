@@ -49,16 +49,102 @@ lantern:::editorbackend :: namespace {
         return lift;
     }
 
+    // The base a Silhouette's root names with `@base`, or null for a Silhouette that has none.
+    RootBaseName :: (assetsDirectory: string, name: string) -> string!? {
+        rootPath: string! = `${assetsDirectory}/${SILHOUETTES_FOLDER}/${name}/${lantern:::silhouette:::ROOT_FILE_NAME}`;
+        defer delete rootPath;
+        when lantern:::silhouette:::ReadCalamusFile(rootPath) {
+            Result:::Err(message) -> {
+                delete message;
+                return null;
+            },
+            Result:::Ok(document) -> {
+                found: string!? = document->BaseName();
+                delete document;
+                return found!;
+            }
+        }
+    }
+
+    // The flattened lines of a JSON text as one array.
+    LinesOf :: (valuesJson: string) -> ValueLines*! {
+        lines := new ValueLines();
+        when lantern:::json:::Parse(valuesJson) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                lines->Flatten(document, document->root, "");
+                delete document;
+            }
+        }
+        return lines!;
+    }
+
+    // True when a line is in a list of lines.
+    HasLine :: (lines: ValueLines*, wanted: string) -> bool {
+        for line in lines->lines {
+            if line == wanted {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // For each entity of a resolved Silhouette, the lines of its values that differ from the same entity
+    // (by path) in its base, joined with newlines. An entity the base does not have is all its own lines.
+    OwnLines :: (library: lantern:::silhouette:::SilhouetteLibrary*, baseName: string, resolved: lantern:::silhouette:::ResolvedSilhouette*) -> Array<string!>! {
+        own~ Array<string!>! = [];
+        when library->Resolve(baseName) {
+            Result:::Err(message) -> {
+                delete message;
+                for entity in resolved->entities {
+                    own.push("".copy());
+                }
+            },
+            Result:::Ok(baseSilhouette) -> {
+                for entity in resolved->entities {
+                    entityLines := LinesOf(entity->valuesJson);
+                    baseLines~ ValueLines*!? = null;
+                    if baseIndex := baseSilhouette->IndexOf(entity->path) {
+                        baseLines = LinesOf(baseSilhouette->entities[baseIndex]->valuesJson);
+                    }
+                    text~ string! = "|~|".copy();
+                    for line in entityLines->lines {
+                        isOwn~ bool = true;
+                        if present := baseLines {
+                            isOwn = !HasLine(present, line);
+                        }
+                        if isOwn {
+                            extended: string! = `${text}${line}|~|`;
+                            delete text;
+                            text = extended!;
+                        }
+                    }
+                    own.push(text!);
+                    delete entityLines;
+                    delete baseLines;
+                }
+                delete baseSilhouette;
+            }
+        }
+        return own!;
+    }
+
     // Builds the template for one Silhouette: the root becomes the prototype and every other entity a
     // descendant, with its parent given as a position in the group.
-    SilhouetteTemplate :: (library: lantern:::silhouette:::SilhouetteLibrary*, name: string) -> Result<lantern:::editor:::EntityTemplate*!, string!> {
+    SilhouetteTemplate :: (library: lantern:::silhouette:::SilhouetteLibrary*, assetsDirectory: string, name: string) -> Result<lantern:::editor:::EntityTemplate*!, string!> {
         silhouetteName: string! = `${SILHOUETTES_FOLDER}/${name}`;
         defer delete silhouetteName;
         valuesJson~ string! = "".copy();
         allValues~ Array<string!>! = [];
+        ownLines~ Array<string!>! = [];
+        baseName~ string!? = RootBaseName(assetsDirectory, name);
         when library->Resolve(silhouetteName) {
             Result:::Err(message) -> {
                 allValues.freeAll();
+                ownLines.freeAll();
+                delete baseName;
                 delete valuesJson;
                 return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(message!);
             },
@@ -67,6 +153,10 @@ lantern:::editorbackend :: namespace {
                 valuesJson = `${resolved->entities[0]->valuesJson}`;
                 for resolvedEntity in resolved->entities {
                     allValues.push(`${resolvedEntity->valuesJson}`);
+                }
+                if base := baseName {
+                    ownLines.freeAll();
+                    ownLines = OwnLines(library, base, resolved);
                 }
                 delete resolved;
             }
@@ -79,6 +169,8 @@ lantern:::editorbackend :: namespace {
             Result:::Err(message) -> {
                 delete label;
                 allValues.freeAll();
+                ownLines.freeAll();
+                delete baseName;
                 return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(message!);
             },
             Result:::Ok(loaded) -> {
@@ -90,6 +182,10 @@ lantern:::editorbackend :: namespace {
                 template->fromSilhouette = true;
                 template->componentValues.freeAll();
                 template->componentValues = allValues!;
+                template->componentOwn.freeAll();
+                template->componentOwn = ownLines!;
+                delete template->baseName;
+                template->baseName = baseName!;
                 delete template->prototype;
                 template->prototype = root->Copy();
                 for index~ usize = 1; index < worldFile->entities.length(); index++ {
@@ -116,6 +212,11 @@ lantern:::editorbackend :: namespace {
 
         !ValueLines~: () {
             lines.freeAll();
+        }
+
+        Replace~: (newLines: Array<string!>!) -> void {
+            lines.freeAll();
+            lines = newLines!;
         }
 
         // Adds the lines for a node and everything under it. `path` is the dotted name so far.
@@ -153,6 +254,17 @@ lantern:::editorbackend :: namespace {
                 delete document;
             }
         }
+        if template->baseName != null && index < template->componentOwn.length() {
+            marked~ Array<string!>! = [];
+            ownText: string = template->componentOwn[index];
+            for line in lines->lines {
+                lineEnd: string! = `|~|${line}|~|`;
+                prefix: string = when ownText.contains(lineEnd) { true -> "* ", false -> "  " };
+                marked.push(`${prefix}${line}`);
+                delete lineEnd;
+            }
+            lines->Replace(marked!);
+        }
         return lines!;
     }
 
@@ -180,7 +292,7 @@ lantern:::editorbackend :: namespace {
                     if !isFolder {
                         continue;
                     }
-                    when SilhouetteTemplate(library, name) {
+                    when SilhouetteTemplate(library, assetsDirectory, name) {
                         Result:::Err(message) -> {
                             warning: string! = `silhouette '${name}' not added to the palette: ${message}`;
                             lantern:::core:::LogWarn("editor", warning);
