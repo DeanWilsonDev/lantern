@@ -67,7 +67,7 @@ games/
     game-rules/   game-events/       GameRules; GameEvent and its queue
     game-state/   ui/                GameState; the UI as .chaos components and .cosmos
                                      stylesheets (main menu, pause menu, HUD), collision view
-assets/                              textures, model, sounds, music (tools/asset-gen), worlds/
+games/platformer/assets/                textures, model, sounds, music (tools/asset-gen), Silhouettes, worlds/
 shaders/                             lit.wgsl, lines.wgsl, overlay.wgsl (compiled at build time)
 docs/                                brief, decisions, this file, dependencies, future work
 examples/frame-loop/                 the original Nyx hosting example
@@ -334,11 +334,11 @@ A Nyx feature the game needs and can't have yet is a card on the Nyx kanban's Ga
 
 ## World editor
 
-The editor is a separate program that edits `assets/worlds/*.world.json`. It shares only
+The editor is a separate program that edits `games/platformer/assets/worlds/*.world.json`. It shares only
 `lantern-world-format` and the assets with the game. Its logic is `lantern-editor-core`, its
 viewport is drawn off-screen by `lantern-editor-backend`, and its panels are Nyx, Chaos and
 Cosmos on Nox Penumbra (`apps/world-editor`). The game's content reaches it as data through
-`assets/editor/palette.json`. See `docs/editor.md` and D-018 to D-022.
+`games/platformer/assets/editor/palette.json`. See `docs/editor.md` and D-018 to D-022.
 
 ## Rewrite-in-another-language checklist
 
@@ -406,6 +406,6 @@ What the prototype does not do, on purpose or for lack of time (ideas for later 
 - No D3D12 shaders: on Windows SDL GPU uses Vulkan. Windows is expected to build but was not
   built.
 - Controller feel numbers are measured by tests, not tuned by hand.
-- One level (`assets/worlds/course.world.json`); the game loads it by path.
+- One level (`games/platformer/assets/worlds/course.world.json`); the game loads it by path.
 - No shadows besides the blob shadow, no skinned animation, no transparency sorting.
 - F5 restarts the game rather than keeping its state (D-028).

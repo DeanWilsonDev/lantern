@@ -37,7 +37,7 @@ neither shader tool.
 engine/              the Nox engine: engine/src (one folder per domain), tests, shaders, native bridge, tools
 games/platformer/    the demo game, all Nyx: entities, systems, rules, settings and Chaos UI
 apps/world-editor/   the world editor: Chaos UI in src/ui and its Nox host in nox/
-assets/              textures, models, sounds, music, worlds (course, streets, lamp yard) and the editor palette
+games/platformer/assets/   the game project's textures, models, sounds, music, Silhouettes, worlds and editor palette
 docs/                the guides, the decision log and the kanban board that tracks the work
 crates/              the Rust engine the Nox engine was ported from (reference only)
 ```

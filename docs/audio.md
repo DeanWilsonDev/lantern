@@ -68,7 +68,7 @@ are the same length and start in the same frame, so they stay in step.
 1. Record or license a sound, and save it as a WAV file.
 2. Put it where the game loads that name from. For the platformer, `games/platformer/game-assets/game-assets.nyx` lists
    each name and its path, for example `lantern:::audio:::Load("footstep_stone", "sounds/footstep_stone.wav");`, so the
-   file goes at `assets/sounds/footstep_stone.wav`.
+   file goes at `games/platformer/assets/sounds/footstep_stone.wav`.
 3. Run the game. The file wins; the generated sound is used only when the file can't be read.
 
 For a loop, make the file loop cleanly (the end must join the start), and for music stems that play together, make every
@@ -143,7 +143,7 @@ Two systems in `games/platformer/game-systems/` use the calls above. The engine 
 `Audio/Companion`, `Audio/Surface` and `Audio/Footsteps` show what the director and footsteps are doing.
 
 `menu_move.wav` and `menu_select.wav` are no longer loaded; use `ui_move.wav` and `ui_select.wav`. Every generated name
-is loaded by `LoadGeneratedSounds` in `game-assets/game-assets.nyx`, so a file at `assets/sounds/<name>.wav` replaces it.
+is loaded by `LoadGeneratedSounds` in `game-assets/game-assets.nyx`, so a file at `games/platformer/assets/sounds/<name>.wav` replaces it.
 
 ## Testing without a device
 

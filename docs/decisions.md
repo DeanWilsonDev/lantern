@@ -1845,3 +1845,7 @@ Silhouette files belong to the game project and the editor, not to the built gam
 ## D-214: Photos are saved by `lantern:::screen:::Capture(path)`, taken on the next frame without the UI
 
 A shutter press asks the engine to save the next drawn frame as a PNG. The engine leaves the game UI and debug HUD out of that frame, so the viewfinder, flash and counter are not in the picture, creates the folder, and writes the file. The game saves every press, counted or not, as `photos/photo-N.png` relative to the folder it runs in (git-ignored). Provisional: a per-user pictures folder and an album screen are not decided.
+
+## D-215: A game's assets live in its project folder
+
+`assets/` moved to `games/platformer/assets/`, so the Silhouettes, material Silhouettes, textures, models, sounds, music, worlds and editor palette are part of the game project, which is what the editor opens. `game.json`'s `assets` is now `assets`, and the editor finds the checkout from the assets folder by going three folders up to the one with `engine/nox.json`. Nothing about the on-disk formats changed. What the game needs from the Calamus files is still compiled in as generated Nyx (D-213: `BakedMaterials.nyx`); the Calamus files themselves stay with the project. Still to do: compile placed Silhouettes and scenes the same way, so a built game carries objects and not the project's source files.

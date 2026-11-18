@@ -50,13 +50,13 @@ Playable end to end with what the engine has today:
    jump than any normal jump (the exact height is a tuning question the design leaves to prototyping). A first ledge is
    one normal jump too high and has a crate stack beside it (the solo form); a second ledge is only reachable through
    the companion (the cooperative form).
-4. **A short level** in `assets/worlds/streets.world.json` that teaches these in order, ending at a goal with gems on the
+4. **A short level** in `games/platformer/assets/worlds/streets.world.json` that teaches these in order, ending at a goal with gems on the
    way.
 
 ### What slice 1 is, in the game
 
 Pick **The streets** on the main menu (or run with `LANTERN_LEVEL=worlds/streets.world.json`). The level is
-`assets/worlds/streets.world.json`, authored like the course: plain blocks plus game kinds.
+`games/platformer/assets/worlds/streets.world.json`, authored like the course: plain blocks plus game kinds.
 
 | World kind | Properties | Meaning |
 |---|---|---|
