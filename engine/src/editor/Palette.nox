@@ -75,6 +75,11 @@ lantern:::editor :: namespace {
         label~ string!;
         lift~ f32 = 0.0f;
         prototype~ lantern:::world:::WorldEntity*!;
+        // A template made from a Silhouette also carries the Silhouette's other entities. Each descendant's
+        // parent is a position in the group: 0 is the prototype, 1 is the first descendant, and so on.
+        fromSilhouette~ bool = false;
+        descendants~ Array<lantern:::world:::WorldEntity*!>! = [];
+        descendantParents~ Array<usize>! = [];
 
         EntityTemplate~: (templateId: string, templateLabel: string, templateKind: string) {
             id = `${templateId}`;
@@ -86,6 +91,8 @@ lantern:::editor :: namespace {
             delete id;
             delete label;
             delete prototype;
+            descendants.freeAll();
+            delete descendantParents;
         }
 
         // The kind of entity this template makes.
@@ -182,6 +189,9 @@ lantern:::editor :: namespace {
             root: u32 = document->NewObject();
             templateList: u32 = document->NewList();
             for template in templates {
+                if template->fromSilhouette {
+                    continue;
+                }
                 document->Append(templateList, TemplateNode(document, template));
             }
             document->Set(root, "templates", templateList);
@@ -218,6 +228,20 @@ lantern:::editor :: namespace {
             }
             delete text;
             return failure!;
+        }
+
+        // Adds a template, replacing any template with the same id so a Silhouette takes over from a
+        // hand-written entry.
+        AddTemplate~: (template: EntityTemplate*!) -> void {
+            for index~ usize = 0; index < templates.length(); index++ {
+                if templates[index]->id == template->id {
+                    previous := templates.remove(index);
+                    delete previous;
+                    templates.insert(index, template!);
+                    return;
+                }
+            }
+            templates.push(template!);
         }
 
         // The template with this id, or null.

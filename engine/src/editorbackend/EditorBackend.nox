@@ -89,9 +89,11 @@ lantern:::editorbackend :: namespace {
 
     // Loads the palette file; if that fails, warns and uses the built-in palette so the editor opens
     // anyway.
-    LoadPaletteOrFallback :: (path: string) -> lantern:::editor:::Palette*! {
+    LoadPaletteOrFallback :: (path: string, assetsDirectory: string) -> lantern:::editor:::Palette*! {
         when lantern:::editor:::Palette:::Load(path) {
-            Result:::Ok(palette) -> {
+            Result:::Ok(loaded) -> {
+                palette~ lantern:::editor:::Palette*! = loaded!;
+                AddSilhouetteTemplates(palette, assetsDirectory);
                 return palette!;
             },
             Result:::Err(failure) -> {
@@ -99,21 +101,23 @@ lantern:::editorbackend :: namespace {
                 lantern:::core:::LogWarn("editor", message);
                 delete message;
                 delete failure;
-                return lantern:::editor:::Palette:::Fallback();
+                fallback~ lantern:::editor:::Palette*! = lantern:::editor:::Palette:::Fallback();
+                AddSilhouetteTemplates(fallback, assetsDirectory);
+                return fallback!;
             }
         }
     }
 
     // Opens the level for a session. If the level cannot be read, the session starts with an empty
     // level called "untitled" and the problem is shown in the console.
-    OpenSession :: (palettePath: string, worldPath: string) -> lantern:::editor:::EditorSession*! {
-        when lantern:::editor:::EditorSession:::Open(worldPath, LoadPaletteOrFallback(palettePath)) {
+    OpenSession :: (palettePath: string, assetsDirectory: string, worldPath: string) -> lantern:::editor:::EditorSession*! {
+        when lantern:::editor:::EditorSession:::Open(worldPath, LoadPaletteOrFallback(palettePath, assetsDirectory)) {
             Result:::Ok(session) -> {
                 return session!;
             },
             Result:::Err(failure) -> {
                 lantern:::core:::LogWarn("editor", failure);
-                session := lantern:::editor:::EditorSession:::Create(new lantern:::world:::WorldFile("untitled"), "", LoadPaletteOrFallback(palettePath));
+                session := lantern:::editor:::EditorSession:::Create(new lantern:::world:::WorldFile("untitled"), "", LoadPaletteOrFallback(palettePath, assetsDirectory));
                 session->NewWorld("untitled");
                 session->Note(lantern:::editor:::LogLevel:::Error, failure);
                 delete failure;
@@ -175,7 +179,7 @@ lantern:::editorbackend :: namespace {
                 delete chosenWorld;
                 chosenWorld = `${assets}/worlds/course.world.json`;
             }
-            session = OpenSession(palettePath, chosenWorld);
+            session = OpenSession(palettePath, assets, chosenWorld);
             delete chosenWorld;
             session->SetPalettePath(palettePath);
             delete palettePath;

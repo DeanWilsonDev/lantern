@@ -1,0 +1,40 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    library := new lantern:::silhouette:::SilhouetteLibrary("../assets");
+    defer delete library;
+    names: string[16] = ["block", "camera_shot", "camera_volume", "gem", "kill_plane", "lamp_post", "lit_window", "moving_platform", "moving_platform_wide", "photo_sight", "point_light", "ramp", "spawn", "spot_light", "street_lamp", "sun"];
+    for name in names {
+        silhouetteName: string! = `silhouettes/${name}`;
+        when lantern:::silhouette:::SilhouetteWorld(library, silhouetteName) {
+            Result:::Err(message) -> {
+                print(`${name}: ${message}`);
+                assert(false, "every platformer silhouette should place as a world");
+            },
+            Result:::Ok(loaded) -> {
+                world: lantern:::world:::WorldFile* = loaded;
+                expectedCount~ usize = 1;
+                if name == "lamp_post" {
+                    expectedCount = 2;
+                }
+                if world->entities.length() != expectedCount {
+                    print(`${name}: ${world->entities.length()} entities`);
+                }
+                assert(world->entities.length() == expectedCount, "the silhouette should place the expected number of entities");
+                assert(world->entities[0]->id == 1, "the root is entity 1");
+                if name == "lamp_post" {
+                    assert(world->entities[1]->kind == "point_light", "the lamp post's child is a point light");
+                    parentIsRoot~ bool = false;
+                    if parent := world->entities[1]->parent {
+                        parentIsRoot = parent == 1;
+                    }
+                    assert(parentIsRoot, "the light is parented to the post");
+                }
+                delete loaded;
+            }
+        }
+        delete silhouetteName;
+    }
+    print("the platformer silhouettes resolve and place as worlds");
+    return 0;
+}
