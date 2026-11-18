@@ -110,6 +110,8 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 
 - Slice 5a: the `while` node (`condition`, body on `then`, continues on `next`), in the generator, the pins, the palette and the details panel. Test: `a-graph-loops-with-while` sums one to ten with a graph loop. Still to come: `when`, event entries (`OnTick`, `OnTouch`), per-node debugging, comment boxes, reroutes, copy and paste.
 
+- Slice 5b: finding the node behind a line. `lantern:::graphs:::NodeAtLine(graph, line)` regenerates the Nyx with a `//@<node id>` mark on each line a node wrote and reads the mark off the requested line. The Graph tab's Nyx pane shows line numbers, and clicking a line selects its node on the canvas, so a line number from a Nyx error leads straight to the node. Test: `a-generated-line-names-its-node`. Highlighting the node automatically when a running game throws needs the runtime to report the generated file and line to the editor; that is still to come.
+
 ## Known open questions
 
 - How a graph names a class's methods (a graph function is free, not a method) before event entries exist.

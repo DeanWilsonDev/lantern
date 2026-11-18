@@ -13,15 +13,19 @@ lantern:::graphs :: namespace {
         problem~ string!;
         declared~ Array<string!>! = [];
         steps~ u32 = 0;
+        annotate~ bool = false;
+        currentNodeId~ string!;
 
         Emitter~: () {
             text = "".copy();
             problem = "".copy();
+            currentNodeId = "".copy();
         }
 
         !Emitter~: () {
             delete text;
             delete problem;
+            delete currentNodeId;
             declared.freeAll();
         }
 
@@ -42,11 +46,19 @@ lantern:::graphs :: namespace {
             return false;
         }
 
+        SetCurrent~: (nodeId: string) -> void {
+            delete currentNodeId;
+            currentNodeId = `${nodeId}`;
+        }
+
         Line~: (depth: u32, line: string!) -> void {
             for step~ u32 = 0; step < depth; step++ {
                 text += "    ";
             }
             text += line;
+            if annotate && currentNodeId.length() > 0 {
+                text += `  //@${currentNodeId}`;
+            }
             text += "\n";
             delete line;
         }
@@ -190,6 +202,7 @@ lantern:::graphs :: namespace {
                 nodeIndex = present;
             }
             node: GraphNode* = function->nodes[nodeIndex];
+            emitter->SetCurrent(node->id);
             nextId~ string = node->next;
             if node->kind == "entry" {
             } else if node->kind == "return" {
@@ -245,15 +258,18 @@ lantern:::graphs :: namespace {
                 emitter->Line(depth, `while ${conditionText} {`);
                 delete conditionText;
                 EmitChain(function, emitter, node->thenId, depth + 1);
+                emitter->SetCurrent(node->id);
                 emitter->Line(depth, "}".copy());
             } else if node->kind == "branch" {
                 conditionText: string! = Bare(Expression(function, emitter, node->condition, 0));
                 emitter->Line(depth, `if ${conditionText} {`);
                 delete conditionText;
                 EmitChain(function, emitter, node->thenId, depth + 1);
+                emitter->SetCurrent(node->id);
                 if node->elseId.length() > 0 {
                     emitter->Line(depth, "} else {".copy());
                     EmitChain(function, emitter, node->elseId, depth + 1);
+                    emitter->SetCurrent(node->id);
                 }
                 emitter->Line(depth, "}".copy());
             } else {
@@ -319,12 +335,19 @@ lantern:::graphs :: namespace {
             return;
         }
         EmitChain(function, emitter, function->nodes[usize(entryIndex)]->id, 2);
+        emitter->SetCurrent("");
         emitter->Line(1, "}".copy());
     }
 
     // The Nyx source of a graph, or the first problem found.
     GenerateNyx :: (graph: Graph*) -> Result<string!, string!> {
+        return GenerateNyxWith(graph, false);
+    }
+
+    // The same Nyx with `  //@<node id>` after each line a node wrote, for finding the node behind a line.
+    GenerateNyxWith :: (graph: Graph*, annotate: bool) -> Result<string!, string!> {
         emitter := new Emitter();
+        emitter->annotate = annotate;
         namespaceName: string! = NamespaceName(graph->name);
         emitter->text += `// Generated from ${graph->name}.graph.json by lantern:::graphs. Edit the graph, not this file.`;
         emitter->text += "\n";
@@ -346,6 +369,29 @@ lantern:::graphs :: namespace {
         source: string! = `${emitter->text}`;
         delete emitter;
         return Result<string!, string!>:::Ok(source!);
+    }
+
+    // The id of the node that wrote a line of the generated Nyx (1 is the first line), or "" for a line no node wrote.
+    NodeAtLine :: (graph: Graph*, lineNumber: u32) -> string! {
+        when GenerateNyxWith(graph, true) {
+            Result:::Err(message) -> {
+                delete message;
+                return "".copy();
+            },
+            Result:::Ok(source) -> {
+                defer delete source;
+                rows := source.lines();
+                defer delete rows;
+                if lineNumber == 0 || usize(lineNumber) > rows.length() {
+                    return "".copy();
+                }
+                row: string = rows[usize(lineNumber) - 1];
+                marker: string = "  //@";
+                position := row.indexOf(marker, 0);
+                guard found := position return "".copy();
+                return `${row.substring(found + marker.length(), row.length() - found - marker.length())}`;
+            }
+        }
     }
 
     // Reads a graph file and generates its Nyx in one step.
