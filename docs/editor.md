@@ -121,7 +121,8 @@ saves the rendered viewport.
 - **Outliner**: the entity tree with a search box, kind icons, expand and collapse, eye and
   lock toggles per row, click and Shift-click selection, and drag-and-drop: drop on a row to
   parent under it, on the line between two rows to move just before the lower one (taking its
-  parent), and on the empty tail to move to the end of the root. Right-click opens a context menu.
+  parent), and on the empty tail to move to the end of the root. Double-click a row or press F2 to rename it: Enter
+  keeps the new name and Escape cancels. Right-click opens a context menu.
 - **Viewport**: the level, with the camera's description and the controls hint in its header.
   Drop a template from the asset browser into it to add an entity under the cursor.
 - **Inspector**: the selection's fields in collapsible groups. Vectors edit X, Y and Z side by
@@ -183,6 +184,7 @@ In the viewport:
 | H / Shift + H | Hide the selection / unhide all |
 | 1 to 9, Ctrl/Cmd + 1 to 9 | Go to a camera bookmark / set it |
 | Delete or Backspace | Delete the selection |
+| F2 | Rename the selected entity in the outliner |
 | Ctrl/Cmd + Z, Ctrl/Cmd + Shift + Z or Ctrl + Y | Undo, redo |
 | Ctrl/Cmd + D / G / A | Duplicate / group / select all |
 | Esc | Cancel a drag, or clear the selection |
