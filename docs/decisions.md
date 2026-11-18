@@ -1781,3 +1781,7 @@ A `when` node has a subject (`a`), any number of cases (a match value and a wire
 ## D-198: a graph error is located by the generated file's own header
 
 When a script error's stack has a frame in a generated graph file, the game's error text adds `graph <name>, node <id>`. The graph is found from the first line of the generated file (`// Generated from <name>.graph.json`) and its folder (the file's `generated` folder's parent), and the node from `NodeAtLine`, so the runtime needs nothing new and no node ids are written into the Nyx. Rejected: writing `//@id` markers into the committed Nyx (noisy diffs) and a runtime hook for the node. Highlighting the node on the editor canvas is left until the editor can show a game's errors.
+
+## D-199: renaming a Silhouette rewrites every `@base` that names it
+
+`RenameSilhouette` moves the folder and rewrites the `"silhouettes/<old>"` path in every file of every other Silhouette (as a base, or as the base of a child), dropping the `@base_hash` of each rewritten file, then resolves each of them and reports the first that no longer loads. A taken or unusable name changes nothing. This closes the gap D-192 left. The editor's palette drops the old template and loads the new one and the variants again. Known gap: a Silhouette that replaced a built-in palette template of the same id (D-188) leaves that id missing from the palette until the editor restarts. Rejected: keeping the old name as an alias (two names for one folder).
