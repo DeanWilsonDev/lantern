@@ -8,13 +8,15 @@ lantern:::graphs :: namespace {
     GRID_STEP: i32 : 20;
     MAX_ZOOM: i32 : 4;
 
-    COLOR_BACKGROUND: u32 : 1776930;
-    COLOR_GRID: u32 : 2500912;
-    COLOR_NODE: u32 : 2895671;
-    COLOR_NODE_EDGE: u32 : 1316122;
+    COLOR_BACKGROUND: u32 : 1710878;
+    COLOR_GRID: u32 : 2237223;
+    COLOR_NODE: u32 : 2566188;
+    COLOR_NODE_EDGE: u32 : 1118740;
+    COLOR_GRID_MAJOR: u32 : 2763825;
+    COLOR_SHADOW: u32 : 723725;
     COLOR_SELECTED: u32 : 16765514;
-    COLOR_TEXT: u32 : 15132910;
-    COLOR_DIM_TEXT: u32 : 10133677;
+    COLOR_TEXT: u32 : 15527666;
+    COLOR_DIM_TEXT: u32 : 10725555;
     COLOR_EXECUTION: u32 : 15921906;
     COLOR_VALUE: u32 : 7327999;
 
@@ -41,11 +43,25 @@ lantern:::graphs :: namespace {
         height~ u32 = 0;
         zoom~ i32 = 2;
         pixels~ Array<u8>! = [];
+        fontMetrics~ Array<i32>! = [];
+        fontSizeIndex~ i32 = -1;
 
         PixelCanvas~: () { }
 
         !PixelCanvas~: () {
             delete pixels;
+            delete fontMetrics;
+        }
+
+        // Reads the glyph table for the current zoom, once per zoom change.
+        LoadFont~: () -> void {
+            wanted: i32 = zoom - 1;
+            if wanted == fontSizeIndex {
+                return;
+            }
+            delete fontMetrics;
+            fontMetrics = GraphFontMetrics(wanted);
+            fontSizeIndex = wanted;
         }
 
         Clear~: (color: u32) -> void {
@@ -110,48 +126,274 @@ lantern:::graphs :: namespace {
             }
         }
 
+        // Mixes a colour into a pixel; coverage is 0 (nothing) to 255 (all of it).
+        Blend~: (x: i32, y: i32, color: u32, coverage: i32) -> void {
+            if coverage <= 0 || x < 0 || y < 0 || x >= i32(width) || y >= i32(height) {
+                return;
+            }
+            if coverage >= 255 {
+                this->Dot(x, y, color);
+                return;
+            }
+            index: usize = (usize(y) * usize(width) + usize(x)) * 4;
+            red: i32 = i32((color >> 16) & 255);
+            green: i32 = i32((color >> 8) & 255);
+            blue: i32 = i32(color & 255);
+            oldRed: i32 = i32(pixels[index]);
+            oldGreen: i32 = i32(pixels[index + 1]);
+            oldBlue: i32 = i32(pixels[index + 2]);
+            pixels[index] = u8(oldRed + (red - oldRed) * coverage / 255);
+            pixels[index + 1] = u8(oldGreen + (green - oldGreen) * coverage / 255);
+            pixels[index + 2] = u8(oldBlue + (blue - oldBlue) * coverage / 255);
+        }
+
+        // A colour between two others, `step` of `steps` of the way from the first.
+        Mixed :: (first: u32, second: u32, step: i32, steps: i32) -> u32 {
+            if steps <= 0 {
+                return first;
+            }
+            red: i32 = i32((first >> 16) & 255) + (i32((second >> 16) & 255) - i32((first >> 16) & 255)) * step / steps;
+            green: i32 = i32((first >> 8) & 255) + (i32((second >> 8) & 255) - i32((first >> 8) & 255)) * step / steps;
+            blue: i32 = i32(first & 255) + (i32(second & 255) - i32(first & 255)) * step / steps;
+            return u32(red) * 65536 + u32(green) * 256 + u32(blue);
+        }
+
+        // How much of a pixel a corner of the given radius covers: 1 inside, 0 outside, between on the edge.
+        CornerCoverage :: (pixelX: i32, pixelY: i32, centreX: f32, centreY: f32, radius: f32) -> i32 {
+            deltaX: f32 = f32(pixelX) + 0.5f - centreX;
+            deltaY: f32 = f32(pixelY) + 0.5f - centreY;
+            distance: f32 = Math:::sqrt(deltaX * deltaX + deltaY * deltaY);
+            amount: f32 = radius - distance + 0.5f;
+            if amount <= 0.0f {
+                return 0;
+            }
+            if amount >= 1.0f {
+                return 255;
+            }
+            return i32(amount * 255.0f);
+        }
+
+        // A rectangle with rounded top corners (and bottom ones when `roundBottom`), shaded from `topColor` to `bottomColor`.
+        FillRounded~: (x: i32, y: i32, rectangleWidth: i32, rectangleHeight: i32, radius: i32, roundBottom: bool, topColor: u32, bottomColor: u32) -> void {
+            for row~ i32 = 0; row < rectangleHeight; row++ {
+                screenY: i32 = y + row;
+                if screenY < 0 || screenY >= i32(height) {
+                    continue;
+                }
+                color: u32 = this->Mixed(topColor, bottomColor, row, rectangleHeight - 1);
+                inTop: bool = row < radius;
+                inBottom: bool = roundBottom && row >= rectangleHeight - radius;
+                for column~ i32 = 0; column < rectangleWidth; column++ {
+                    screenX: i32 = x + column;
+                    if screenX < 0 || screenX >= i32(width) {
+                        continue;
+                    }
+                    inLeft: bool = column < radius;
+                    inRight: bool = column >= rectangleWidth - radius;
+                    if (inTop || inBottom) && (inLeft || inRight) {
+                        centreX: f32 = inLeft ? f32(x + radius) : f32(x + rectangleWidth - radius);
+                        centreY: f32 = inTop ? f32(y + radius) : f32(y + rectangleHeight - radius);
+                        this->Blend(screenX, screenY, color, this->CornerCoverage(screenX, screenY, centreX, centreY, f32(radius)));
+                    } else {
+                        this->Dot(screenX, screenY, color);
+                    }
+                }
+            }
+        }
+
+        // A filled circle with a soft edge.
+        Disc~: (centreX: f32, centreY: f32, radius: f32, color: u32) -> void {
+            left: i32 = i32(centreX - radius) - 1;
+            top: i32 = i32(centreY - radius) - 1;
+            size: i32 = i32(radius * 2.0f) + 3;
+            for row~ i32 = top; row <= top + size; row++ {
+                for column~ i32 = left; column <= left + size; column++ {
+                    this->Blend(column, row, color, this->CornerCoverage(column, row, centreX, centreY, radius));
+                }
+            }
+        }
+
+        // A circle's outline: `thickness` wide, soft on both edges.
+        Ring~: (centreX: f32, centreY: f32, radius: f32, thickness: f32, color: u32) -> void {
+            left: i32 = i32(centreX - radius) - 2;
+            top: i32 = i32(centreY - radius) - 2;
+            size: i32 = i32(radius * 2.0f) + 5;
+            for row~ i32 = top; row <= top + size; row++ {
+                for column~ i32 = left; column <= left + size; column++ {
+                    outer: i32 = this->CornerCoverage(column, row, centreX, centreY, radius);
+                    inner: i32 = this->CornerCoverage(column, row, centreX, centreY, radius - thickness);
+                    this->Blend(column, row, color, outer - inner);
+                }
+            }
+        }
+
+        // A right-pointing triangle (the execution pin), softened by sampling each pixel three times across.
+        Arrow~: (centreX: f32, centreY: f32, halfHeight: f32, color: u32) -> void {
+            left: i32 = i32(centreX - halfHeight) - 1;
+            top: i32 = i32(centreY - halfHeight) - 1;
+            size: i32 = i32(halfHeight * 2.0f) + 3;
+            for row~ i32 = top; row <= top + size; row++ {
+                for column~ i32 = left; column <= left + size; column++ {
+                    inside~ i32 = 0;
+                    for sampleY~ i32 = 0; sampleY < 3; sampleY++ {
+                        for sampleX~ i32 = 0; sampleX < 3; sampleX++ {
+                            pointX: f32 = f32(column) + (f32(sampleX) + 0.5f) / 3.0f - (centreX - halfHeight * 0.7f);
+                            pointY: f32 = f32(row) + (f32(sampleY) + 0.5f) / 3.0f - centreY;
+                            absolute: f32 = pointY < 0.0f ? -pointY : pointY;
+                            if pointX >= 0.0f && pointX <= halfHeight * 1.5f && absolute <= halfHeight - pointX * halfHeight / (halfHeight * 1.5f) {
+                                inside += 1;
+                            }
+                        }
+                    }
+                    this->Blend(column, row, color, inside * 255 / 9);
+                }
+            }
+        }
+
+        // Adds a soft-edged line to the coverage a wire is collecting, keeping the larger coverage where lines overlap so joints
+        // between segments show no seams. The buffer's top left is (bufferLeft, bufferTop) and it is `bufferWidth` pixels wide.
+        StrokeSegment~: (coverage: Array<u8~>, bufferLeft: i32, bufferTop: i32, bufferWidth: i32, bufferHeight: i32, fromX: f32, fromY: f32, toX: f32, toY: f32, thickness: f32) -> void {
+            half: f32 = thickness / 2.0f;
+            left: i32 = i32((fromX < toX ? fromX : toX) - half) - 1;
+            right: i32 = i32((fromX > toX ? fromX : toX) + half) + 2;
+            top: i32 = i32((fromY < toY ? fromY : toY) - half) - 1;
+            bottom: i32 = i32((fromY > toY ? fromY : toY) + half) + 2;
+            deltaX: f32 = toX - fromX;
+            deltaY: f32 = toY - fromY;
+            lengthSquared: f32 = deltaX * deltaX + deltaY * deltaY;
+            for row~ i32 = top; row <= bottom; row++ {
+                for column~ i32 = left; column <= right; column++ {
+                    localX: i32 = column - bufferLeft;
+                    localY: i32 = row - bufferTop;
+                    if localX < 0 || localY < 0 || localX >= bufferWidth || localY >= bufferHeight {
+                        continue;
+                    }
+                    offsetX: f32 = f32(column) + 0.5f - fromX;
+                    offsetY: f32 = f32(row) + 0.5f - fromY;
+                    along~ f32 = 0.0f;
+                    if lengthSquared > 0.0f {
+                        along = (offsetX * deltaX + offsetY * deltaY) / lengthSquared;
+                    }
+                    if along < 0.0f {
+                        along = 0.0f;
+                    }
+                    if along > 1.0f {
+                        along = 1.0f;
+                    }
+                    nearX: f32 = offsetX - along * deltaX;
+                    nearY: f32 = offsetY - along * deltaY;
+                    distance: f32 = Math:::sqrt(nearX * nearX + nearY * nearY);
+                    amount: f32 = half - distance + 0.5f;
+                    if amount > 0.0f {
+                        level: u8 = amount >= 1.0f ? 255 : u8(amount * 255.0f);
+                        slot: usize = usize(localY * bufferWidth + localX);
+                        if level > coverage[slot] {
+                            coverage[slot] = level;
+                        }
+                    }
+                }
+            }
+        }
+
         // A wire: an S curve that leaves the start to the right and enters the end from the left.
         Wire~: (fromX: i32, fromY: i32, toX: i32, toY: i32, color: u32) -> void {
             reach~ i32 = (toX - fromX) / 2;
             if reach < 40 * zoom {
                 reach = 40 * zoom;
             }
-            previousX~ i32 = fromX;
-            previousY~ i32 = fromY;
-            for step~ i32 = 1; step <= 24; step++ {
-                t: f32 = f32(step) / 24.0f;
+            thickness: f32 = 0.5f + f32(zoom) * 0.9f;
+            margin: i32 = i32(thickness) + 3;
+            curveLeft: i32 = (fromX < toX ? fromX : toX) - reach - margin;
+            curveRight: i32 = (fromX > toX ? fromX : toX) + reach + margin;
+            curveTop: i32 = (fromY < toY ? fromY : toY) - margin;
+            curveBottom: i32 = (fromY > toY ? fromY : toY) + margin;
+            left: i32 = curveLeft < 0 ? 0 : curveLeft;
+            top: i32 = curveTop < 0 ? 0 : curveTop;
+            right: i32 = curveRight > i32(width) ? i32(width) : curveRight;
+            bottom: i32 = curveBottom > i32(height) ? i32(height) : curveBottom;
+            if right <= left || bottom <= top {
+                return;
+            }
+            bufferWidth: i32 = right - left;
+            bufferHeight: i32 = bottom - top;
+            coverage~ Array<u8>! = [];
+            for slot~ i32 = 0; slot < bufferWidth * bufferHeight; slot++ {
+                coverage.push(0);
+            }
+            spanX: i32 = toX > fromX ? toX - fromX : fromX - toX;
+            spanY: i32 = toY > fromY ? toY - fromY : fromY - toY;
+            segments: i32 = (spanX + spanY) / (4 * zoom) + 12;
+            previousX~ f32 = f32(fromX);
+            previousY~ f32 = f32(fromY);
+            for step~ i32 = 1; step <= segments; step++ {
+                t: f32 = f32(step) / f32(segments);
                 u: f32 = 1.0f - t;
                 controlOneX: f32 = f32(fromX + reach);
                 controlTwoX: f32 = f32(toX - reach);
                 curveX: f32 = u * u * u * f32(fromX) + 3.0f * u * u * t * controlOneX + 3.0f * u * t * t * controlTwoX + t * t * t * f32(toX);
                 curveY: f32 = u * u * u * f32(fromY) + 3.0f * u * u * t * f32(fromY) + 3.0f * u * t * t * f32(toY) + t * t * t * f32(toY);
-                this->Line(previousX, previousY, i32(curveX), i32(curveY), zoom, color);
-                previousX = i32(curveX);
-                previousY = i32(curveY);
+                this->StrokeSegment(coverage, left, top, bufferWidth, bufferHeight, previousX, previousY, curveX, curveY, thickness);
+                previousX = curveX;
+                previousY = curveY;
             }
+            for row~ i32 = 0; row < bufferHeight; row++ {
+                for column~ i32 = 0; column < bufferWidth; column++ {
+                    level: i32 = i32(coverage[usize(row * bufferWidth + column)]);
+                    if level > 0 {
+                        this->Blend(left + column, top + row, color, level);
+                    }
+                }
+            }
+            delete coverage;
         }
 
-        // Text in the 8 by 8 font, a pixel of font to `zoom` pixels of screen, six font pixels to a letter.
-        Text~: (x: i32, y: i32, text: string, color: u32, maxWidth: i32) -> void {
-            glyphs: Array<u64>! = lantern:::renderer:::PackedGlyphRows();
-            cursor~ i32 = x;
+        // The font's ascent at this zoom, used to centre text on a line.
+        fontAscent :: () -> i32 {
+            return GraphFontAscent(zoom - 1);
+        }
+
+        // The width of a line of text, in pixels.
+        TextWidth :: (text: string) -> i32 {
+            metrics: Array<i32> = fontMetrics;
+            total~ i32 = 0;
             for position~ usize = 0; position < text.length(); position++ {
                 byte: u8 = text.byteAt(position);
-                if cursor + 6 * zoom > x + maxWidth {
+                cell: usize = (byte >= 32 && byte <= 126) ? usize(byte - 32) : 31;
+                total += metrics[cell * GRAPH_FONT_FIELDS];
+            }
+            return total / 16;
+        }
+
+        // Text in Actor, drawn with its baseline at `baselineY`, left edge at `x`, cut off at `maxWidth`.
+        Text~: (x: i32, baselineY: i32, text: string, color: u32, maxWidth: i32) -> void {
+            this->LoadFont();
+            metrics: Array<i32> = fontMetrics;
+            coverage: string = GraphFontCoverage(zoom - 1);
+            cursor~ i32 = x * 16;
+            for position~ usize = 0; position < text.length(); position++ {
+                byte: u8 = text.byteAt(position);
+                cell: usize = (byte >= 32 && byte <= 126) ? usize(byte - 32) : 31;
+                base: usize = cell * GRAPH_FONT_FIELDS;
+                advance: i32 = metrics[base];
+                glyphWidth: i32 = metrics[base + 1];
+                glyphHeight: i32 = metrics[base + 2];
+                glyphLeft: i32 = metrics[base + 3];
+                glyphTop: i32 = metrics[base + 4];
+                start: usize = usize(metrics[base + 5]);
+                if (cursor + advance) / 16 > x + maxWidth {
                     break;
                 }
-                cell: u32 = (byte >= 32 && byte <= 126) ? u32(byte - 32) : 31;
-                for row~ u32 = 0; row < 8; row++ {
-                    bits: u8 = lantern:::renderer:::GlyphRow(glyphs, usize(cell), row);
-                    for column~ u32 = 0; column < 8; column++ {
-                        if (bits & (u8(1) << u8(column))) != 0 {
-                            this->Rectangle(cursor + i32(column) * zoom, y + i32(row) * zoom, zoom, zoom, color);
+                for row~ i32 = 0; row < glyphHeight; row++ {
+                    for column~ i32 = 0; column < glyphWidth; column++ {
+                        digit: u8 = coverage.byteAt(start + usize(row * glyphWidth + column));
+                        level: i32 = digit >= 97 ? i32(digit) - 87 : i32(digit) - 48;
+                        if level > 0 {
+                            this->Blend(cursor / 16 + glyphLeft + column, baselineY + glyphTop + row, color, level * 17);
                         }
                     }
                 }
-                cursor += 6 * zoom;
+                cursor += advance;
             }
-            delete glyphs;
         }
     }
 
@@ -170,6 +412,7 @@ lantern:::graphs :: namespace {
         dragNode~ string!;
         dragOffsetX~ i32 = 0;
         dragOffsetY~ i32 = 0;
+        nodeMoved~ bool = false;
         wireNode~ string!;
         wirePort~ string!;
         wireIsExecution~ bool = false;
