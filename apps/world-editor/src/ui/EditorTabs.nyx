@@ -1,0 +1,101 @@
+// The document tabs above the centre of the editor: the Level tab, which is the 3D viewport, and one tab
+// for each entity opened for editing. `active` is the entity of the tab being shown, or 0 for the level.
+// Opening or showing an entity's tab also selects that entity, so the outliner and the details panel on the
+// right follow whichever tab is up.
+EditorTabs :: class {
+public:
+    static LEVEL_TAB :: 0;
+
+    @signal entities~ Array<i64> = [];
+    @signal active~ i64 = 0;
+
+    // Opens a tab for an entity (or shows it if it is already open) and selects the entity.
+    OpenEntity~: (id: i64) -> void {
+        guard id != 0 return;
+        if !this.IsOpen(id) {
+            next~ Array<i64> = this.entities;
+            next.add(id);
+            this.entities = next;
+        }
+        this.Show(id);
+    }
+
+    // Opens a tab for the selected entity.
+    OpenSelected~: () -> void {
+        this.OpenEntity(editorPrimarySelection());
+    }
+
+    // Shows a tab: the level, or an open entity, which becomes the selection.
+    Show~: (id: i64) -> void {
+        this.active = id;
+        if id != 0 {
+            editorSelect(id, false);
+        }
+    }
+
+    // Shows the next tab to the right, wrapping around to the level.
+    ShowNext~: () -> void {
+        if this.active == 0 {
+            if this.entities.length() > 0 {
+                this.Show(this.entities[0]);
+            }
+            return;
+        }
+        position := this.PositionOf(this.active);
+        if position + 1 < this.entities.length() {
+            this.Show(this.entities[position + 1]);
+        } else {
+            this.Show(0);
+        }
+    }
+
+    // Closes an entity's tab. If it was showing, the tab to its left (or the level) takes over.
+    Close~: (id: i64) -> void {
+        guard this.IsOpen(id) return;
+        position := this.PositionOf(id);
+        next~ Array<i64> = [];
+        for open in this.entities {
+            if open != id {
+                next.add(open);
+            }
+        }
+        this.entities = next;
+        if this.active == id {
+            this.active = position > 0 ? next[position - 1] : 0;
+            if this.active != 0 {
+                editorSelect(this.active, false);
+            }
+        }
+    }
+
+    // Closes the tab being shown. The level tab does not close.
+    CloseActive~: () -> void {
+        if this.active != 0 {
+            this.Close(this.active);
+        }
+    }
+
+    // Closes the tabs of entities that were deleted.
+    DropMissing~: () -> void {
+        for open in this.entities {
+            if editorEntityName(open) == "" {
+                this.Close(open);
+            }
+        }
+    }
+
+    // True when an entity has a tab.
+    IsOpen:: (id: i64) -> bool {
+        return this.PositionOf(id) >= 0;
+    }
+
+    // Where an entity's tab is among the entity tabs, or -1.
+    PositionOf:: (id: i64) -> i32 {
+        for index~ i32 = 0; index < this.entities.length(); index++ {
+            if this.entities[index] == id {
+                return index;
+            }
+        }
+        return -1;
+    }
+}
