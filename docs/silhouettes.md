@@ -59,6 +59,7 @@ The tab edits the Silhouette's files directly, so there is no separate save: eac
 - **Rename.** Type a name and press **Rename**. Only the `name` line of that component's file is rewritten; the file keeps its place, so nothing that points at it breaks. A Silhouette with an `@base` can't be renamed this way yet.
 - **Delete.** **Delete** removes the selected component's file and everything under it. The root can't be deleted.
 - **Rename Silhouette.** Type a new name in the name box beside New variant and press **Rename Silhouette**. The folder moves and every Silhouette made from this one gets its `@base` rewritten; a taken or unusable name changes nothing. A Silhouette that replaced a built-in palette template of the same id leaves that id out of the palette until the editor restarts.
+- **Typed fields.** Each value row is a field of its type: a checkbox for a bool, an input for a number, a text input (shown without quotes) for a string, one input per axis for a vector of two to four numbers, and a raw JSON input for anything else. Enter commits the field; the label still fills the key and JSON boxes for Set value and Revert to base. `own` values are marked with `*` as before.
 - A component the Silhouette gets from its base has no file of its own, so it can't be renamed or deleted, and it can't take new children, in the variant. Change it in the base.
 
 - **New Silhouette and New variant.** Type a name (lowercase letters, digits and underscores) and press **New Silhouette** for an empty block, or **New variant** for a variant of the Silhouette open in the tab. A variant's root has the open Silhouette as its `@base` and sets only its name and menu label, marked `*`, so it follows every later change to the base. The new Silhouette opens in the tab and appears in the asset browser. A name that is taken or not allowed is refused and the reason is shown under the buttons.
@@ -78,6 +79,6 @@ Changing a Silhouette doesn't change the entities already placed in a world; it 
 ## Known gaps
 
 - The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
-- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. A value is edited by typing its key and JSON, not in the inspector's own fields. Visual scripting comes after them.
+- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. A value is edited in a field of its own type (below), or by typing its key and JSON. Visual scripting comes after them.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.

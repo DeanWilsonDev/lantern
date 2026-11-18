@@ -1,0 +1,110 @@
+SilhouetteValues :: namespace {
+    IsNumber :: (text: string) -> bool {
+        trimmed := text.trim();
+        if trimmed.length() == 0 {
+            return false;
+        }
+        digits~ i32 = 0;
+        dots~ i32 = 0;
+        for position~ i32 = 0; position < trimmed.length(); position++ {
+            piece := trimmed.substring(position, 1);
+            if piece == "." {
+                dots = dots + 1;
+            } else if piece == "-" {
+                if position != 0 {
+                    return false;
+                }
+            } else if "0123456789".contains(piece) {
+                digits = digits + 1;
+            } else {
+                return false;
+            }
+        }
+        return digits > 0 && dots <= 1;
+    }
+
+    Inside :: (jsonText: string) -> string {
+        trimmed := jsonText.trim();
+        return trimmed.substring(1, trimmed.length() - 2);
+    }
+
+    Parts :: (jsonText: string) -> Array<string> {
+        parts~ Array<string> = [];
+        for piece in Inside(jsonText).split(",") {
+            parts.add(piece.trim());
+        }
+        return parts;
+    }
+
+    Axes :: (jsonText: string) -> Array<i32> {
+        axes~ Array<i32> = [];
+        count := Parts(jsonText).length();
+        for axis~ i32 = 0; axis < count; axis++ {
+            axes.add(axis);
+        }
+        return axes;
+    }
+
+    IsVector :: (jsonText: string) -> bool {
+        trimmed := jsonText.trim();
+        if !trimmed.startsWith("[") || !trimmed.endsWith("]") {
+            return false;
+        }
+        parts := Parts(trimmed);
+        if parts.length() < 2 || parts.length() > 4 {
+            return false;
+        }
+        for part in parts {
+            if !IsNumber(part) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    KindOf :: (jsonText: string) -> string {
+        trimmed := jsonText.trim();
+        if trimmed == "true" || trimmed == "false" {
+            return "bool";
+        }
+        if IsNumber(trimmed) {
+            return "number";
+        }
+        if trimmed.length() >= 2 && trimmed.startsWith("\"") && trimmed.endsWith("\"") {
+            return "text";
+        }
+        if IsVector(trimmed) {
+            return "vector";
+        }
+        return "raw";
+    }
+
+    Unquoted :: (jsonText: string) -> string {
+        guard KindOf(jsonText) == "text" return jsonText;
+        return Inside(jsonText).replace("\\\"", "\"").replace("\\\\", "\\");
+    }
+
+    Quoted :: (text: string) -> string {
+        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    WithPart :: (jsonText: string, index: i32, newText: string) -> string {
+        parts := Parts(jsonText);
+        result~ string = "[";
+        for position~ i32 = 0; position < parts.length(); position++ {
+            if position > 0 {
+                result = result + ", ";
+            }
+            result = result + (position == index ? newText.trim() : parts[position]);
+        }
+        return result + "]";
+    }
+
+    Commit :: (kind: string, jsonText: string, index: i32, typed: string) -> string {
+        return when kind {
+            "text" -> Quoted(typed),
+            "vector" -> WithPart(jsonText, index, typed),
+            default -> typed
+        };
+    }
+}

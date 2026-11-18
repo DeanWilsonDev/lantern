@@ -1,0 +1,57 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+VALUES: string : "../apps/world-editor/src/ui/SilhouetteValues.nyx";
+
+Check :: (program: lantern:::nyx:::Program*, expression: string, expected: string, message: string) -> void {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(expression, noArguments));
+    delete noArguments;
+    actual: string! = lantern:::testing:::TextOrFail(value->Text());
+    if actual != expected {
+        print(`${message}: expected ${expected} but got ${actual}`);
+    }
+    assert(actual == expected, "a typed value is read or written as expected");
+    delete actual;
+    delete value;
+}
+
+main :: () -> i32 {
+    when readTextFile(VALUES) {
+        Result:::Err(error) -> {
+            delete error;
+            assert(false, "the values file is there");
+        },
+        Result:::Ok(text) -> {
+            runtime := new lantern:::nyx:::Runtime();
+            script~ string! = `${text}`;
+            delete text;
+            script += "\nKindBool :: () -> string { return SilhouetteValues:::KindOf(\"true\"); }\n";
+            script += "KindNumber :: () -> string { return SilhouetteValues:::KindOf(\"-1.25\"); }\n";
+            script += "KindText :: () -> string { return SilhouetteValues:::KindOf(\"\\\"Block\\\"\"); }\n";
+            script += "KindVector :: () -> string { return SilhouetteValues:::KindOf(\"[1, 0.5, -1]\"); }\n";
+            script += "KindRaw :: () -> string { return SilhouetteValues:::KindOf(\"{\\\"a\\\": 1}\"); }\n";
+            script += "KindMixedArray :: () -> string { return SilhouetteValues:::KindOf(\"[1, \\\"x\\\"]\"); }\n";
+            script += "ReadText :: () -> string { return SilhouetteValues:::Unquoted(\"\\\"Wide \\\\\\\"one\\\\\\\"\\\"\"); }\n";
+            script += "WriteText :: () -> string { return SilhouetteValues:::Commit(\"text\", \"\", 0, \"Wide \\\"one\\\"\"); }\n";
+            script += "WriteNumber :: () -> string { return SilhouetteValues:::Commit(\"number\", \"1\", 0, \"2.5\"); }\n";
+            script += "WriteVector :: () -> string { return SilhouetteValues:::Commit(\"vector\", \"[1, 0.5, 1]\", 1, \"2\"); }\n";
+            program := lantern:::testing:::Mount(runtime, script);
+            Check(program, "KindBool", "bool", "true is a bool");
+            Check(program, "KindNumber", "number", "-1.25 is a number");
+            Check(program, "KindText", "text", "a quoted value is text");
+            Check(program, "KindVector", "vector", "three numbers are a vector");
+            Check(program, "KindRaw", "raw", "an object stays raw");
+            Check(program, "KindMixedArray", "raw", "a mixed array stays raw");
+            Check(program, "ReadText", "Wide \"one\"", "text is shown without its quotes");
+            Check(program, "WriteText", "\"Wide \\\"one\\\"\"", "text is written quoted and escaped");
+            Check(program, "WriteNumber", "2.5", "a number is written as typed");
+            Check(program, "WriteVector", "[1, 2, 1]", "one axis changes and the others stay");
+            delete script;
+            delete program;
+            delete runtime;
+        }
+    }
+    print("silhouette values are read and written by type");
+    return 0;
+}
