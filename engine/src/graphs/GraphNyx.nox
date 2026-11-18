@@ -94,6 +94,25 @@ lantern:::graphs :: namespace {
         return expression!;
     }
 
+    // `Path(a, b)` for a call node.
+    CallExpression :: (function: GraphFunction*, emitter: Emitter~*, node: GraphNode*, depth: u32) -> string! {
+        if !IsPath(node->functionPath) {
+            emitter->Fail(function->name, `node '${node->id}' needs the Nyx function it calls, such as lantern:::world:::Position`);
+            return "".copy();
+        }
+        call~ string! = `${node->functionPath}(`;
+        for index~ usize = 0; index < node->arguments.length(); index++ {
+            if index > 0 {
+                call += ", ";
+            }
+            argument: string! = Expression(function, emitter, node->arguments[index], depth + 1);
+            call += argument;
+            delete argument;
+        }
+        call += ")";
+        return call!;
+    }
+
     // The Nyx expression for a value reference: a literal, an input or local, or the data node it names.
     Expression :: (function: GraphFunction*, emitter: Emitter~*, reference: string, depth: u32) -> string! {
         if emitter->problem.length() > 0 {
@@ -126,6 +145,19 @@ lantern:::graphs :: namespace {
                 negated: string! = `!${inner}`;
                 delete inner;
                 return negated!;
+            }
+            if node->kind == "call" {
+                if node->name.length() > 0 {
+                    return `${node->name}`;
+                }
+                return CallExpression(function, emitter, node, depth + 1);
+            }
+            if node->kind == "nyx_value" {
+                if !IsBalanced(node->text) || node->text.length() == 0 {
+                    emitter->Fail(function->name, `node '${node->id}' needs a Nyx expression with balanced brackets`);
+                    return "".copy();
+                }
+                return `(${node->text})`;
             }
             emitter->Fail(function->name, `node '${reference}' (${node->kind}) does not give a value`);
             return "".copy();
@@ -183,6 +215,30 @@ lantern:::graphs :: namespace {
                         emitter->Fail(function->name, `node '${node->id}' sets '${node->name}' before it has a type`);
                     }
                     delete valueText;
+                }
+            } else if node->kind == "call" {
+                callText: string! = CallExpression(function, emitter, node, 0);
+                if node->name.length() > 0 && node->typeName.length() > 0 && IsName(node->name) {
+                    emitter->Line(depth, `${node->name}~ ${node->typeName} = ${callText};`);
+                    emitter->declared.push(`${node->name}`);
+                } else if node->name.length() > 0 {
+                    emitter->Fail(function->name, `node '${node->id}' needs a type to keep its result as '${node->name}'`);
+                } else {
+                    emitter->Line(depth, `${callText};`);
+                }
+                delete callText;
+            } else if node->kind == "nyx" {
+                if !IsBalanced(node->text) {
+                    emitter->Fail(function->name, `node '${node->id}' has Nyx whose brackets do not balance`);
+                } else {
+                    snippetLines := node->text.lines();
+                    for lineIndex~ usize = 0; lineIndex < snippetLines.length(); lineIndex++ {
+                        emitter->Line(depth, `${snippetLines[lineIndex]}`);
+                    }
+                    delete snippetLines;
+                    for declaredIndex~ usize = 0; declaredIndex < node->declares.length(); declaredIndex++ {
+                        emitter->declared.push(`${node->declares[declaredIndex]}`);
+                    }
                 }
             } else if node->kind == "branch" {
                 conditionText: string! = Bare(Expression(function, emitter, node->condition, 0));

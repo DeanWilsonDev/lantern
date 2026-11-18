@@ -97,6 +97,8 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 
 - Slice 1: `engine/src/graphs/` (`Graph.nox` the model and `LoadGraph`, `GraphNyx.nox` the generator). `lantern:::graphs:::GenerateNyxFromText(jsonText)` returns the Nyx source or the first problem, named by function and node. Node kinds so far: `entry`, `branch` (with an optional `else`, then on to its own `next`), `set` (a `type` declares the local), `return`, the data nodes `add` `sub` `mul` `div` `less` `greater` `equal` `and` `or` `not`, and literals written `{ "f32": 1.0 }`, `{ "i32": 3 }`, `{ "bool": true }`, `{ "string": "hi" }`. Tests: `engine/tests/graphs/` (a graph's Nyx is mounted on a Nyx runtime and called, and eight broken graphs are refused with their messages).
 
+- Slice 2: a `call` node (`function`: any Nyx path, `args`: value references, and `name` plus `type` to keep the result in a local; as a data reference it is the call inline), a `nyx` node (`text`: statements written as typed, in the function's scope, so they see its inputs and locals; `declares`: names it adds for later nodes) and a `nyx_value` node (`text`: one Nyx expression). Brackets in a snippet must balance so it can't close the function around it. Test: `a-graph-mixes-nodes-with-nyx-text` has a graph call a hand-written Nyx function, run a Nyx `for` loop and be called back from Nyx.
+
 ## Known open questions
 
 - Whether the generated `.nyx` is committed or only built; slice 4 starts with built-only and revisits.
