@@ -170,9 +170,16 @@ lantern:::editorbackend :: namespace {
         thumbnails~ Array<Thumbnail*!>! = [];
         preferences~ lantern:::editor:::EditorPreferences*!;
         preferencesPath~ string!? = null;
+        failureGraph~ string!;
+        failureNode~ string!;
+        failureText~ string!;
+        failureVersion~ u32 = 0;
 
         EditorBackend~: (assets: string, worldPath: string) {
             assetsDirectory = `${assets}`;
+            failureGraph = "".copy();
+            failureNode = "".copy();
+            failureText = "".copy();
             palettePath: string! = `${assets}/editor/palette.json`;
             chosenWorld~ string! = `${worldPath}`;
             if worldPath.length() == 0 {
@@ -196,6 +203,9 @@ lantern:::editorbackend :: namespace {
 
         !EditorBackend~: () {
             StopPlay();
+            delete failureGraph;
+            delete failureNode;
+            delete failureText;
             delete session;
             delete gpuResources;
             delete renderWorld;
@@ -381,7 +391,16 @@ lantern:::editorbackend :: namespace {
                 return false;
             }
             levelAssetPath: string! = `worlds/${SCRATCH_LEVEL_FILE}`;
-            process: raw Sdl:::SDL_Process~* = SpawnRunner(runner, gameDirectory, levelAssetPath, assetsDirectory);
+            errorFilePath: string! = `${assetsDirectory}/worlds/${ERROR_FILE}`;
+            when removeFile(errorFilePath) {
+                Result:::Ok(removed) -> { },
+                Result:::Err(error) -> {
+                    delete error;
+                }
+            }
+            ForgetFailure();
+            process: raw Sdl:::SDL_Process~* = SpawnRunner(runner, gameDirectory, levelAssetPath, assetsDirectory, errorFilePath);
+            delete errorFilePath;
             delete levelAssetPath;
             if process == null {
                 failureText~ string! = "".copy();
@@ -412,6 +431,57 @@ lantern:::editorbackend :: namespace {
             delete gameDirectory;
             delete levelPath;
             return true;
+        }
+
+        // Clears the graph node a failed game pointed at.
+        ForgetFailure~: () -> void {
+            if failureGraph.length() == 0 && failureNode.length() == 0 && failureText.length() == 0 {
+                return;
+            }
+            delete failureGraph;
+            failureGraph = "".copy();
+            delete failureNode;
+            failureNode = "".copy();
+            delete failureText;
+            failureText = "".copy();
+            failureVersion += 1;
+        }
+
+        // Reads the file the running game writes a script error to. A new error is noted in the console, and when it names a graph
+        // node that node is remembered so the Graph tab can mark it.
+        PollGameFailure~: () -> void {
+            errorFilePath: string! = `${assetsDirectory}/worlds/${ERROR_FILE}`;
+            defer delete errorFilePath;
+            when readTextFile(errorFilePath) {
+                Result:::Err(error) -> {
+                    delete error;
+                },
+                Result:::Ok(text) -> {
+                    defer delete text;
+                    if text == failureText || text.length() == 0 {
+                        return;
+                    }
+                    delete failureText;
+                    failureText = `${text}`;
+                    located: string! = lantern:::graphs:::FailureFromText(text);
+                    delete failureGraph;
+                    failureGraph = "".copy();
+                    delete failureNode;
+                    failureNode = "".copy();
+                    if located.length() > 0 {
+                        parts: Array<string>! = located.split("\n");
+                        failureGraph = `${parts[0]}`;
+                        failureNode = `${parts[1]}`;
+                        delete parts;
+                    }
+                    delete located;
+                    failureVersion += 1;
+                    firstLine: string = text.lines()[0];
+                    shown: string! = `The game raised a script error: ${firstLine}`;
+                    session->Note(lantern:::editor:::LogLevel:::Error, shown);
+                    delete shown;
+                }
+            }
         }
 
         // Deletes the scratch level and drops the process record.
@@ -451,6 +521,7 @@ lantern:::editorbackend :: namespace {
             active~ PlaySession*!? = play!;
             play = null;
             guard active return;
+            PollGameFailure();
             exitCode = active->Finished();
             seconds = active->Seconds();
             play = active!;

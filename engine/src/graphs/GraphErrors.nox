@@ -3,6 +3,52 @@ lantern:::graphs :: namespace {
     GENERATED_HEADER: string : "// Generated from ";
     GRAPH_FILE_SUFFIX: string : ".graph.json";
 
+    ERROR_FILE_VARIABLE: string : "LANTERN_ERROR_FILE";
+
+    // When the editor started the game it names a file in LANTERN_ERROR_FILE; a script error is written there (replacing what was
+    // there) so the editor can show which graph node failed.
+    WriteErrorForEditor :: (message: string) -> void {
+        target: string!? = environmentVariable(ERROR_FILE_VARIABLE);
+        if path := target {
+            when writeTextFile(path, message) {
+                Result:::Ok(written) -> { },
+                Result:::Err(error) -> {
+                    delete error;
+                }
+            }
+        }
+        delete target;
+    }
+
+    // The graph and node a script error's text names ("graph crumble_phase, node isIdle"), as "crumble_phase\nisIdle", or "" when it names none.
+    FailureFromText :: (message: string) -> string! {
+        graphAt: usize? = message.indexOf("graph ", 0);
+        if graphAt == null {
+            return "".copy();
+        }
+        graphStart~ usize = 0;
+        if present := graphAt {
+            graphStart = present + 6;
+        }
+        separatorAt: usize? = message.indexOf(", node ", graphStart);
+        if separatorAt == null {
+            return "".copy();
+        }
+        separator~ usize = 0;
+        if present := separatorAt {
+            separator = present;
+        }
+        nodeStart: usize = separator + 7;
+        nodeEnd~ usize = nodeStart;
+        while nodeEnd < message.length() && message.byteAt(nodeEnd) != 10 && message.byteAt(nodeEnd) != 41 && message.byteAt(nodeEnd) != 92 && message.byteAt(nodeEnd) != 32 {
+            nodeEnd += 1;
+        }
+        located~ string! = `${message.substring(graphStart, separator - graphStart)}`;
+        located += "\n";
+        located += message.substring(nodeStart, nodeEnd - nodeStart);
+        return located!;
+    }
+
     // "graph crumble_phase, node isIdle" for a line of a generated graph file (a `.nyx` under a `generated` folder whose
     // first line says which graph wrote it), or "" when the file is not one, can't be read, or the line was written by no node.
     DescribeGraphLine :: (generatedPath: string, lineNumber: i32) -> string! {
