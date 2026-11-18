@@ -1,0 +1,489 @@
+lantern:::silhouette :: namespace {
+    /**
+     * The file that holds a Silhouette's root entity, inside the Silhouette's folder. Every other `.calamus` file there
+     * is a child entity, and a folder named like a child holds that child's own children.
+     */
+    ROOT_FILE_NAME: string : "root.calamus";
+
+    /**
+     * The folder of a Silhouette (or of an instance in a scene) that holds patches: one Calamus file per entity,
+     * named by the entity's dotted path of local ids, such as `pole.lamp.calamus`.
+     */
+    OVERRIDES_FOLDER_NAME: string : "overrides";
+
+    /**
+     * The extension every Calamus file has.
+     */
+    CALAMUS_EXTENSION: string : ".calamus";
+
+    /**
+     * One entity of a resolved Silhouette: where it sits (a dotted path of local ids, empty for the root, and its
+     * parent's path), its type, and its resolved values as JSON text.
+     */
+    SilhouetteEntity :: class {
+    public:
+        path~ string!;
+        parentPath~ string!? = null;
+        typeName~ string!;
+        valuesJson~ string!;
+
+        SilhouetteEntity~: (newPath: string, newTypeName: string, newValuesJson: string) {
+            path = `${newPath}`;
+            typeName = `${newTypeName}`;
+            valuesJson = `${newValuesJson}`;
+        }
+
+        !SilhouetteEntity~: () {
+            delete path;
+            delete parentPath;
+            delete typeName;
+            delete valuesJson;
+        }
+
+        SetParentPath~: (newParentPath: string) -> void {
+            delete parentPath;
+            parentPath = `${newParentPath}`;
+        }
+
+        SetValuesJson~: (newValuesJson: string) -> void {
+            delete valuesJson;
+            valuesJson = `${newValuesJson}`;
+        }
+
+        /**
+         * A copy of the entity at another place in a tree.
+         */
+        CopyTo :: (newPath: string, newParentPath: string?) -> SilhouetteEntity*! {
+            copied := new SilhouetteEntity(newPath, typeName, valuesJson);
+            if parent := newParentPath {
+                copied->SetParentPath(parent);
+            }
+            return copied!;
+        }
+    }
+
+    /**
+     * A Silhouette once its whole chain is resolved: entity 0 is the root, and the rest are its children and their
+     * children, parents before their children.
+     */
+    ResolvedSilhouette :: class {
+    public:
+        name~ string!;
+        entities~ Array<SilhouetteEntity*!>! = [];
+
+        ResolvedSilhouette~: (newName: string) {
+            name = `${newName}`;
+        }
+
+        !ResolvedSilhouette~: () {
+            delete name;
+            entities.freeAll();
+        }
+
+        /**
+         * The entity at a dotted path, or null.
+         */
+        IndexOf :: (path: string) -> usize? {
+            for index~ usize = 0; index < entities.length(); index++ {
+                if entities[index]->path == path {
+                    return index;
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * The path of a child: its own name under its parent's path.
+     */
+    JoinPath :: (parentPath: string, childName: string) -> string! {
+        if parentPath.length() == 0 {
+            return `${childName}`;
+        }
+        return `${parentPath}.${childName}`;
+    }
+
+    /**
+     * True when `left` sorts before `right` byte by byte, so folders are read in the same order everywhere.
+     */
+    NameBefore :: (left: string, right: string) -> bool {
+        shared~ usize = left.length();
+        if right.length() < shared {
+            shared = right.length();
+        }
+        for index~ usize = 0; index < shared; index++ {
+            leftByte: u8 = left.byteAt(index);
+            rightByte: u8 = right.byteAt(index);
+            if leftByte != rightByte {
+                return leftByte < rightByte;
+            }
+        }
+        return left.length() < right.length();
+    }
+
+    /**
+     * The names inside a folder, sorted, or the reason it can't be read.
+     */
+    SortedEntries :: (directory: string) -> Result<Array<string!>!, string!> {
+        when listDirectory(directory) {
+            Result:::Ok(listed) -> {
+                sorted~ Array<string!>! = listed!;
+                sortOwners<string!, string>(sorted, (first: string, second: string) -> bool { return NameBefore(first, second); });
+                return Result<Array<string!>!, string!>:::Ok(sorted!);
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${directory}: ${error.message()}`;
+                delete error;
+                return Result<Array<string!>!, string!>:::Err(failure!);
+            }
+        }
+    }
+
+    /**
+     * The name of a Calamus file without its extension, or null for any other file.
+     */
+    CalamusStem :: (fileName: string) -> string!? {
+        if !fileName.endsWith(CALAMUS_EXTENSION) {
+            return null;
+        }
+        return `${fileName.substring(0, fileName.length() - CALAMUS_EXTENSION.length())}`;
+    }
+
+    /**
+     * Reads and parses one Calamus file. A failure names the file.
+     */
+    ReadCalamusFile :: (path: string) -> Result<lantern:::calamus:::CalamusDocument*!, string!> {
+        when readTextFile(path) {
+            Result:::Ok(text) -> {
+                when lantern:::calamus:::ParseCalamus(text) {
+                    Result:::Ok(document) -> {
+                        delete text;
+                        return Result<lantern:::calamus:::CalamusDocument*!, string!>:::Ok(document!);
+                    },
+                    Result:::Err(message) -> {
+                        delete text;
+                        failure: string! = `${path}: ${message}`;
+                        delete message;
+                        return Result<lantern:::calamus:::CalamusDocument*!, string!>:::Err(failure!);
+                    }
+                }
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${path}: ${error.message()}`;
+                delete error;
+                return Result<lantern:::calamus:::CalamusDocument*!, string!>:::Err(failure!);
+            }
+        }
+    }
+
+    /**
+     * Adds an entity made from a file: its own values, laid over its `@base` Silhouette's root when it names one,
+     * followed by everything that Silhouette holds under it. Returns the first problem, or null.
+     */
+    AddInstance :: (library: SilhouetteLibrary*, document: lantern:::calamus:::CalamusDocument*, path: string, parentPath: string?, resolved: ResolvedSilhouette~*, chain: Array<string!>) -> string!? {
+        typeName: string! = document->TypeName();
+        baseName: string!? = document->BaseName();
+        if base := baseName {
+            when library->ResolveInChain(base, chain) {
+                Result:::Err(message) -> {
+                    delete typeName;
+                    delete baseName;
+                    return message!;
+                },
+                Result:::Ok(baseSilhouette) -> {
+                    rootLookup: usize? = baseSilhouette->IndexOf("");
+                    if rootLookup == null {
+                        failure: string! = `silhouette '${base}' has no root`;
+                        delete baseSilhouette;
+                        delete typeName;
+                        delete baseName;
+                        return failure!;
+                    }
+                    rootIndex: usize = rootLookup ?? 0;
+                    when document->Resolve(baseSilhouette->entities[rootIndex]->valuesJson) {
+                        Result:::Err(message) -> {
+                            delete baseSilhouette;
+                            delete typeName;
+                            delete baseName;
+                            return message!;
+                        },
+                        Result:::Ok(valuesJson) -> {
+                            root := new SilhouetteEntity(path, typeName, valuesJson);
+                            if parent := parentPath {
+                                root->SetParentPath(parent);
+                            }
+                            delete valuesJson;
+                            resolved->entities.push(root!);
+                        }
+                    }
+                    for index~ usize = 0; index < baseSilhouette->entities.length(); index++ {
+                        inherited: SilhouetteEntity* = baseSilhouette->entities[index];
+                        if inherited->path.length() == 0 {
+                            continue;
+                        }
+                        newPath: string! = JoinPath(path, inherited->path);
+                        newParent~ string! = `${path}`;
+                        if inheritedParent := inherited->parentPath {
+                            if inheritedParent.length() > 0 {
+                                delete newParent;
+                                newParent = JoinPath(path, inheritedParent);
+                            }
+                        }
+                        copy: SilhouetteEntity*! = inherited->CopyTo(newPath, newParent);
+                        resolved->entities.push(copy!);
+                        delete newPath;
+                        delete newParent;
+                    }
+                    delete baseSilhouette;
+                }
+            }
+            delete baseName;
+        } else {
+            when document->Resolve("") {
+                Result:::Err(message) -> {
+                    delete typeName;
+                    return message!;
+                },
+                Result:::Ok(valuesJson) -> {
+                    root := new SilhouetteEntity(path, typeName, valuesJson);
+                    if parent := parentPath {
+                        root->SetParentPath(parent);
+                    }
+                    delete valuesJson;
+                    resolved->entities.push(root!);
+                }
+            }
+        }
+        delete typeName;
+        return null;
+    }
+
+    /**
+     * Adds the child files of a folder under `parentPath`, each followed by the children in its same-named folder.
+     * The root file of the Silhouette's own folder is skipped.
+     */
+    AddChildren :: (library: SilhouetteLibrary*, folder: string, parentPath: string, isSilhouetteFolder: bool, resolved: ResolvedSilhouette~*, chain: Array<string!>) -> string!? {
+        when SortedEntries(folder) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(listedEntries) -> {
+                entries~ Array<string!>! = listedEntries!;
+                for entry in entries {
+                    stem: string!? = CalamusStem(entry);
+                    guard childName := stem continue;
+                    if isSilhouetteFolder && entry == ROOT_FILE_NAME {
+                        delete stem;
+                        continue;
+                    }
+                    childPath: string! = JoinPath(parentPath, childName);
+                    filePath: string! = `${folder}/${entry}`;
+                    when ReadCalamusFile(filePath) {
+                        Result:::Ok(document) -> {
+                            problem: string!? = AddInstance(library, document, childPath, parentPath, resolved, chain);
+                            delete document;
+                            if problem != null {
+                                delete stem;
+                                delete childPath;
+                                delete filePath;
+                                entries.freeAll();
+                                return problem!;
+                            }
+                        },
+                        Result:::Err(message) -> {
+                            delete stem;
+                            delete childPath;
+                            delete filePath;
+                            entries.freeAll();
+                            return message!;
+                        }
+                    }
+                    subFolder: string! = `${folder}/${childName}`;
+                    if directoryExists(subFolder) {
+                        deeper: string!? = AddChildren(library, subFolder, childPath, false, resolved, chain);
+                        if deeper != null {
+                            delete stem;
+                            delete childPath;
+                            delete filePath;
+                            delete subFolder;
+                            entries.freeAll();
+                            return deeper!;
+                        }
+                    }
+                    delete stem;
+                    delete childPath;
+                    delete filePath;
+                    delete subFolder;
+                }
+                entries.freeAll();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Lays each patch file in a folder over the entity its name points at. A patch for a path nothing has is an
+     * error, because it would be an override of nothing.
+     */
+    ApplyPatches :: (patchFolder: string, resolved: ResolvedSilhouette~*) -> string!? {
+        if !directoryExists(patchFolder) {
+            return null;
+        }
+        when SortedEntries(patchFolder) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(listedEntries) -> {
+                entries~ Array<string!>! = listedEntries!;
+                for entry in entries {
+                    stem: string!? = CalamusStem(entry);
+                    guard patchPath := stem continue;
+                    index: usize? = resolved->IndexOf(patchPath);
+                    if index == null {
+                        failure: string! = `${patchFolder}/${entry}: no entity at '${patchPath}'`;
+                        delete stem;
+                        entries.freeAll();
+                        return failure!;
+                    }
+                    target: usize = index ?? 0;
+                    filePath: string! = `${patchFolder}/${entry}`;
+                    when ReadCalamusFile(filePath) {
+                        Result:::Err(message) -> {
+                            delete stem;
+                            delete filePath;
+                            entries.freeAll();
+                            return message!;
+                        },
+                        Result:::Ok(document) -> {
+                            when document->Resolve(resolved->entities[target]->valuesJson) {
+                                Result:::Ok(valuesJson) -> {
+                                    resolved->entities[target]->SetValuesJson(valuesJson);
+                                    delete valuesJson;
+                                },
+                                Result:::Err(message) -> {
+                                    failure: string! = `${filePath}: ${message}`;
+                                    delete message;
+                                    delete document;
+                                    delete stem;
+                                    delete filePath;
+                                    entries.freeAll();
+                                    return failure!;
+                                }
+                            }
+                            delete document;
+                        }
+                    }
+                    delete stem;
+                    delete filePath;
+                }
+                entries.freeAll();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Fills `resolved` from a Silhouette's folder: the root file, then the children folder by folder, then the
+     * patches. Returns the first problem, or null.
+     */
+    BuildTree :: (library: SilhouetteLibrary*, silhouetteDirectory: string, resolved: ResolvedSilhouette~*, chain: Array<string!>) -> string!? {
+        rootPath: string! = `${silhouetteDirectory}/${ROOT_FILE_NAME}`;
+        if !pathExists(rootPath) {
+            failure: string! = `${rootPath}: a silhouette needs a root file`;
+            delete rootPath;
+            return failure!;
+        }
+        when ReadCalamusFile(rootPath) {
+            Result:::Ok(document) -> {
+                delete rootPath;
+                problem: string!? = AddInstance(library, document, "", null, resolved, chain);
+                delete document;
+                if problem != null {
+                    return problem!;
+                }
+            },
+            Result:::Err(message) -> {
+                delete rootPath;
+                return message!;
+            }
+        }
+        childProblem: string!? = AddChildren(library, silhouetteDirectory, "", true, resolved, chain);
+        if childProblem != null {
+            return childProblem!;
+        }
+        overridesDirectory: string! = `${silhouetteDirectory}/${OVERRIDES_FOLDER_NAME}`;
+        patchProblem: string!? = ApplyPatches(overridesDirectory, resolved);
+        delete overridesDirectory;
+        return patchProblem!;
+    }
+
+    /**
+     * The folder where a game keeps its Silhouettes (`silhouettes/` inside it), and the resolver for them. A
+     * Silhouette is named by its folder under `directory`, such as `silhouettes/platform_ice`, the same text an
+     * `@base` line holds.
+     */
+    SilhouetteLibrary :: class {
+    public:
+        directory~ string!;
+
+        SilhouetteLibrary~: (newDirectory: string) {
+            directory = `${newDirectory}`;
+        }
+
+        !SilhouetteLibrary~: () {
+            delete directory;
+        }
+
+        /**
+         * Resolves a Silhouette: its root, its children, and every Silhouette they are made from. A missing
+         * Silhouette or a cycle is an error that names it.
+         */
+        Resolve :: (name: string) -> Result<ResolvedSilhouette*!, string!> {
+            chain~ Array<string!>! = [];
+            result: Result<ResolvedSilhouette*!, string!> = ResolveInChain(name, chain);
+            chain.freeAll();
+            return result!;
+        }
+
+        /**
+         * Resolves a Silhouette that is reached through the Silhouettes in `chain`, which makes a cycle visible.
+         */
+        ResolveInChain :: (name: string, chain: Array<string!>) -> Result<ResolvedSilhouette*!, string!> {
+            for entry in chain {
+                if entry == name {
+                    path~ string! = "";
+                    for link in chain {
+                        extended: string! = `${path}${link} -> `;
+                        delete path;
+                        path = extended!;
+                    }
+                    failure: string! = `silhouette cycle: ${path}${name}`;
+                    delete path;
+                    return Result<ResolvedSilhouette*!, string!>:::Err(failure!);
+                }
+            }
+            silhouetteDirectory: string! = `${directory}/${name}`;
+            if !directoryExists(silhouetteDirectory) {
+                failure: string! = `missing silhouette '${name}' (no folder ${silhouetteDirectory})`;
+                delete silhouetteDirectory;
+                return Result<ResolvedSilhouette*!, string!>:::Err(failure!);
+            }
+            deeperChain~ Array<string!>! = [];
+            for entry in chain {
+                deeperChain.push(`${entry}`);
+            }
+            deeperChain.push(`${name}`);
+            resolved := new ResolvedSilhouette(name);
+            problem: string!? = BuildTree(this, silhouetteDirectory, resolved, deeperChain);
+            deeperChain.freeAll();
+            delete silhouetteDirectory;
+            if message := problem {
+                failure: string! = `${message}`;
+                delete problem;
+                delete resolved;
+                return Result<ResolvedSilhouette*!, string!>:::Err(failure!);
+            }
+            return Result<ResolvedSilhouette*!, string!>:::Ok(resolved!);
+        }
+    }
+}

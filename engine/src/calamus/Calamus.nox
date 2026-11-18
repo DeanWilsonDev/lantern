@@ -1,0 +1,181 @@
+CalamusC :: import CalamusC;
+NyxC :: import NyxC;
+
+lantern:::calamuscalls :: foreign "lantern-native" {
+    amanuensis_calamus_last_error :: () -> raw u8*;
+    amanuensis_calamus_text_length :: (text: raw u8*) -> usize;
+    amanuensis_calamus_free_string :: (text: raw u8~*) -> void;
+    amanuensis_calamus_parse :: (text: string, length: usize) -> raw CalamusC:::AmanuensisCalamusDocument~*;
+    amanuensis_calamus_document_free :: (document: raw CalamusC:::AmanuensisCalamusDocument~*) -> void;
+    amanuensis_calamus_document_version :: (document: raw CalamusC:::AmanuensisCalamusDocument*) -> i32;
+    amanuensis_calamus_document_type :: (document: raw CalamusC:::AmanuensisCalamusDocument*) -> raw u8~*;
+    amanuensis_calamus_document_has_id :: (document: raw CalamusC:::AmanuensisCalamusDocument*) -> i32;
+    amanuensis_calamus_document_id :: (document: raw CalamusC:::AmanuensisCalamusDocument*) -> u64;
+    amanuensis_calamus_document_base :: (document: raw CalamusC:::AmanuensisCalamusDocument*) -> raw u8~*;
+    amanuensis_calamus_load :: (document: raw CalamusC:::AmanuensisCalamusDocument*, base_json: string) -> raw CalamusC:::AmanuensisCalamusLoaded~*;
+    amanuensis_calamus_loaded_free :: (loaded: raw CalamusC:::AmanuensisCalamusLoaded~*) -> void;
+    amanuensis_calamus_loaded_value_json :: (loaded: raw CalamusC:::AmanuensisCalamusLoaded*) -> raw u8~*;
+    amanuensis_calamus_loaded_overrides_json :: (loaded: raw CalamusC:::AmanuensisCalamusLoaded*) -> raw u8~*;
+    amanuensis_calamus_write :: (type: string, version: i32, has_id: i32, id: u64, base_name: string, entity_json: string, base_json: string) -> raw u8~*;
+    amanuensis_calamus_stable_hash :: (value_json: string) -> u64;
+}
+
+lantern:::calamus :: namespace {
+    /**
+     * Copies a string the Calamus library returned into a Nox string and frees the original. A null pointer gives
+     * "".
+     */
+    TakeText :: (text: raw u8~*) -> string! {
+        unsafe {
+            if text == null {
+                return "".copy();
+            }
+            length: usize = lantern:::calamuscalls:::amanuensis_calamus_text_length(text);
+            built: string! = lantern:::nyx:::ReadText(NyxC:::nyx_str { data_: text, length: length });
+            lantern:::calamuscalls:::amanuensis_calamus_free_string(text);
+            return built!;
+        }
+    }
+
+    /**
+     * The last message the Calamus library reported, with its line and column.
+     */
+    LastError :: () -> string! {
+        unsafe {
+            text: raw u8* = lantern:::calamuscalls:::amanuensis_calamus_last_error();
+            length: usize = lantern:::calamuscalls:::amanuensis_calamus_text_length(text);
+            message: string! = lantern:::nyx:::ReadText(NyxC:::nyx_str { data_: text, length: length });
+            return message!;
+        }
+    }
+
+    /**
+     * A parsed Calamus file: its header, and the values it holds, which resolve against a base value.
+     */
+    CalamusDocument :: class {
+    public:
+        handle~ raw CalamusC:::AmanuensisCalamusDocument~* = null;
+
+        CalamusDocument~: () { }
+
+        !CalamusDocument~: () {
+            unsafe {
+                if handle != null {
+                    lantern:::calamuscalls:::amanuensis_calamus_document_free(handle);
+                }
+            }
+        }
+
+        /**
+         * The entity type named in the header.
+         */
+        TypeName :: () -> string! {
+            text~ raw u8~* = null;
+            unsafe {
+                text = lantern:::calamuscalls:::amanuensis_calamus_document_type(handle);
+            }
+            return TakeText(text);
+        }
+
+        /**
+         * The `@base` path, or null when the file has none.
+         */
+        BaseName :: () -> string!? {
+            text~ raw u8~* = null;
+            unsafe {
+                text = lantern:::calamuscalls:::amanuensis_calamus_document_base(handle);
+                if text == null {
+                    return null;
+                }
+            }
+            return TakeText(text);
+        }
+
+        /**
+         * The `@id` number, or null when the file has none.
+         */
+        Id :: () -> u64? {
+            present~ i32 = 0;
+            value~ u64 = 0;
+            unsafe {
+                present = lantern:::calamuscalls:::amanuensis_calamus_document_has_id(handle);
+                value = lantern:::calamuscalls:::amanuensis_calamus_document_id(handle);
+            }
+            if present == 0 {
+                return null;
+            }
+            return value;
+        }
+
+        /**
+         * The entity's value as JSON text once the marked fields are laid over `baseJson` (the empty string for no
+         * base, so every field counts).
+         */
+        Resolve :: (baseJson: string) -> Result<string!, string!> {
+            loaded~ raw CalamusC:::AmanuensisCalamusLoaded~* = null;
+            unsafe {
+                loaded = lantern:::calamuscalls:::amanuensis_calamus_load(handle, baseJson);
+            }
+            valueText~ raw u8~* = null;
+            unsafe {
+                if loaded == null {
+                    failure: string! = LastError();
+                    return Result<string!, string!>:::Err(failure!);
+                }
+                valueText = lantern:::calamuscalls:::amanuensis_calamus_loaded_value_json(loaded);
+                lantern:::calamuscalls:::amanuensis_calamus_loaded_free(loaded);
+            }
+            valueOwned: string! = TakeText(valueText);
+            return Result<string!, string!>:::Ok(valueOwned!);
+        }
+    }
+
+    /**
+     * Parses Calamus text. The error names the line and column.
+     */
+    ParseCalamus :: (text: string) -> Result<CalamusDocument*!, string!> {
+        document := new CalamusDocument();
+        unsafe {
+            document->handle = lantern:::calamuscalls:::amanuensis_calamus_parse(text, text.length());
+            if document->handle == null {
+                failure: string! = LastError();
+                delete document;
+                return Result<CalamusDocument*!, string!>:::Err(failure!);
+            }
+        }
+        return Result<CalamusDocument*!, string!>:::Ok(document!);
+    }
+
+    /**
+     * Writes an entity as Calamus text, marking the fields that differ from `baseJson` (the empty string for no base).
+     */
+    WriteCalamus :: (typeName: string, version: i32, id: u64?, baseName: string, entityJson: string, baseJson: string) -> Result<string!, string!> {
+        hasId~ i32 = 0;
+        idValue~ u64 = 0;
+        if present := id {
+            hasId = 1;
+            idValue = present;
+        }
+        text~ raw u8~* = null;
+        unsafe {
+            text = lantern:::calamuscalls:::amanuensis_calamus_write(typeName, version, hasId, idValue, baseName, entityJson, baseJson);
+            if text == null {
+                failure: string! = LastError();
+                return Result<string!, string!>:::Err(failure!);
+            }
+        }
+        written: string! = TakeText(text);
+        return Result<string!, string!>:::Ok(written!);
+    }
+
+    /**
+     * The stable hash Calamus records for a base value.
+     */
+    StableHash :: (valueJson: string) -> u64 {
+        hash~ u64 = 0;
+        unsafe {
+            hash = lantern:::calamuscalls:::amanuensis_calamus_stable_hash(valueJson);
+        }
+        return hash;
+    }
+}
