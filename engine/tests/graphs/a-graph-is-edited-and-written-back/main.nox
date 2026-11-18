@@ -1,0 +1,90 @@
+lantern :: import lantern;
+
+Wire :: (function: lantern:::graphs:::GraphFunction~*, nodeId: string, port: string, value: string) -> bool {
+    problem: string!? = lantern:::graphs:::SetPort(function, nodeId, port, value);
+    succeeded: bool = problem == null;
+    delete problem;
+    return succeeded;
+}
+
+main :: () -> i32 {
+    graph := lantern:::graphs:::NewGraph("lift_pad");
+    function: lantern:::graphs:::GraphFunction~* = graph->functions[0];
+    delete function->returns;
+    function->returns = "f32".copy();
+    function->inputNames.push("height".copy());
+    function->inputTypes.push("f32".copy());
+
+    assert(function->IndexOfNode("entry") != null, "a new function has its entry");
+    low: string! = lantern:::graphs:::AddNode(function, "less", 120.0f, 200.0f);
+    assert(low == "less", "a node gets its kind as its id");
+    second: string! = lantern:::graphs:::AddNode(function, "less", 120.0f, 260.0f);
+    assert(second == "less2", "a second node of a kind gets a number");
+    branch: string! = lantern:::graphs:::AddNode(function, "branch", 260.0f, 40.0f);
+    raise: string! = lantern:::graphs:::AddNode(function, "return", 460.0f, 20.0f);
+    keep: string! = lantern:::graphs:::AddNode(function, "return", 460.0f, 120.0f);
+    sum: string! = lantern:::graphs:::AddNode(function, "add", 300.0f, 220.0f);
+    secondEntry: string! = lantern:::graphs:::AddNode(function, "entry", 0.0f, 0.0f);
+    assert(secondEntry == "", "a function keeps one entry");
+    unknown: string! = lantern:::graphs:::AddNode(function, "mystery", 0.0f, 0.0f);
+    assert(unknown == "", "an unknown kind adds nothing");
+
+    assert(Wire(function, "entry", "next", "branch"), "entry wires to the branch");
+    assert(Wire(function, "branch", "condition", "less"), "the branch reads the comparison");
+    assert(Wire(function, "branch", "then", "return"), "the branch has a then");
+    assert(Wire(function, "branch", "else", "return2"), "the branch has an else");
+    assert(Wire(function, "less", "a", "height"), "an input feeds a");
+    assert(Wire(function, "less", "b", "#1.0f"), "a literal feeds b");
+    assert(Wire(function, "return", "value", "add"), "the sum is returned");
+    assert(Wire(function, "return2", "value", "height"), "the input is returned");
+    assert(Wire(function, "add", "a", "height"), "the sum reads the input");
+    assert(Wire(function, "add", "b", "#0.5f"), "the sum reads a literal");
+    assert(!Wire(function, "branch", "next", "nowhere"), "a wire to a missing node is refused");
+    assert(!Wire(function, "less", "name", "a b"), "a name with a space is refused");
+    assert(lantern:::graphs:::RemoveNode(function, "less2"), "an unused node is removed");
+    assert(!lantern:::graphs:::RemoveNode(function, "entry"), "the entry stays");
+
+    when lantern:::graphs:::GenerateNyx(graph) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the edited graph generates");
+            delete message;
+        },
+        Result:::Ok(source) -> {
+            assert(source.contains("if height < 1.0f {"), "the wired graph reads as the branch");
+            assert(source.contains("return height + 0.5f;"), "the wired graph returns the sum");
+            delete source;
+        }
+    }
+
+    assert(lantern:::graphs:::MoveNode(function, "branch", 300.0f, 50.0f), "a node moves");
+    written: string! = lantern:::graphs:::WriteGraph(graph);
+    assert(written.contains("{ \"id\": \"branch\", \"kind\": \"branch\", \"then\": \"return\", \"else\": \"return2\", \"condition\": \"less\", \"x\": 300, \"y\": 50 }"), "a node is one line");
+    assert(written.contains("\"b\": { \"f32\": 1.0 }"), "a literal is written as an object");
+
+    when lantern:::graphs:::LoadGraph(written) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the written graph loads again");
+            delete message;
+        },
+        Result:::Ok(loaded) -> {
+            again: string! = lantern:::graphs:::WriteGraph(loaded);
+            assert(again == written, "writing a loaded graph gives the same text");
+            delete again;
+            delete loaded;
+        }
+    }
+    delete written;
+    delete low;
+    delete second;
+    delete branch;
+    delete raise;
+    delete keep;
+    delete sum;
+    delete secondEntry;
+    delete unknown;
+    delete graph;
+    print("a graph is edited and written back");
+    return 0;
+}

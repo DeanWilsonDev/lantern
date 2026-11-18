@@ -99,6 +99,8 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 
 - Slice 2: a `call` node (`function`: any Nyx path, `args`: value references, and `name` plus `type` to keep the result in a local; as a data reference it is the call inline), a `nyx` node (`text`: statements written as typed, in the function's scope, so they see its inputs and locals; `declares`: names it adds for later nodes) and a `nyx_value` node (`text`: one Nyx expression). Brackets in a snippet must balance so it can't close the function around it. Test: `a-graph-mixes-nodes-with-nyx-text` has a graph call a hand-written Nyx function, run a Nyx `for` loop and be called back from Nyx.
 
+- Slice 3a: `GraphFile.nox` (`WriteGraph`, one node per line, which `LoadGraph` reads back to the same text) and `GraphEditing.nox` (`AddNode`, `RemoveNode`, `MoveNode`, `SetPort`, `AddFunction`, `NewGraph`). A wire is a port set to another node's id (`next`, `then`, `else` for execution; `a`, `b`, `value`, `condition`, `arg0`... for values); a literal is `#` and its Nyx text. A refused edit returns a message and changes nothing. Nodes carry an `x` and `y` for the tab. Test: `a-graph-is-edited-and-written-back`.
+
 ## Known open questions
 
 - Whether the generated `.nyx` is committed or only built; slice 4 starts with built-only and revisits.

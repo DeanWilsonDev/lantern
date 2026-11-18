@@ -19,6 +19,8 @@ lantern:::graphs :: namespace {
         b~ string!;
         value~ string!;
         condition~ string!;
+        x~ f32 = 0.0f;
+        y~ f32 = 0.0f;
         functionPath~ string!;
         text~ string!;
         arguments~ Array<string!>! = [];
@@ -38,6 +40,53 @@ lantern:::graphs :: namespace {
             condition = "".copy();
             functionPath = "".copy();
             text = "".copy();
+        }
+
+        // Empties every field that names a node, once that node is gone.
+        ClearLinksTo~: (target: string) -> void {
+            if next == target {
+                delete next;
+                next = "".copy();
+            }
+            if thenId == target {
+                delete thenId;
+                thenId = "".copy();
+            }
+            if elseId == target {
+                delete elseId;
+                elseId = "".copy();
+            }
+            if a == target {
+                delete a;
+                a = "".copy();
+            }
+            if b == target {
+                delete b;
+                b = "".copy();
+            }
+            if value == target {
+                delete value;
+                value = "".copy();
+            }
+            if condition == target {
+                delete condition;
+                condition = "".copy();
+            }
+            for argument~ usize = 0; argument < arguments.length(); argument++ {
+                if arguments[argument] == target {
+                    this->SetArgument(argument, "");
+                }
+            }
+        }
+
+        // Sets one argument of a call, adding empty ones before it when the call has fewer.
+        SetArgument~: (argumentIndex: usize, newValue: string) -> void {
+            while arguments.length() <= argumentIndex {
+                arguments.push("".copy());
+            }
+            old := arguments.remove(argumentIndex);
+            delete old;
+            arguments.insert(argumentIndex, `${newValue}`);
         }
 
         !GraphNode~: () {
@@ -174,6 +223,16 @@ lantern:::graphs :: namespace {
         return "".copy();
     }
 
+    // The number at an object's member, or 0 when it is missing or not a number.
+    NumberMember :: (document: lantern:::json:::JsonDocument*, object: u32, key: string) -> f32 {
+        if member := document->Member(object, key) {
+            if document->Kind(member) == lantern:::json:::JsonKind:::Number {
+                return f32(document->Node(member).number);
+            }
+        }
+        return 0.0f;
+    }
+
     // A number written so Nyx reads it as an f32: `1` becomes `1.0f`.
     FloatLiteral :: (written: string) -> string! {
         text~ string! = `${written}`;
@@ -260,6 +319,8 @@ lantern:::graphs :: namespace {
         node->value = ReferenceMember(document, nodeAt, "value");
         delete node->condition;
         node->condition = ReferenceMember(document, nodeAt, "condition");
+        node->x = NumberMember(document, nodeAt, "x");
+        node->y = NumberMember(document, nodeAt, "y");
         delete node->functionPath;
         node->functionPath = TextMember(document, nodeAt, "function");
         delete node->text;
