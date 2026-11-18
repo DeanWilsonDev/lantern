@@ -1,0 +1,176 @@
+// The edits the graph tab makes: add and remove a node, set one of its ports, move it, add a function. Each works on the
+// in-memory graph; the tab writes the result with WriteGraph. An edit that can't be made returns a message and changes nothing.
+lantern:::graphs :: namespace {
+    // The node kinds the tab offers.
+    IsKnownKind :: (kind: string) -> bool {
+        return kind == "entry" || kind == "branch" || kind == "set" || kind == "return" || kind == "call" || kind == "nyx"
+            || kind == "nyx_value" || OperatorFor(kind).length() > 0 || kind == "not";
+    }
+
+    IsExecutionPort :: (port: string) -> bool {
+        return port == "next" || port == "then" || port == "else";
+    }
+
+    IsValuePort :: (port: string) -> bool {
+        return port == "a" || port == "b" || port == "value" || port == "condition" || port.startsWith("arg");
+    }
+
+    // A node id that no node of the function has: `add`, then `add2`, `add3`.
+    FreshNodeId :: (function: GraphFunction*, kind: string) -> string! {
+        candidate~ string! = `${kind}`;
+        number~ u32 = 1;
+        while function->IndexOfNode(candidate) != null {
+            number += 1;
+            delete candidate;
+            candidate = `${kind}${number}`;
+        }
+        return candidate!;
+    }
+
+    // Adds a node of a kind at a place and returns its id, or the empty string for an unknown kind. A function has one
+    // entry, so a second is refused.
+    AddNode :: (function: GraphFunction~*, kind: string, x: f32, y: f32) -> string! {
+        if !IsKnownKind(kind) {
+            return "".copy();
+        }
+        if kind == "entry" {
+            for index~ usize = 0; index < function->nodes.length(); index++ {
+                if function->nodes[index]->kind == "entry" {
+                    return "".copy();
+                }
+            }
+        }
+        id: string! = FreshNodeId(function, kind);
+        node := new GraphNode(id, kind);
+        node->x = x;
+        node->y = y;
+        function->nodes.push(node!);
+        return id!;
+    }
+
+    // Removes a node, and every wire that came from it. The entry can't be removed.
+    RemoveNode :: (function: GraphFunction~*, id: string) -> bool {
+        index: usize? = function->IndexOfNode(id);
+        if index == null {
+            return false;
+        }
+        position~ usize = 0;
+        if present := index {
+            position = present;
+        }
+        if function->nodes[position]->kind == "entry" {
+            return false;
+        }
+        removed := function->nodes.remove(position);
+        delete removed;
+        for at~ usize = 0; at < function->nodes.length(); at++ {
+            function->nodes[at]->ClearLinksTo(id);
+        }
+        return true;
+    }
+
+    // Moves a node.
+    MoveNode :: (function: GraphFunction~*, id: string, x: f32, y: f32) -> bool {
+        if index := function->IndexOfNode(id) {
+            function->nodes[index]->x = x;
+            function->nodes[index]->y = y;
+            return true;
+        }
+        return false;
+    }
+
+    // Sets one port or field of a node from text. A wire is a port set to another node's id (`next` and `then` and `else` for
+    // execution, `a` and `b` and `value` and `condition` and `arg0`, `arg1`... for values); a literal is `#` and its Nyx text;
+    // `name`, `type`, `function`, `text` and `declares` are plain fields. An empty value clears the port.
+    SetPort :: (function: GraphFunction~*, id: string, port: string, value: string) -> string!? {
+        index: usize? = function->IndexOfNode(id);
+        if index == null {
+            return `there is no node '${id}'`;
+        }
+        position~ usize = 0;
+        if present := index {
+            position = present;
+        }
+        node: GraphNode~* = function->nodes[position];
+        if IsExecutionPort(port) && value.length() > 0 && function->IndexOfNode(value) == null {
+            return `'${value}' is not a node`;
+        }
+        if port == "next" {
+            delete node->next;
+            node->next = `${value}`;
+        } else if port == "then" {
+            delete node->thenId;
+            node->thenId = `${value}`;
+        } else if port == "else" {
+            delete node->elseId;
+            node->elseId = `${value}`;
+        } else if port == "a" {
+            delete node->a;
+            node->a = `${value}`;
+        } else if port == "b" {
+            delete node->b;
+            node->b = `${value}`;
+        } else if port == "value" {
+            delete node->value;
+            node->value = `${value}`;
+        } else if port == "condition" {
+            delete node->condition;
+            node->condition = `${value}`;
+        } else if port.startsWith("arg") {
+            argumentNumber~ usize = 0;
+            digits: string = port.substring(3, port.length() - 3);
+            for digit~ usize = 0; digit < digits.length(); digit++ {
+                argumentNumber = argumentNumber * 10 + usize(digits.byteAt(digit) - 48);
+            }
+            node->SetArgument(argumentNumber, value);
+        } else if port == "name" {
+            if value.length() > 0 && !IsName(value) {
+                return "a name is letters, digits and underscores".copy();
+            }
+            delete node->name;
+            node->name = `${value}`;
+        } else if port == "type" {
+            delete node->typeName;
+            node->typeName = `${value}`;
+        } else if port == "function" {
+            if value.length() > 0 && !IsPath(value) {
+                return "a Nyx function is names joined by ::: such as lantern:::world:::Position".copy();
+            }
+            delete node->functionPath;
+            node->functionPath = `${value}`;
+        } else if port == "text" {
+            delete node->text;
+            node->text = `${value}`;
+        } else {
+            return `'${port}' is not a port`;
+        }
+        return null;
+    }
+
+    // Adds a function with an entry node and a return, ready to wire.
+    AddFunction :: (graph: Graph~*, name: string, returns: string) -> string!? {
+        if !IsName(name) {
+            return "a function name is letters, digits and underscores".copy();
+        }
+        for index~ usize = 0; index < graph->functions.length(); index++ {
+            if graph->functions[index]->name == name {
+                return `the graph already has a function named ${name}`;
+            }
+        }
+        function := new GraphFunction(name);
+        delete function->returns;
+        function->returns = `${returns}`;
+        entryId: string! = AddNode(function, "entry", 40.0f, 40.0f);
+        delete entryId;
+        graph->functions.push(function!);
+        return null;
+    }
+
+    // A new graph with one function, `Run`, holding an entry node.
+    NewGraph :: (name: string) -> Graph*! {
+        graph := new Graph(name);
+        problem := AddFunction(graph, "Run", "");
+        delete problem;
+        return graph!;
+    }
+}

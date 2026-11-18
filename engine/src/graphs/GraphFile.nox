@@ -1,0 +1,146 @@
+// Writes a graph back to its `.graph.json` text, one node to a line so a change is a small diff. `LoadGraph` reads what this
+// writes, and the two agree on how a value reference is stored: a literal is `{ "f32": 1.0 }` in the file and `#1.0f` in memory.
+lantern:::graphs :: namespace {
+    // A value reference as JSON: a name is a string, a literal is an object naming its type.
+    ReferenceJson :: (reference: string) -> string! {
+        if !reference.startsWith(LITERAL_MARK) {
+            return lantern:::json:::QuotedText(reference);
+        }
+        payload: string = reference.substring(1, reference.length() - 1);
+        if payload.startsWith("\"") {
+            return `{ "string": ${payload} }`;
+        }
+        if payload == "true" || payload == "false" {
+            return `{ "bool": ${payload} }`;
+        }
+        if payload.endsWith("f") {
+            return `{ "f32": ${payload.substring(0, payload.length() - 1)} }`;
+        }
+        return `{ "i32": ${payload} }`;
+    }
+
+    // Builds the members of one object on a line.
+    LineWriter :: class {
+    public:
+        text~ string!;
+
+        LineWriter~: (opening: string) {
+            text = `${opening}`;
+        }
+
+        !LineWriter~: () {
+            delete text;
+        }
+
+        Member~: (key: string, valueJson: string!) -> void {
+            text += `, "${key}": ${valueJson}`;
+            delete valueJson;
+        }
+
+        Text~: (key: string, value: string) -> void {
+            if value.length() > 0 {
+                this->Member(key, lantern:::json:::QuotedText(value));
+            }
+        }
+
+        Reference~: (key: string, reference: string) -> void {
+            if reference.length() > 0 {
+                this->Member(key, ReferenceJson(reference));
+            }
+        }
+
+        List~: (key: string, node: GraphNode*, isReference: bool) -> void {
+            itemCount: usize = isReference ? node->arguments.length() : node->declares.length();
+            if itemCount == 0 {
+                return;
+            }
+            list~ string! = "[".copy();
+            for index~ usize = 0; index < itemCount; index++ {
+                if index > 0 {
+                    list += ", ";
+                }
+                itemText: string = isReference ? node->arguments[index] : node->declares[index];
+                item: string! = isReference ? ReferenceJson(itemText) : lantern:::json:::QuotedText(itemText);
+                list += item;
+                delete item;
+            }
+            list += "]";
+            this->Member(key, list!);
+        }
+    }
+
+    NodeLine :: (node: GraphNode*) -> string! {
+        idJson: string! = lantern:::json:::QuotedText(node->id);
+        opening: string! = `{ "id": ${idJson}`;
+        delete idJson;
+        line := new LineWriter(opening);
+        delete opening;
+        line->Text("kind", node->kind);
+        line->Text("next", node->next);
+        line->Text("then", node->thenId);
+        line->Text("else", node->elseId);
+        line->Text("name", node->name);
+        line->Text("type", node->typeName);
+        line->Reference("a", node->a);
+        line->Reference("b", node->b);
+        line->Reference("value", node->value);
+        line->Reference("condition", node->condition);
+        line->Text("function", node->functionPath);
+        line->List("args", node, true);
+        line->Text("text", node->text);
+        line->List("declares", node, false);
+        line->Member("x", `${node->x}`);
+        line->Member("y", `${node->y}`);
+        written: string! = `${line->text} }`;
+        delete line;
+        return written!;
+    }
+
+    FunctionText :: (function: GraphFunction*) -> string! {
+        nameJson: string! = lantern:::json:::QuotedText(function->name);
+        text~ string! = `    { "name": ${nameJson}`;
+        delete nameJson;
+        if function->returns.length() > 0 {
+            returnsJson: string! = lantern:::json:::QuotedText(function->returns);
+            text += `, "returns": ${returnsJson}`;
+            delete returnsJson;
+        }
+        text += ",\n      \"inputs\": [";
+        for index~ usize = 0; index < function->inputNames.length(); index++ {
+            if index > 0 {
+                text += ", ";
+            }
+            inputName: string! = lantern:::json:::QuotedText(function->inputNames[index]);
+            inputType: string! = lantern:::json:::QuotedText(function->inputTypes[index]);
+            text += `{ "name": ${inputName}, "type": ${inputType} }`;
+            delete inputName;
+            delete inputType;
+        }
+        text += "],\n      \"nodes\": [\n";
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            line: string! = NodeLine(function->nodes[index]);
+            text += `        ${line}`;
+            delete line;
+            text += index + 1 < function->nodes.length() ? ",\n" : "\n";
+        }
+        text += "      ] }";
+        return text!;
+    }
+
+    // The text of a graph's file.
+    WriteGraph :: (graph: Graph*) -> string! {
+        nameJson: string! = lantern:::json:::QuotedText(graph->name);
+        text~ string! = "{\n  \"graph\": ".copy();
+        text += nameJson;
+        text += ",\n  \"functions\": [\n";
+        delete nameJson;
+        for index~ usize = 0; index < graph->functions.length(); index++ {
+            function: string! = FunctionText(graph->functions[index]);
+            text += function;
+            delete function;
+            text += index + 1 < graph->functions.length() ? ",\n" : "\n";
+        }
+        text += "  ]\n}\n";
+        return text!;
+    }
+}
