@@ -54,23 +54,31 @@ lantern:::editorbackend :: namespace {
     SilhouetteTemplate :: (library: lantern:::silhouette:::SilhouetteLibrary*, name: string) -> Result<lantern:::editor:::EntityTemplate*!, string!> {
         silhouetteName: string! = `${SILHOUETTES_FOLDER}/${name}`;
         defer delete silhouetteName;
-        valuesJson~ string!? = null;
+        valuesJson~ string! = "".copy();
+        allValues~ Array<string!>! = [];
         when library->Resolve(silhouetteName) {
             Result:::Err(message) -> {
+                allValues.freeAll();
+                delete valuesJson;
                 return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(message!);
             },
             Result:::Ok(resolved) -> {
+                delete valuesJson;
                 valuesJson = `${resolved->entities[0]->valuesJson}`;
+                for resolvedEntity in resolved->entities {
+                    allValues.push(`${resolvedEntity->valuesJson}`);
+                }
                 delete resolved;
             }
         }
-        guard rootValues := valuesJson return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(`silhouette '${name}' has no root`);
+        rootValues: string = valuesJson;
         label: string! = EditorLabel(rootValues, name);
         menuLift: f32 = EditorLift(rootValues);
         delete valuesJson;
         when lantern:::silhouette:::SilhouetteWorld(library, silhouetteName) {
             Result:::Err(message) -> {
                 delete label;
+                allValues.freeAll();
                 return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(message!);
             },
             Result:::Ok(loaded) -> {
@@ -80,6 +88,8 @@ lantern:::editorbackend :: namespace {
                 delete label;
                 template->lift = menuLift;
                 template->fromSilhouette = true;
+                template->componentValues.freeAll();
+                template->componentValues = allValues!;
                 delete template->prototype;
                 template->prototype = root->Copy();
                 for index~ usize = 1; index < worldFile->entities.length(); index++ {
@@ -95,6 +105,55 @@ lantern:::editorbackend :: namespace {
                 return Result<lantern:::editor:::EntityTemplate*!, string!>:::Ok(template!);
             }
         }
+    }
+
+    // The values of one component, flattened into one line per value, such as `transform.position: [0, 1, 0]`.
+    ValueLines :: class {
+    public:
+        lines~ Array<string!>! = [];
+
+        ValueLines~: () { }
+
+        !ValueLines~: () {
+            lines.freeAll();
+        }
+
+        // Adds the lines for a node and everything under it. `path` is the dotted name so far.
+        Flatten~: (document: lantern:::json:::JsonDocument*, node: u32, path: string) -> void {
+            kind: lantern:::json:::JsonKind = document->Kind(node);
+            if kind == lantern:::json:::JsonKind:::Object {
+                child~ u32 = document->FirstChild(node);
+                while child != lantern:::json:::NO_NODE {
+                    isRoot: bool = path.length() == 0;
+                    childPath: string! = when isRoot { true -> `${document->Key(child)}`, false -> `${path}.${document->Key(child)}` };
+                    Flatten(document, child, childPath);
+                    delete childPath;
+                    child = document->NextSibling(child);
+                }
+                return;
+            }
+            written: string! = document->Write(node);
+            lines.push(`${path}: ${written.trim()}`);
+            delete written;
+        }
+    }
+
+    // The flattened values of one component of a template, or no lines for an unknown component.
+    ComponentValueLines :: (template: lantern:::editor:::EntityTemplate*, index: usize) -> ValueLines*! {
+        lines := new ValueLines();
+        if index >= template->componentValues.length() {
+            return lines!;
+        }
+        when lantern:::json:::Parse(template->componentValues[index]) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                lines->Flatten(document, document->root, "");
+                delete document;
+            }
+        }
+        return lines!;
     }
 
     // Adds a template for every Silhouette folder under `<assets>/silhouettes`. A missing folder adds
