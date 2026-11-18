@@ -1,0 +1,44 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    when readTextFile("../games/platformer/game-graphs/lamp_pulse.graph.json") {
+        Result:::Err(error) -> {
+            delete error;
+            return 1;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when lantern:::graphs:::LoadGraph(text) {
+                Result:::Err(message) -> {
+                    delete message;
+                    return 2;
+                },
+                Result:::Ok(loaded) -> {
+                    graph~ lantern:::graphs:::Graph*! = loaded!;
+                    function~ lantern:::graphs:::GraphFunction~* = graph->functions[0];
+
+                    everything: string! = lantern:::graphs:::SuggestedKinds(function, "", false);
+                    assert(everything.startsWith("call\n"), "with no pin the menu lists every kind in its usual order");
+                    assert(everything.contains("not\n"), "with no pin the menu lists the comparison kinds too");
+                    assert(!everything.contains("-\n"), "with no pin there is no separator");
+                    delete everything;
+
+                    afterStep: string! = lantern:::graphs:::SuggestedKinds(function, "start", true);
+                    assert(afterStep.startsWith("call\nset\nbranch\n"), "from an execution pin the steps come first");
+                    assert(afterStep.contains("-\n"), "the likely kinds are separated from the rest");
+                    assert(afterStep.endsWith("not\n"), "the kinds that were not likely come after the separator");
+                    delete afterStep;
+
+                    newNode: string! = lantern:::graphs:::AddNode(function, "return", 0.0f, 0.0f);
+                    assert(newNode.length() > 0, "a node is added");
+                    wired: bool = lantern:::graphs:::WireFromMenu(function, newNode, "start", "next", true);
+                    assert(wired, "a node added from an execution pin is wired to it");
+                    delete newNode;
+                    delete graph;
+                }
+            }
+        }
+    }
+    print("a graph menu offers likely nodes first");
+    return 0;
+}

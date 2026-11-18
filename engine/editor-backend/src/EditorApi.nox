@@ -1351,6 +1351,32 @@ lantern:::editorapi :: namespace {
         return id!;
     }
 
+    // Counts up each time the canvas asks for its add-node menu (a right click on empty canvas, or a wire let go over nothing).
+    export GraphMenuRequest :: (editorInstance: Editor*) -> u32 {
+        guard open := editorInstance->graphEditor return 0;
+        return open->menuRequest;
+    }
+
+    // The kinds that menu offers, one per line, most likely first, with a `-` line between the likely ones and the rest.
+    export GraphMenuKinds :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        function: lantern:::graphs:::GraphFunction* = open->graph->functions[open->functionIndex];
+        return lantern:::graphs:::SuggestedKinds(function, open->menuSourceNode, open->menuSourceIsExecution);
+    }
+
+    // Adds a node of a kind where the menu was opened and wires it to the pin the menu came from. Returns its id.
+    export GraphAddNodeFromMenu :: (editorInstance: Editor~*, kind: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "".copy();
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        id: string! = lantern:::graphs:::AddNode(function, kind, f32(lantern:::graphs:::Snapped(open->menuWorldX)), f32(lantern:::graphs:::Snapped(open->menuWorldY)));
+        if id.length() > 0 {
+            lantern:::graphs:::WireFromMenu(function, id, open->menuSourceNode, open->menuSourcePort, open->menuSourceIsExecution);
+            lantern:::graphs:::SelectNode(open, id);
+            open->Touch();
+        }
+        return id!;
+    }
+
     // The selected node's id, or "".
     export GraphSelected :: (editorInstance: Editor*) -> string! {
         guard open := editorInstance->graphEditor return "".copy();

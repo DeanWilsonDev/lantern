@@ -1,0 +1,147 @@
+// Which node kinds the add-node menu offers first. With no pin it offers every kind in the order people reach for them. From a pin
+// it puts the kinds that can take that pin on top, then a `-` line, then the rest.
+lantern:::graphs :: namespace {
+    // Every kind the menu can add, in the order it offers them when nothing is dragged.
+    MenuKinds :: () -> Array<string>! {
+        list~ Array<string>! = [];
+        list.push("call");
+        list.push("set");
+        list.push("branch");
+        list.push("while");
+        list.push("when");
+        list.push("return");
+        list.push("nyx");
+        list.push("nyx_value");
+        list.push("add");
+        list.push("sub");
+        list.push("mul");
+        list.push("div");
+        list.push("less");
+        list.push("greater");
+        list.push("equal");
+        list.push("and");
+        list.push("or");
+        list.push("not");
+        return list!;
+    }
+
+    IsComparisonKind :: (kind: string) -> bool {
+        return kind == "less" || kind == "greater" || kind == "equal" || kind == "and" || kind == "or" || kind == "not";
+    }
+
+    LikelyAfterExecution :: () -> Array<string>! {
+        list~ Array<string>! = [];
+        list.push("call");
+        list.push("set");
+        list.push("branch");
+        list.push("while");
+        list.push("when");
+        list.push("return");
+        list.push("nyx");
+        return list!;
+    }
+
+    LikelyAfterComparison :: () -> Array<string>! {
+        list~ Array<string>! = [];
+        list.push("branch");
+        list.push("while");
+        list.push("not");
+        list.push("and");
+        list.push("or");
+        list.push("set");
+        list.push("return");
+        return list!;
+    }
+
+    LikelyAfterValue :: () -> Array<string>! {
+        list~ Array<string>! = [];
+        list.push("add");
+        list.push("sub");
+        list.push("mul");
+        list.push("div");
+        list.push("less");
+        list.push("greater");
+        list.push("equal");
+        list.push("set");
+        list.push("return");
+        list.push("call");
+        return list!;
+    }
+
+    // The kinds to offer, one per line, most likely first. `sourceNode` is the node a pin was dragged from, or empty.
+    SuggestedKinds :: (function: GraphFunction*, sourceNode: string, sourceIsExecution: bool) -> string! {
+        all: Array<string>! = MenuKinds();
+        defer delete all;
+        if sourceNode.length() == 0 {
+            text~ string! = "".copy();
+            for kind in all {
+                text += kind;
+                text += "\n";
+            }
+            return text!;
+        }
+        likely~ Array<string>! = LikelyAfterValue();
+        defer delete likely;
+        if sourceIsExecution {
+            delete likely;
+            likely = LikelyAfterExecution();
+        } else if sourcePosition := function->IndexOfNode(sourceNode) {
+            if IsComparisonKind(function->nodes[sourcePosition]->kind) {
+                delete likely;
+                likely = LikelyAfterComparison();
+            }
+        }
+        result~ string! = "".copy();
+        for kind in likely {
+            result += kind;
+            result += "\n";
+        }
+        result += "-\n";
+        for kind in all {
+            alreadyListed~ bool = false;
+            for chosen in likely {
+                if chosen == kind {
+                    alreadyListed = true;
+                }
+            }
+            if !alreadyListed {
+                result += kind;
+                result += "\n";
+            }
+        }
+        return result!;
+    }
+
+    // Wires a node just added from the menu to the pin the menu was opened from. Returns false when nothing was wired.
+    WireFromMenu :: (function: GraphFunction~*, newNode: string, sourceNode: string, sourcePort: string, sourceIsExecution: bool) -> bool {
+        if sourceNode.length() == 0 || newNode.length() == 0 {
+            return false;
+        }
+        if sourceIsExecution {
+            problem: string!? = SetPort(function, sourceNode, sourcePort, newNode);
+            wired: bool = problem == null;
+            delete problem;
+            return wired;
+        }
+        newPosition: usize? = function->IndexOfNode(newNode);
+        if newPosition == null {
+            return false;
+        }
+        pins := PinsOf(function, function->nodes[newPosition ?? 0]);
+        target~ string = "";
+        for pin in pins->items {
+            if target.length() == 0 && !pin->isOutput && !pin->isExecution {
+                target = pin->port;
+            }
+        }
+        if target.length() == 0 {
+            delete pins;
+            return false;
+        }
+        problem: string!? = SetPort(function, newNode, target, sourceNode);
+        wired: bool = problem == null;
+        delete problem;
+        delete pins;
+        return wired;
+    }
+}
