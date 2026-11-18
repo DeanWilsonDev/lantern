@@ -1,0 +1,106 @@
+lantern :: import lantern;
+
+COPY_ROOT: string : "/tmp/lantern-silhouette-editing-test";
+
+CopyFile :: (from: string, to: string) -> bool {
+    when readTextFile(from) {
+        Result:::Err(error) -> {
+            delete error;
+            return false;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when writeTextFile(to, text) {
+                Result:::Err(error) -> {
+                    delete error;
+                    return false;
+                },
+                Result:::Ok(written) -> {
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+Succeeded :: (problem: string!?) -> bool {
+    worked: bool = problem == null;
+    delete problem;
+    return worked;
+}
+
+TemplateOf :: (assetsDirectory: string) -> lantern:::editor:::Palette*! {
+    palette := new lantern:::editor:::Palette();
+    lantern:::editorbackend:::AddSilhouetteTemplates(palette, assetsDirectory);
+    return palette!;
+}
+
+main :: () -> i32 {
+    assets: string = "/tmp/lantern-silhouette-editing-test/assets";
+    folder: string = "/tmp/lantern-silhouette-editing-test/assets/silhouettes/lamp_post";
+    Succeeded(lantern:::editorbackend:::RemoveTree(COPY_ROOT));
+    createDirectories(folder);
+    assert(CopyFile("../assets/silhouettes/lamp_post/root.calamus", "/tmp/lantern-silhouette-editing-test/assets/silhouettes/lamp_post/root.calamus"), "the root is copied");
+    assert(CopyFile("../assets/silhouettes/lamp_post/light.calamus", "/tmp/lantern-silhouette-editing-test/assets/silhouettes/lamp_post/light.calamus"), "the light is copied");
+
+    palette := TemplateOf(assets);
+    defer delete palette;
+    guard post := palette->Template("lamp_post") return 1;
+    assert(post->componentPaths.length() == 2, "each component has a path");
+    assert(post->componentPaths[0] == "", "the root's path is empty");
+    assert(post->componentPaths[1] == "light", "the light's path is its name");
+
+    added: bool = Succeeded(lantern:::editorbackend:::AddSilhouetteChild(assets, "lamp_post", "", "block"));
+    assert(added, "a block is added under the root");
+    addedAgain: bool = Succeeded(lantern:::editorbackend:::AddSilhouetteChild(assets, "lamp_post", "light", "point_light"));
+    assert(addedAgain, "a light is added under the light");
+    addedThird: bool = Succeeded(lantern:::editorbackend:::AddSilhouetteChild(assets, "lamp_post", "", "block"));
+    assert(addedThird, "a second block is added");
+    refreshed: bool = Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "lamp_post"));
+    assert(refreshed, "the template is read again");
+    guard grown := palette->Template("lamp_post") return 2;
+    assert(grown->componentPaths.length() == 5, "the post now has five components");
+    foundSecondBlock~ bool = false;
+    foundNested~ bool = false;
+    for componentPath in grown->componentPaths {
+        if componentPath == "block2" {
+            foundSecondBlock = true;
+        }
+        if componentPath == "light.point_light" {
+            foundNested = true;
+        }
+    }
+    assert(foundSecondBlock, "the second block got a free name");
+    assert(foundNested, "the nested light lives under its parent");
+
+    renamed: bool = Succeeded(lantern:::editorbackend:::RenameSilhouetteComponent(assets, "lamp_post", "light", "Warm glow"));
+    assert(renamed, "the light is renamed");
+    badName: bool = !Succeeded(lantern:::editorbackend:::RenameSilhouetteComponent(assets, "lamp_post", "light", ""));
+    assert(badName, "an empty name is refused");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "lamp_post")), "the template is read again");
+    guard renamedPost := palette->Template("lamp_post") return 3;
+    foundGlow~ bool = false;
+    for descendant in renamedPost->descendants {
+        if descendant->name == "Warm glow" {
+            foundGlow = true;
+        }
+    }
+    assert(foundGlow, "the new name shows in the template");
+
+    refusedRoot: bool = !Succeeded(lantern:::editorbackend:::DeleteSilhouetteComponent(assets, "lamp_post", ""));
+    assert(refusedRoot, "the root can't be deleted");
+    deleted: bool = Succeeded(lantern:::editorbackend:::DeleteSilhouetteComponent(assets, "lamp_post", "light"));
+    assert(deleted, "the light is deleted with the light under it");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "lamp_post")), "the template is read again");
+    guard shrunk := palette->Template("lamp_post") return 4;
+    assert(shrunk->componentPaths.length() == 3, "the post keeps its root and two blocks");
+    assert(!directoryExists("/tmp/lantern-silhouette-editing-test/assets/silhouettes/lamp_post/light"), "the light's folder is gone");
+
+    wideMissing: bool = !Succeeded(lantern:::editorbackend:::DeleteSilhouetteComponent(assets, "lamp_post", "nothing"));
+    assert(wideMissing, "a component with no file can't be deleted");
+
+    cleaned: bool = Succeeded(lantern:::editorbackend:::RemoveTree(COPY_ROOT));
+    assert(cleaned, "the scratch folder is removed");
+    print("a silhouette gains renames and loses children");
+    return 0;
+}

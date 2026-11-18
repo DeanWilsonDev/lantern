@@ -536,6 +536,89 @@ lantern:::editorapi :: namespace {
         return lines->lines[usize(line)].copy();
     }
 
+    // Edits to a Silhouette's files from its tab. `index` names the component the edit applies to (the parent for an
+    // add), and each returns an error message, empty when it worked. The Silhouette's palette template is then
+    // read again, so the tab shows the files as they are now.
+    ProblemText :: (problem: string!?) -> string! {
+        message~ string! = "".copy();
+        if text := problem {
+            delete message;
+            message = text.copy();
+        }
+        delete problem;
+        return message!;
+    }
+
+    SilhouetteEdit :: (editorInstance: Editor~*, templateId: string, problemText: string) -> string! {
+        if problemText.length() > 0 {
+            return problemText.copy();
+        }
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        defer delete assetsDirectory;
+        refreshed: string!? = lantern:::editorbackend:::RefreshSilhouetteTemplate(editorInstance->Session()->palette, assetsDirectory, templateId);
+        editorInstance->Session()->paletteRevision += 1;
+        return ProblemText(refreshed!);
+    }
+
+    SilhouetteHasComponent :: (editorInstance: Editor*, templateId: string, index: u32) -> bool {
+        guard template := editorInstance->backend->session->palette->Template(templateId) return false;
+        return usize(index) < template->componentPaths.length();
+    }
+
+    // The dotted path of a component, empty for the root or an index past the end.
+    SilhouetteComponentPath :: (editorInstance: Editor*, templateId: string, index: u32) -> string! {
+        guard template := editorInstance->backend->session->palette->Template(templateId) return "".copy();
+        if usize(index) >= template->componentPaths.length() {
+            return "".copy();
+        }
+        return template->componentPaths[usize(index)].copy();
+    }
+
+    export SilhouetteAddChild :: (editorInstance: Editor~*, templateId: string, parentIndex: u32, kind: string) -> string! {
+        if !SilhouetteHasComponent(editorInstance, templateId, parentIndex) {
+            return "No such component.".copy();
+        }
+        parentPath: string! = SilhouetteComponentPath(editorInstance, templateId, parentIndex);
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        problem: string!? = lantern:::editorbackend:::AddSilhouetteChild(assetsDirectory, templateId, parentPath, kind);
+        delete parentPath;
+        delete assetsDirectory;
+        problemText: string! = ProblemText(problem!);
+        result: string! = SilhouetteEdit(editorInstance, templateId, problemText);
+        delete problemText;
+        return result!;
+    }
+
+    export SilhouetteRenameComponent :: (editorInstance: Editor~*, templateId: string, index: u32, newName: string) -> string! {
+        if !SilhouetteHasComponent(editorInstance, templateId, index) {
+            return "No such component.".copy();
+        }
+        componentPath: string! = SilhouetteComponentPath(editorInstance, templateId, index);
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        problem: string!? = lantern:::editorbackend:::RenameSilhouetteComponent(assetsDirectory, templateId, componentPath, newName);
+        delete componentPath;
+        delete assetsDirectory;
+        problemText: string! = ProblemText(problem!);
+        result: string! = SilhouetteEdit(editorInstance, templateId, problemText);
+        delete problemText;
+        return result!;
+    }
+
+    export SilhouetteDeleteComponent :: (editorInstance: Editor~*, templateId: string, index: u32) -> string! {
+        if !SilhouetteHasComponent(editorInstance, templateId, index) {
+            return "No such component.".copy();
+        }
+        componentPath: string! = SilhouetteComponentPath(editorInstance, templateId, index);
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        problem: string!? = lantern:::editorbackend:::DeleteSilhouetteComponent(assetsDirectory, templateId, componentPath);
+        delete componentPath;
+        delete assetsDirectory;
+        problemText: string! = ProblemText(problem!);
+        result: string! = SilhouetteEdit(editorInstance, templateId, problemText);
+        delete problemText;
+        return result!;
+    }
+
     // Places a new entity from a template at the centre of the view and returns its key, or 0.
     export AddEntity :: (editorInstance: Editor~*, templateId: string) -> i64 {
         editorInstance->ClearApiStatus();
