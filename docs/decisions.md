@@ -1797,3 +1797,7 @@ The Graph page's `OnTick` never ran when the page was mounted inside the workspa
 ## D-202: A placed Silhouette root remembers its Silhouette, and one command rebuilds every placed instance
 
 The editor still places Silhouettes as copies (D-188). The root's prototype now carries a text property `silhouette` with the Silhouette's name, which the game ignores like any free property. `Session.RefreshSilhouetteInstances` finds every root whose property names a Silhouette in the palette and, as one undo step, replaces the root (keeping id, name, parent and transform), removes its descendants and inserts the Silhouette's descendants with fresh ids, reusing the old descendants' names in order. The Silhouette tab's **Refresh placed instances** button runs it for all of them; a per-Silhouette or per-selection refresh and keeping instance-level overrides are later work. Rejected: refreshing on every Silhouette edit (it would silently discard changes made on instances). Provisional: not reviewed by Dean.
+
+## D-203: `mist run test` also builds the world editor
+
+`nox test` compiles only what each test names, so `engine/editor-backend` and the editor app had no compile check: a syntax error in `EditorApi.nox` (D-202) was merged and only failed when the editor started. `engine/tools/run-tests.sh` now ends by building `apps/world-editor/nox` when it runs the whole suite, so the same command catches it. A single suite named on the command line skips the build. Provisional: not reviewed by Dean.
