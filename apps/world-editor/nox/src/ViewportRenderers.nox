@@ -107,6 +107,63 @@ lantern:::worldeditor:::viewports :: namespace {
         editorInstance~ raw Editor~* = null;
     }
 
+    // The graph tab's canvas. The editor draws the open graph into its own pixels; this passes the size in, copies the
+    // pixels out and forwards the pointer, wheel and key events to the graph.
+    GraphRenderer :: class {
+        implements:
+            ViewportRenderer;
+    public:
+        GraphRenderer~: (editorInstance: raw Editor~*) : editorInstance(editorInstance) {
+        }
+
+        Render~: (widthPhysical: u32, heightPhysical: u32, frame: ViewportFrame~*) -> bool {
+            unsafe {
+                editorInstance: Editor~* = this->editorInstance;
+                guard Api:::GraphRender(editorInstance, widthPhysical, heightPhysical) == true return false;
+                SizeFrame(frame, Api:::GraphPixelWidth(editorInstance), Api:::GraphPixelHeight(editorInstance));
+                return Api:::GraphCopyPixels(editorInstance, frame->rgbaPixels);
+            }
+        }
+
+        PointerMoved~: (xPhysical: f32, yPhysical: f32) -> void {
+            unsafe {
+                editorInstance: Editor~* = this->editorInstance;
+                Api:::GraphPointerMove(editorInstance, xPhysical, yPhysical);
+            }
+        }
+
+        PointerButton~: (button: usize, down: bool, modifiers: Modifiers) -> void {
+            unsafe {
+                editorInstance: Editor~* = this->editorInstance;
+                Api:::GraphPointerButton(editorInstance, u32(button), down);
+            }
+        }
+
+        Wheel~: (notches: f32, notchesX: f32) -> void {
+            unsafe {
+                editorInstance: Editor~* = this->editorInstance;
+                Api:::GraphWheel(editorInstance, notches);
+            }
+        }
+
+        Key~: (keyName: string, down: bool, modifiers: Modifiers) -> bool {
+            guard down == true return false;
+            unsafe {
+                editorInstance: Editor~* = this->editorInstance;
+                return Api:::GraphKey(editorInstance, keyName);
+            }
+        }
+
+        HoverChanged~: (pointerIsOver: bool) -> void {
+        }
+
+        Tick~: (deltaSeconds: f32) -> void {
+        }
+
+    private:
+        editorInstance~ raw Editor~* = null;
+    }
+
     // The turning picture of the template chosen in the palette. It ignores all input, and each tick
     // advances the angle, wrapping at a full turn.
     PreviewRenderer :: class {

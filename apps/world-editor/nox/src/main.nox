@@ -38,6 +38,8 @@ Paths :: import lantern:::worldeditor:::paths;
 FileDialog :: import lantern:::worldeditor:::filedialogs:::FileDialog;
 LevelRenderer :: import lantern:::worldeditor:::viewports:::LevelRenderer;
 PreviewRenderer :: import lantern:::worldeditor:::viewports:::PreviewRenderer;
+GraphRenderer :: import lantern:::worldeditor:::viewports:::GraphRenderer;
+GraphFunctions :: import lantern:::worldeditor:::graphfunctions;
 ThumbnailRenderer :: import lantern:::worldeditor:::viewports:::ThumbnailRenderer;
 
 // The C library's setenv, to set an environment variable before the renderer starts.
@@ -79,11 +81,13 @@ lantern:::worldeditor :: namespace {
     public:
         level~ LevelRenderer*!;
         preview~ PreviewRenderer*!;
+        graph~ GraphRenderer*!;
         thumbnails~ Array<ThumbnailRenderer*!>! = [];
 
         EditorRenderers~: (editorInstance: raw Editor~*) {
             this->level = new LevelRenderer(editorInstance);
             this->preview = new PreviewRenderer(editorInstance);
+            this->graph = new GraphRenderer(editorInstance);
             unsafe {
                 borrowed: Editor~* = editorInstance;
                 templateCount: u32 = Api:::TemplateCount(borrowed);
@@ -97,6 +101,7 @@ lantern:::worldeditor :: namespace {
 
         !EditorRenderers~: () {
             this->thumbnails.freeAll();
+            delete this->graph;
             delete this->preview;
             delete this->level;
         }
@@ -108,6 +113,8 @@ lantern:::worldeditor :: namespace {
                 host->RegisterViewportRenderer("level", levelPointer);
                 previewPointer: raw ViewportRenderer~* = this->preview;
                 host->RegisterViewportRenderer("preview", previewPointer);
+                graphPointer: raw ViewportRenderer~* = this->graph;
+                host->RegisterViewportRenderer("graph", graphPointer);
             }
             for index~ usize = 0; index < this->thumbnails.length(); index++ {
                 name: string! = `thumbnail:${this->thumbnails[index]->templateId}`;
@@ -150,6 +157,7 @@ lantern:::worldeditor :: namespace {
             previewPointer: raw PreviewRenderer~* = renderers->preview;
             failure = HostFunctions:::FirstFailure(failure!, RegisterPreviewFunctions(runtime, previewPointer));
         }
+        failure = HostFunctions:::FirstFailure(failure!, GraphFunctions:::RegisterGraphFunctions(runtime, editorInstance));
         failure = HostFunctions:::FirstFailure(failure!, FrameTimeFunctions:::RegisterFrameTimeFunctions(runtime, frameTimes));
         if failure != null {
             print("registering the editor's host functions failed:");
