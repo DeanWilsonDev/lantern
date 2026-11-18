@@ -6,6 +6,12 @@ lantern:::graphs :: namespace {
     HEADER_HEIGHT: i32 : 18;
     ROW_HEIGHT: i32 : 16;
     PIN_HIT_RADIUS: i32 : 7;
+    REROUTE_WIDTH: i32 : 44;
+
+    // A reroute is a small knot on a wire, so it is drawn narrow and with no rows.
+    NodeWidth :: (kind: string) -> i32 {
+        return kind == "reroute" ? REROUTE_WIDTH : NODE_WIDTH;
+    }
 
     // One pin of a node. `port` is what SetPort takes (`next`, `a`, `arg0`) and `in` or `out` for the header's two pins.
     PinSlot :: class {
@@ -15,6 +21,7 @@ lantern:::graphs :: namespace {
         isExecution~ bool;
         isOutput~ bool;
         row~ i32;
+        width~ i32 = NODE_WIDTH;
 
         PinSlot~: (newPort: string, newLabel: string, newIsExecution: bool, newIsOutput: bool, newRow: i32) {
             port = `${newPort}`;
@@ -32,7 +39,7 @@ lantern:::graphs :: namespace {
         // The pin's centre, relative to the node's top left.
         OffsetX :: () -> i32 {
             if isOutput {
-                return NODE_WIDTH;
+                return width;
             }
             return 0;
         }
@@ -49,6 +56,8 @@ lantern:::graphs :: namespace {
     public:
         items~ Array<PinSlot*!>! = [];
         rowCount~ i32 = 0;
+        width~ i32 = NODE_WIDTH;
+        isCompact~ bool = false;
 
         PinList~: () { }
 
@@ -57,7 +66,9 @@ lantern:::graphs :: namespace {
         }
 
         Add~: (port: string, label: string, isExecution: bool, isOutput: bool, row: i32) -> void {
-            items.push(new PinSlot(port, label, isExecution, isOutput, row));
+            slot~ PinSlot*! = new PinSlot(port, label, isExecution, isOutput, row);
+            slot->width = width;
+            items.push(slot!);
             if row > rowCount {
                 rowCount = row;
             }
@@ -69,7 +80,7 @@ lantern:::graphs :: namespace {
     }
 
     GivesValue :: (kind: string) -> bool {
-        return kind == "call" || kind == "nyx_value" || kind == "get" || kind == "not" || OperatorFor(kind).length() > 0;
+        return kind == "call" || kind == "nyx_value" || kind == "get" || kind == "not" || kind == "reroute" || OperatorFor(kind).length() > 0;
     }
 
     // The text beside a value pin: its port, and what feeds it when that isn't a wire.
@@ -90,6 +101,13 @@ lantern:::graphs :: namespace {
     PinsOf :: (function: GraphFunction*, node: GraphNode*) -> PinList*! {
         pins := new PinList();
         kind: string = node->kind;
+        pins->width = NodeWidth(kind);
+        if kind == "reroute" {
+            pins->isCompact = true;
+            pins->Add("a", "", false, false, 0);
+            pins->Add("out", "", false, true, 0);
+            return pins!;
+        }
         if IsExecutionKind(kind) && kind != "entry" {
             pins->Add("in", "", true, false, 0);
         }
@@ -157,7 +175,7 @@ lantern:::graphs :: namespace {
             pins->Add("next", "next", true, true, 1);
         } else if kind == "nyx" {
             pins->Add("next", "next", true, true, 1);
-        } else if kind == "not" {
+        } else if kind == "not" || kind == "reroute" {
             label: string! = ValueLabel(function, "a", node->a);
             pins->Add("a", label, false, false, 1);
             delete label;
@@ -175,6 +193,9 @@ lantern:::graphs :: namespace {
     // How tall a node is drawn.
     NodeHeight :: (pins: PinList*) -> i32 {
         rows~ i32 = pins->rowCount;
+        if pins->isCompact {
+            return HEADER_HEIGHT;
+        }
         if rows < 1 {
             rows = 1;
         }

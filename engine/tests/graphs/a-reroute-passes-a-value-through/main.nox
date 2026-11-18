@@ -1,0 +1,38 @@
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"lift_pad\", \"functions\": [{\"name\": \"Lift\", \"returns\": \"bool\", \"inputs\": [{\"name\": \"height\", \"type\": \"f32\"}], \"nodes\": [{\"id\": \"entry\", \"kind\": \"entry\", \"next\": \"return\", \"x\": 20, \"y\": 20}, {\"id\": \"bend\", \"kind\": \"reroute\", \"a\": \"height\", \"x\": 20, \"y\": 140}, {\"id\": \"less\", \"kind\": \"less\", \"a\": \"bend\", \"b\": {\"f32\": 1.0}, \"x\": 200, \"y\": 140}, {\"id\": \"return\", \"kind\": \"return\", \"value\": \"less\", \"x\": 480, \"y\": 20}]}]}";
+
+main :: () -> i32 {
+    when lantern:::graphs:::LoadGraph(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        },
+        Result:::Ok(loaded) -> {
+            graph: lantern:::graphs:::Graph*! = loaded!;
+            function: lantern:::graphs:::GraphFunction* = graph->functions[0];
+            carried: string! = lantern:::graphs:::ValueTypeOf(function, "bend", 0);
+            assert(carried == "f32", "a reroute carries the type of what feeds it");
+            delete carried;
+            pins := lantern:::graphs:::PinsOf(function, function->nodes[1]);
+            assert(pins->items.length() == 2, "a reroute has one pin in and one out");
+            delete pins;
+            when lantern:::graphs:::GenerateNyx(graph) {
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 2;
+                },
+                Result:::Ok(source) -> {
+                    assert(source.contains("height < 1.0f"), "the generated code reads straight through the reroute");
+                    assert(!source.contains("bend"), "a reroute leaves no trace in the generated code");
+                    delete source;
+                }
+            }
+            delete graph;
+        }
+    }
+    print("a reroute passes a value through");
+    return 0;
+}
