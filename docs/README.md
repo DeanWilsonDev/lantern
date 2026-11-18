@@ -67,18 +67,14 @@ finding what to turn down when a frame is slow. Each effect has its own guide.
 | [`decisions.md`](decisions.md) | Every decision made along the way with reasons and how to undo it (D-001 to D-073, in order). |
 | [`known-gaps.md`](known-gaps.md) | What hasn't been checked, what isn't built and what is half-way. |
 | [`future-work.md`](future-work.md) | Ideas out of scope for the prototype, and the experiments to try next. |
-| [`dependencies.md`](dependencies.md) | Each third-party library and why, for the Nox engine and for the Rust reference. |
+| [`dependencies.md`](dependencies.md) | Each third-party library and why, and the toolchain. |
 | [`kanban/`](kanban/) | The board that tracks the work, in the format the `cairn` tool reads (`cairn --root docs/kanban tree`). |
 
-## The Rust reference engine
-
-Lantern began as a Rust engine (`crates/`) and was rewritten in Nox. These documents describe the original and are kept
-as history and for comparison.
+## History
 
 | Document | What it tells you |
 | --- | --- |
 | [`brief.md`](brief.md) | The original brief: what the prototype was for and its milestones. |
-| [`architecture.md`](architecture.md) | A tour of the Rust engine's crates, the per-frame sequence, ownership and shutdown. |
 | [`renderer_illustrated.md`](renderer_illustrated.md), `renderer_illustrated.pdf` | An illustrated, printable edition of the renderer walkthrough, from before the post-processing effects. |
 
 ## Screenshots

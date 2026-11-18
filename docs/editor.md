@@ -45,8 +45,7 @@ apps/world-editor                                     engine/ (Nox)
   (`engine/editor-backend/include/lantern_editor.h`). It is written in Nox
   (`engine/src/editorbackend/` and `engine/editor-backend/`, `docs/decisions.md` D-051) and built
   as a static library linked against the system SDL3. The editor's Nox host imports its
-  `lantern:::editorapi` namespace directly. The Rust backend (`crates/editor-backend`, the reference the Nox one was ported from) implements
-  the same header and is still there to compare with: link a C program against either library.
+  `lantern:::editorapi` namespace directly.
 - **`apps/world-editor`** is the front end. `nox/` is its host, a Nox program on Nox Penumbra:
   `main.nox` opens an SDL3 window, mounts the UI through penumbra-bridge's `BridgeHost`, registers
   the viewport renderers and runs the frame loop, and `EditorFunctions.nox` registers one Nyx host

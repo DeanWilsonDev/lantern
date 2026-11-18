@@ -9,8 +9,6 @@ explains itself.
   and the game meet in one place, the host API in `engine/src/host/` (`docs/game-api.md`).
 - **The game's menus and HUD are Chaos components** styled by Cosmos (`games/platformer/ui/`), and so is the world
   editor (`apps/world-editor/`), which runs on Penumbra, a UI engine written in Nox.
-- **`crates/` is the Rust engine** the Nox engine was ported from. It stays as a reference to compare against and isn't
-  part of the build below.
 
 Start with [`docs/README.md`](docs/README.md): it links every document and says which to read first.
 
@@ -39,7 +37,6 @@ games/platformer/    the demo game, all Nyx: entities, systems, rules, settings 
 apps/world-editor/   the world editor: Chaos UI in src/ui and its Nox host in nox/
 games/platformer/assets/   the game project's textures, models, sounds, music, Silhouettes, worlds and editor palette
 docs/                the guides, the decision log and the kanban board that tracks the work
-crates/              the Rust engine the Nox engine was ported from (reference only)
 ```
 
 `docs/engine-structure.md` explains the engine's folders and why they're split that way.

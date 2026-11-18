@@ -1,7 +1,7 @@
 # Lantern's engine in Nox
 
-This directory is the Nox rewrite of Lantern's Rust engine (`crates/`), on the `nox-proto` branch. The platformer in
-`games/platformer/` is meant to run on it unchanged. The Rust engine stays on `proto` as the reference, and the work is
+This directory is Lantern's engine, written in Nox on the `nox-proto` branch. It was ported from an earlier Rust engine,
+which now lives only in the `proto` branch's history. The platformer in `games/platformer/` runs on it unchanged, and the work is
 tracked on the board's `engine-on-nox` epic (`docs/kanban/engine-on-nox`), one feature per milestone.
 
 So far it has the scaffold (milestone L0): a Nox project, its C dependencies through Mist, the SDL3 and Nyx bindings,
@@ -204,15 +204,14 @@ renderer one frame at a time, and `../docs/application-and-game-loop.md` the sta
   walks it from the menu for 240 frames, and compares every frame's player, camera and game debug values and draw
   count with `rust-autopilot.trace` and `rust-walking.trace`. They match exactly at the precision the game prints
   them (two decimals for positions and speed). The camera stays still in both runs, so its values only show it starts
-  the same. The Rust test `the_platformer_writes_its_traces` writes those files when `LANTERN_TRACE_DIRECTORY` is set,
-  and the Nox test writes `nox-*.trace` there too.
-- `benchmarks/headless-platformer/` times the same autopilot run against the Rust build; `benchmarks/results.md` records
-  the numbers and how to run both.
+  the same. With `LANTERN_TRACE_DIRECTORY` set, the Nox test writes `nox-*.trace` there too. The `rust-*.trace` files are frozen records of what the Rust engine
+  printed; nothing can regenerate them now, and they stay as the reference the port is held to.
+- `benchmarks/headless-platformer/` times the autopilot run; `benchmarks/results.md` records the numbers, including
+  the ones taken against the Rust build before it was removed.
 - `tests/world/the-course-matches-the-rust-trace-at-every-display-rate/` runs the jump course the way the Rust
   `course_traversal` test does and compares every fixed step's position, velocity and grounded flag with the Rust run's
-  `rust-<hz>hz.trace`, which match bit for bit. Set `LANTERN_TRACE_DIRECTORY` to write the Nox traces there too, and
-  regenerate the Rust ones with `LANTERN_TRACE_DIRECTORY=$PWD/engine/tests/world/the-course-matches-the-rust-trace-at-every-display-rate cargo test -p lantern-game-host --test course_traversal`
-  from the repository root.
+  `rust-<hz>hz.trace`, which match bit for bit. Set `LANTERN_TRACE_DIRECTORY` to write the Nox traces there too. The
+  `rust-<hz>hz.trace` files are frozen, as above.
 
 ## Testing
 
@@ -238,7 +237,7 @@ needs for minimising), as in a cloud session; on a desktop it uses the display y
 ## Shaders
 
 `shaders/` holds the three shaders as GLSL 4.50: `lit` (lit, textured meshes), `lines` (debug lines) and `overlay`
-(the HUD and menus). They're the Rust engine's WGSL shaders (`../shaders/*.wgsl`) rewritten line for line.
+(the HUD and menus). They're the Rust engine's old WGSL shaders rewritten line for line.
 `mist run build-shaders` (`tools/build-shaders.sh`) compiles each stage to SPIR-V with `glslangValidator` and translates the SPIR-V to Metal
 Shading Language with `spirv-cross`, into `shaders/compiled/`. The compiled files are committed, so building the
 engine needs neither tool; run the script again after changing a shader.
