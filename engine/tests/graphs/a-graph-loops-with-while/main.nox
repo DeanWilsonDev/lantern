@@ -1,0 +1,44 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"adder\", \"functions\": [{\"name\": \"UpTo\", \"inputs\": [{\"name\": \"count\", \"type\": \"i32\"}], \"returns\": \"i32\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\", \"next\": \"mk\"}, {\"id\": \"mk\", \"kind\": \"set\", \"name\": \"total\", \"type\": \"i32\", \"value\": {\"i32\": 0}, \"next\": \"mk2\"}, {\"id\": \"mk2\", \"kind\": \"set\", \"name\": \"step\", \"type\": \"i32\", \"value\": {\"i32\": 1}, \"next\": \"loop\"}, {\"id\": \"loop\", \"kind\": \"while\", \"condition\": \"within\", \"then\": \"grow\", \"next\": \"done\"}, {\"id\": \"within\", \"kind\": \"not\", \"a\": \"past\"}, {\"id\": \"past\", \"kind\": \"less\", \"a\": \"count\", \"b\": \"step\"}, {\"id\": \"grow\", \"kind\": \"set\", \"name\": \"total\", \"value\": \"plus\", \"next\": \"advance\"}, {\"id\": \"plus\", \"kind\": \"add\", \"a\": \"total\", \"b\": \"step\"}, {\"id\": \"advance\", \"kind\": \"set\", \"name\": \"step\", \"value\": \"nextStep\"}, {\"id\": \"nextStep\", \"kind\": \"add\", \"a\": \"step\", \"b\": {\"i32\": 1}}, {\"id\": \"done\", \"kind\": \"return\", \"value\": \"total\"}]}]}";
+
+CallNoArguments :: (program: lantern:::nyx:::Program*, name: string) -> lantern:::nyx:::Value*! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    return value!;
+}
+
+main :: () -> i32 {
+    generated~ string! = "".copy();
+    when lantern:::graphs:::GenerateNyxFromText(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph generates");
+            delete message;
+        },
+        Result:::Ok(source) -> {
+            delete generated;
+            generated = source!;
+        }
+    }
+    assert(generated.contains("while !(count < step) {"), "a while node reads its condition");
+    runtime := new lantern:::nyx:::Runtime();
+    script~ string! = `${generated}`;
+    script += "\nTen :: () -> i32 { return Adder:::UpTo(10); }\n";
+    script += "None :: () -> i32 { return Adder:::UpTo(0); }\n";
+    program := lantern:::testing:::Mount(runtime, script);
+    ten := CallNoArguments(program, "Ten");
+    assert(lantern:::testing:::I32OrFail(ten->I32()) == 55, "the loop adds one to ten");
+    delete ten;
+    none := CallNoArguments(program, "None");
+    assert(lantern:::testing:::I32OrFail(none->I32()) == 0, "a loop that never starts adds nothing");
+    delete none;
+    delete script;
+    delete generated;
+    delete program;
+    delete runtime;
+    print("a graph loops with while");
+    return 0;
+}
