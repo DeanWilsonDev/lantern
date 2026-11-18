@@ -28,13 +28,13 @@ lantern:::graphs :: namespace {
         }
     }
 
-    HitAt :: (editor: GraphEditor*, screenX: i32, screenY: i32) -> Hit*! {
+    HitAt :: (graphEditor: GraphEditor*, screenX: i32, screenY: i32) -> Hit*! {
         hit := new Hit();
-        if editor->graph->functions.length() == 0 {
+        if graphEditor->graph->functions.length() == 0 {
             return hit!;
         }
-        function: GraphFunction* = editor->Function();
-        radius: i32 = PIN_HIT_RADIUS * editor->zoom;
+        function: GraphFunction* = graphEditor->Function();
+        radius: i32 = PIN_HIT_RADIUS * graphEditor->zoom;
         index~ usize = function->nodes.length();
         while index > 0 && hit->kind == HIT_NOTHING {
             index -= 1;
@@ -42,8 +42,8 @@ lantern:::graphs :: namespace {
             pins := PinsOf(function, node);
             for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
                 pin: PinSlot* = pins->items[pinIndex];
-                deltaX: i32 = screenX - PinScreenX(editor, node, pin);
-                deltaY: i32 = screenY - PinScreenY(editor, node, pin);
+                deltaX: i32 = screenX - PinScreenX(graphEditor, node, pin);
+                deltaY: i32 = screenY - PinScreenY(graphEditor, node, pin);
                 if deltaX >= -radius && deltaX <= radius && deltaY >= -radius && deltaY <= radius && hit->kind == HIT_NOTHING {
                     hit->kind = HIT_PIN;
                     delete hit->nodeId;
@@ -55,9 +55,9 @@ lantern:::graphs :: namespace {
                 }
             }
             if hit->kind == HIT_NOTHING {
-                left: i32 = editor->ScreenX(i32(node->x));
-                top: i32 = editor->ScreenY(i32(node->y));
-                if screenX >= left && screenX < left + NODE_WIDTH * editor->zoom && screenY >= top && screenY < top + NodeHeight(pins) * editor->zoom {
+                left: i32 = graphEditor->ScreenX(i32(node->x));
+                top: i32 = graphEditor->ScreenY(i32(node->y));
+                if screenX >= left && screenX < left + NODE_WIDTH * graphEditor->zoom && screenY >= top && screenY < top + NodeHeight(pins) * graphEditor->zoom {
                     hit->kind = HIT_NODE;
                     delete hit->nodeId;
                     hit->nodeId = `${node->id}`;
@@ -78,56 +78,56 @@ lantern:::graphs :: namespace {
     }
 
     // Joins the wire being dragged to what it was let go over.
-    FinishWire :: (editor: GraphEditor~*, target: Hit*) -> void {
-        if editor->graph->functions.length() == 0 {
+    FinishWire :: (graphEditor: GraphEditor~*, target: Hit*) -> void {
+        if graphEditor->graph->functions.length() == 0 {
             return;
         }
-        function: GraphFunction~* = editor->graph->functions[editor->functionIndex];
+        function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
         problem~ string!? = null;
         madeWire~ bool = false;
-        if target->kind == HIT_PIN && target->nodeId != editor->wireNode {
-            if editor->wireIsExecution && !target->isOutput && target->isExecution {
-                problem = SetPort(function, editor->wireNode, editor->wirePort, target->nodeId);
+        if target->kind == HIT_PIN && target->nodeId != graphEditor->wireNode {
+            if graphEditor->wireIsExecution && !target->isOutput && target->isExecution {
+                problem = SetPort(function, graphEditor->wireNode, graphEditor->wirePort, target->nodeId);
                 madeWire = true;
-            } else if !editor->wireIsExecution && !target->isOutput && !target->isExecution {
-                problem = SetPort(function, target->nodeId, target->port, editor->wireNode);
+            } else if !graphEditor->wireIsExecution && !target->isOutput && !target->isExecution {
+                problem = SetPort(function, target->nodeId, target->port, graphEditor->wireNode);
                 madeWire = true;
             }
-        } else if target->kind == HIT_NODE && target->nodeId != editor->wireNode && editor->wireIsExecution {
-            problem = SetPort(function, editor->wireNode, editor->wirePort, target->nodeId);
+        } else if target->kind == HIT_NODE && target->nodeId != graphEditor->wireNode && graphEditor->wireIsExecution {
+            problem = SetPort(function, graphEditor->wireNode, graphEditor->wirePort, target->nodeId);
             madeWire = true;
         }
         if message := problem {
-            editor->SetStatus(message);
+            graphEditor->SetStatus(message);
         } else if madeWire {
-            editor->Touch();
-            editor->SetStatus("Connected.");
+            graphEditor->Touch();
+            graphEditor->SetStatus("Connected.");
         }
         delete problem;
     }
 
-    PointerPressed :: (editor: GraphEditor~*, button: u32) -> void {
-        hit := HitAt(editor, editor->pointerX, editor->pointerY);
-        if editor->graph->functions.length() == 0 {
+    PointerPressed :: (graphEditor: GraphEditor~*, button: u32) -> void {
+        hit := HitAt(graphEditor, graphEditor->pointerX, graphEditor->pointerY);
+        if graphEditor->graph->functions.length() == 0 {
             delete hit;
             return;
         }
-        function: GraphFunction~* = editor->graph->functions[editor->functionIndex];
+        function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
         if button == BUTTON_RIGHT {
             if hit->kind == HIT_PIN {
                 problem~ string!? = null;
                 if !hit->isOutput && !hit->isExecution || hit->isOutput && hit->isExecution {
                     problem = SetPort(function, hit->nodeId, hit->port, "");
-                    editor->Touch();
-                    editor->SetStatus("Disconnected.");
+                    graphEditor->Touch();
+                    graphEditor->SetStatus("Disconnected.");
                 } else if !hit->isOutput && hit->isExecution {
                     for index~ usize = 0; index < function->nodes.length(); index++ {
                         if function->nodes[index]->next == hit->nodeId {
                             function->nodes[index]->ClearLinksTo(hit->nodeId);
                         }
                     }
-                    editor->Touch();
-                    editor->SetStatus("Disconnected.");
+                    graphEditor->Touch();
+                    graphEditor->SetStatus("Disconnected.");
                 }
                 delete problem;
             }
@@ -139,92 +139,92 @@ lantern:::graphs :: namespace {
             return;
         }
         if hit->kind == HIT_PIN && hit->isOutput {
-            editor->dragMode = DRAG_WIRE;
-            delete editor->wireNode;
-            editor->wireNode = `${hit->nodeId}`;
-            delete editor->wirePort;
-            editor->wirePort = `${hit->port}`;
-            editor->wireIsExecution = hit->isExecution;
-            delete editor->selected;
-            editor->selected = `${hit->nodeId}`;
+            graphEditor->dragMode = DRAG_WIRE;
+            delete graphEditor->wireNode;
+            graphEditor->wireNode = `${hit->nodeId}`;
+            delete graphEditor->wirePort;
+            graphEditor->wirePort = `${hit->port}`;
+            graphEditor->wireIsExecution = hit->isExecution;
+            delete graphEditor->selected;
+            graphEditor->selected = `${hit->nodeId}`;
         } else if hit->kind == HIT_NODE || hit->kind == HIT_PIN {
-            delete editor->selected;
-            editor->selected = `${hit->nodeId}`;
-            editor->dragMode = DRAG_NODE;
-            delete editor->dragNode;
-            editor->dragNode = `${hit->nodeId}`;
-            grabbed: GraphFunction* = editor->Function();
+            delete graphEditor->selected;
+            graphEditor->selected = `${hit->nodeId}`;
+            graphEditor->dragMode = DRAG_NODE;
+            delete graphEditor->dragNode;
+            graphEditor->dragNode = `${hit->nodeId}`;
+            grabbed: GraphFunction* = graphEditor->Function();
             if index := grabbed->IndexOfNode(hit->nodeId) {
-                editor->dragOffsetX = editor->WorldX(editor->pointerX) - i32(grabbed->nodes[index]->x);
-                editor->dragOffsetY = editor->WorldY(editor->pointerY) - i32(grabbed->nodes[index]->y);
+                graphEditor->dragOffsetX = graphEditor->WorldX(graphEditor->pointerX) - i32(grabbed->nodes[index]->x);
+                graphEditor->dragOffsetY = graphEditor->WorldY(graphEditor->pointerY) - i32(grabbed->nodes[index]->y);
             }
         } else {
-            delete editor->selected;
-            editor->selected = "".copy();
-            editor->dragMode = DRAG_PAN;
-            editor->dragOffsetX = editor->pointerX;
-            editor->dragOffsetY = editor->pointerY;
+            delete graphEditor->selected;
+            graphEditor->selected = "".copy();
+            graphEditor->dragMode = DRAG_PAN;
+            graphEditor->dragOffsetX = graphEditor->pointerX;
+            graphEditor->dragOffsetY = graphEditor->pointerY;
         }
         delete hit;
     }
 
-    PointerReleased :: (editor: GraphEditor~*, button: u32) -> void {
+    PointerReleased :: (graphEditor: GraphEditor~*, button: u32) -> void {
         if button != BUTTON_LEFT {
             return;
         }
-        if editor->dragMode == DRAG_WIRE {
-            target := HitAt(editor, editor->pointerX, editor->pointerY);
-            FinishWire(editor, target);
+        if graphEditor->dragMode == DRAG_WIRE {
+            target := HitAt(graphEditor, graphEditor->pointerX, graphEditor->pointerY);
+            FinishWire(graphEditor, target);
             delete target;
-        } else if editor->dragMode == DRAG_NODE && editor->graph->functions.length() > 0 {
-            function: GraphFunction~* = editor->graph->functions[editor->functionIndex];
-            if index := function->IndexOfNode(editor->dragNode) {
+        } else if graphEditor->dragMode == DRAG_NODE && graphEditor->graph->functions.length() > 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            if index := function->IndexOfNode(graphEditor->dragNode) {
                 function->nodes[index]->x = f32(Snapped(i32(function->nodes[index]->x)));
                 function->nodes[index]->y = f32(Snapped(i32(function->nodes[index]->y)));
-                editor->Touch();
+                graphEditor->Touch();
             }
         }
-        editor->dragMode = DRAG_NONE;
+        graphEditor->dragMode = DRAG_NONE;
     }
 
-    PointerMoved :: (editor: GraphEditor~*, screenX: i32, screenY: i32) -> void {
-        editor->pointerX = screenX;
-        editor->pointerY = screenY;
-        if editor->dragMode == DRAG_NODE && editor->graph->functions.length() > 0 {
-            function: GraphFunction~* = editor->graph->functions[editor->functionIndex];
-            if index := function->IndexOfNode(editor->dragNode) {
-                function->nodes[index]->x = f32(editor->WorldX(screenX) - editor->dragOffsetX);
-                function->nodes[index]->y = f32(editor->WorldY(screenY) - editor->dragOffsetY);
+    PointerMoved :: (graphEditor: GraphEditor~*, screenX: i32, screenY: i32) -> void {
+        graphEditor->pointerX = screenX;
+        graphEditor->pointerY = screenY;
+        if graphEditor->dragMode == DRAG_NODE && graphEditor->graph->functions.length() > 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            if index := function->IndexOfNode(graphEditor->dragNode) {
+                function->nodes[index]->x = f32(graphEditor->WorldX(screenX) - graphEditor->dragOffsetX);
+                function->nodes[index]->y = f32(graphEditor->WorldY(screenY) - graphEditor->dragOffsetY);
             }
-        } else if editor->dragMode == DRAG_PAN {
-            editor->panX += (screenX - editor->dragOffsetX) / editor->zoom;
-            editor->panY += (screenY - editor->dragOffsetY) / editor->zoom;
-            editor->dragOffsetX = screenX;
-            editor->dragOffsetY = screenY;
+        } else if graphEditor->dragMode == DRAG_PAN {
+            graphEditor->panX += (screenX - graphEditor->dragOffsetX) / graphEditor->zoom;
+            graphEditor->panY += (screenY - graphEditor->dragOffsetY) / graphEditor->zoom;
+            graphEditor->dragOffsetX = screenX;
+            graphEditor->dragOffsetY = screenY;
         }
     }
 
     // The wheel changes the zoom by a whole step so text stays sharp.
-    WheelTurned :: (editor: GraphEditor~*, notches: f32) -> void {
-        if notches > 0.0f && editor->zoom < MAX_ZOOM {
-            editor->zoom += 1;
-        } else if notches < 0.0f && editor->zoom > 1 {
-            editor->zoom -= 1;
+    WheelTurned :: (graphEditor: GraphEditor~*, notches: f32) -> void {
+        if notches > 0.0f && graphEditor->zoom < MAX_ZOOM {
+            graphEditor->zoom += 1;
+        } else if notches < 0.0f && graphEditor->zoom > 1 {
+            graphEditor->zoom -= 1;
         }
     }
 
     // Delete removes the selected node. Returns true when the key was used.
-    KeyPressed :: (editor: GraphEditor~*, keyName: string) -> bool {
-        if (keyName == "Delete" || keyName == "Backspace") && editor->selected.length() > 0 && editor->graph->functions.length() > 0 {
-            function: GraphFunction~* = editor->graph->functions[editor->functionIndex];
-            doomed: string! = `${editor->selected}`;
+    KeyPressed :: (graphEditor: GraphEditor~*, keyName: string) -> bool {
+        if (keyName == "Delete" || keyName == "Backspace") && graphEditor->selected.length() > 0 && graphEditor->graph->functions.length() > 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            doomed: string! = `${graphEditor->selected}`;
             if RemoveNode(function, doomed) {
-                delete editor->selected;
-                editor->selected = "".copy();
-                editor->Touch();
-                editor->SetStatus("Node deleted.");
+                delete graphEditor->selected;
+                graphEditor->selected = "".copy();
+                graphEditor->Touch();
+                graphEditor->SetStatus("Node deleted.");
             } else {
-                editor->SetStatus("That node can't be deleted.");
+                graphEditor->SetStatus("That node can't be deleted.");
             }
             delete doomed;
             return true;
@@ -232,8 +232,8 @@ lantern:::graphs :: namespace {
         return false;
     }
 
-    SelectNode :: (editor: GraphEditor~*, nodeId: string) -> void {
-        delete editor->selected;
-        editor->selected = `${nodeId}`;
+    SelectNode :: (graphEditor: GraphEditor~*, nodeId: string) -> void {
+        delete graphEditor->selected;
+        graphEditor->selected = `${nodeId}`;
     }
 }

@@ -86,13 +86,18 @@ lantern:::editorapi :: namespace {
         inspector~ Array<InspectorField*!>! = [];
         inspectorRevision~ u64? = null;
         thumbnailSide~ u32 = 0;
+        graphEditor~ lantern:::graphs:::GraphEditor*!? = null;
+        graphCanvas~ lantern:::graphs:::PixelCanvas*!;
 
         Editor~: (assets: string, worldPath: string) {
             backend = new EditorBackend(assets, worldPath);
+            graphCanvas = new lantern:::graphs:::PixelCanvas();
         }
 
         !Editor~: () {
             delete backend;
+            delete graphEditor;
+            delete graphCanvas;
             delete apiStatus;
             outline.freeAll();
             inspector.freeAll();
@@ -1116,5 +1121,232 @@ lantern:::editorapi :: namespace {
     export CopyThumbnailPixels :: (editorInstance: Editor*, templateId: string, target: Array<u8~>) -> bool {
         guard index := editorInstance->backend->ThumbnailIndex(templateId) return false;
         return CopyInto(editorInstance->backend->thumbnails[index]->pixels, target);
+    }
+
+    // ---- the Graph tab ----
+    // One graph is open at a time (`GraphOpen`), drawn into the editor's own pixels (`GraphRender`, then
+    // `GraphCopyPixels`), moved by the pointer events, and edited by field. Every function that changes the graph
+    // bumps `GraphRevision`, so the interface knows when to ask again.
+
+    // The names of the graphs in the assets folder, one per line.
+    export GraphList :: (editorInstance: Editor*) -> string! {
+        return lantern:::editorbackend:::ListGraphNames(editorInstance->backend->assetsDirectory);
+    }
+
+    // Makes a loaded graph the open one.
+    InstallGraph :: (editorInstance: Editor~*, name: string, graph: lantern:::graphs:::Graph*!) -> string! {
+        delete editorInstance->graphEditor;
+        editorInstance->graphEditor = new lantern:::graphs:::GraphEditor(name, graph!);
+        return "".copy();
+    }
+
+    // Opens a graph from its file, or makes it when `create` is true. Returns an error message, or "" when it is open.
+    export GraphOpen :: (editorInstance: Editor~*, name: string, create: bool) -> string! {
+        if create {
+            when lantern:::editorbackend:::CreateGraphFile(editorInstance->backend->assetsDirectory, name) {
+                Result:::Err(message) -> {
+                    return message!;
+                },
+                Result:::Ok(graph) -> {
+                    return InstallGraph(editorInstance, name, graph!);
+                }
+            }
+        }
+        when lantern:::editorbackend:::LoadGraphByName(editorInstance->backend->assetsDirectory, name) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(graph) -> {
+                return InstallGraph(editorInstance, name, graph!);
+            }
+        }
+    }
+
+    export GraphClose :: (editorInstance: Editor~*) -> void {
+        delete editorInstance->graphEditor;
+        editorInstance->graphEditor = null;
+    }
+
+    export GraphIsOpen :: (editorInstance: Editor*) -> bool {
+        return editorInstance->graphEditor != null;
+    }
+
+    // Draws the open graph at a size. False when none is open.
+    export GraphRender :: (editorInstance: Editor~*, width: u32, height: u32) -> bool {
+        guard open ~= editorInstance->graphEditor return false;
+        lantern:::graphs:::DrawGraph(open, editorInstance->graphCanvas, width, height);
+        return true;
+    }
+
+    export GraphPixelWidth :: (editorInstance: Editor*) -> u32 {
+        return editorInstance->graphCanvas->width;
+    }
+
+    export GraphPixelHeight :: (editorInstance: Editor*) -> u32 {
+        return editorInstance->graphCanvas->height;
+    }
+
+    export GraphCopyPixels :: (editorInstance: Editor*, target: Array<u8~>) -> bool {
+        return CopyInto(editorInstance->graphCanvas->pixels, target);
+    }
+
+    export GraphPointerMove :: (editorInstance: Editor~*, x: f32, y: f32) -> void {
+        guard open ~= editorInstance->graphEditor return;
+        lantern:::graphs:::PointerMoved(open, i32(x), i32(y));
+    }
+
+    export GraphPointerButton :: (editorInstance: Editor~*, button: u32, down: bool) -> void {
+        guard open ~= editorInstance->graphEditor return;
+        if down {
+            lantern:::graphs:::PointerPressed(open, button);
+        } else {
+            lantern:::graphs:::PointerReleased(open, button);
+        }
+    }
+
+    export GraphWheel :: (editorInstance: Editor~*, notches: f32) -> void {
+        guard open ~= editorInstance->graphEditor return;
+        lantern:::graphs:::WheelTurned(open, notches);
+    }
+
+    export GraphKey :: (editorInstance: Editor~*, keyName: string) -> bool {
+        guard open ~= editorInstance->graphEditor return false;
+        return lantern:::graphs:::KeyPressed(open, keyName);
+    }
+
+    // Counts up on every change to the open graph or what is selected, so the interface redraws its panels.
+    export GraphRevision :: (editorInstance: Editor*) -> u32 {
+        guard open := editorInstance->graphEditor return 0;
+        return open->generation;
+    }
+
+    export GraphIsDirty :: (editorInstance: Editor*) -> bool {
+        guard open := editorInstance->graphEditor return false;
+        return open->isDirty;
+    }
+
+    export GraphStatus :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        return open->status.copy();
+    }
+
+    // The text of the open function's functions, one name per line.
+    export GraphFunctions :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        names~ string! = "".copy();
+        for index~ usize = 0; index < open->graph->functions.length(); index++ {
+            if index > 0 {
+                names += "\n";
+            }
+            names += open->graph->functions[index]->name;
+        }
+        return names!;
+    }
+
+    export GraphSelectFunction :: (editorInstance: Editor~*, index: u32) -> void {
+        guard open ~= editorInstance->graphEditor return;
+        if usize(index) < open->graph->functions.length() {
+            open->functionIndex = usize(index);
+            lantern:::graphs:::SelectNode(open, "");
+            open->Touch();
+        }
+    }
+
+    export GraphSelectedFunction :: (editorInstance: Editor*) -> u32 {
+        guard open := editorInstance->graphEditor return 0;
+        return u32(open->functionIndex);
+    }
+
+    // Adds a function and shows it. Returns an error message or "".
+    export GraphAddFunction :: (editorInstance: Editor~*, name: string, returns: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "No graph is open.".copy();
+        problem: string!? = lantern:::graphs:::AddFunction(open->graph, name, returns);
+        if problem != null {
+            return ProblemText(problem!);
+        }
+        delete problem;
+        open->functionIndex = open->graph->functions.length() - 1;
+        open->Touch();
+        return "".copy();
+    }
+
+    // Adds a node of a kind near the middle of what is showing and selects it. Returns its id, or "" for an unknown kind.
+    export GraphAddNode :: (editorInstance: Editor~*, kind: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "".copy();
+        centreX: i32 = open->WorldX(i32(editorInstance->graphCanvas->width / 2));
+        centreY: i32 = open->WorldY(i32(editorInstance->graphCanvas->height / 2));
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        id: string! = lantern:::graphs:::AddNode(function, kind, f32(lantern:::graphs:::Snapped(centreX)), f32(lantern:::graphs:::Snapped(centreY)));
+        if id.length() > 0 {
+            lantern:::graphs:::SelectNode(open, id);
+            open->Touch();
+        }
+        return id!;
+    }
+
+    // The selected node's id, or "".
+    export GraphSelected :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        return open->selected.copy();
+    }
+
+    // One field of the selected node: `kind`, `name`, `type`, `function`, `text`, or a port (`a`, `b`, `value`, `condition`,
+    // `next`, `then`, `else`, `arg0`...). A literal reads as `#` and its text.
+    export GraphField :: (editorInstance: Editor*, field: string) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        function: lantern:::graphs:::GraphFunction* = open->Function();
+        guard index := function->IndexOfNode(open->selected) return "".copy();
+        node: lantern:::graphs:::GraphNode* = function->nodes[index];
+        if field == "kind" {
+            return node->kind.copy();
+        }
+        if field == "name" {
+            return node->name.copy();
+        }
+        if field == "type" {
+            return node->typeName.copy();
+        }
+        if field == "function" {
+            return node->functionPath.copy();
+        }
+        if field == "text" {
+            return node->text.copy();
+        }
+        return lantern:::graphs:::PortReference(node, field).copy();
+    }
+
+    // Sets one field of the selected node. Returns an error message or "".
+    export GraphSetField :: (editorInstance: Editor~*, field: string, value: string) -> string! {
+        guard open ~= editorInstance->graphEditor return "No graph is open.".copy();
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        selectedId: string! = open->selected.copy();
+        defer delete selectedId;
+        problem: string!? = lantern:::graphs:::SetPort(function, selectedId, field, value);
+        if problem != null {
+            return ProblemText(problem!);
+        }
+        delete problem;
+        open->Touch();
+        return "".copy();
+    }
+
+    // The Nyx the open graph generates, or a comment saying what stops it.
+    export GraphNyx :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        return lantern:::editorbackend:::GeneratedNyxText(open->graph);
+    }
+
+    // Writes the graph and its Nyx. Returns an error message or "".
+    export GraphSave :: (editorInstance: Editor~*) -> string! {
+        guard open ~= editorInstance->graphEditor return "No graph is open.".copy();
+        problem: string!? = lantern:::editorbackend:::SaveGraphFiles(editorInstance->backend->assetsDirectory, open->name, open->graph);
+        if problem != null {
+            return ProblemText(problem!);
+        }
+        delete problem;
+        open->isDirty = false;
+        open->generation += 1;
+        open->SetStatus("Saved.");
+        return "".copy();
     }
 }

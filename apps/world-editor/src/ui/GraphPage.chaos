@@ -1,0 +1,240 @@
+Editor :: import Editor;
+
+GraphPageUi :: namespace {
+    KindRows :: () -> Array<Array<string>> {
+        return [["branch", "set", "return", "call"], ["nyx", "nyx_value", "add", "sub"], ["mul", "div", "less", "greater"], ["equal", "and", "or", "not"]];
+    }
+
+    FunctionNumber :: (name: string) -> i32 {
+        names := Lines(editorGraphFunctions());
+        for position~ i32 = 0; position < names.length(); position++ {
+            if names[position] == name {
+                return position;
+            }
+        }
+        return 0;
+    }
+
+    Lines :: (text: string) -> Array<string> {
+        rows~ Array<string> = [];
+        for piece in text.split("\n") {
+            if piece != "" {
+                rows.add(piece);
+            }
+        }
+        return rows;
+    }
+
+    FieldsOf :: (kind: string) -> Array<string> {
+        return when kind {
+            "branch" -> ["condition"],
+            "set" -> ["name", "type", "value"],
+            "return" -> ["value"],
+            "call" -> ["function", "name", "type", "arg0", "arg1", "arg2"],
+            "nyx" -> ["text"],
+            "nyx_value" -> ["text"],
+            "not" -> ["a"],
+            "entry" -> [],
+            default -> ["a", "b"]
+        };
+    }
+
+    IsNumber :: (text: string) -> bool {
+        if text == "" {
+            return false;
+        }
+        dots~ i32 = 0;
+        for position~ i32 = 0; position < text.length(); position++ {
+            piece := text.substring(position, 1);
+            if piece == "." {
+                dots = dots + 1;
+            } else if !"0123456789".contains(piece) {
+                return false;
+            }
+        }
+        return dots <= 1;
+    }
+
+    Reference :: (text: string) -> string {
+        if text == "true" || text == "false" {
+            return `#${text}`;
+        }
+        if text.startsWith("\"") {
+            return `#${text}`;
+        }
+        if IsNumber(text) {
+            return text.contains(".") ? `#${text}f` : `#${text}`;
+        }
+        return text;
+    }
+
+    Shown :: (stored: string) -> string {
+        return stored.startsWith("#") ? stored.substring(1, stored.length() - 1) : stored;
+    }
+
+    FieldClass :: (selected: bool) -> string {
+        return selected ? "entity-page-component-selected" : "entity-page-component";
+    }
+
+    DirtyMark :: () -> string {
+        return editorGraphIsDirty() ? " (unsaved)" : "";
+    }
+}
+
+GraphPage :: () -> Penumbra:::Component {
+    @context editor~ Editor;
+    @signal revision~ i32 = 0;
+    @signal pageStatus~ string = "";
+    @signal newGraphName~ string = "";
+    @signal newFunctionName~ string = "";
+    @signal chosenField~ string = "";
+    @signal fieldText~ string = "";
+    OnTick := (deltaSeconds: f32) -> void {
+        now := editorGraphRevision();
+        if now != revision {
+            revision = now;
+        }
+    };
+    return (
+        <frame ref="graph-page" class="entity-page">
+            <slot>
+                !{(() -> Penumbra:::Component {
+                    revisionNow := revision;
+                    isOpen := editorGraphIsOpen();
+                    selectedId := editorGraphSelected();
+                    kind := selectedId == "" ? "" : editorGraphField("kind");
+                    return (
+                        <frame class="entity-page-body">
+                            <frame class="entity-page-header">
+                                <icon class="panel-header-icon" icon="cube" size={14.0f} />
+                                <text class="entity-page-title">Graph</text>
+                                <text class="entity-page-kind">{isOpen ? `${editorGraphStatus()}${GraphPageUi:::DirtyMark()}` : "Open a graph, or make a new one."}</text>
+                                <frame class="toolbar-spacer" />
+                                <frame ref="graph-save-button" class="small-button-accent"
+                                       onRelease={() -> {
+                                           pageStatus = editorGraphSave();
+                                           revision = revision + 1;
+                                       }}>
+                                    <text class="small-button-label-accent">Save</text>
+                                </frame>
+                            </frame>
+                            <frame class="entity-page-columns">
+                                <frame class="entity-page-list">
+                                    <text class="entity-page-heading">Graphs</text>
+                                    <slot>
+                                        !{GraphPageUi:::Lines(editorGraphList()).map((name: string) ->
+                                            <frame key={`graph-${name}`} ref={`graph-open-${name}`} class="entity-page-component"
+                                                   onRelease={() -> {
+                                                       pageStatus = editorGraphOpen(name, false);
+                                                       chosenField = "";
+                                                       revision = revision + 1;
+                                                   }}>
+                                                <text class="entity-page-component-name">{name}</text>
+                                            </frame>)}
+                                    </slot>
+                                    <frame class="field-row">
+                                        <input ref="graph-new-name" class="field-input" text={newGraphName}
+                                               preferredWidth={110.0f}
+                                               onTextChange={(text: string) -> { newGraphName = text; }} />
+                                        <frame ref="graph-new-button" class="small-button"
+                                               onRelease={() -> {
+                                                   pageStatus = editorGraphOpen(newGraphName, true);
+                                                   chosenField = "";
+                                                   revision = revision + 1;
+                                               }}>
+                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                            <text class="small-button-label">New</text>
+                                        </frame>
+                                    </frame>
+                                    <text class="entity-page-heading">Functions</text>
+                                    <slot>
+                                        !{GraphPageUi:::Lines(editorGraphFunctions()).map((name: string) ->
+                                            <frame key={`graph-function-${name}`} ref={`graph-function-${name}`}
+                                                   class={GraphPageUi:::FieldClass(editorGraphSelectedFunction() == GraphPageUi:::FunctionNumber(name))}
+                                                   onRelease={() -> {
+                                                       editorGraphSelectFunction(GraphPageUi:::FunctionNumber(name));
+                                                       revision = revision + 1;
+                                                   }}>
+                                                <text class="entity-page-component-name">{name}</text>
+                                            </frame>)}
+                                    </slot>
+                                    <frame class="field-row">
+                                        <input ref="graph-new-function" class="field-input" text={newFunctionName}
+                                               preferredWidth={110.0f}
+                                               onTextChange={(text: string) -> { newFunctionName = text; }} />
+                                        <frame ref="graph-add-function-button" class="small-button"
+                                               onRelease={() -> {
+                                                   pageStatus = editorGraphAddFunction(newFunctionName, "");
+                                                   revision = revision + 1;
+                                               }}>
+                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                            <text class="small-button-label">Add</text>
+                                        </frame>
+                                    </frame>
+                                </frame>
+                                <frame class="graph-centre">
+                                    <viewport ref="graph-canvas" class="graph-canvas" renderer="graph" />
+                                    <text ref="graph-page-status" class="entity-page-kind">{pageStatus}</text>
+                                    <scroll ref="graph-nyx-scroll" class="graph-nyx" wheelStep={40.0f}>
+                                        <frame class="entity-page-fields">
+                                            <slot>
+                                                !{GraphPageUi:::Lines(isOpen ? editorGraphNyx() : "").map((row: string) ->
+                                                    <text key={row} class="entity-page-kind">{row}</text>)}
+                                            </slot>
+                                        </frame>
+                                    </scroll>
+                                </frame>
+                                <frame class="graph-side">
+                                    <text class="entity-page-heading">Add a node</text>
+                                    <slot>
+                                        !{GraphPageUi:::KindRows().map((row: Array<string>) ->
+                                            <frame key={`graph-add-row-${row[0]}`} class="field-row">
+                                                <slot>
+                                                    !{row.map((nodeKind: string) ->
+                                                        <frame key={`graph-add-${nodeKind}`} ref={`graph-add-${nodeKind}`} class="small-button"
+                                                               onRelease={() -> {
+                                                                   guard editorGraphIsOpen() return;
+                                                                   editorGraphAddNode(nodeKind);
+                                                                   revision = revision + 1;
+                                                               }}>
+                                                            <text class="small-button-label">{nodeKind}</text>
+                                                        </frame>)}
+                                                </slot>
+                                            </frame>)}
+                                    </slot>
+                                    <text class="entity-page-heading">{selectedId == "" ? "No node selected" : `${kind}: ${selectedId}`}</text>
+                                    <slot>
+                                        !{GraphPageUi:::FieldsOf(kind).map((field: string) ->
+                                            <frame key={`graph-field-${field}`} ref={`graph-field-${field}`}
+                                                   class={GraphPageUi:::FieldClass(chosenField == field)}
+                                                   onRelease={() -> {
+                                                       chosenField = field;
+                                                       fieldText = GraphPageUi:::Shown(editorGraphField(field));
+                                                   }}>
+                                                <text class="entity-page-component-name">{field}</text>
+                                                <text class="entity-page-component-count">{GraphPageUi:::Shown(editorGraphField(field))}</text>
+                                            </frame>)}
+                                    </slot>
+                                    <frame class="field-row">
+                                        <input ref="graph-field-text" class="field-input" text={fieldText}
+                                               preferredWidth={150.0f}
+                                               onTextChange={(text: string) -> { fieldText = text; }} />
+                                        <frame ref="graph-field-set-button" class="small-button"
+                                               onRelease={() -> {
+                                                   guard chosenField != "" return;
+                                                   pageStatus = editorGraphSetField(chosenField, GraphPageUi:::Reference(fieldText));
+                                                   revision = revision + 1;
+                                               }}>
+                                            <text class="small-button-label">Set</text>
+                                        </frame>
+                                    </frame>
+                                    <text class="entity-page-kind">Drag a node to move it, drag from an output pin to wire, right-click a pin to disconnect, Delete removes the selected node, the wheel zooms.</text>
+                                </frame>
+                            </frame>
+                        </frame>
+                    );
+                })()}
+            </slot>
+        </frame>
+    );
+}

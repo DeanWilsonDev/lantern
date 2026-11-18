@@ -1,0 +1,126 @@
+lantern:::editorbackend :: namespace {
+    // Where graphs are kept and read from: `<assets>/graphs/<name>.graph.json`, with the Nyx made from it written beside it as
+    // `<name>.generated.nyx`. Each function returns an error message or null, or a Result carrying one.
+    GRAPH_FILE_EXTENSION: string : ".graph.json";
+    GENERATED_FILE_EXTENSION: string : ".generated.nyx";
+
+    GraphsFolder :: (assetsDirectory: string) -> string! {
+        return `${assetsDirectory}/graphs`;
+    }
+
+    // The names of the graphs in the folder, one per line, sorted.
+    ListGraphNames :: (assetsDirectory: string) -> string! {
+        folder: string! = GraphsFolder(assetsDirectory);
+        defer delete folder;
+        names~ string! = "".copy();
+        if !directoryExists(folder) {
+            return names!;
+        }
+        when lantern:::silhouette:::SortedEntries(folder) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(listed) -> {
+                entries~ Array<string!>! = listed!;
+                for entry in entries {
+                    if entry.endsWith(GRAPH_FILE_EXTENSION) {
+                        if names.length() > 0 {
+                            names += "\n";
+                        }
+                        names += entry.substring(0, entry.length() - GRAPH_FILE_EXTENSION.length());
+                    }
+                }
+                entries.freeAll();
+            }
+        }
+        return names!;
+    }
+
+    // Reads and loads a graph by name.
+    LoadGraphByName :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
+        if !lantern:::graphs:::IsName(name) {
+            return Result<lantern:::graphs:::Graph*!, string!>:::Err("A graph name is letters, digits and underscores.".copy());
+        }
+        folder: string! = GraphsFolder(assetsDirectory);
+        file: string! = `${folder}/${name}${GRAPH_FILE_EXTENSION}`;
+        delete folder;
+        defer delete file;
+        when readTextFile(file) {
+            Result:::Err(error) -> {
+                failure: string! = `${file}: ${error.message()}`;
+                delete error;
+                return Result<lantern:::graphs:::Graph*!, string!>:::Err(failure!);
+            },
+            Result:::Ok(text) -> {
+                defer delete text;
+                return lantern:::graphs:::LoadGraph(text);
+            }
+        }
+    }
+
+    // The Nyx a graph generates, or a comment line saying what stops it.
+    GeneratedNyxText :: (graph: lantern:::graphs:::Graph*) -> string! {
+        when lantern:::graphs:::GenerateNyx(graph) {
+            Result:::Err(message) -> {
+                text: string! = `// ${message}`;
+                delete message;
+                return text!;
+            },
+            Result:::Ok(source) -> {
+                return source!;
+            }
+        }
+    }
+
+    // Writes the graph and its generated Nyx. A graph that can't generate Nyx is still saved, so work in progress isn't lost.
+    SaveGraphFiles :: (assetsDirectory: string, name: string, graph: lantern:::graphs:::Graph*) -> string!? {
+        folder: string! = GraphsFolder(assetsDirectory);
+        defer delete folder;
+        when createDirectories(folder) {
+            Result:::Ok(created) -> { },
+            Result:::Err(error) -> {
+                failure: string! = `${folder}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        file: string! = `${folder}/${name}${GRAPH_FILE_EXTENSION}`;
+        defer delete file;
+        text: string! = lantern:::graphs:::WriteGraph(graph);
+        defer delete text;
+        problem: string!? = WriteFileText(file, text);
+        if problem != null {
+            return problem!;
+        }
+        generatedFile: string! = `${folder}/${name}${GENERATED_FILE_EXTENSION}`;
+        defer delete generatedFile;
+        generated: string! = GeneratedNyxText(graph);
+        defer delete generated;
+        return WriteFileText(generatedFile, generated);
+    }
+
+    // Makes a new graph with one empty function and saves it. An existing graph is never overwritten.
+    CreateGraphFile :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
+        if !lantern:::graphs:::IsName(name) {
+            return Result<lantern:::graphs:::Graph*!, string!>:::Err("A graph name is letters, digits and underscores.".copy());
+        }
+        folder: string! = GraphsFolder(assetsDirectory);
+        file: string! = `${folder}/${name}${GRAPH_FILE_EXTENSION}`;
+        delete folder;
+        exists: bool = pathExists(file);
+        delete file;
+        if exists {
+            return Result<lantern:::graphs:::Graph*!, string!>:::Err("There is already a graph with that name.".copy());
+        }
+        graph := lantern:::graphs:::NewGraph(name);
+        problem: string!? = SaveGraphFiles(assetsDirectory, name, graph);
+        if failed := problem {
+            message: string! = failed.copy();
+            delete problem;
+            delete graph;
+            return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+        }
+        delete problem;
+        return Result<lantern:::graphs:::Graph*!, string!>:::Ok(graph!);
+    }
+}

@@ -82,7 +82,7 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 
 ## Where graphs live and how a game uses one
 
-- A game keeps graphs in `games/<name>/game-graphs/`. A build step (`lantern:::graphs:::GenerateAll`) writes `game-graphs/generated/<Name>.nyx`, which is imported like any `.nyx` file. The generated file starts with a line saying it is generated and is never edited by hand.
+- The editor keeps graphs in `<assets>/graphs/`; a game keeps its own in `games/<name>/game-graphs/`. A build step (`lantern:::graphs:::GenerateAll`) writes `game-graphs/generated/<Name>.nyx`, which is imported like any `.nyx` file. The generated file starts with a line saying it is generated and is never edited by hand.
 - A **Silhouette** component can name a graph in its values (`behaviour.graph`, `behaviour.function`); the game's existing entity systems call it. The first game use is one small graph in the platformer replacing a hand-written behaviour.
 
 ## Slices
@@ -102,6 +102,8 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 - Slice 3a: `GraphFile.nox` (`WriteGraph`, one node per line, which `LoadGraph` reads back to the same text) and `GraphEditing.nox` (`AddNode`, `RemoveNode`, `MoveNode`, `SetPort`, `AddFunction`, `NewGraph`). A wire is a port set to another node's id (`next`, `then`, `else` for execution; `a`, `b`, `value`, `condition`, `arg0`... for values); a literal is `#` and its Nyx text. A refused edit returns a message and changes nothing. Nodes carry an `x` and `y` for the tab. Test: `a-graph-is-edited-and-written-back`.
 
 - Slice 3b: the canvas, in `GraphPins.nox` (where a node's pins are), `GraphEditor.nox` (the open graph and a `PixelCanvas` of RGBA bytes with rectangles, lines, curved wires and text in the engine's 8 by 8 font), `GraphEditorDraw.nox` and `GraphEditorInput.nox`. Nodes are a coloured header (execution in on the left, value out on the right) over rows of pins. Press a node to select and drag it (it snaps to a 20 unit grid on release), press the background and drag to pan, press an output pin and let go over a node or an input pin to wire, right-click a pin to disconnect it, turn the wheel to zoom a whole step, press Delete to remove the selected node. Test: `the-graph-canvas-draws-and-wires-by-pointer`.
+
+- Slice 3c: the Graph tab in the world editor (Window > Graph Editor). `engine/src/editorbackend/GraphFiles.nox` lists, opens, creates and saves graphs in `<assets>/graphs/`, writing `<name>.graph.json` and `<name>.generated.nyx` side by side. `EditorApi.nox` exports the `GraphOpen`, `GraphRender`, `GraphPointer*`, `GraphField`, `GraphSave` family, the app registers them as `editorGraph*` host functions (`apps/world-editor/nox/src/GraphFunctions.nox`), and `GraphPage.chaos` lays out the graph list, functions, the canvas as a Penumbra viewport (`graph` renderer), the node palette, the selected node's fields and the generated Nyx pane.
 
 ## Known open questions
 
