@@ -1,14 +1,33 @@
 Editor :: import Editor;
+InspectorField :: import InspectorField;
+InspectorFieldItem :: import InspectorFieldItem;
 InspectorGroupItem :: import InspectorGroupItem;
+
+EntityPageUi :: namespace {
+    ComponentClass :: (selected: bool) -> string {
+        return selected ? "entity-page-component-selected" : "entity-page-component";
+    }
+
+    ChosenGroup :: (groups: Array<InspectorGroupItem>, wanted: string) -> InspectorGroupItem {
+        for group in groups {
+            if group.name == wanted {
+                return group;
+            }
+        }
+        return groups.length() > 0 ? groups[0] : InspectorGroupItem { name: "", collapsed: false, fields: [] };
+    }
+}
 
 EntityPage :: () -> Penumbra:::Component {
     @context editor~ Editor;
+    @signal chosenName~ string = "";
     return (
         <frame ref="entity-page" class="entity-page">
             <slot>
                 !{(() -> Penumbra:::Component {
                     revision := editor.document.revision;
                     id := editor.tabs.active;
+                    chosen := EntityPageUi:::ChosenGroup(editor.document.inspectorGroups, chosenName);
                     return (
                         <frame class="entity-page-body">
                             <frame class="entity-page-header">
@@ -16,15 +35,29 @@ EntityPage :: () -> Penumbra:::Component {
                                 <text class="entity-page-title">{editorEntityName(id)}</text>
                                 <text class="entity-page-kind">{editorEntityKind(id)}</text>
                             </frame>
-                            <text class="entity-page-heading">Components</text>
-                            <slot>
-                                !{editor.document.inspectorGroups.map((group: InspectorGroupItem) ->
-                                    <frame key={group.name} class="entity-page-component">
-                                        <text class="entity-page-component-name">{group.name}</text>
-                                        <text class="entity-page-component-count">{`${group.fields.length()} properties`}</text>
-                                    </frame>)}
-                            </slot>
-                            <text class="dialog-hint">Edit the values in the Details panel on the right. Ctrl+W closes this tab.</text>
+                            <frame class="entity-page-columns">
+                                <frame class="entity-page-list">
+                                    <text class="entity-page-heading">Components</text>
+                                    <slot>
+                                        !{editor.document.inspectorGroups.map((group: InspectorGroupItem) ->
+                                            <frame key={group.name} ref={`component-${group.name}`}
+                                                   class={EntityPageUi:::ComponentClass(group.name == chosen.name)}
+                                                   onRelease={() -> { chosenName = group.name; }}>
+                                                <text class="entity-page-component-name">{group.name}</text>
+                                                <text class="entity-page-component-count">{`${group.fields.length()}`}</text>
+                                            </frame>)}
+                                    </slot>
+                                </frame>
+                                <scroll ref="entity-page-scroll" class="entity-page-fields-scroll" wheelStep={60.0f}>
+                                    <frame class="entity-page-fields">
+                                        <text class="entity-page-heading">{chosen.name}</text>
+                                        <slot>
+                                            !{chosen.fields.map((item: InspectorFieldItem) ->
+                                                <InspectorField key={item.rowKey} item={item} />)}
+                                        </slot>
+                                    </frame>
+                                </scroll>
+                            </frame>
                         </frame>
                     );
                 })()}
