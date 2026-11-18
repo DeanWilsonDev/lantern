@@ -914,6 +914,97 @@ lantern:::editor :: namespace {
             return succeeded;
         }
 
+        // Rebuilds every placed Silhouette instance (a root whose `silhouette` property names a Silhouette in the palette)
+        // from the Silhouette as it is now. Each root keeps its id, name, parent and transform and takes everything else
+        // from the Silhouette; its descendants are rebuilt, keeping their names in order. One undo step. Returns how many
+        // instances were rebuilt.
+        RefreshSilhouetteInstances~: () -> usize {
+            rootKeys~ Array<u64>! = [];
+            rootSilhouettes~ Array<string!>! = [];
+            for entity in document->documentWorldFile->entities {
+                if propertyAt := entity->PropertyIndex("silhouette") {
+                    silhouetteName: string = entity->propertyTexts[propertyAt];
+                    if known := palette->Template(silhouetteName) {
+                        if known->fromSilhouette {
+                            rootKeys.push(entity->id);
+                            rootSilhouettes.push(`${silhouetteName}`);
+                        }
+                    }
+                }
+            }
+            edits~ Array<Edit*!>! = [];
+            pending~ Array<lantern:::world:::WorldEntity*!>! = [];
+            nextKey~ u64 = document->documentWorldFile->NextEntityKey();
+            removedCount~ usize = 0;
+            refreshed~ usize = 0;
+            for position~ usize = 0; position < rootKeys.length(); position++ {
+                rootKey: u64 = rootKeys[position];
+                guard template := palette->Template(rootSilhouettes[position]) continue;
+                guard rootIndex := document->documentWorldFile->IndexOf(rootKey) continue;
+                oldRoot: lantern:::world:::WorldEntity* = document->documentWorldFile->entities[rootIndex];
+                single~ Array<u64>! = [];
+                single.push(rootKey);
+                oldKeys: Array<u64>! = Descendants(single);
+                delete single;
+                oldNames~ Array<string!>! = [];
+                for oldKey in oldKeys {
+                    if oldKey != rootKey {
+                        if oldIndex := document->documentWorldFile->IndexOf(oldKey) {
+                            oldNames.push(`${document->documentWorldFile->entities[oldIndex]->name}`);
+                        }
+                        edits.push(Edit:::Remove(oldKey));
+                        removedCount += 1;
+                    }
+                }
+                delete oldKeys;
+                freshRoot := template->prototype->Copy();
+                freshRoot->id = rootKey;
+                freshRoot->parent = oldRoot->parent;
+                freshRoot->SetName(oldRoot->name);
+                freshRoot->transform = oldRoot->transform;
+                edits.push(Edit:::Replace(freshRoot!));
+                groupKeys~ Array<u64>! = [];
+                groupKeys.push(rootKey);
+                for descendantIndex~ usize = 0; descendantIndex < template->descendants.length(); descendantIndex++ {
+                    groupKeys.push(nextKey);
+                    nextKey += 1;
+                }
+                for descendantIndex~ usize = 0; descendantIndex < template->descendants.length(); descendantIndex++ {
+                    descendant := template->descendants[descendantIndex]->Copy();
+                    descendant->id = groupKeys[descendantIndex + 1];
+                    descendant->parent = groupKeys[template->descendantParents[descendantIndex]];
+                    if descendantIndex < oldNames.length() {
+                        descendant->SetName(oldNames[descendantIndex]);
+                    }
+                    pending.push(descendant!);
+                }
+                delete groupKeys;
+                oldNames.freeAll();
+                refreshed += 1;
+            }
+            delete rootKeys;
+            rootSilhouettes.freeAll();
+            if refreshed == 0 {
+                edits.freeAll();
+                pending.freeAll();
+                return 0;
+            }
+            insertAt~ usize = document->documentWorldFile->entities.length() - removedCount;
+            while pending.length() > 0 {
+                inserted := pending.remove(0);
+                edits.push(Edit:::Insert(insertAt, inserted!));
+                insertAt += 1;
+            }
+            pending.freeAll();
+            label: string! = "Refresh Silhouette instances".copy();
+            succeeded: bool = ExecuteEdits(label, edits!);
+            delete label;
+            if !succeeded {
+                return 0;
+            }
+            return refreshed;
+        }
+
         // Places a new entity from a palette template and selects it. The position is where the mouse ray
         // (or the centre of the viewport) meets the level, rounded to the snap step on x and z, then raised so
         // a box rests on the surface and by the template's lift. The name is made unique (`block_1`,

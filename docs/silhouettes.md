@@ -70,7 +70,7 @@ The tab edits the Silhouette's files directly, so there is no separate save: eac
 - **Set base.** Type a Silhouette's name in the name box and press **Set base** to point the open variant at it. If the result doesn't resolve (a missing Silhouette, or a cycle) the file is put back and the reason is shown. Only a variant has a base to change.
 - **Delete Silhouette.** Removes the whole folder, unless another Silhouette is made from this one. It also leaves the tab and the asset browser.
 
-Changing a Silhouette doesn't change the entities already placed in a world; it changes what is placed from then on.
+Changing a Silhouette doesn't change the entities already placed in a world on its own; it changes what is placed from then on. A placed root carries a `silhouette` property naming where it came from, and **Refresh placed instances** (beside Rename Silhouette) rebuilds every such instance in the open level from the Silhouettes as they are now. Each root keeps its id, name, parent and transform and takes everything else from the Silhouette; its children are rebuilt, keeping their names in order, so anything changed on the instance or its children is lost. It is one undo step. A root placed before this property existed has none and isn't refreshed.
 
 ## Calamus from Nox
 
