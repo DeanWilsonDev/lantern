@@ -1,4 +1,5 @@
 MenuEntry :: import MenuEntry;
+PanelVisibility :: import PanelVisibility;
 ToolbarState :: import ToolbarState;
 
 // The menus: what each menu bar menu and the right click menu contain. A menu is a list of MenuEntry
@@ -47,14 +48,14 @@ EditorMenus :: namespace {
     }
 
     // The entries of a named menu. The toolbar state decides what is ticked and what is greyed out.
-    Entries :: (menu: string, state: ToolbarState, recentFiles: Array<string>) -> Array<MenuEntry> {
+    Entries :: (menu: string, state: ToolbarState, recentFiles: Array<string>, panels: PanelVisibility) -> Array<MenuEntry> {
         return when menu {
             "File" -> FileEntries(state, recentFiles),
             "Edit" -> EditEntries(state),
             "Selection" -> SelectionEntries(state),
             "View" -> ViewEntries(state),
             "Entity" -> EntityEntries(state),
-            "Window" -> WindowEntries(),
+            "Window" -> WindowEntries(panels),
             "Help" -> HelpEntries(),
             default -> []
         };
@@ -195,13 +196,18 @@ EditorMenus :: namespace {
         ];
     }
 
-    // Window: the bottom panels and the settings.
-    WindowEntries :: () -> Array<MenuEntry> {
+    // Window: each panel with a tick when it is shown, hiding every panel, and the settings.
+    WindowEntries :: (panels: PanelVisibility) -> Array<MenuEntry> {
         return [
-            Item("Assets", "panel:assets", ""),
-            Item("Console", "panel:console", ""),
-            Item("History", "panel:history", ""),
-            Item("Hide Bottom Panel", "panel:none", ""),
+            Toggle("Outliner", "togglePanel:outliner", "Alt+1", panels.outliner),
+            Toggle("Details", "togglePanel:details", "Alt+2", panels.details),
+            Toggle("Content Drawer", "togglePanel:drawer", "Alt+3", panels.drawer),
+            Separator(),
+            Toggle("Assets", "panel:assets", "Ctrl+Space", panels.drawer && panels.bottomPanel == "assets"),
+            Toggle("Console", "panel:console", "Backtick", panels.drawer && panels.bottomPanel == "console"),
+            Toggle("History", "panel:history", "Alt+4", panels.drawer && panels.bottomPanel == "history"),
+            Separator(),
+            Item("Hide or Restore All Panels", "focusViewport", "F11"),
             Separator(),
             Item("Settings…", "settings", "Ctrl+,")
         ];
@@ -238,10 +244,10 @@ EditorMenus :: namespace {
 
     // Every menu command as one flat list for the command palette, each labelled with its menu
     // ("Edit: Undo"), plus the three tools. Separators and entries with no command are left out.
-    AllCommands :: (state: ToolbarState) -> Array<MenuEntry> {
+    AllCommands :: (state: ToolbarState, panels: PanelVisibility) -> Array<MenuEntry> {
         commands~ Array<MenuEntry> = [];
         for menu in Names() {
-            entries := Entries(menu, state, []);
+            entries := Entries(menu, state, [], panels);
             for entry in entries {
                 guard !entry.separator && entry.command != "" continue;
                 commands.add(MenuEntry {
