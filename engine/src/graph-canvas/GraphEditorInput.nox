@@ -34,7 +34,7 @@ lantern:::graphs :: namespace {
             return hit!;
         }
         function: GraphFunction* = graphEditor->Function();
-        radius: i32 = PIN_HIT_RADIUS * graphEditor->zoom;
+        radius: i32 = graphEditor->Scaled(PIN_HIT_RADIUS);
         index~ usize = function->nodes.length();
         while index > 0 && hit->kind == HIT_NOTHING {
             index -= 1;
@@ -57,7 +57,7 @@ lantern:::graphs :: namespace {
             if hit->kind == HIT_NOTHING {
                 left: i32 = graphEditor->ScreenX(i32(node->x));
                 top: i32 = graphEditor->ScreenY(i32(node->y));
-                if screenX >= left && screenX < left + NODE_WIDTH * graphEditor->zoom && screenY >= top && screenY < top + NodeHeight(pins) * graphEditor->zoom {
+                if screenX >= left && screenX < left + graphEditor->Scaled(NODE_WIDTH) && screenY >= top && screenY < top + graphEditor->Scaled(NodeHeight(pins)) {
                     hit->kind = HIT_NODE;
                     delete hit->nodeId;
                     hit->nodeId = `${node->id}`;
@@ -225,20 +225,39 @@ lantern:::graphs :: namespace {
                 function->nodes[index]->y = f32(graphEditor->WorldY(screenY) - graphEditor->dragOffsetY);
             }
         } else if graphEditor->dragMode == DRAG_PAN {
-            graphEditor->panX += (screenX - graphEditor->dragOffsetX) / graphEditor->zoom;
-            graphEditor->panY += (screenY - graphEditor->dragOffsetY) / graphEditor->zoom;
+            graphEditor->panX += (screenX - graphEditor->dragOffsetX) * ZOOM_ONE / graphEditor->zoom;
+            graphEditor->panY += (screenY - graphEditor->dragOffsetY) * ZOOM_ONE / graphEditor->zoom;
             graphEditor->dragOffsetX = screenX;
             graphEditor->dragOffsetY = screenY;
         }
     }
 
-    // The wheel changes the zoom by a whole step so text stays sharp.
-    WheelTurned :: (graphEditor: GraphEditor~*, notches: f32) -> void {
-        if notches > 0.0f && graphEditor->zoom < MAX_ZOOM {
-            graphEditor->zoom += 1;
-        } else if notches < 0.0f && graphEditor->zoom > 1 {
-            graphEditor->zoom -= 1;
+    // The wheel zooms by a few percent per notch about the pointer, so a trackpad's small steps give fine control; sideways
+    // scrolling pans. The graph point under the pointer stays under it.
+    WheelTurned :: (graphEditor: GraphEditor~*, notches: f32, notchesX: f32) -> void {
+        if notchesX != 0.0f {
+            graphEditor->panX -= i32(notchesX * 30.0f * f32(ZOOM_ONE) / f32(graphEditor->zoom));
+            graphEditor->generation += 1;
         }
+        if notches == 0.0f {
+            return;
+        }
+        anchorX: i32 = graphEditor->WorldX(graphEditor->pointerX);
+        anchorY: i32 = graphEditor->WorldY(graphEditor->pointerY);
+        wanted~ i32 = i32(f32(graphEditor->zoom) * (1.0f + 0.12f * notches));
+        if wanted == graphEditor->zoom {
+            wanted = notches > 0.0f ? graphEditor->zoom + 1 : graphEditor->zoom - 1;
+        }
+        if wanted < MIN_ZOOM {
+            wanted = MIN_ZOOM;
+        }
+        if wanted > MAX_ZOOM {
+            wanted = MAX_ZOOM;
+        }
+        graphEditor->zoom = wanted;
+        graphEditor->panX = graphEditor->pointerX * ZOOM_ONE / wanted - anchorX;
+        graphEditor->panY = graphEditor->pointerY * ZOOM_ONE / wanted - anchorY;
+        graphEditor->generation += 1;
     }
 
     // Delete removes the selected node. Returns true when the key was used.
@@ -266,7 +285,7 @@ lantern:::graphs :: namespace {
         graphEditor->generation += 1;
     }
 
-    // Picks the zoom and pan that show every node of the open function, at zoom 2 when they fit and zoom 1 when they don't.
+    // Picks the zoom and pan that show every node of the open function, as large as fits, up to twice normal size.
     FitToView :: (graphEditor: GraphEditor~*, canvasWidth: i32, canvasHeight: i32) -> void {
         function: GraphFunction* = graphEditor->graph->functions[graphEditor->functionIndex];
         if function->nodes.length() == 0 {
@@ -298,8 +317,16 @@ lantern:::graphs :: namespace {
         margin: i32 = 24;
         contentWidth: i32 = right - left + margin * 2;
         contentHeight: i32 = bottom - top + margin * 2;
-        fitsDoubled: bool = contentWidth * 2 <= canvasWidth && contentHeight * 2 <= canvasHeight;
-        graphEditor->zoom = when fitsDoubled { true -> 2, false -> 1 };
+        fitWidth: i32 = canvasWidth * ZOOM_ONE / contentWidth;
+        fitHeight: i32 = canvasHeight * ZOOM_ONE / contentHeight;
+        fitted~ i32 = fitWidth < fitHeight ? fitWidth : fitHeight;
+        if fitted > 200 {
+            fitted = 200;
+        }
+        if fitted < MIN_ZOOM {
+            fitted = MIN_ZOOM;
+        }
+        graphEditor->zoom = fitted;
         graphEditor->panX = margin - left;
         graphEditor->panY = margin - top;
     }
