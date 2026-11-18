@@ -1,0 +1,159 @@
+// Where a node's pins are. The canvas draws them and hits them, and the editor tab names them, so the layout lives in one place.
+// A node is a header (its title, the execution-in pin on the left and the value-out pin on the right) over numbered rows, each
+// with a value-in pin on the left and an execution-out or value pin on the right.
+lantern:::graphs :: namespace {
+    NODE_WIDTH: i32 : 168;
+    HEADER_HEIGHT: i32 : 18;
+    ROW_HEIGHT: i32 : 16;
+    PIN_HIT_RADIUS: i32 : 7;
+
+    // One pin of a node. `port` is what SetPort takes (`next`, `a`, `arg0`) and `in` or `out` for the header's two pins.
+    PinSlot :: class {
+    public:
+        port~ string!;
+        label~ string!;
+        isExecution~ bool;
+        isOutput~ bool;
+        row~ i32;
+
+        PinSlot~: (newPort: string, newLabel: string, newIsExecution: bool, newIsOutput: bool, newRow: i32) {
+            port = `${newPort}`;
+            label = `${newLabel}`;
+            isExecution = newIsExecution;
+            isOutput = newIsOutput;
+            row = newRow;
+        }
+
+        !PinSlot~: () {
+            delete port;
+            delete label;
+        }
+
+        // The pin's centre, relative to the node's top left.
+        OffsetX :: () -> i32 {
+            if isOutput {
+                return NODE_WIDTH;
+            }
+            return 0;
+        }
+
+        OffsetY :: () -> i32 {
+            if row == 0 {
+                return HEADER_HEIGHT / 2;
+            }
+            return HEADER_HEIGHT + (row - 1) * ROW_HEIGHT + ROW_HEIGHT / 2;
+        }
+    }
+
+    PinList :: class {
+    public:
+        items~ Array<PinSlot*!>! = [];
+        rowCount~ i32 = 0;
+
+        PinList~: () { }
+
+        !PinList~: () {
+            items.freeAll();
+        }
+
+        Add~: (port: string, label: string, isExecution: bool, isOutput: bool, row: i32) -> void {
+            items.push(new PinSlot(port, label, isExecution, isOutput, row));
+            if row > rowCount {
+                rowCount = row;
+            }
+        }
+    }
+
+    IsExecutionKind :: (kind: string) -> bool {
+        return kind == "entry" || kind == "return" || kind == "set" || kind == "branch" || kind == "call" || kind == "nyx";
+    }
+
+    GivesValue :: (kind: string) -> bool {
+        return kind == "call" || kind == "nyx_value" || kind == "not" || OperatorFor(kind).length() > 0;
+    }
+
+    // The text beside a value pin: its port, and what feeds it when that isn't a wire.
+    ValueLabel :: (function: GraphFunction*, port: string, reference: string) -> string! {
+        if reference.length() == 0 {
+            return `${port}`;
+        }
+        if function->IndexOfNode(reference) != null {
+            return `${port}`;
+        }
+        if reference.startsWith(LITERAL_MARK) {
+            return `${port} = ${reference.substring(1, reference.length() - 1)}`;
+        }
+        return `${port} = ${reference}`;
+    }
+
+    // Every pin of a node, in rows.
+    PinsOf :: (function: GraphFunction*, node: GraphNode*) -> PinList*! {
+        pins := new PinList();
+        kind: string = node->kind;
+        if IsExecutionKind(kind) && kind != "entry" {
+            pins->Add("in", "", true, false, 0);
+        }
+        if GivesValue(kind) {
+            pins->Add("out", "", false, true, 0);
+        }
+        if kind == "entry" {
+            pins->Add("next", "next", true, true, 1);
+        } else if kind == "return" {
+            label: string! = ValueLabel(function, "value", node->value);
+            pins->Add("value", label, false, false, 1);
+            delete label;
+        } else if kind == "set" {
+            label: string! = ValueLabel(function, "value", node->value);
+            pins->Add("value", label, false, false, 1);
+            delete label;
+            pins->Add("next", "next", true, true, 1);
+        } else if kind == "branch" {
+            label: string! = ValueLabel(function, "condition", node->condition);
+            pins->Add("condition", label, false, false, 1);
+            delete label;
+            pins->Add("then", "then", true, true, 1);
+            pins->Add("else", "else", true, true, 2);
+            pins->Add("next", "after", true, true, 3);
+        } else if kind == "call" {
+            count~ i32 = i32(node->arguments.length());
+            if count < 1 {
+                count = 1;
+            }
+            for argument~ i32 = 0; argument < count; argument++ {
+                port: string! = `arg${argument}`;
+                reference~ string = "";
+                if usize(argument) < node->arguments.length() {
+                    reference = node->arguments[usize(argument)];
+                }
+                label: string! = ValueLabel(function, port, reference);
+                pins->Add(port, label, false, false, argument + 1);
+                delete label;
+                delete port;
+            }
+            pins->Add("next", "next", true, true, 1);
+        } else if kind == "nyx" {
+            pins->Add("next", "next", true, true, 1);
+        } else if kind == "not" {
+            label: string! = ValueLabel(function, "a", node->a);
+            pins->Add("a", label, false, false, 1);
+            delete label;
+        } else if OperatorFor(kind).length() > 0 {
+            labelA: string! = ValueLabel(function, "a", node->a);
+            pins->Add("a", labelA, false, false, 1);
+            delete labelA;
+            labelB: string! = ValueLabel(function, "b", node->b);
+            pins->Add("b", labelB, false, false, 2);
+            delete labelB;
+        }
+        return pins!;
+    }
+
+    // How tall a node is drawn.
+    NodeHeight :: (pins: PinList*) -> i32 {
+        rows~ i32 = pins->rowCount;
+        if rows < 1 {
+            rows = 1;
+        }
+        return HEADER_HEIGHT + rows * ROW_HEIGHT + 4;
+    }
+}
