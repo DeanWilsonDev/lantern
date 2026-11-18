@@ -65,7 +65,7 @@ lantern:::graphs :: namespace {
     }
 
     IsExecutionKind :: (kind: string) -> bool {
-        return kind == "entry" || kind == "return" || kind == "set" || kind == "branch" || kind == "while" || kind == "call" || kind == "nyx";
+        return kind == "entry" || kind == "return" || kind == "set" || kind == "branch" || kind == "while" || kind == "when" || kind == "call" || kind == "nyx";
     }
 
     GivesValue :: (kind: string) -> bool {
@@ -120,6 +120,24 @@ lantern:::graphs :: namespace {
             delete label;
             pins->Add("then", "body", true, true, 1);
             pins->Add("next", "after", true, true, 2);
+        } else if kind == "when" {
+            label: string! = ValueLabel(function, "a", node->a);
+            pins->Add("a", label, false, false, 1);
+            delete label;
+            caseCount: i32 = i32(node->arguments.length()) + 1;
+            for caseIndex~ i32 = 0; caseIndex < caseCount; caseIndex++ {
+                port: string! = `case${caseIndex}`;
+                caseLabel~ string! = `case ${caseIndex}`;
+                if usize(caseIndex) < node->arguments.length() && node->arguments[usize(caseIndex)].length() > 0 {
+                    delete caseLabel;
+                    caseLabel = ValueLabel(function, port, node->arguments[usize(caseIndex)]);
+                }
+                pins->Add(port, caseLabel, true, true, caseIndex + 1);
+                delete caseLabel;
+                delete port;
+            }
+            pins->Add("else", "else", true, true, caseCount + 1);
+            pins->Add("next", "after", true, true, caseCount + 2);
         } else if kind == "call" {
             count~ i32 = i32(node->arguments.length());
             if count < 1 {

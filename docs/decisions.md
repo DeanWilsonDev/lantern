@@ -1773,3 +1773,7 @@ An entity of kind `scripted` carries `graph` and `function` text properties (`fu
 ## D-196: the editor saves graphs where the game reads them
 
 When `games/platformer/game-graphs/` exists beside the assets, the Graph tab lists, opens and saves graphs there, and Save regenerates `generated/` so the committed Nyx stays current (D-194). Without that folder it falls back to `<assets>/graphs/`. If the Nyx build fails the graph file is still saved and the message names the problem. Rejected: two graph folders, which left editor-made graphs the game never saw.
+
+## D-197: a `when` node is a statement `when` over literal cases
+
+A `when` node has a subject (`a`), any number of cases (a match value and a wire each) and an optional `else`. It generates a statement `when` with block arms, so every arm may run a whole chain, and the arms are literal or computed values, never enum patterns. With no `else` it ends in `_`, which does nothing, so a value that matches no case just continues. Cases are stored as `cases: [{ "match": ..., "do": id }]` rather than parallel fields, so a file reads as what it means. Rejected: enum patterns and bindings (a graph has no types to name them with yet), and value-producing `when` (a data node, later if wanted).

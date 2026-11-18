@@ -25,6 +25,7 @@ lantern:::graphs :: namespace {
         text~ string!;
         arguments~ Array<string!>! = [];
         declares~ Array<string!>! = [];
+        targets~ Array<string!>! = [];
 
         GraphNode~: (newId: string, newKind: string) {
             id = `${newId}`;
@@ -77,6 +78,21 @@ lantern:::graphs :: namespace {
                     this->SetArgument(argument, "");
                 }
             }
+            for caseIndex~ usize = 0; caseIndex < targets.length(); caseIndex++ {
+                if targets[caseIndex] == target {
+                    this->SetTarget(caseIndex, "");
+                }
+            }
+        }
+
+        // Sets where one case of a `when` goes, adding empty cases before it when the node has fewer.
+        SetTarget~: (caseIndex: usize, newTarget: string) -> void {
+            while targets.length() <= caseIndex {
+                targets.push("".copy());
+            }
+            old := targets.remove(caseIndex);
+            delete old;
+            targets.insert(caseIndex, `${newTarget}`);
         }
 
         // Sets one argument of a call, adding empty ones before it when the call has fewer.
@@ -105,6 +121,7 @@ lantern:::graphs :: namespace {
             delete text;
             arguments.freeAll();
             declares.freeAll();
+            targets.freeAll();
         }
     }
 
@@ -330,6 +347,14 @@ lantern:::graphs :: namespace {
             for step~ usize = 0; step < usize(document->ChildCount(argumentsAt)); step++ {
                 node->arguments.push(ReferenceAt(document, argumentAt));
                 argumentAt = document->NextSibling(argumentAt);
+            }
+        }
+        if casesAt := document->Member(nodeAt, "cases") {
+            caseAt~ u32 = document->FirstChild(casesAt);
+            for step~ usize = 0; step < usize(document->ChildCount(casesAt)); step++ {
+                node->arguments.push(ReferenceMember(document, caseAt, "match"));
+                node->targets.push(TextMember(document, caseAt, "do"));
+                caseAt = document->NextSibling(caseAt);
             }
         }
         if declaresAt := document->Member(nodeAt, "declares") {
