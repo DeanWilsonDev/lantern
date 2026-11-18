@@ -1,0 +1,68 @@
+AssetBrowserUi :: import AssetBrowserUi;
+AssetCard :: import AssetCard;
+AssetEntry :: import AssetEntry;
+Editor :: import Editor;
+TemplateItem :: import TemplateItem;
+
+SilhouetteBrowserUi :: namespace {
+    Silhouettes :: (query: string) -> Array<AssetEntry> {
+        rows~ Array<AssetEntry> = [];
+        for entry in AssetBrowserUi:::Entries(query == "" ? "Silhouettes" : "", query) {
+            if entry.kind == "silhouette" {
+                rows.add(entry);
+            }
+        }
+        return rows;
+    }
+}
+
+SilhouetteBrowser :: () -> Penumbra:::Component {
+    @context editor~ Editor;
+    @signal query~ string = "";
+    @signal preview~ string = AssetBrowserUi:::InitialPreview();
+    Preview := (templateId: string) -> void {
+        preview = templateId;
+        editorSetPreviewTemplate(templateId);
+    };
+    return (
+        <frame class="asset-browser">
+            <frame class="asset-main">
+                <frame class="asset-bar">
+                    <icon class="search-icon" icon="search" size={12.0f} />
+                    <input ref="silhouette-search" class="search-input" text={query}
+                           preferredWidth={220.0f}
+                           onTextChange={(text: string) -> { query = text; }} />
+                    <text class="asset-path">Search every Silhouette, then drag one into the level or press Add to world.</text>
+                </frame>
+                <scroll ref="silhouette-scroll" class="asset-scroll" direction="horizontal" horizontalWheelStep={80.0f}>
+                    <frame class="asset-cards">
+                        <slot>
+                            !{SilhouetteBrowserUi:::Silhouettes(query).map((entry: AssetEntry) ->
+                                <AssetCard key={entry.path} item={TemplateItem { id: entry.label, label: entry.label, kind: "block" }}
+                                           selected={preview == entry.label}
+                                           onSelect={() -> Preview(entry.label)} />)}
+                        </slot>
+                    </frame>
+                </scroll>
+            </frame>
+            <frame class="asset-preview">
+                <viewport ref="silhouette-preview-viewport" class="asset-preview-viewport" renderer="preview" />
+                <frame class="asset-preview-actions">
+                    <slot>
+                        !{<text class="asset-preview-title">{preview}</text>}
+                    </slot>
+                    <frame ref="silhouette-edit" class="small-button"
+                           onRelease={() -> editor.tabs.OpenSilhouette(preview)}>
+                        <icon class="small-button-icon" icon="pencil" size={12.0f} />
+                        <text class="small-button-label">Edit</text>
+                    </frame>
+                    <frame class="small-button-accent"
+                           onRelease={() -> { editorAddEntity(preview); }}>
+                        <icon class="small-button-icon-accent" icon="plus" size={12.0f} />
+                        <text class="small-button-label-accent">Add to world</text>
+                    </frame>
+                </frame>
+            </frame>
+        </frame>
+    );
+}
