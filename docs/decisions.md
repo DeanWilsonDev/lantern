@@ -1769,3 +1769,7 @@ The Nyx a game graph generates (`games/<name>/game-graphs/generated/<Name>.nyx`)
 ## D-195: a scripted entity names its graph in two properties
 
 An entity of kind `scripted` carries `graph` and `function` text properties (`function` is `Update` when missing), and the game runs `GraphBehaviours:::Run(graph, function, entity, time)` for it each step. `GraphBehaviours.nyx` is generated beside the graphs because Nyx can't call a function by name. A behaviour function has the fixed shape `(entity: i64, time: f32) -> void`; it keeps no state of its own, so anything that must persist lives in the world through the host API. Rejected: a dotted `behaviour.graph` property (flat properties are what every other entity kind reads), and calling arbitrary graph signatures (the engine can't know the arguments).
+
+## D-196: the editor saves graphs where the game reads them
+
+When `games/platformer/game-graphs/` exists beside the assets, the Graph tab lists, opens and saves graphs there, and Save regenerates `generated/` so the committed Nyx stays current (D-194). Without that folder it falls back to `<assets>/graphs/`. If the Nyx build fails the graph file is still saved and the message names the problem. Rejected: two graph folders, which left editor-made graphs the game never saw.

@@ -83,7 +83,7 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 
 ## Where graphs live and how a game uses one
 
-- The editor keeps graphs in `<assets>/graphs/`; a game keeps its own in `games/<name>/game-graphs/`. A build step (`lantern:::graphs:::GenerateAll`) writes `game-graphs/generated/<Name>.nyx`, which is imported like any `.nyx` file. The generated file starts with a line saying it is generated and is never edited by hand.
+- The editor saves graphs into `games/platformer/game-graphs/` when that folder is found beside the assets, and into `<assets>/graphs/` otherwise. Saving in the game's folder also rebuilds its `generated/` Nyx, so a graph saved in the editor is the graph the game runs. A game keeps its own in `games/<name>/game-graphs/`. A build step (`lantern:::graphs:::GenerateAll`) writes `game-graphs/generated/<Name>.nyx`, which is imported like any `.nyx` file. The generated file starts with a line saying it is generated and is never edited by hand.
 - A **Silhouette** component can name a graph in its values (`behaviour.graph`, `behaviour.function`); the game's existing entity systems call it. The first game use is one small graph in the platformer replacing a hand-written behaviour.
 
 ## Slices
@@ -113,6 +113,7 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 - Slice 5b: finding the node behind a line. `lantern:::graphs:::NodeAtLine(graph, line)` regenerates the Nyx with a `//@<node id>` mark on each line a node wrote and reads the mark off the requested line. The Graph tab's Nyx pane shows line numbers, and clicking a line selects its node on the canvas, so a line number from a Nyx error leads straight to the node. Test: `a-generated-line-names-its-node`. Highlighting the node automatically when a running game throws needs the runtime to report the generated file and line to the editor; that is still to come.
 
 - Slice 5c: graph behaviours on entities. A behaviour function is `Update :: (entity: i64, time: f32) -> void`. `mist run graphs` also writes `game-graphs/generated/GraphBehaviours.nyx`, whose `GraphBehaviours:::Run(graph, function, entity, time)` calls any such function by name (Nyx has no call by name, so the dispatch is generated). An entity of kind `scripted` names its behaviour in its `graph` and `function` properties; the platformer's `ScriptedEntity` runs it every step, and the `Scripted lamp` Silhouette is one. The first behaviour graph is `lamp_pulse` (`game-graphs/lamp_pulse.graph.json`): it calls `lantern:::world:::SetGlow` with a strength that follows `Math:::sin(time)`, and `flow-and-fragile` has a lamp using it. A call node to `Math:::...` (or another standard library namespace) makes the generated file import it. A graph's own `behaviour.graph` Silhouette value is these two properties (D-195).
+- Slice 6: the editor writes to the game's graph folder (`GraphsFolder`, `GameGraphsFolder`) and rebuilds the generated Nyx on Save; the Silhouette tab shows a "Behaviour graph" row of buttons that sets the `graph` property of a `scripted` Silhouette. Test: `engine/tests/editorbackend/the-editor-saves-graphs-where-the-game-reads-them/`.
 
 ## Known open questions
 

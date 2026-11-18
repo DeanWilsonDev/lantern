@@ -4,7 +4,27 @@ lantern:::editorbackend :: namespace {
     GRAPH_FILE_EXTENSION: string : ".graph.json";
     GENERATED_FILE_EXTENSION: string : ".generated.nyx";
 
+    // The platformer's `game-graphs` folder when the editor runs in a checkout, so a saved graph reaches the game; null otherwise.
+    GameGraphsFolder :: (assetsDirectory: string) -> string!? {
+        found: string!? = WorkspaceRoot(assetsDirectory);
+        guard root := found return null;
+        folder: string! = `${root}/games/platformer/game-graphs`;
+        delete found;
+        if !directoryExists(folder) {
+            delete folder;
+            return null;
+        }
+        return folder!;
+    }
+
     GraphsFolder :: (assetsDirectory: string) -> string! {
+        game: string!? = GameGraphsFolder(assetsDirectory);
+        if gameFolder := game {
+            result: string! = gameFolder.copy();
+            delete game;
+            return result!;
+        }
+        delete game;
         return `${assetsDirectory}/graphs`;
     }
 
@@ -92,6 +112,24 @@ lantern:::editorbackend :: namespace {
         if problem != null {
             return problem!;
         }
+        game: string!? = GameGraphsFolder(assetsDirectory);
+        if inGame := game {
+            generatedFolder: string! = `${inGame}/generated`;
+            delete game;
+            defer delete generatedFolder;
+            when BuildGameGraphs(folder, generatedFolder, true) {
+                Result:::Err(message) -> {
+                    failure: string! = `Saved, but the game's Nyx was not updated: ${message}`;
+                    delete message;
+                    return failure!;
+                },
+                Result:::Ok(written) -> {
+                    delete written;
+                    return null;
+                }
+            }
+        }
+        delete game;
         generatedFile: string! = `${folder}/${name}${GENERATED_FILE_EXTENSION}`;
         defer delete generatedFile;
         generated: string! = GeneratedNyxText(graph);
