@@ -327,6 +327,241 @@ lantern:::editorbackend :: namespace {
         return problem!;
     }
 
+    // The last name in a dotted path, and everything before it ("" when there is one name).
+    LastSegment :: (componentPath: string) -> string! {
+        dot: usize? = componentPath.lastIndexOf(".");
+        if position := dot {
+            return `${componentPath.substring(position + 1, componentPath.length() - position - 1)}`;
+        }
+        return componentPath.copy();
+    }
+
+    ParentPathOf :: (componentPath: string) -> string! {
+        dot: usize? = componentPath.lastIndexOf(".");
+        if position := dot {
+            return `${componentPath.substring(0, position)}`;
+        }
+        return "".copy();
+    }
+
+    // The folder that holds a component's children: the Silhouette's own folder for the root.
+    ChildrenFolder :: (silhouetteFolder: string, componentPath: string) -> string! {
+        if componentPath.length() == 0 {
+            return `${silhouetteFolder}`;
+        }
+        return ComponentStem(silhouetteFolder, componentPath);
+    }
+
+    // Moves a component, and everything under it, to hang from another component. `newParentPath` is empty for the root.
+    // The component keeps its name and its place in the files only changes.
+    MoveSilhouetteComponent :: (assetsDirectory: string, silhouetteName: string, componentPath: string, newParentPath: string) -> string!? {
+        if componentPath.length() == 0 {
+            return "The root can't be moved.".copy();
+        }
+        descendantPrefix: string! = `${componentPath}.`;
+        defer delete descendantPrefix;
+        if newParentPath == componentPath || newParentPath.startsWith(descendantPrefix) {
+            return "A component can't go under itself.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if !ComponentHasFile(silhouetteFolder, componentPath) || !ComponentHasFile(silhouetteFolder, newParentPath) {
+            return "Both components have to be the Silhouette's own, not inherited from a base.".copy();
+        }
+        currentParent: string! = ParentPathOf(componentPath);
+        defer delete currentParent;
+        if currentParent == newParentPath {
+            return "It already hangs from there.".copy();
+        }
+        childName: string! = LastSegment(componentPath);
+        defer delete childName;
+        targetFolder: string! = ChildrenFolder(silhouetteFolder, newParentPath);
+        defer delete targetFolder;
+        targetFile: string! = `${targetFolder}/${childName}${SILHOUETTE_FILE_EXTENSION}`;
+        defer delete targetFile;
+        targetStem: string! = `${targetFolder}/${childName}`;
+        defer delete targetStem;
+        if pathExists(targetFile) || pathExists(targetStem) {
+            return `That component already has a child called ${childName}.`.copy();
+        }
+        when createDirectories(targetFolder) {
+            Result:::Ok(created) -> { },
+            Result:::Err(error) -> {
+                failure: string! = `${targetFolder}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        sourceFile: string! = ComponentFile(silhouetteFolder, componentPath);
+        defer delete sourceFile;
+        sourceStem: string! = ComponentStem(silhouetteFolder, componentPath);
+        defer delete sourceStem;
+        when renameFile(sourceFile, targetFile) {
+            Result:::Ok(moved) -> { },
+            Result:::Err(error) -> {
+                failure: string! = `${sourceFile}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        if directoryExists(sourceStem) {
+            when renameFile(sourceStem, targetStem) {
+                Result:::Ok(moved) -> { },
+                Result:::Err(error) -> {
+                    failure: string! = `${sourceStem}: ${error.message()}`;
+                    delete error;
+                    return failure!;
+                }
+            }
+        }
+        return null;
+    }
+
+    // Points a variant at another Silhouette as its base by rewriting the `@base` line of its root file. If the result
+    // doesn't resolve (a missing Silhouette, or a cycle), the file is put back and the reason returned.
+    SetSilhouetteBase :: (assetsDirectory: string, silhouetteName: string, newBase: string) -> string!? {
+        if newBase == silhouetteName {
+            return "A Silhouette can't be its own base.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        file: string! = ComponentFile(silhouetteFolder, "");
+        defer delete file;
+        baseFolder: string! = SilhouetteFolderOf(assetsDirectory, newBase);
+        defer delete baseFolder;
+        if !directoryExists(baseFolder) {
+            return "There is no Silhouette with that name.".copy();
+        }
+        when readTextFile(file) {
+            Result:::Err(error) -> {
+                failure: string! = `${file}: ${error.message()}`;
+                delete error;
+                return failure!;
+            },
+            Result:::Ok(original) -> {
+                defer delete original;
+                lines := original.lines();
+                defer delete lines;
+                rewritten~ string! = "".copy();
+                changed~ bool = false;
+                for line in lines {
+                    if line.startsWith("@base") && !line.startsWith("@base_hash") {
+                        rewritten += "@base \"";
+                        rewritten += SILHOUETTES_FOLDER;
+                        rewritten += "/";
+                        rewritten += newBase;
+                        rewritten += "\"\n";
+                        changed = true;
+                    } else if !line.startsWith("@base_hash") {
+                        rewritten += line;
+                        rewritten += "\n";
+                    }
+                }
+                if !changed {
+                    delete rewritten;
+                    return "Only a variant has a base to change.".copy();
+                }
+                writeProblem: string!? = WriteFileText(file, rewritten);
+                delete rewritten;
+                if writeProblem != null {
+                    return writeProblem!;
+                }
+                library := new lantern:::silhouette:::SilhouetteLibrary(assetsDirectory);
+                defer delete library;
+                resolvedName: string! = `${SILHOUETTES_FOLDER}/${silhouetteName}`;
+                defer delete resolvedName;
+                when library->Resolve(resolvedName) {
+                    Result:::Ok(resolved) -> {
+                        delete resolved;
+                        return null;
+                    },
+                    Result:::Err(message) -> {
+                        restoreProblem: string!? = WriteFileText(file, original);
+                        delete restoreProblem;
+                        return message!;
+                    }
+                }
+            }
+        }
+    }
+
+    // True when any file of another Silhouette names this one (as a base, or as the base of a child).
+    SilhouetteIsUsed :: (assetsDirectory: string, silhouetteName: string) -> bool {
+        folder: string! = `${assetsDirectory}/${SILHOUETTES_FOLDER}`;
+        defer delete folder;
+        needle: string! = `"${SILHOUETTES_FOLDER}/${silhouetteName}"`;
+        defer delete needle;
+        when lantern:::silhouette:::SortedEntries(folder) {
+            Result:::Err(message) -> {
+                delete message;
+                return false;
+            },
+            Result:::Ok(listed) -> {
+                names~ Array<string!>! = listed!;
+                used~ bool = false;
+                for name in names {
+                    if name != silhouetteName && !used {
+                        entryFolder: string! = `${folder}/${name}`;
+                        used = FolderMentions(entryFolder, needle);
+                        delete entryFolder;
+                    }
+                }
+                names.freeAll();
+                return used;
+            }
+        }
+    }
+
+    FolderMentions :: (directory: string, needle: string) -> bool {
+        when lantern:::silhouette:::SortedEntries(directory) {
+            Result:::Err(message) -> {
+                delete message;
+                return false;
+            },
+            Result:::Ok(listed) -> {
+                entries~ Array<string!>! = listed!;
+                found~ bool = false;
+                for entry in entries {
+                    if !found {
+                        child: string! = `${directory}/${entry}`;
+                        if directoryExists(child) {
+                            found = FolderMentions(child, needle);
+                        } else if entry.endsWith(SILHOUETTE_FILE_EXTENSION) {
+                            when readTextFile(child) {
+                                Result:::Err(error) -> {
+                                    delete error;
+                                },
+                                Result:::Ok(text) -> {
+                                    found = text.contains(needle);
+                                    delete text;
+                                }
+                            }
+                        }
+                        delete child;
+                    }
+                }
+                entries.freeAll();
+                return found;
+            }
+        }
+    }
+
+    // Deletes a whole Silhouette folder, unless another Silhouette is made from it.
+    DeleteSilhouette :: (assetsDirectory: string, silhouetteName: string) -> string!? {
+        if !SilhouetteNameIsUsable(silhouetteName) {
+            return "No such Silhouette.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if !directoryExists(silhouetteFolder) {
+            return "No such Silhouette.".copy();
+        }
+        if SilhouetteIsUsed(assetsDirectory, silhouetteName) {
+            return "Another Silhouette is made from this one, so it can't be deleted.".copy();
+        }
+        return RemoveTree(silhouetteFolder);
+    }
+
     // Reads a Silhouette's folder again and replaces its palette template, so the editor shows what the files say now.
     // Returns an error message or null.
     RefreshSilhouetteTemplate :: (palette: lantern:::editor:::Palette~*, assetsDirectory: string, silhouetteName: string) -> string!? {
