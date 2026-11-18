@@ -1,0 +1,79 @@
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"lift_pad\", \"functions\": [{\"name\": \"Lift\", \"returns\": \"f32\", \"inputs\": [{\"name\": \"height\", \"type\": \"f32\"}], \"nodes\": [{\"id\": \"entry\", \"kind\": \"entry\", \"x\": 20, \"y\": 20}, {\"id\": \"branch\", \"kind\": \"branch\", \"condition\": \"less\", \"x\": 240, \"y\": 20}, {\"id\": \"less\", \"kind\": \"less\", \"a\": \"height\", \"b\": {\"f32\": 1.0}, \"x\": 20, \"y\": 140}, {\"id\": \"return\", \"kind\": \"return\", \"value\": \"height\", \"x\": 480, \"y\": 20}]}]}";
+
+Move :: (editor: lantern:::graphs:::GraphEditor~*, x: i32, y: i32) -> void {
+    lantern:::graphs:::PointerMoved(editor, x, y);
+}
+
+Press :: (editor: lantern:::graphs:::GraphEditor~*, x: i32, y: i32) -> void {
+    lantern:::graphs:::PointerMoved(editor, x, y);
+    lantern:::graphs:::PointerPressed(editor, 0);
+}
+
+Release :: (editor: lantern:::graphs:::GraphEditor~*, x: i32, y: i32) -> void {
+    lantern:::graphs:::PointerMoved(editor, x, y);
+    lantern:::graphs:::PointerReleased(editor, 0);
+}
+
+main :: () -> i32 {
+    editor~ lantern:::graphs:::GraphEditor*! = new lantern:::graphs:::GraphEditor("lift_pad", lantern:::graphs:::NewGraph("placeholder"));
+    when lantern:::graphs:::LoadGraph(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph loads");
+            delete message;
+        },
+        Result:::Ok(graph) -> {
+            delete editor;
+            editor = new lantern:::graphs:::GraphEditor("lift_pad", graph!);
+        }
+    }
+    editor->zoom = 1;
+    editor->panX = 0;
+    editor->panY = 0;
+    canvas := new lantern:::graphs:::PixelCanvas();
+    lantern:::graphs:::DrawGraph(editor, canvas, 700, 300);
+    assert(canvas->pixels.length() == 700 * 300 * 4, "the canvas fills its pixels");
+    backgroundRed: u8 = canvas->pixels[(5 * 700 + 5) * 4];
+    assert(backgroundRed == 27, "the corner is the background colour");
+    headerIndex: usize = (usize(24) * 700 + usize(260)) * 4;
+    assert(canvas->pixels[headerIndex] == 138 && canvas->pixels[headerIndex + 1] == 90, "a branch header is drawn orange");
+
+    Press(editor, 260, 24);
+    assert(editor->selected == "branch", "pressing a node selects it");
+    Move(editor, 300, 64);
+    Release(editor, 300, 64);
+    moved: lantern:::graphs:::GraphFunction* = editor->Function();
+    branchIndex: usize? = moved->IndexOfNode("branch");
+    assert(branchIndex != null, "the branch is still there");
+    at~ usize = 0;
+    if present := branchIndex {
+        at = present;
+    }
+    assert(moved->nodes[at]->x == 280.0f && moved->nodes[at]->y == 60.0f, "a dragged node moves and snaps to the grid");
+
+    entryNode: lantern:::graphs:::GraphNode* = editor->Function()->nodes[0];
+    exitX: i32 = i32(entryNode->x) + lantern:::graphs:::NODE_WIDTH;
+    exitY: i32 = i32(entryNode->y) + lantern:::graphs:::HEADER_HEIGHT + lantern:::graphs:::ROW_HEIGHT / 2;
+    Press(editor, exitX, exitY);
+    assert(editor->dragMode == lantern:::graphs:::DRAG_WIRE, "pressing an output pin starts a wire");
+    Release(editor, 290, 69);
+    assert(editor->Function()->nodes[0]->next == "branch", "letting go over a node's header joins execution");
+
+    Press(editor, 600, 250);
+    assert(editor->selected == "", "pressing the background selects nothing");
+    Release(editor, 600, 250);
+    lantern:::graphs:::WheelTurned(editor, 1.0f);
+    assert(editor->zoom == 2, "the wheel zooms in a step");
+    lantern:::graphs:::SelectNode(editor, "less");
+    assert(lantern:::graphs:::KeyPressed(editor, "Delete"), "delete is used on a selected node");
+    assert(editor->Function()->IndexOfNode("less") == null, "the node is deleted");
+    assert(editor->Function()->nodes[1]->condition == "", "and the wire that came from it");
+    assert(editor->isDirty, "the edits mark the graph changed");
+
+    delete canvas;
+    delete editor;
+    print("the graph canvas draws and wires by pointer");
+    return 0;
+}

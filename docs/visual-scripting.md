@@ -101,6 +101,8 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 
 - Slice 3a: `GraphFile.nox` (`WriteGraph`, one node per line, which `LoadGraph` reads back to the same text) and `GraphEditing.nox` (`AddNode`, `RemoveNode`, `MoveNode`, `SetPort`, `AddFunction`, `NewGraph`). A wire is a port set to another node's id (`next`, `then`, `else` for execution; `a`, `b`, `value`, `condition`, `arg0`... for values); a literal is `#` and its Nyx text. A refused edit returns a message and changes nothing. Nodes carry an `x` and `y` for the tab. Test: `a-graph-is-edited-and-written-back`.
 
+- Slice 3b: the canvas, in `GraphPins.nox` (where a node's pins are), `GraphEditor.nox` (the open graph and a `PixelCanvas` of RGBA bytes with rectangles, lines, curved wires and text in the engine's 8 by 8 font), `GraphEditorDraw.nox` and `GraphEditorInput.nox`. Nodes are a coloured header (execution in on the left, value out on the right) over rows of pins. Press a node to select and drag it (it snaps to a 20 unit grid on release), press the background and drag to pan, press an output pin and let go over a node or an input pin to wire, right-click a pin to disconnect it, turn the wheel to zoom a whole step, press Delete to remove the selected node. Test: `the-graph-canvas-draws-and-wires-by-pointer`.
+
 ## Known open questions
 
 - Whether the generated `.nyx` is committed or only built; slice 4 starts with built-only and revisits.

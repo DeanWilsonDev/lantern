@@ -1,0 +1,231 @@
+// The graph tab's canvas: one graph open for editing, drawn as pixels (the interface shows them in a viewport) and moved by the
+// pointer. It owns the graph, which function is open, the pan and zoom, what is selected and what is being dragged.
+lantern:::graphs :: namespace {
+    DRAG_NONE: i32 : 0;
+    DRAG_NODE: i32 : 1;
+    DRAG_PAN: i32 : 2;
+    DRAG_WIRE: i32 : 3;
+    GRID_STEP: i32 : 20;
+    MAX_ZOOM: i32 : 4;
+
+    COLOR_BACKGROUND: u32 : 1776930;
+    COLOR_GRID: u32 : 2500912;
+    COLOR_NODE: u32 : 2895671;
+    COLOR_NODE_EDGE: u32 : 1316122;
+    COLOR_SELECTED: u32 : 16765514;
+    COLOR_TEXT: u32 : 15132910;
+    COLOR_DIM_TEXT: u32 : 10133677;
+    COLOR_EXECUTION: u32 : 15921906;
+    COLOR_VALUE: u32 : 7327999;
+
+    HeaderColor :: (kind: string) -> u32 {
+        if kind == "entry" {
+            return 9058874;
+        }
+        if kind == "return" || kind == "set" {
+            return 3104138;
+        }
+        if kind == "branch" || kind == "call" {
+            return 9067055;
+        }
+        if kind == "nyx" || kind == "nyx_value" {
+            return 6965898;
+        }
+        return 3963474;
+    }
+
+    // The picture the canvas is drawn into: RGBA bytes, with the zoom the drawing is done at.
+    PixelCanvas :: class {
+    public:
+        width~ u32 = 0;
+        height~ u32 = 0;
+        zoom~ i32 = 2;
+        pixels~ Array<u8>! = [];
+
+        PixelCanvas~: () { }
+
+        !PixelCanvas~: () {
+            delete pixels;
+        }
+
+        Clear~: (color: u32) -> void {
+            byteCount: usize = usize(width) * usize(height) * 4;
+            while pixels.length() > byteCount {
+                pixels.pop();
+            }
+            while pixels.length() < byteCount {
+                pixels.push(0);
+            }
+            red: u8 = u8((color >> 16) & 255);
+            green: u8 = u8((color >> 8) & 255);
+            blue: u8 = u8(color & 255);
+            for index~ usize = 0; index < byteCount; index += 4 {
+                pixels[index] = red;
+                pixels[index + 1] = green;
+                pixels[index + 2] = blue;
+                pixels[index + 3] = 255;
+            }
+        }
+
+        Dot~: (x: i32, y: i32, color: u32) -> void {
+            if x < 0 || y < 0 || x >= i32(width) || y >= i32(height) {
+                return;
+            }
+            index: usize = (usize(y) * usize(width) + usize(x)) * 4;
+            pixels[index] = u8((color >> 16) & 255);
+            pixels[index + 1] = u8((color >> 8) & 255);
+            pixels[index + 2] = u8(color & 255);
+        }
+
+        Rectangle~: (x: i32, y: i32, rectangleWidth: i32, rectangleHeight: i32, color: u32) -> void {
+            left: i32 = x < 0 ? 0 : x;
+            top: i32 = y < 0 ? 0 : y;
+            right: i32 = x + rectangleWidth > i32(width) ? i32(width) : x + rectangleWidth;
+            bottom: i32 = y + rectangleHeight > i32(height) ? i32(height) : y + rectangleHeight;
+            for row~ i32 = top; row < bottom; row++ {
+                for column~ i32 = left; column < right; column++ {
+                    this->Dot(column, row, color);
+                }
+            }
+        }
+
+        Outline~: (x: i32, y: i32, rectangleWidth: i32, rectangleHeight: i32, thickness: i32, color: u32) -> void {
+            this->Rectangle(x, y, rectangleWidth, thickness, color);
+            this->Rectangle(x, y + rectangleHeight - thickness, rectangleWidth, thickness, color);
+            this->Rectangle(x, y, thickness, rectangleHeight, color);
+            this->Rectangle(x + rectangleWidth - thickness, y, thickness, rectangleHeight, color);
+        }
+
+        Line~: (fromX: i32, fromY: i32, toX: i32, toY: i32, thickness: i32, color: u32) -> void {
+            deltaX: i32 = toX > fromX ? toX - fromX : fromX - toX;
+            deltaY: i32 = toY > fromY ? toY - fromY : fromY - toY;
+            steps~ i32 = deltaX > deltaY ? deltaX : deltaY;
+            if steps == 0 {
+                steps = 1;
+            }
+            for step~ i32 = 0; step <= steps; step++ {
+                pointX: i32 = fromX + (toX - fromX) * step / steps;
+                pointY: i32 = fromY + (toY - fromY) * step / steps;
+                this->Rectangle(pointX - thickness / 2, pointY - thickness / 2, thickness, thickness, color);
+            }
+        }
+
+        // A wire: an S curve that leaves the start to the right and enters the end from the left.
+        Wire~: (fromX: i32, fromY: i32, toX: i32, toY: i32, color: u32) -> void {
+            reach~ i32 = (toX - fromX) / 2;
+            if reach < 40 * zoom {
+                reach = 40 * zoom;
+            }
+            previousX~ i32 = fromX;
+            previousY~ i32 = fromY;
+            for step~ i32 = 1; step <= 24; step++ {
+                t: f32 = f32(step) / 24.0f;
+                u: f32 = 1.0f - t;
+                controlOneX: f32 = f32(fromX + reach);
+                controlTwoX: f32 = f32(toX - reach);
+                curveX: f32 = u * u * u * f32(fromX) + 3.0f * u * u * t * controlOneX + 3.0f * u * t * t * controlTwoX + t * t * t * f32(toX);
+                curveY: f32 = u * u * u * f32(fromY) + 3.0f * u * u * t * f32(fromY) + 3.0f * u * t * t * f32(toY) + t * t * t * f32(toY);
+                this->Line(previousX, previousY, i32(curveX), i32(curveY), zoom, color);
+                previousX = i32(curveX);
+                previousY = i32(curveY);
+            }
+        }
+
+        // Text in the 8 by 8 font, a pixel of font to `zoom` pixels of screen, six font pixels to a letter.
+        Text~: (x: i32, y: i32, text: string, color: u32, maxWidth: i32) -> void {
+            glyphs: Array<u64>! = lantern:::renderer:::PackedGlyphRows();
+            cursor~ i32 = x;
+            for position~ usize = 0; position < text.length(); position++ {
+                byte: u8 = text.byteAt(position);
+                if cursor + 6 * zoom > x + maxWidth {
+                    break;
+                }
+                cell: u32 = (byte >= 32 && byte <= 126) ? u32(byte - 32) : 31;
+                for row~ u32 = 0; row < 8; row++ {
+                    bits: u8 = lantern:::renderer:::GlyphRow(glyphs, usize(cell), row);
+                    for column~ u32 = 0; column < 8; column++ {
+                        if (bits & (u8(1) << u8(column))) != 0 {
+                            this->Rectangle(cursor + i32(column) * zoom, y + i32(row) * zoom, zoom, zoom, color);
+                        }
+                    }
+                }
+                cursor += 6 * zoom;
+            }
+            delete glyphs;
+        }
+    }
+
+    GraphEditor :: class {
+    public:
+        name~ string!;
+        graph~ Graph*!;
+        functionIndex~ usize = 0;
+        selected~ string!;
+        panX~ i32 = 20;
+        panY~ i32 = 20;
+        zoom~ i32 = 2;
+        pointerX~ i32 = 0;
+        pointerY~ i32 = 0;
+        dragMode~ i32 = 0;
+        dragNode~ string!;
+        dragOffsetX~ i32 = 0;
+        dragOffsetY~ i32 = 0;
+        wireNode~ string!;
+        wirePort~ string!;
+        wireIsExecution~ bool = false;
+        isDirty~ bool = false;
+        status~ string!;
+        generation~ u32 = 0;
+
+        GraphEditor~: (newName: string, newGraph: Graph*!) {
+            name = `${newName}`;
+            graph = newGraph!;
+            selected = "".copy();
+            dragNode = "".copy();
+            wireNode = "".copy();
+            wirePort = "".copy();
+            status = "".copy();
+        }
+
+        !GraphEditor~: () {
+            delete name;
+            delete graph;
+            delete selected;
+            delete dragNode;
+            delete wireNode;
+            delete wirePort;
+            delete status;
+        }
+
+        Function :: () -> GraphFunction* {
+            return graph->functions[functionIndex];
+        }
+
+        SetStatus~: (text: string) -> void {
+            delete status;
+            status = `${text}`;
+        }
+
+        Touch~: () -> void {
+            isDirty = true;
+            generation += 1;
+        }
+
+        // World coordinates to screen, and back.
+        ScreenX :: (worldX: i32) -> i32 {
+            return (worldX + panX) * zoom;
+        }
+
+        ScreenY :: (worldY: i32) -> i32 {
+            return (worldY + panY) * zoom;
+        }
+
+        WorldX :: (screenX: i32) -> i32 {
+            return screenX / zoom - panX;
+        }
+
+        WorldY :: (screenY: i32) -> i32 {
+            return screenY / zoom - panY;
+        }
+    }
+}

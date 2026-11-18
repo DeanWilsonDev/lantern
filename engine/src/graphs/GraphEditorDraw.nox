@@ -1,0 +1,183 @@
+// Draws the open graph into the editor's pixels: a grid, the wires, then the nodes with their pins.
+lantern:::graphs :: namespace {
+    // The centre of a pin in screen pixels.
+    PinScreenX :: (editor: GraphEditor*, node: GraphNode*, pin: PinSlot*) -> i32 {
+        return editor->ScreenX(i32(node->x) + pin->OffsetX());
+    }
+
+    PinScreenY :: (editor: GraphEditor*, node: GraphNode*, pin: PinSlot*) -> i32 {
+        return editor->ScreenY(i32(node->y) + pin->OffsetY());
+    }
+
+    // The port that holds a node's link for a pin (what SetPort takes), for reading back its reference.
+    PortReference :: (node: GraphNode*, port: string) -> string {
+        if port == "next" {
+            return node->next;
+        }
+        if port == "then" {
+            return node->thenId;
+        }
+        if port == "else" {
+            return node->elseId;
+        }
+        if port == "a" {
+            return node->a;
+        }
+        if port == "b" {
+            return node->b;
+        }
+        if port == "value" {
+            return node->value;
+        }
+        if port == "condition" {
+            return node->condition;
+        }
+        if port.startsWith("arg") {
+            argumentNumber~ usize = 0;
+            digits: string = port.substring(3, port.length() - 3);
+            for digit~ usize = 0; digit < digits.length(); digit++ {
+                argumentNumber = argumentNumber * 10 + usize(digits.byteAt(digit) - 48);
+            }
+            if argumentNumber < node->arguments.length() {
+                return node->arguments[argumentNumber];
+            }
+        }
+        return "";
+    }
+
+    DrawGrid :: (editor: GraphEditor*, canvas: PixelCanvas~*) -> void {
+        step: i32 = GRID_STEP * editor->zoom;
+        startX: i32 = editor->ScreenX(0) % step;
+        startY: i32 = editor->ScreenY(0) % step;
+        for y~ i32 = startY; y < i32(canvas->height); y += step {
+            for x~ i32 = startX; x < i32(canvas->width); x += step {
+                canvas->Rectangle(x, y, editor->zoom, editor->zoom, COLOR_GRID);
+            }
+        }
+    }
+
+    // A wire from every link a node holds.
+    DrawWires :: (editor: GraphEditor*, canvas: PixelCanvas~*) -> void {
+        function: GraphFunction* = editor->Function();
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            node: GraphNode* = function->nodes[index];
+            pins := PinsOf(function, node);
+            for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
+                pin: PinSlot* = pins->items[pinIndex];
+                if pin->isOutput && pin->isExecution {
+                    reference: string = PortReference(node, pin->port);
+                    if targetIndex := function->IndexOfNode(reference) {
+                        target: GraphNode* = function->nodes[targetIndex];
+                        canvas->Wire(PinScreenX(editor, node, pin), PinScreenY(editor, node, pin), editor->ScreenX(i32(target->x)), editor->ScreenY(i32(target->y)) + (HEADER_HEIGHT / 2) * editor->zoom, COLOR_EXECUTION);
+                    }
+                } else if !pin->isOutput && !pin->isExecution {
+                    reference: string = PortReference(node, pin->port);
+                    if sourceIndex := function->IndexOfNode(reference) {
+                        source: GraphNode* = function->nodes[sourceIndex];
+                        canvas->Wire(editor->ScreenX(i32(source->x) + NODE_WIDTH), editor->ScreenY(i32(source->y)) + (HEADER_HEIGHT / 2) * editor->zoom, PinScreenX(editor, node, pin), PinScreenY(editor, node, pin), COLOR_VALUE);
+                    }
+                }
+            }
+            delete pins;
+        }
+    }
+
+    DrawPin :: (editor: GraphEditor*, canvas: PixelCanvas~*, x: i32, y: i32, isExecution: bool, isLinked: bool) -> void {
+        color: u32 = isExecution ? COLOR_EXECUTION : COLOR_VALUE;
+        size: i32 = 4 * editor->zoom;
+        canvas->Rectangle(x - size / 2, y - size / 2, size, size, color);
+        if !isLinked {
+            inner: i32 = size - 2 * editor->zoom;
+            if inner > 0 {
+                canvas->Rectangle(x - inner / 2, y - inner / 2, inner, inner, COLOR_NODE);
+            }
+        }
+    }
+
+    // The words in a node's header.
+    NodeTitle :: (node: GraphNode*) -> string! {
+        if node->kind == "call" && node->functionPath.length() > 0 {
+            return `${node->functionPath}`;
+        }
+        if node->kind == "set" && node->name.length() > 0 {
+            return `set ${node->name}`;
+        }
+        return `${node->kind}`;
+    }
+
+    DrawNode :: (editor: GraphEditor*, canvas: PixelCanvas~*, node: GraphNode*) -> void {
+        function: GraphFunction* = editor->Function();
+        pins := PinsOf(function, node);
+        zoom: i32 = editor->zoom;
+        left: i32 = editor->ScreenX(i32(node->x));
+        top: i32 = editor->ScreenY(i32(node->y));
+        nodeWidth: i32 = NODE_WIDTH * zoom;
+        nodeHeight: i32 = NodeHeight(pins) * zoom;
+        canvas->Rectangle(left, top, nodeWidth, nodeHeight, COLOR_NODE);
+        canvas->Rectangle(left, top, nodeWidth, HEADER_HEIGHT * zoom, HeaderColor(node->kind));
+        isSelected: bool = node->id == editor->selected;
+        canvas->Outline(left, top, nodeWidth, nodeHeight, isSelected ? 2 * zoom / 2 + 1 : 1, isSelected ? COLOR_SELECTED : COLOR_NODE_EDGE);
+        title: string! = NodeTitle(node);
+        canvas->Text(left + 10 * zoom, top + (HEADER_HEIGHT - 8) * zoom / 2, title, COLOR_TEXT, nodeWidth - 20 * zoom);
+        delete title;
+        for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
+            pin: PinSlot* = pins->items[pinIndex];
+            pinX: i32 = PinScreenX(editor, node, pin);
+            pinY: i32 = PinScreenY(editor, node, pin);
+            isLinked~ bool = false;
+            if pin->isOutput && pin->isExecution {
+                isLinked = function->IndexOfNode(PortReference(node, pin->port)) != null;
+            } else if !pin->isOutput && !pin->isExecution {
+                isLinked = PortReference(node, pin->port).length() > 0;
+            } else {
+                isLinked = true;
+            }
+            DrawPin(editor, canvas, pinX, pinY, pin->isExecution, isLinked);
+            if pin->label.length() > 0 {
+                labelWidth: i32 = (NODE_WIDTH / 2 - 8) * zoom;
+                if pin->isOutput {
+                    labelX: i32 = pinX - 8 * zoom - i32(pin->label.length()) * 6 * zoom;
+                    canvas->Text(labelX, pinY - 4 * zoom, pin->label, COLOR_DIM_TEXT, nodeWidth);
+                } else {
+                    canvas->Text(pinX + 8 * zoom, pinY - 4 * zoom, pin->label, COLOR_DIM_TEXT, nodeWidth - 12 * zoom);
+                }
+            }
+        }
+        delete pins;
+    }
+
+    // The whole canvas at a size.
+    DrawGraph :: (editor: GraphEditor*, canvas: PixelCanvas~*, newWidth: u32, newHeight: u32) -> void {
+        canvas->width = newWidth;
+        canvas->height = newHeight;
+        canvas->zoom = editor->zoom;
+        canvas->Clear(COLOR_BACKGROUND);
+        if editor->graph->functions.length() == 0 {
+            return;
+        }
+        DrawGrid(editor, canvas);
+        DrawWires(editor, canvas);
+        function: GraphFunction* = editor->Function();
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            DrawNode(editor, canvas, function->nodes[index]);
+        }
+        if editor->dragMode == DRAG_WIRE {
+            fromIndex: usize? = function->IndexOfNode(editor->wireNode);
+            if fromIndex != null {
+                at~ usize = 0;
+                if present := fromIndex {
+                    at = present;
+                }
+                from: GraphNode* = function->nodes[at];
+                pins := PinsOf(function, from);
+                for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
+                    pin: PinSlot* = pins->items[pinIndex];
+                    if pin->port == editor->wirePort {
+                        canvas->Wire(PinScreenX(editor, from, pin), PinScreenY(editor, from, pin), editor->pointerX, editor->pointerY, pin->isExecution ? COLOR_EXECUTION : COLOR_VALUE);
+                    }
+                }
+                delete pins;
+            }
+        }
+    }
+}
