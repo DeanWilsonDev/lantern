@@ -1,0 +1,230 @@
+// Lays a function's nodes out left to right: execution flows rightwards, a value sits left of what uses it, and the order inside each
+// column is swept to keep wires from crossing. The graph tab runs it on a graph that has no saved positions and from its Format button.
+lantern:::graphs :: namespace {
+    COLUMN_GAP: i32 : 56;
+    ROW_GAP: i32 : 22;
+    LAYOUT_MARGIN: i32 : 24;
+    ORDERING_SWEEPS: i32 : 4;
+
+    // The node ids a node's execution pins lead to.
+    NodeLinkTargets :: (node: GraphNode*) -> Array<string!>! {
+        targets~ Array<string!>! = [];
+        targets.push(`${node->next}`);
+        targets.push(`${node->thenId}`);
+        targets.push(`${node->elseId}`);
+        for target in node->targets {
+            targets.push(`${target}`);
+        }
+        return targets!;
+    }
+
+    // The node ids or literals feeding a node's value pins.
+    NodeValueSources :: (node: GraphNode*) -> Array<string!>! {
+        sources~ Array<string!>! = [];
+        sources.push(`${node->a}`);
+        sources.push(`${node->b}`);
+        sources.push(`${node->value}`);
+        sources.push(`${node->condition}`);
+        for argument in node->arguments {
+            sources.push(`${argument}`);
+        }
+        return sources!;
+    }
+
+    // True when the function has more than one node and every node sits at the same place, as in a graph written by hand.
+    NeedsLayout :: (function: GraphFunction*) -> bool {
+        if function->nodes.length() < 2 {
+            return false;
+        }
+        firstX: f32 = function->nodes[0]->x;
+        firstY: f32 = function->nodes[0]->y;
+        for node in function->nodes {
+            if node->x != firstX || node->y != firstY {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The nodes in one column, ordered by their current position in it.
+    MembersOf :: (layers: Array<usize>, positions: Array<f32>, columnIndex: usize) -> Array<usize>! {
+        members~ Array<usize>! = [];
+        for nodeIndex~ usize = 0; nodeIndex < layers.length(); nodeIndex++ {
+            if layers[nodeIndex] == columnIndex {
+                slot~ usize = members.length();
+                members.push(nodeIndex);
+                while slot > 0 && positions[members[slot - 1]] > positions[nodeIndex] {
+                    members[slot] = members[slot - 1];
+                    slot -= 1;
+                }
+                members[slot] = nodeIndex;
+            }
+        }
+        return members!;
+    }
+
+    // The average position in its column of the neighbours a node has in another column, or its own position when it has none.
+    BarycenterOf :: (nodeIndex: usize, fromIndexes: Array<usize>, toIndexes: Array<usize>, layers: Array<usize>, positions: Array<f32>, useEarlier: bool) -> f32 {
+        total~ f32 = 0.0f;
+        count~ f32 = 0.0f;
+        for edgeIndex~ usize = 0; edgeIndex < fromIndexes.length(); edgeIndex++ {
+            other~ usize = nodeIndex;
+            if useEarlier && toIndexes[edgeIndex] == nodeIndex && layers[fromIndexes[edgeIndex]] < layers[nodeIndex] {
+                other = fromIndexes[edgeIndex];
+            } else if !useEarlier && fromIndexes[edgeIndex] == nodeIndex && layers[toIndexes[edgeIndex]] > layers[nodeIndex] {
+                other = toIndexes[edgeIndex];
+            }
+            if other != nodeIndex {
+                total += positions[other];
+                count += 1.0f;
+            }
+        }
+        if count == 0.0f {
+            return positions[nodeIndex];
+        }
+        return total / count;
+    }
+
+    // Moves every node of the function to a column and a row. Execution order and value flow decide the columns; the rows are
+    // ordered by sweeping the neighbours' average row back and forth.
+    ArrangeFunction :: (function: GraphFunction~*) -> void {
+        nodeCount: usize = function->nodes.length();
+        if nodeCount == 0 {
+            return;
+        }
+        fromIndexes~ Array<usize>! = [];
+        toIndexes~ Array<usize>! = [];
+        for nodeIndex~ usize = 0; nodeIndex < nodeCount; nodeIndex++ {
+            node: GraphNode* = function->nodes[nodeIndex];
+            linkTargets~ Array<string!>! = NodeLinkTargets(node);
+            for target in linkTargets {
+                if targetIndex := function->IndexOfNode(target) {
+                    if targetIndex != nodeIndex {
+                        fromIndexes.push(nodeIndex);
+                        toIndexes.push(targetIndex);
+                    }
+                }
+            }
+            linkTargets.freeAll();
+            valueSources~ Array<string!>! = NodeValueSources(node);
+            for source in valueSources {
+                if sourceIndex := function->IndexOfNode(source) {
+                    if sourceIndex != nodeIndex {
+                        fromIndexes.push(sourceIndex);
+                        toIndexes.push(nodeIndex);
+                    }
+                }
+            }
+            valueSources.freeAll();
+        }
+
+        layers~ Array<usize>! = [];
+        for nodeIndex~ usize = 0; nodeIndex < nodeCount; nodeIndex++ {
+            layers.push(0);
+        }
+        for round~ usize = 0; round < nodeCount; round++ {
+            changed~ bool = false;
+            for edgeIndex~ usize = 0; edgeIndex < fromIndexes.length(); edgeIndex++ {
+                wanted: usize = layers[fromIndexes[edgeIndex]] + 1;
+                if layers[toIndexes[edgeIndex]] < wanted && wanted <= nodeCount {
+                    layers[toIndexes[edgeIndex]] = wanted;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for nodeIndex~ usize = 0; nodeIndex < nodeCount; nodeIndex++ {
+            hasIncoming~ bool = false;
+            nearestUser~ usize = nodeCount + 1;
+            for edgeIndex~ usize = 0; edgeIndex < fromIndexes.length(); edgeIndex++ {
+                if toIndexes[edgeIndex] == nodeIndex {
+                    hasIncoming = true;
+                }
+                if fromIndexes[edgeIndex] == nodeIndex && layers[toIndexes[edgeIndex]] < nearestUser {
+                    nearestUser = layers[toIndexes[edgeIndex]];
+                }
+            }
+            if !hasIncoming && nearestUser <= nodeCount && nearestUser > 1 && !IsExecutionKind(function->nodes[nodeIndex]->kind) {
+                layers[nodeIndex] = nearestUser - 1;
+            }
+        }
+
+        highestLayer~ usize = 0;
+        for layer in layers {
+            if layer > highestLayer {
+                highestLayer = layer;
+            }
+        }
+        positions~ Array<f32>! = [];
+        columnFill~ Array<usize>! = [];
+        for columnIndex~ usize = 0; columnIndex <= highestLayer; columnIndex++ {
+            columnFill.push(0);
+        }
+        for nodeIndex~ usize = 0; nodeIndex < nodeCount; nodeIndex++ {
+            positions.push(f32(columnFill[layers[nodeIndex]]));
+            columnFill[layers[nodeIndex]] += 1;
+        }
+        delete columnFill;
+
+        for sweep~ i32 = 0; sweep < ORDERING_SWEEPS; sweep++ {
+            forward: bool = sweep % 2 == 0;
+            for step~ usize = 0; step <= highestLayer; step++ {
+                columnIndex: usize = when forward { true -> step, false -> highestLayer - step };
+                members~ Array<usize>! = MembersOf(layers, positions, columnIndex);
+                keys~ Array<f32>! = [];
+                for member in members {
+                    keys.push(BarycenterOf(member, fromIndexes, toIndexes, layers, positions, forward));
+                }
+                for inserted~ usize = 1; inserted < members.length(); inserted++ {
+                    movingMember: usize = members[inserted];
+                    movingKey: f32 = keys[inserted];
+                    slot~ usize = inserted;
+                    while slot > 0 && keys[slot - 1] > movingKey {
+                        members[slot] = members[slot - 1];
+                        keys[slot] = keys[slot - 1];
+                        slot -= 1;
+                    }
+                    members[slot] = movingMember;
+                    keys[slot] = movingKey;
+                }
+                for rank~ usize = 0; rank < members.length(); rank++ {
+                    positions[members[rank]] = f32(rank);
+                }
+                delete members;
+                delete keys;
+            }
+        }
+
+        for columnIndex~ usize = 0; columnIndex <= highestLayer; columnIndex++ {
+            members := MembersOf(layers, positions, columnIndex);
+            rowTop~ i32 = LAYOUT_MARGIN;
+            for member in members {
+                pins := PinsOf(function, function->nodes[member]);
+                nodeHeight: i32 = NodeHeight(pins);
+                delete pins;
+                function->nodes[member]->x = f32(LAYOUT_MARGIN + i32(columnIndex) * (NODE_WIDTH + COLUMN_GAP));
+                function->nodes[member]->y = f32(rowTop);
+                rowTop += nodeHeight + ROW_GAP;
+            }
+            delete members;
+        }
+        delete fromIndexes;
+        delete toIndexes;
+        delete layers;
+        delete positions;
+    }
+
+    // Lays out every function that has no saved positions. Returns how many it laid out.
+    ArrangeUnplacedFunctions :: (graph: Graph~*) -> usize {
+        arranged~ usize = 0;
+        for functionIndex~ usize = 0; functionIndex < graph->functions.length(); functionIndex++ {
+            if NeedsLayout(graph->functions[functionIndex]) {
+                ArrangeFunction(graph->functions[functionIndex]);
+                arranged += 1;
+            }
+        }
+        return arranged;
+    }
+}

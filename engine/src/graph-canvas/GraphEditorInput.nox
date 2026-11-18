@@ -240,4 +240,42 @@ lantern:::graphs :: namespace {
         graphEditor->selected = `${nodeId}`;
         graphEditor->generation += 1;
     }
+
+    // Picks the zoom and pan that show every node of the open function, at zoom 2 when they fit and zoom 1 when they don't.
+    FitToView :: (graphEditor: GraphEditor~*, canvasWidth: i32, canvasHeight: i32) -> void {
+        function: GraphFunction* = graphEditor->graph->functions[graphEditor->functionIndex];
+        if function->nodes.length() == 0 {
+            return;
+        }
+        left~ i32 = 1000000;
+        top~ i32 = 1000000;
+        right~ i32 = -1000000;
+        bottom~ i32 = -1000000;
+        for node in function->nodes {
+            pins := PinsOf(function, node);
+            nodeHeight: i32 = NodeHeight(pins);
+            delete pins;
+            nodeLeft: i32 = i32(node->x);
+            nodeTop: i32 = i32(node->y);
+            if nodeLeft < left {
+                left = nodeLeft;
+            }
+            if nodeTop < top {
+                top = nodeTop;
+            }
+            if nodeLeft + NODE_WIDTH > right {
+                right = nodeLeft + NODE_WIDTH;
+            }
+            if nodeTop + nodeHeight > bottom {
+                bottom = nodeTop + nodeHeight;
+            }
+        }
+        margin: i32 = 24;
+        contentWidth: i32 = right - left + margin * 2;
+        contentHeight: i32 = bottom - top + margin * 2;
+        fitsDoubled: bool = contentWidth * 2 <= canvasWidth && contentHeight * 2 <= canvasHeight;
+        graphEditor->zoom = when fitsDoubled { true -> 2, false -> 1 };
+        graphEditor->panX = margin - left;
+        graphEditor->panY = margin - top;
+    }
 }

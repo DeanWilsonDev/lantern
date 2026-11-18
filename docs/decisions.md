@@ -1801,3 +1801,7 @@ The editor still places Silhouettes as copies (D-188). The root's prototype now 
 ## D-203: `mist run test` also builds the world editor
 
 `nox test` compiles only what each test names, so `engine/editor-backend` and the editor app had no compile check: a syntax error in `EditorApi.nox` (D-202) was merged and only failed when the editor started. `engine/tools/run-tests.sh` now ends by building `apps/world-editor/nox` when it runs the whole suite, so the same command catches it. A single suite named on the command line skips the build. Provisional: not reviewed by Dean.
+
+## D-204: A graph is laid out in columns by execution and value flow, on opening and on Format graph
+
+`ArrangeFunction` gives every node a column from the longest chain of links into it (execution links run from a node to its targets, value links from the node a reference names to the node using it), pulls a value-only node with no inputs next to its first user, orders each column with a few barycentre sweeps, and stacks each column top to bottom. It runs when a function's nodes all sit at one place, and from **Format graph**; saved positions are never moved otherwise. Rejected for now: fractional zoom (the canvas draws with whole-number pixel scales) and routing wires around nodes. Provisional: not reviewed by Dean.
