@@ -74,7 +74,7 @@ are `point_light`, `spot_light` and `sun`), their numbers are properties in the 
 scene with them as you edit. See `lighting-and-shadows.md`.
 
 Every folder in `assets/silhouettes/` is added to the same list as a template (a Silhouette with the same name as a
-palette entry replaces it). Placing one inserts its root and children together as one undo step. See `silhouettes.md`.
+palette entry replaces it). Placing one inserts its root and children together as one undo step, and **Edit** in the asset browser opens its components in a tab. See `silhouettes.md`.
 
 Without a palette the editor still works, with generic blocks, ramps and markers.
 

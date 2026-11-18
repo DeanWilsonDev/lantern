@@ -1,0 +1,78 @@
+ComponentItem :: import ComponentItem;
+Editor :: import Editor;
+EditorModel :: import EditorModel;
+
+SilhouettePageUi :: namespace {
+    ComponentClass :: (selected: bool) -> string {
+        return selected ? "entity-page-component-selected" : "entity-page-component";
+    }
+
+    Indented :: (name: string, depth: i32) -> string {
+        prefix~ string = "";
+        for level~ i32 = 0; level < depth; level++ {
+            prefix = prefix + "    ";
+        }
+        return depth > 0 ? prefix + "└ " + name : name;
+    }
+
+    PositionOf :: (components: Array<ComponentItem>, name: string) -> i32 {
+        for index~ i32 = 0; index < components.length(); index++ {
+            if components[index].name == name {
+                return index;
+            }
+        }
+        return 0;
+    }
+
+    Chosen :: (components: Array<ComponentItem>, position: i32) -> ComponentItem {
+        if position >= 0 && position < components.length() {
+            return components[position];
+        }
+        return ComponentItem { name: "", kind: "", depth: 0 };
+    }
+}
+
+SilhouettePage :: () -> Penumbra:::Component {
+    @context editor~ Editor;
+    @signal chosenPosition~ i32 = 0;
+    return (
+        <frame ref="silhouette-page" class="entity-page">
+            <slot>
+                !{(() -> Penumbra:::Component {
+                    templateId := editor.tabs.silhouette;
+                    components := EditorModel:::Components(templateId);
+                    chosen := SilhouettePageUi:::Chosen(components, chosenPosition);
+                    return (
+                        <frame class="entity-page-body">
+                            <frame class="entity-page-header">
+                                <icon class="panel-header-icon" icon="cube" size={14.0f} />
+                                <text class="entity-page-title">{templateId}</text>
+                                <text class="entity-page-kind">{`${components.length()} components`}</text>
+                            </frame>
+                            <frame class="entity-page-columns">
+                                <frame class="entity-page-list">
+                                    <text class="entity-page-heading">Components</text>
+                                    <slot>
+                                        !{components.map((item: ComponentItem) ->
+                                            <frame key={`silhouette-component-${item.name}-${item.depth}`}
+                                                   ref={`silhouette-component-${item.name}`}
+                                                   class={SilhouettePageUi:::ComponentClass(item.name == chosen.name)}
+                                                   onRelease={() -> { chosenPosition = SilhouettePageUi:::PositionOf(components, item.name); }}>
+                                                <text class="entity-page-component-name">{SilhouettePageUi:::Indented(item.name, item.depth)}</text>
+                                                <text class="entity-page-component-count">{item.kind}</text>
+                                            </frame>)}
+                                    </slot>
+                                </frame>
+                                <frame class="entity-page-fields">
+                                    <text class="entity-page-heading">{chosen.name}</text>
+                                    <text class="entity-page-kind">{`kind: ${chosen.kind}`}</text>
+                                    <text class="entity-page-kind">{chosen.depth == 0 ? "the root of this Silhouette" : "a child of this Silhouette"}</text>
+                                </frame>
+                            </frame>
+                        </frame>
+                    );
+                })()}
+            </slot>
+        </frame>
+    );
+}
