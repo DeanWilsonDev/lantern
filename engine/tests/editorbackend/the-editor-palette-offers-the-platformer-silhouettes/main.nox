@@ -1,0 +1,35 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    session := lantern:::editorbackend:::OpenSession("../assets/editor/palette.json", "../assets", "../assets/worlds/course.world.json");
+    defer delete session;
+    session->SetViewportSize(Vec2 { x: 1280.0f, y: 720.0f });
+    palette: lantern:::editor:::Palette* = session->palette;
+
+    guard block := palette->Template("block") return 1;
+    assert(block->fromSilhouette, "the block silhouette takes over from the palette entry");
+    assert(block->prototype->shape != null, "the block has a shape");
+    guard gem := palette->Template("gem") return 2;
+    assert(gem->lift == 0.6f, "the gem's lift comes from its editor values");
+    assert(gem->label == "Gem", "the gem's label comes from its editor values");
+    guard wide := palette->Template("moving_platform_wide") return 3;
+    assert(wide->prototype->kind == "moving_platform", "the wide platform is a variant of the moving platform");
+    guard post := palette->Template("lamp_post") return 4;
+    assert(post->descendants.length() == 1, "the lamp post has one light");
+    assert(post->descendantParents[0] == 0, "the light hangs from the post");
+
+    entitiesBefore: usize = session->World()->entities.length();
+    placed: u64? = session->AddEntity("lamp_post", false);
+    guard postKey := placed return 5;
+    assert(session->World()->entities.length() == entitiesBefore + 2, "placing the lamp post adds the post and its light");
+    guard postIndex := session->World()->IndexOf(postKey) return 6;
+    light: lantern:::world:::WorldEntity* = session->World()->entities[postIndex + 1];
+    assert(light->kind == "point_light", "the light follows the post");
+    lightParent: u64 = light->parent ?? 0;
+    assert(lightParent == postKey, "the light's parent is the new post");
+    undone: bool = session->Undo();
+    assert(undone, "placing a silhouette is one undo step");
+    assert(session->World()->entities.length() == entitiesBefore, "undo removes the post and its light");
+    print("the editor palette offers the platformer silhouettes");
+    return 0;
+}

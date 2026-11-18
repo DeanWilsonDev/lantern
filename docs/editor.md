@@ -73,6 +73,9 @@ The palette also offers **Point light**, **Spot light** and **Sun**. They are en
 are `point_light`, `spot_light` and `sun`), their numbers are properties in the inspector, and the viewport lights the
 scene with them as you edit. See `lighting-and-shadows.md`.
 
+Every folder in `assets/silhouettes/` is added to the same list as a template (a Silhouette with the same name as a
+palette entry replaces it). Placing one inserts its root and children together as one undo step. See `silhouettes.md`.
+
 Without a palette the editor still works, with generic blocks, ramps and markers.
 
 ## Build and run

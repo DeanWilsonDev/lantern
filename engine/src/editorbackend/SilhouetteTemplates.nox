@@ -1,0 +1,140 @@
+lantern:::editorbackend :: namespace {
+    // The palette file lists what the editor can place, and a game's Silhouettes are things it can place
+    // too. This reads every Silhouette folder under `<assets>/silhouettes` and adds one template for each,
+    // named after the folder. A Silhouette's `editor` values (`label` for the menu and `lift` for how far
+    // to raise it off the surface) are read from its root and are not part of the entity itself. A
+    // Silhouette that fails to resolve is logged and left out; the rest still load.
+    SILHOUETTES_FOLDER: string : "silhouettes";
+
+    // The menu label a root's `editor` values ask for, or the fallback.
+    EditorLabel :: (valuesJson: string, fallbackLabel: string) -> string! {
+        label~ string! = `${fallbackLabel}`;
+        when lantern:::json:::Parse(valuesJson) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                if editorAt := document->Member(document->root, "editor") {
+                    if labelAt := document->Member(editorAt, "label") {
+                        if document->Kind(labelAt) == lantern:::json:::JsonKind:::Text {
+                            delete label;
+                            label = `${document->Text(labelAt)}`;
+                        }
+                    }
+                }
+                delete document;
+            }
+        }
+        return label!;
+    }
+
+    // How far a root's `editor` values ask to lift it off the surface, or 0.
+    EditorLift :: (valuesJson: string) -> f32 {
+        lift~ f32 = 0.0f;
+        when lantern:::json:::Parse(valuesJson) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                if editorAt := document->Member(document->root, "editor") {
+                    if liftAt := document->Member(editorAt, "lift") {
+                        if document->Kind(liftAt) == lantern:::json:::JsonKind:::Number {
+                            lift = f32(document->Node(liftAt).number);
+                        }
+                    }
+                }
+                delete document;
+            }
+        }
+        return lift;
+    }
+
+    // Builds the template for one Silhouette: the root becomes the prototype and every other entity a
+    // descendant, with its parent given as a position in the group.
+    SilhouetteTemplate :: (library: lantern:::silhouette:::SilhouetteLibrary*, name: string) -> Result<lantern:::editor:::EntityTemplate*!, string!> {
+        silhouetteName: string! = `${SILHOUETTES_FOLDER}/${name}`;
+        defer delete silhouetteName;
+        valuesJson~ string!? = null;
+        when library->Resolve(silhouetteName) {
+            Result:::Err(message) -> {
+                return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(message!);
+            },
+            Result:::Ok(resolved) -> {
+                valuesJson = `${resolved->entities[0]->valuesJson}`;
+                delete resolved;
+            }
+        }
+        guard rootValues := valuesJson return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(`silhouette '${name}' has no root`);
+        label: string! = EditorLabel(rootValues, name);
+        menuLift: f32 = EditorLift(rootValues);
+        delete valuesJson;
+        when lantern:::silhouette:::SilhouetteWorld(library, silhouetteName) {
+            Result:::Err(message) -> {
+                delete label;
+                return Result<lantern:::editor:::EntityTemplate*!, string!>:::Err(message!);
+            },
+            Result:::Ok(loaded) -> {
+                worldFile: lantern:::world:::WorldFile* = loaded;
+                root: lantern:::world:::WorldEntity* = worldFile->entities[0];
+                template := new lantern:::editor:::EntityTemplate(name, label, root->kind);
+                delete label;
+                template->lift = menuLift;
+                template->fromSilhouette = true;
+                delete template->prototype;
+                template->prototype = root->Copy();
+                for index~ usize = 1; index < worldFile->entities.length(); index++ {
+                    descendant := worldFile->entities[index]->Copy();
+                    parentPosition~ usize = 0;
+                    if parentId := descendant->parent {
+                        parentPosition = usize(parentId) - 1;
+                    }
+                    template->descendants.push(descendant!);
+                    template->descendantParents.push(parentPosition);
+                }
+                delete loaded;
+                return Result<lantern:::editor:::EntityTemplate*!, string!>:::Ok(template!);
+            }
+        }
+    }
+
+    // Adds a template for every Silhouette folder under `<assets>/silhouettes`. A missing folder adds
+    // nothing.
+    AddSilhouetteTemplates :: (palette: lantern:::editor:::Palette~*, assetsDirectory: string) -> void {
+        folder: string! = `${assetsDirectory}/${SILHOUETTES_FOLDER}`;
+        defer delete folder;
+        if !directoryExists(folder) {
+            return;
+        }
+        library := new lantern:::silhouette:::SilhouetteLibrary(assetsDirectory);
+        defer delete library;
+        when lantern:::silhouette:::SortedEntries(folder) {
+            Result:::Err(message) -> {
+                lantern:::core:::LogWarn("editor", message);
+                delete message;
+            },
+            Result:::Ok(listed) -> {
+                names~ Array<string!>! = listed!;
+                for name in names {
+                    entryPath: string! = `${folder}/${name}`;
+                    isFolder: bool = directoryExists(entryPath);
+                    delete entryPath;
+                    if !isFolder {
+                        continue;
+                    }
+                    when SilhouetteTemplate(library, name) {
+                        Result:::Err(message) -> {
+                            warning: string! = `silhouette '${name}' not added to the palette: ${message}`;
+                            lantern:::core:::LogWarn("editor", warning);
+                            delete warning;
+                            delete message;
+                        },
+                        Result:::Ok(template) -> {
+                            palette->AddTemplate(template!);
+                        }
+                    }
+                }
+                names.freeAll();
+            }
+        }
+    }
+}

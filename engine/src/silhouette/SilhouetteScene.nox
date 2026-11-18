@@ -65,6 +65,68 @@ lantern:::silhouette :: namespace {
     }
 
     /**
+     * The text of a world file holding the given entity objects.
+     */
+    WorldText :: (entityTexts: Array<string!>, sceneName: string) -> string! {
+        joined~ string! = "";
+        for index~ usize = 0; index < entityTexts.length(); index++ {
+            if index > 0 {
+                extendedComma: string! = `${joined},`;
+                delete joined;
+                joined = extendedComma!;
+            }
+            extendedJoined: string! = `${joined}${entityTexts[index]}`;
+            delete joined;
+            joined = extendedJoined!;
+        }
+        quotedName: string! = lantern:::json:::QuotedText(sceneName);
+        worldText: string! = `{"format_version":${lantern:::world:::CURRENT_FORMAT_VERSION},"name":${quotedName},"entities":[${joined}]}`;
+        delete quotedName;
+        delete joined;
+        return worldText!;
+    }
+
+    /**
+     * One Silhouette as a world file of its own: entity 1 is the root, the rest are its descendants, numbered in
+     * order with their parents' ids. The editor uses it to place a Silhouette.
+     */
+    SilhouetteWorld :: (library: SilhouetteLibrary*, name: string) -> Result<lantern:::world:::WorldFile*!, string!> {
+        when library->Resolve(name) {
+            Result:::Err(message) -> {
+                return Result<lantern:::world:::WorldFile*!, string!>:::Err(message!);
+            },
+            Result:::Ok(resolved) -> {
+                entityTexts~ Array<string!>! = [];
+                for index~ usize = 0; index < resolved->entities.length(); index++ {
+                    entity: SilhouetteEntity* = resolved->entities[index];
+                    parentId~ u64? = null;
+                    if parentPath := entity->parentPath {
+                        if parentIndex := resolved->IndexOf(parentPath) {
+                            parentId = u64(parentIndex + 1);
+                        }
+                    }
+                    when WorldEntityJson(entity, u64(index + 1), parentId, name) {
+                        Result:::Ok(text) -> {
+                            entityTexts.push(text!);
+                        },
+                        Result:::Err(message) -> {
+                            entityTexts.freeAll();
+                            delete resolved;
+                            return Result<lantern:::world:::WorldFile*!, string!>:::Err(message!);
+                        }
+                    }
+                }
+                worldText: string! = WorldText(entityTexts, name);
+                entityTexts.freeAll();
+                delete resolved;
+                result: Result<lantern:::world:::WorldFile*!, string!> = lantern:::world:::FromJson(worldText, name);
+                delete worldText;
+                return result!;
+            }
+        }
+    }
+
+    /**
      * The instances read from a scene folder, in file order: each root's world id and the entities it resolved to.
      */
     SceneBuild :: class {
@@ -209,21 +271,7 @@ lantern:::silhouette :: namespace {
             }
             delete ids;
         }
-        joined~ string! = "";
-        for index~ usize = 0; index < entityTexts.length(); index++ {
-            if index > 0 {
-                extendedComma: string! = `${joined},`;
-                delete joined;
-                joined = extendedComma!;
-            }
-            extendedJoined: string! = `${joined}${entityTexts[index]}`;
-            delete joined;
-            joined = extendedJoined!;
-        }
-        quotedName: string! = lantern:::json:::QuotedText(sceneName);
-        worldText: string! = `{"format_version":${lantern:::world:::CURRENT_FORMAT_VERSION},"name":${quotedName},"entities":[${joined}]}`;
-        delete quotedName;
-        delete joined;
+        worldText: string! = WorldText(entityTexts, sceneName);
         entityTexts.freeAll();
         delete build;
         result: Result<lantern:::world:::WorldFile*!, string!> = lantern:::world:::FromJson(worldText, sceneDirectory);

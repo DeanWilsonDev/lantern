@@ -37,12 +37,23 @@ Resolution runs from the inside out: the type's values (none yet, so the empty o
 
 `lantern:::silhouette:::LoadScene(library, sceneFolder, name)` reads a folder of instance files. Each file needs an `@id` (the world id of the instance's root) and an `@base` (the Silhouette). An instance's descendants take the ids after the largest `@id`, in file order. A folder `<file>.overrides/` beside an instance file patches that instance's entities by dotted path. The result is an ordinary `WorldFile`, validated like any other.
 
+## The platformer's Silhouettes
+
+`assets/silhouettes/` holds the platformer's pieces: block, ramp, moving platform (and `moving_platform_wide`, a variant of it), gem, spawn, kill plane, the point light, spot light and sun, street lamp, lit window, photo sight, camera volume and camera shot, and `lamp_post`, a post with a point light as its child. Each root has an `editor` object (`label`, `lift`) that the editor reads for its menu entry; the `editor` values are not part of the entity.
+
+## In the editor
+
+When the editor starts it reads `assets/editor/palette.json`, then adds one template for every folder in `<assets>/silhouettes`. A Silhouette with the same name as a palette entry replaces it, so the Silhouette is the source of truth once it exists; the palette entries stay as the fallback when there is no Silhouettes folder. Placing a Silhouette from the asset browser or Entity menu expands it into the open world file: the root and all its descendants are inserted with new ids, parent links and unique names, as one undo step. This is a copy, not a link: later edits to the Silhouette do not reach entities already placed. A Silhouette that fails to resolve is logged and left out of the menu.
+
+`SilhouetteWorld(library, name)` turns one Silhouette into a world file (entity 1 is the root, the rest are its descendants), which is also how the platformer Silhouettes are tested.
+
 ## Calamus from Nox
 
 `lantern:::calamus` wraps Amanuensis's C API (`capi/` in the amanuensis repository), which `lantern-native` links: `ParseCalamus(text)` gives a `CalamusDocument` (header, `Resolve(baseJson)`), `WriteCalamus` writes an entity as Calamus text with `*` marks against a base, and `StableHash` is the hash Calamus records for a base. Values cross the boundary as JSON text.
 
 ## Known gaps
 
-- The editor still uses palette templates, and saves world files as JSON. Writing Silhouette files from the editor, and the inspector's inherited and overridden states, are not built.
+- The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
+- There is no Silhouette editor tab yet (components tree, details, preview). It is the next slice; visual scripting comes after it.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.
