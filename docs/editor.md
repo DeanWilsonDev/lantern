@@ -116,7 +116,7 @@ and align) and `Show` opens the Show menu (grid, wireframe, colliders, markers, 
 statistics, snapping, grid size). Alt+C and Alt+V open them from the keyboard.
 
 Above the viewport is a row of document tabs. `Level` is the viewport. F4, Entity > Edit in Tab or the entity's right
-click menu opens a tab for the selected entity, which shows its name, kind and components; the outliner and details
+click menu opens a tab for the selected entity, which lists its components (Entity, Transform, Shape and so on) and edits the chosen one's values in the page itself; the outliner and details
 stay docked on the right and follow the tab, and double click still renames. Ctrl+W or the x closes a tab, Ctrl+Tab goes
 to the next one, and deleting an entity closes its tab.
 
