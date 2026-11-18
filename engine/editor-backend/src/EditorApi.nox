@@ -1174,6 +1174,9 @@ lantern:::editorapi :: namespace {
     InstallGraph :: (editorInstance: Editor~*, name: string, graph: lantern:::graphs:::Graph*!) -> string! {
         delete editorInstance->graphEditor;
         editorInstance->graphEditor = new lantern:::graphs:::GraphEditor(name, graph!);
+        if open ~= editorInstance->graphEditor {
+            lantern:::graphs:::ArrangeUnplacedFunctions(open->graph);
+        }
         return "".copy();
     }
 
@@ -1199,6 +1202,16 @@ lantern:::editorapi :: namespace {
         }
     }
 
+    // Lays the open function's nodes out left to right and brings them into view. Returns false when no graph is open.
+    export GraphFormat :: (editorInstance: Editor~*) -> bool {
+        guard open ~= editorInstance->graphEditor return false;
+        lantern:::graphs:::ArrangeFunction(open->graph->functions[open->functionIndex]);
+        open->fitPending = true;
+        open->SetStatus("Formatted.");
+        open->Touch();
+        return true;
+    }
+
     export GraphClose :: (editorInstance: Editor~*) -> void {
         delete editorInstance->graphEditor;
         editorInstance->graphEditor = null;
@@ -1211,6 +1224,10 @@ lantern:::editorapi :: namespace {
     // Draws the open graph at a size. False when none is open.
     export GraphRender :: (editorInstance: Editor~*, width: u32, height: u32) -> bool {
         guard open ~= editorInstance->graphEditor return false;
+        if open->fitPending {
+            open->fitPending = false;
+            lantern:::graphs:::FitToView(open, i32(width), i32(height));
+        }
         lantern:::graphs:::DrawGraph(open, editorInstance->graphCanvas, width, height);
         return true;
     }
@@ -1284,6 +1301,7 @@ lantern:::editorapi :: namespace {
         guard open ~= editorInstance->graphEditor return;
         if usize(index) < open->graph->functions.length() {
             open->functionIndex = usize(index);
+            open->fitPending = true;
             lantern:::graphs:::SelectNode(open, "");
             open->Touch();
         }

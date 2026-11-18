@@ -1,0 +1,62 @@
+lantern :: import lantern;
+
+NodeNamed :: (function: lantern:::graphs:::GraphFunction*, nodeId: string) -> lantern:::graphs:::GraphNode* {
+    position: usize = function->IndexOfNode(nodeId) ?? 0;
+    return function->nodes[position];
+}
+
+Overlaps :: (first: lantern:::graphs:::GraphNode*, second: lantern:::graphs:::GraphNode*) -> bool {
+    wide: f32 = f32(lantern:::graphs:::NODE_WIDTH);
+    tall: f32 = 18.0f;
+    return first->x < second->x + wide && second->x < first->x + wide && first->y < second->y + tall && second->y < first->y + tall;
+}
+
+main :: () -> i32 {
+    when readTextFile("../games/platformer/game-graphs/lamp_pulse.graph.json") {
+        Result:::Err(error) -> {
+            delete error;
+            return 1;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when lantern:::graphs:::LoadGraph(text) {
+                Result:::Err(message) -> {
+                    delete message;
+                    return 2;
+                },
+                Result:::Ok(loaded) -> {
+                    graph~ lantern:::graphs:::Graph*! = loaded!;
+                    function~ lantern:::graphs:::GraphFunction* = graph->functions[0];
+                    assert(lantern:::graphs:::NeedsLayout(function), "a graph written by hand has every node at the origin");
+                    arranged: usize = lantern:::graphs:::ArrangeUnplacedFunctions(graph);
+                    assert(arranged == 1, "the one function without positions is laid out");
+                    function = graph->functions[0];
+                    assert(!lantern:::graphs:::NeedsLayout(function), "a laid out function is not laid out again");
+
+                    start: lantern:::graphs:::GraphNode* = NodeNamed(function, "start");
+                    glow: lantern:::graphs:::GraphNode* = NodeNamed(function, "glow");
+                    apply: lantern:::graphs:::GraphNode* = NodeNamed(function, "apply");
+                    strengthValue: lantern:::graphs:::GraphNode* = NodeNamed(function, "strengthValue");
+                    swing: lantern:::graphs:::GraphNode* = NodeNamed(function, "swing");
+                    assert(start->x < glow->x, "execution runs rightwards: the entry is left of the first step");
+                    assert(glow->x < apply->x, "the second step is right of the first");
+                    assert(swing->x < strengthValue->x, "a value is left of the node that uses it");
+                    assert(strengthValue->x < glow->x, "a value feeding a step is left of the step");
+
+                    overlapping~ bool = false;
+                    for firstIndex~ usize = 0; firstIndex < function->nodes.length(); firstIndex++ {
+                        for secondIndex~ usize = firstIndex + 1; secondIndex < function->nodes.length(); secondIndex++ {
+                            if Overlaps(function->nodes[firstIndex], function->nodes[secondIndex]) {
+                                overlapping = true;
+                            }
+                        }
+                    }
+                    assert(!overlapping, "no two nodes are drawn on top of each other");
+                    delete graph;
+                }
+            }
+        }
+    }
+    print("a graph is laid out left to right");
+    return 0;
+}
