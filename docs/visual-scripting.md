@@ -105,7 +105,8 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 
 - Slice 3c: the Graph tab in the world editor (Window > Graph Editor). `engine/src/editorbackend/GraphFiles.nox` lists, opens, creates and saves graphs in `<assets>/graphs/`, writing `<name>.graph.json` and `<name>.generated.nyx` side by side. `EditorApi.nox` exports the `GraphOpen`, `GraphRender`, `GraphPointer*`, `GraphField`, `GraphSave` family, the app registers them as `editorGraph*` host functions (`apps/world-editor/nox/src/GraphFunctions.nox`), and `GraphPage.chaos` lays out the graph list, functions, the canvas as a Penumbra viewport (`graph` renderer), the node palette, the selected node's fields and the generated Nyx pane.
 
+- Slice 4: `lantern:::editorbackend:::BuildGameGraphs(graphsFolder, outputFolder, writeFiles)` (`GameGraphs.nox`) turns every `<name>.graph.json` into `<Name>.nyx`; `mist run graphs` writes `games/platformer/game-graphs/generated/`, and the test `the-game-graphs-are-built-and-current` fails, naming the file, when a committed file is stale. The platformer's first graph is `crumble_phase`: `CrumblePhase:::Next(phase, isStoodOn, phaseSeconds, delaySeconds, returnSeconds)` picks a crumbling slab's next phase (solid, shivering, gone), and `CrumblePlatform.Update` calls it and only does what each phase looks like. The generated file is committed (D-194). Not done yet: the `behaviour.graph` Silhouette property, because no entity system reads a behaviour from a Silhouette yet; it needs that hook first.
+
 ## Known open questions
 
-- Whether the generated `.nyx` is committed or only built; slice 4 starts with built-only and revisits.
 - How a graph names a class's methods (a graph function is free, not a method) before event entries exist.

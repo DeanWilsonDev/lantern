@@ -1,0 +1,119 @@
+lantern:::editorbackend :: namespace {
+    // Turns a game's graphs into the Nyx it imports: every `<graphsFolder>/<name>.graph.json` becomes
+    // `<outputFolder>/<Name>.nyx` (`crumble_phase` is `CrumblePhase.nyx`).
+    GeneratedFileName :: (graphName: string) -> string! {
+        namespaceName: string! = lantern:::graphs:::NamespaceName(graphName);
+        name: string! = `${namespaceName}.nyx`;
+        delete namespaceName;
+        return name!;
+    }
+
+    // The Nyx of one graph file, or the problem naming the file.
+    GenerateGameGraph :: (graphFile: string) -> Result<string!, string!> {
+        when readTextFile(graphFile) {
+            Result:::Err(error) -> {
+                failure: string! = `${graphFile}: ${error.message()}`;
+                delete error;
+                return Result<string!, string!>:::Err(failure!);
+            },
+            Result:::Ok(text) -> {
+                defer delete text;
+                when lantern:::graphs:::GenerateNyxFromText(text) {
+                    Result:::Err(message) -> {
+                        failure: string! = `${graphFile}: ${message}`;
+                        delete message;
+                        return Result<string!, string!>:::Err(failure!);
+                    },
+                    Result:::Ok(source) -> {
+                        return Result<string!, string!>:::Ok(source!);
+                    }
+                }
+            }
+        }
+    }
+
+    // Generates every graph in `graphsFolder` into `outputFolder`. With `writeFiles` false nothing is written, and the Ok text
+    // lists the files that differ from what is on disk, one per line (empty when every file is current).
+    BuildGameGraphs :: (graphsFolder: string, outputFolder: string, writeFiles: bool) -> Result<string!, string!> {
+        stale~ string! = "".copy();
+        if !directoryExists(graphsFolder) {
+            return Result<string!, string!>:::Ok(stale!);
+        }
+        if writeFiles {
+            when createDirectories(outputFolder) {
+                Result:::Ok(created) -> { },
+                Result:::Err(error) -> {
+                    failure: string! = `${outputFolder}: ${error.message()}`;
+                    delete error;
+                    delete stale;
+                    return Result<string!, string!>:::Err(failure!);
+                }
+            }
+        }
+        when lantern:::silhouette:::SortedEntries(graphsFolder) {
+            Result:::Err(message) -> {
+                delete stale;
+                return Result<string!, string!>:::Err(message!);
+            },
+            Result:::Ok(listed) -> {
+                entries~ Array<string!>! = listed!;
+                for entry in entries {
+                    if !entry.endsWith(".graph.json") {
+                        continue;
+                    }
+                    graphName: string = entry.substring(0, entry.length() - ".graph.json".length());
+                    graphFile: string! = `${graphsFolder}/${entry}`;
+                    when GenerateGameGraph(graphFile) {
+                        Result:::Err(message) -> {
+                            delete graphFile;
+                            delete stale;
+                            entries.freeAll();
+                            return Result<string!, string!>:::Err(message!);
+                        },
+                        Result:::Ok(source) -> {
+                            fileName: string! = GeneratedFileName(graphName);
+                            outputFile: string! = `${outputFolder}/${fileName}`;
+                            current~ string! = "".copy();
+                            when readTextFile(outputFile) {
+                                Result:::Err(error) -> { delete error; },
+                                Result:::Ok(existing) -> {
+                                    delete current;
+                                    current = existing!;
+                                }
+                            }
+                            if current != source {
+                                if stale.length() > 0 {
+                                    stale += "\n";
+                                }
+                                stale += fileName;
+                                if writeFiles {
+                                    problem: string!? = WriteFileText(outputFile, source);
+                                    if failed := problem {
+                                        message: string! = failed.copy();
+                                        delete problem;
+                                        delete current;
+                                        delete source;
+                                        delete fileName;
+                                        delete outputFile;
+                                        delete graphFile;
+                                        delete stale;
+                                        entries.freeAll();
+                                        return Result<string!, string!>:::Err(message!);
+                                    }
+                                    delete problem;
+                                }
+                            }
+                            delete current;
+                            delete source;
+                            delete fileName;
+                            delete outputFile;
+                        }
+                    }
+                    delete graphFile;
+                }
+                entries.freeAll();
+            }
+        }
+        return Result<string!, string!>:::Ok(stale!);
+    }
+}

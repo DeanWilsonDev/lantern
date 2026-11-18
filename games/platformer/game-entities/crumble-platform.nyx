@@ -1,4 +1,5 @@
 Math :: import standard:::Math;
+CrumblePhase :: import CrumblePhase;
 PartnerTuning :: import PartnerTuning;
 
 // A platform that gives way: a world-file entity of kind "crumble" with a "kinematic" collider. It
@@ -28,30 +29,35 @@ public:
         delaySeconds(lantern:::world:::HasProperty(entity, "delay_seconds") ? lantern:::world:::NumberProperty(entity, "delay_seconds") : PartnerTuning:::CRUMBLE_DELAY_SECONDS),
         returnSeconds(lantern:::world:::HasProperty(entity, "return_seconds") ? lantern:::world:::NumberProperty(entity, "return_seconds") : PartnerTuning:::CRUMBLE_RETURN_SECONDS) { }
 
-    // One step. `isStoodOn` is whether anyone's feet are on it.
+    // One step. `isStoodOn` is whether anyone's feet are on it. Which phase comes next is the `crumble_phase` graph
+    // (game-graphs/crumble_phase.graph.json); this method does what each phase looks like.
     Update~: (isStoodOn: bool, time: f32, dt: f32) -> void {
-        if phase == 0 {
-            if isStoodOn {
-                phase = 1;
-                phaseSeconds = 0.0f;
-            }
-        } else if phase == 1 {
+        if phase != 0 {
             phaseSeconds += dt;
+        }
+        nextPhase := CrumblePhase:::Next(phase, isStoodOn, phaseSeconds, delaySeconds, returnSeconds);
+        if phase == 1 {
             // A small sideways shake that grows, so the player can see it is about to go.
             shake: lantern:::math:::Vec3 = { x: Math:::sin(time * 60.0f) * 0.04f * (phaseSeconds / delaySeconds) };
             lantern:::world:::SetPosition(entity, home + shake);
-            if phaseSeconds >= delaySeconds {
-                phase = 2;
-                phaseSeconds = 0.0f;
-                lantern:::world:::SetVisible(entity, false);
-                far: lantern:::math:::Vec3 = { y: -1000.0f };
-                lantern:::world:::Teleport(entity, home + far);
-            }
+        }
+        if nextPhase != phase {
+            Enter(nextPhase);
+        }
+    }
+
+    Enter~: (nextPhase: i32) -> void {
+        if nextPhase == 1 {
+            phase = 1;
+            phaseSeconds = 0.0f;
+        } else if nextPhase == 2 {
+            phase = 2;
+            phaseSeconds = 0.0f;
+            lantern:::world:::SetVisible(entity, false);
+            far: lantern:::math:::Vec3 = { y: -1000.0f };
+            lantern:::world:::Teleport(entity, home + far);
         } else {
-            phaseSeconds += dt;
-            if returnSeconds >= 0.0f && phaseSeconds >= returnSeconds {
-                Restore();
-            }
+            Restore();
         }
     }
 
