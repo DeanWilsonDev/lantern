@@ -24,6 +24,22 @@ SilhouettePageUi :: namespace {
         return rows;
     }
 
+    RowText :: (row: string) -> string {
+        return (row.startsWith("* ") || row.startsWith("  ")) ? row.substring(2, row.length() - 2) : row;
+    }
+
+    RowKey :: (row: string) -> string {
+        text := RowText(row);
+        colon := text.indexOf(": ", 0);
+        return colon > 0 ? text.substring(0, colon) : text;
+    }
+
+    RowValue :: (row: string) -> string {
+        text := RowText(row);
+        colon := text.indexOf(": ", 0);
+        return colon > 0 ? text.substring(colon + 2, text.length() - colon - 2) : "";
+    }
+
     Chosen :: (components: Array<ComponentItem>, position: i32) -> ComponentItem {
         if position >= 0 && position < components.length() {
             return components[position];
@@ -39,6 +55,8 @@ SilhouettePage :: () -> Penumbra:::Component {
     @signal editStatus~ string = "";
     @signal renameText~ string = "";
     @signal newSilhouetteName~ string = "";
+    @signal valueKey~ string = "";
+    @signal valueText~ string = "";
     return (
         <frame ref="silhouette-page" class="entity-page">
             <slot>
@@ -111,6 +129,32 @@ SilhouettePage :: () -> Penumbra:::Component {
                                         </slot>
                                     </frame>
                                     <frame class="field-row">
+                                        <input ref="silhouette-value-key" class="field-input" text={valueKey}
+                                               preferredWidth={140.0f}
+                                               onTextChange={(text: string) -> { valueKey = text; }} />
+                                        <input ref="silhouette-value-text" class="field-input" text={valueText}
+                                               preferredWidth={140.0f}
+                                               onTextChange={(text: string) -> { valueText = text; }} />
+                                        <frame ref="silhouette-set-value-button" class="small-button"
+                                               onRelease={() -> {
+                                                   editStatus = editorSilhouetteEditValue(templateId, chosenPosition, valueKey, valueText, false);
+                                                   editorSetPreviewTemplate(templateId);
+                                                   revision = revision + 1;
+                                               }}>
+                                            <icon class="small-button-icon" icon="pencil" size={12.0f} />
+                                            <text class="small-button-label">Set value</text>
+                                        </frame>
+                                        <frame ref="silhouette-revert-value-button" class="small-button"
+                                               onRelease={() -> {
+                                                   editStatus = editorSilhouetteEditValue(templateId, chosenPosition, valueKey, "", true);
+                                                   editorSetPreviewTemplate(templateId);
+                                                   revision = revision + 1;
+                                               }}>
+                                            <icon class="small-button-icon" icon="undo" size={12.0f} />
+                                            <text class="small-button-label">Revert to base</text>
+                                        </frame>
+                                    </frame>
+                                    <frame class="field-row">
                                         <input ref="silhouette-new-name" class="field-input" text={newSilhouetteName}
                                                preferredWidth={140.0f}
                                                onTextChange={(text: string) -> { newSilhouetteName = text; }} />
@@ -148,7 +192,13 @@ SilhouettePage :: () -> Penumbra:::Component {
                                         <frame class="entity-page-fields">
                                             <slot>
                                                 !{SilhouettePageUi:::ValueRows(templateId, chosenPosition).map((row: string) ->
-                                                    <text key={row} class="entity-page-kind">{row}</text>)}
+                                                    <frame key={row} class="entity-page-component"
+                                                           onRelease={() -> {
+                                                               valueKey = SilhouettePageUi:::RowKey(row);
+                                                               valueText = SilhouettePageUi:::RowValue(row);
+                                                           }}>
+                                                        <text class="entity-page-kind">{row}</text>
+                                                    </frame>)}
                                             </slot>
                                         </frame>
                                     </scroll>

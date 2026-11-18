@@ -62,6 +62,8 @@ The tab edits the Silhouette's files directly, so there is no separate save: eac
 
 - **New Silhouette and New variant.** Type a name (lowercase letters, digits and underscores) and press **New Silhouette** for an empty block, or **New variant** for a variant of the Silhouette open in the tab. A variant's root has the open Silhouette as its `@base` and sets only its name and menu label, marked `*`, so it follows every later change to the base. The new Silhouette opens in the tab and appears in the asset browser. A name that is taken or not allowed is refused and the reason is shown under the buttons.
 
+- **Set a value and revert it.** Type a dotted key (`transform.position`, `material`) and its value as JSON (`"wall"`, `[1, 0.5, 1]`, `true`), then press **Set value**; text needs quotes. Clicking a value in the list fills both boxes with it. For a variant, **Revert to base** puts the key back to what the base has (and removes it when the base has none), so it goes back to being inherited. The file is rewritten through Calamus, so a variant still marks only what differs from its base; numbers are compared as numbers, so `0` and `0.0` are the same.
+
 Changing a Silhouette doesn't change the entities already placed in a world; it changes what is placed from then on.
 
 ## Calamus from Nox
@@ -71,6 +73,6 @@ Changing a Silhouette doesn't change the entities already placed in a world; it 
 ## Known gaps
 
 - The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
-- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. Editing a value, moving a component to another parent, deleting or renaming a whole Silhouette, and reverting a variant's value to its base are not built. Visual scripting comes after them.
+- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. Moving a component to another parent, changing a variant's base, and deleting or renaming a whole Silhouette are not built, and a value is edited by typing its key and JSON, not in the inspector's own fields. Visual scripting comes after them.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.

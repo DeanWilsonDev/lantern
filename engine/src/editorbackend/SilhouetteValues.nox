@@ -1,0 +1,234 @@
+lantern:::editorbackend :: namespace {
+    // Sets or reverts one value of a component in a Silhouette's own file. A key is a dotted path into the component's values
+    // (`transform.position`, `shape.half_extents`), and the value is JSON text. The file is rewritten through Calamus, so a
+    // variant's file keeps marking only what differs from its base. Each function returns an error message or null.
+
+    // The JSON of `key`'s value in `jsonText`, or the empty string when there is none.
+    ValueTextAt :: (jsonText: string, segments: Array<string>) -> string! {
+        found~ string! = "".copy();
+        when lantern:::json:::Parse(jsonText) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                node~ u32 = document->root;
+                present~ bool = true;
+                for segment in segments {
+                    if present {
+                        if member := document->Member(node, segment) {
+                            node = member;
+                        } else {
+                            present = false;
+                        }
+                    }
+                }
+                if present {
+                    delete found;
+                    found = document->Write(node);
+                }
+                delete document;
+            }
+        }
+        return found!;
+    }
+
+    // The JSON written the way this editor writes every value (`0.0` and `0` are one number), so a value only counts as
+    // changed when it is.
+    Normalized :: (jsonText: string) -> string! {
+        when lantern:::json:::Parse(jsonText) {
+            Result:::Err(message) -> {
+                delete message;
+                return jsonText.copy();
+            },
+            Result:::Ok(document) -> {
+                written: string! = document->Write(document->root);
+                delete document;
+                return written!;
+            }
+        }
+    }
+
+    // `{"segment": {"next": replacement}}` from `depth` on.
+    ChainText :: (segments: Array<string>, depth: usize, replacement: string) -> string! {
+        if depth >= segments.length() {
+            return replacement.copy();
+        }
+        inner: string! = ChainText(segments, depth + 1, replacement);
+        text~ string! = "{\"".copy();
+        text += segments[depth];
+        text += "\": ";
+        text += inner;
+        text += "}";
+        delete inner;
+        return text!;
+    }
+
+    // The object at `node` written out with the value at `segments` replaced (or removed), adding the value when it
+    // isn't there yet.
+    Splice :: (document: lantern:::json:::JsonDocument*, node: u32, segments: Array<string>, depth: usize, replacement: string, remove: bool) -> string! {
+        if document->Kind(node) != lantern:::json:::JsonKind:::Object {
+            if remove {
+                return document->Write(node);
+            }
+            return ChainText(segments, depth, replacement);
+        }
+        text~ string! = "{".copy();
+        written~ u32 = 0;
+        found~ bool = false;
+        child~ u32 = document->FirstChild(node);
+        while child != lantern:::json:::NO_NODE {
+            key: string = document->Key(child);
+            pieceText~ string! = "".copy();
+            keep~ bool = true;
+            if key == segments[depth] {
+                found = true;
+                if depth + 1 == segments.length() {
+                    if remove {
+                        keep = false;
+                    } else {
+                        delete pieceText;
+                        pieceText = replacement.copy();
+                    }
+                } else {
+                    delete pieceText;
+                    pieceText = Splice(document, child, segments, depth + 1, replacement, remove);
+                }
+            } else {
+                delete pieceText;
+                pieceText = document->Write(child);
+            }
+            if keep {
+                if written > 0 {
+                    text += ", ";
+                }
+                text += "\"";
+                text += key;
+                text += "\": ";
+                text += pieceText;
+                written += 1;
+            }
+            delete pieceText;
+            child = document->NextSibling(child);
+        }
+        if !found && !remove {
+            chain: string! = ChainText(segments, depth + 1, replacement);
+            if written > 0 {
+                text += ", ";
+            }
+            text += "\"";
+            text += segments[depth];
+            text += "\": ";
+            text += chain;
+            delete chain;
+        }
+        text += "}";
+        return text!;
+    }
+
+    KeyIsUsable :: (key: string) -> bool {
+        if key.length() == 0 || key.startsWith(".") || key.endsWith(".") || key.contains("..") {
+            return false;
+        }
+        return !key.contains("\"") && !key.contains("\\") && !key.contains(" ");
+    }
+
+    // Sets `key` to `valueText` in a component's file, or with `revert` puts it back to the base's value (and removes it
+    // when the base has none), which only a file with an `@base` can do.
+    EditSilhouetteValue :: (assetsDirectory: string, silhouetteName: string, componentPath: string, key: string, valueText: string, revert: bool) -> string!? {
+        if !KeyIsUsable(key) {
+            return "A value's key is a dotted name such as transform.position.".copy();
+        }
+        if !revert {
+            when lantern:::json:::Parse(valueText) {
+                Result:::Err(message) -> {
+                    failure: string! = `That isn't JSON (${message}). Text needs quotes, like "wall".`;
+                    delete message;
+                    return failure!;
+                },
+                Result:::Ok(checked) -> {
+                    delete checked;
+                }
+            }
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if !ComponentHasFile(silhouetteFolder, componentPath) {
+            return "That component comes from the base Silhouette, so its values can't be edited here.".copy();
+        }
+        file: string! = ComponentFile(silhouetteFolder, componentPath);
+        defer delete file;
+        when lantern:::silhouette:::ReadCalamusFile(file) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(document) -> {
+                defer delete document;
+                baseName: string!? = document->BaseName();
+                defer delete baseName;
+                baseJson~ string! = "".copy();
+                defer delete baseJson;
+                baseNameText~ string! = "".copy();
+                defer delete baseNameText;
+                if present := baseName {
+                    delete baseNameText;
+                    baseNameText = present.copy();
+                    library := new lantern:::silhouette:::SilhouetteLibrary(assetsDirectory);
+                    defer delete library;
+                    when library->Resolve(present) {
+                        Result:::Err(message) -> {
+                            return message!;
+                        },
+                        Result:::Ok(baseResolved) -> {
+                            delete baseJson;
+                            baseJson = Normalized(baseResolved->entities[0]->valuesJson);
+                            delete baseResolved;
+                        }
+                    }
+                } else {
+                    if revert {
+                        return "Only a variant's value can be reverted to its base.".copy();
+                    }
+                }
+                when document->Resolve(baseJson) {
+                    Result:::Err(message) -> {
+                        return message!;
+                    },
+                    Result:::Ok(entityJson) -> {
+                        defer delete entityJson;
+                        segments := key.split(".");
+                        defer delete segments;
+                        replacement~ string! = Normalized(valueText);
+                        defer delete replacement;
+                        remove~ bool = false;
+                        if revert {
+                            delete replacement;
+                            replacement = ValueTextAt(baseJson, segments);
+                            remove = replacement.length() == 0;
+                        }
+                        when lantern:::json:::Parse(entityJson) {
+                            Result:::Err(message) -> {
+                                return message!;
+                            },
+                            Result:::Ok(entityDocument) -> {
+                                defer delete entityDocument;
+                                changedJson: string! = Splice(entityDocument, entityDocument->root, segments, 0, replacement, remove);
+                                defer delete changedJson;
+                                typeName: string! = document->TypeName();
+                                defer delete typeName;
+                                when lantern:::calamus:::WriteCalamus(typeName, 1, document->Id(), baseNameText, changedJson, baseJson) {
+                                    Result:::Err(message) -> {
+                                        return message!;
+                                    },
+                                    Result:::Ok(text) -> {
+                                        defer delete text;
+                                        return WriteFileText(file, text);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
