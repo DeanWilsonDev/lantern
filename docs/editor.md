@@ -115,6 +115,11 @@ The viewport's own settings are in its header: `Perspective` opens the Camera me
 and align) and `Show` opens the Show menu (grid, wireframe, colliders, markers, level bounds, hidden entities,
 statistics, snapping, grid size). Alt+C and Alt+V open them from the keyboard.
 
+Above the viewport is a row of document tabs. `Level` is the viewport. F4, Entity > Edit in Tab or the entity's right
+click menu opens a tab for the selected entity, which shows its name, kind and components; the outliner and details
+stay docked on the right and follow the tab, and double click still renames. Ctrl+W or the x closes a tab, Ctrl+Tab goes
+to the next one, and deleting an entity closes its tab.
+
 
 - **Menu bar**: File (new, open, recent files, save, save as, play, settings, quit), Edit
   (undo, redo, duplicate, duplicate along an axis, mirror, delete, snap, space, pivot),
