@@ -1385,6 +1385,14 @@ lantern:::editorapi :: namespace {
     export GraphAddNodeFromMenu :: (editorInstance: Editor~*, kind: string) -> string! {
         guard open ~= editorInstance->graphEditor return "".copy();
         function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        if kind == "comment" {
+            commentIndex: usize = lantern:::graphs:::AddComment(function, "Comment", lantern:::graphs:::Snapped(open->menuWorldX), lantern:::graphs:::Snapped(open->menuWorldY));
+            delete open->selected;
+            open->selected = "".copy();
+            open->selectedComment = i32(commentIndex);
+            open->Touch();
+            return "comment".copy();
+        }
         id: string! = lantern:::graphs:::AddMenuNode(function, kind, f32(lantern:::graphs:::Snapped(open->menuWorldX)), f32(lantern:::graphs:::Snapped(open->menuWorldY)));
         if id.length() > 0 {
             lantern:::graphs:::WireFromMenu(function, id, open->menuSourceNode, open->menuSourcePort, open->menuSourceIsExecution);
@@ -1392,6 +1400,38 @@ lantern:::editorapi :: namespace {
             open->Touch();
         }
         return id!;
+    }
+
+    // Which comment box is selected (its index), or -1.
+    export GraphCommentIndex :: (editorInstance: Editor*) -> i32 {
+        guard open := editorInstance->graphEditor return -1;
+        function: lantern:::graphs:::GraphFunction* = open->Function();
+        if open->selectedComment < 0 || usize(open->selectedComment) >= function->commentTexts.length() {
+            return -1;
+        }
+        return open->selectedComment;
+    }
+
+    export GraphCommentText :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        function: lantern:::graphs:::GraphFunction* = open->Function();
+        if open->selectedComment < 0 || usize(open->selectedComment) >= function->commentTexts.length() {
+            return "".copy();
+        }
+        return function->commentTexts[usize(open->selectedComment)].copy();
+    }
+
+    export GraphSetCommentText :: (editorInstance: Editor~*, text: string) -> void {
+        guard open ~= editorInstance->graphEditor return;
+        function: lantern:::graphs:::GraphFunction~* = open->graph->functions[open->functionIndex];
+        if open->selectedComment < 0 || usize(open->selectedComment) >= function->commentTexts.length() {
+            return;
+        }
+        index: usize = usize(open->selectedComment);
+        removedText := function->commentTexts.remove(index);
+        delete removedText;
+        function->commentTexts.insert(index, text.copy());
+        open->Touch();
     }
 
     // The open function's variables, one per line as `name<TAB>type<TAB>default`.

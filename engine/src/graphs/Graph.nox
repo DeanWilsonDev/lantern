@@ -135,6 +135,11 @@ lantern:::graphs :: namespace {
         variableNames~ Array<string!>! = [];
         variableTypes~ Array<string!>! = [];
         variableDefaults~ Array<string!>! = [];
+        commentTexts~ Array<string!>! = [];
+        commentXs~ Array<i32>! = [];
+        commentYs~ Array<i32>! = [];
+        commentWidths~ Array<i32>! = [];
+        commentHeights~ Array<i32>! = [];
         nodes~ Array<GraphNode*!>! = [];
 
         GraphFunction~: (newName: string) {
@@ -150,6 +155,11 @@ lantern:::graphs :: namespace {
             variableNames.freeAll();
             variableTypes.freeAll();
             variableDefaults.freeAll();
+            commentTexts.freeAll();
+            delete commentXs;
+            delete commentYs;
+            delete commentWidths;
+            delete commentHeights;
             nodes.freeAll();
         }
 
@@ -264,6 +274,16 @@ lantern:::graphs :: namespace {
             }
         }
         return 0.0f;
+    }
+
+    // The whole number at an object's member, or `fallback` when it is missing or not a number.
+    IntegerMember :: (document: lantern:::json:::JsonDocument*, object: u32, key: string, fallback: i32) -> i32 {
+        if member := document->Member(object, key) {
+            if document->Kind(member) == lantern:::json:::JsonKind:::Number {
+                return i32(document->Node(member).number);
+            }
+        }
+        return fallback;
     }
 
     // A number written so Nyx reads it as an f32: `1` becomes `1.0f`.
@@ -404,6 +424,17 @@ lantern:::graphs :: namespace {
                 function->variableTypes.push(TextMember(document, variableAt, "type"));
                 function->variableDefaults.push(TextMember(document, variableAt, "default"));
                 variableAt = document->NextSibling(variableAt);
+            }
+        }
+        if commentsAt := document->Member(functionAt, "comments") {
+            commentAt~ u32 = document->FirstChild(commentsAt);
+            for step~ usize = 0; step < usize(document->ChildCount(commentsAt)); step++ {
+                function->commentTexts.push(TextMember(document, commentAt, "text"));
+                function->commentXs.push(IntegerMember(document, commentAt, "x", 0));
+                function->commentYs.push(IntegerMember(document, commentAt, "y", 0));
+                function->commentWidths.push(IntegerMember(document, commentAt, "width", 240));
+                function->commentHeights.push(IntegerMember(document, commentAt, "height", 120));
+                commentAt = document->NextSibling(commentAt);
             }
         }
         if nodesAt := document->Member(functionAt, "nodes") {
