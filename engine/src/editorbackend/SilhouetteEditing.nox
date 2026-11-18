@@ -246,6 +246,87 @@ lantern:::editorbackend :: namespace {
         return RemoveFileText(file);
     }
 
+    // A Silhouette's folder name: letters, digits and underscores only, so it is also a safe id and file name.
+    SilhouetteNameIsUsable :: (name: string) -> bool {
+        if name.length() == 0 {
+            return false;
+        }
+        for index~ usize = 0; index < name.length(); index++ {
+            character: u8 = name.byteAt(index);
+            isLower: bool = character >= 97 && character <= 122;
+            isDigit: bool = character >= 48 && character <= 57;
+            if !isLower && !isDigit && character != 95 {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Writes a new Silhouette's root file in a new folder. Returns an error message or null.
+    WriteNewSilhouette :: (assetsDirectory: string, silhouetteName: string, rootText: string) -> string!? {
+        if !SilhouetteNameIsUsable(silhouetteName) {
+            return "A Silhouette's name can only hold lowercase letters, digits and underscores.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if pathExists(silhouetteFolder) {
+            return "A Silhouette with that name already exists.".copy();
+        }
+        when createDirectories(silhouetteFolder) {
+            Result:::Ok(created) -> { },
+            Result:::Err(error) -> {
+                failure: string! = `${silhouetteFolder}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        file: string! = ComponentFile(silhouetteFolder, "");
+        problem: string!? = WriteFileText(file, rootText);
+        delete file;
+        return problem!;
+    }
+
+    // Creates an empty Silhouette: one entity of `kind`, labelled with its name.
+    CreateSilhouette :: (assetsDirectory: string, silhouetteName: string, kind: string) -> string!? {
+        if !NameIsUsable(kind) {
+            return "A Silhouette needs a kind.".copy();
+        }
+        text~ string! = "@version 1\n@type ".copy();
+        text += kind;
+        text += "\n\n  name : \"";
+        text += silhouetteName;
+        text += "\"\n  transform:\n    position : [0.0, 0.0, 0.0]\n  editor:\n    label : \"";
+        text += silhouetteName;
+        text += "\"\n";
+        problem: string!? = WriteNewSilhouette(assetsDirectory, silhouetteName, text);
+        delete text;
+        return problem!;
+    }
+
+    // Derives a variant of `baseName`: a new Silhouette whose root has the base as its `@base` and sets only its name and
+    // menu label (marked, with the base's values beside them). `baseKind`, `baseEntityName` and `baseLabel` are the base
+    // root's kind, name and menu label.
+    DeriveSilhouette :: (assetsDirectory: string, baseName: string, silhouetteName: string, baseKind: string, baseEntityName: string, baseLabel: string) -> string!? {
+        text~ string! = "@version 1\n@type ".copy();
+        text += baseKind;
+        text += "\n@base \"";
+        text += SILHOUETTES_FOLDER;
+        text += "/";
+        text += baseName;
+        text += "\"\n\n* name : \"";
+        text += silhouetteName;
+        text += "\" | \"";
+        text += baseEntityName;
+        text += "\"\n* editor:\n*   label : \"";
+        text += silhouetteName;
+        text += "\" | \"";
+        text += baseLabel;
+        text += "\"\n";
+        problem: string!? = WriteNewSilhouette(assetsDirectory, silhouetteName, text);
+        delete text;
+        return problem!;
+    }
+
     // Reads a Silhouette's folder again and replaces its palette template, so the editor shows what the files say now.
     // Returns an error message or null.
     RefreshSilhouetteTemplate :: (palette: lantern:::editor:::Palette~*, assetsDirectory: string, silhouetteName: string) -> string!? {

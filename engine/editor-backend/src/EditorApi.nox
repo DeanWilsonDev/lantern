@@ -619,6 +619,27 @@ lantern:::editorapi :: namespace {
         return result!;
     }
 
+    // Creates a Silhouette called `newName`: an empty one of `kind`, or, with `baseTemplateId` set, a variant of that
+    // Silhouette. Returns an error message, empty when it worked.
+    export SilhouetteCreate :: (editorInstance: Editor~*, newName: string, kind: string, baseTemplateId: string) -> string! {
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        defer delete assetsDirectory;
+        problem~ string!? = null;
+        if baseTemplateId.length() == 0 {
+            problem = lantern:::editorbackend:::CreateSilhouette(assetsDirectory, newName, kind);
+        } else {
+            guard base := editorInstance->backend->session->palette->Template(baseTemplateId) return "No such Silhouette.".copy();
+            if !base->fromSilhouette {
+                return "Only a Silhouette can have variants.".copy();
+            }
+            problem = lantern:::editorbackend:::DeriveSilhouette(assetsDirectory, baseTemplateId, newName, base->prototype->kind, base->prototype->name, base->label);
+        }
+        problemText: string! = ProblemText(problem!);
+        result: string! = SilhouetteEdit(editorInstance, newName, problemText);
+        delete problemText;
+        return result!;
+    }
+
     // Places a new entity from a template at the centre of the view and returns its key, or 0.
     export AddEntity :: (editorInstance: Editor~*, templateId: string) -> i64 {
         editorInstance->ClearApiStatus();

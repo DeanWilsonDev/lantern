@@ -99,6 +99,34 @@ main :: () -> i32 {
     wideMissing: bool = !Succeeded(lantern:::editorbackend:::DeleteSilhouetteComponent(assets, "lamp_post", "nothing"));
     assert(wideMissing, "a component with no file can't be deleted");
 
+    madeEmpty: bool = Succeeded(lantern:::editorbackend:::CreateSilhouette(assets, "crate", "block"));
+    assert(madeEmpty, "an empty Silhouette is created");
+    duplicate: bool = !Succeeded(lantern:::editorbackend:::CreateSilhouette(assets, "crate", "block"));
+    assert(duplicate, "a name already taken is refused");
+    badSilhouetteName: bool = !Succeeded(lantern:::editorbackend:::CreateSilhouette(assets, "Big Crate", "block"));
+    assert(badSilhouetteName, "a name with a space or capitals is refused");
+    guard lampPost := palette->Template("lamp_post") return 5;
+    lampChildren: usize = lampPost->descendants.length();
+    derived: bool = Succeeded(lantern:::editorbackend:::DeriveSilhouette(assets, "lamp_post", "tall_post", lampPost->prototype->kind, lampPost->prototype->name, lampPost->label));
+    assert(derived, "a variant is derived");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "crate")), "the new Silhouette loads");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "tall_post")), "the variant loads");
+    guard crate := palette->Template("crate") return 6;
+    assert(crate->componentPaths.length() == 1 && crate->baseName == null, "the new Silhouette is one entity with no base");
+    guard tallPost := palette->Template("tall_post") return 7;
+    assert(tallPost->baseName != null, "the variant names its base");
+    assert(tallPost->prototype->name == "tall_post", "the variant sets its own name");
+    assert(tallPost->descendants.length() == lampChildren, "the variant brings the base's children");
+    tallLines := lantern:::editorbackend:::ComponentValueLines(tallPost, 0);
+    ownMarks~ usize = 0;
+    for line in tallLines->lines {
+        if line.startsWith("* ") {
+            ownMarks += 1;
+        }
+    }
+    delete tallLines;
+    assert(ownMarks == 2, "only the name and the label are the variant's own");
+
     cleaned: bool = Succeeded(lantern:::editorbackend:::RemoveTree(COPY_ROOT));
     assert(cleaned, "the scratch folder is removed");
     print("a silhouette gains renames and loses children");
