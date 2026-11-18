@@ -64,6 +64,10 @@ The tab edits the Silhouette's files directly, so there is no separate save: eac
 
 - **Set a value and revert it.** Type a dotted key (`transform.position`, `material`) and its value as JSON (`"wall"`, `[1, 0.5, 1]`, `true`), then press **Set value**; text needs quotes. Clicking a value in the list fills both boxes with it. For a variant, **Revert to base** puts the key back to what the base has (and removes it when the base has none), so it goes back to being inherited. The file is rewritten through Calamus, so a variant still marks only what differs from its base; numbers are compared as numbers, so `0` and `0.0` are the same.
 
+- **Move a component.** Select it and press **Move under...**, then click the component it should hang from; **Move to root** does the same for the root. Its file and the folder of its children move together and it keeps its name. A component can't go under itself or its own children, the root can't move, and a name already used by a child of the new parent is refused. Components inherited from a base can't be moved. Patches in `overrides/` are named by dotted path, so a moved component's patch no longer finds it.
+- **Set base.** Type a Silhouette's name in the name box and press **Set base** to point the open variant at it. If the result doesn't resolve (a missing Silhouette, or a cycle) the file is put back and the reason is shown. Only a variant has a base to change.
+- **Delete Silhouette.** Removes the whole folder, unless another Silhouette is made from this one. It also leaves the tab and the asset browser.
+
 Changing a Silhouette doesn't change the entities already placed in a world; it changes what is placed from then on.
 
 ## Calamus from Nox
@@ -73,6 +77,6 @@ Changing a Silhouette doesn't change the entities already placed in a world; it 
 ## Known gaps
 
 - The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
-- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. Moving a component to another parent, changing a variant's base, and deleting or renaming a whole Silhouette are not built, and a value is edited by typing its key and JSON, not in the inspector's own fields. Visual scripting comes after them.
+- The Silhouette editor tab shows the components tree and each component's resolved values, and adds, renames and deletes components. Renaming a whole Silhouette is not built, and a value is edited by typing its key and JSON, not in the inspector's own fields. Visual scripting comes after them.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.

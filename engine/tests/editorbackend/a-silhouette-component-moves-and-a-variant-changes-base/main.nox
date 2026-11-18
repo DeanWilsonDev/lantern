@@ -1,0 +1,85 @@
+lantern :: import lantern;
+
+SCRATCH: string : "/tmp/lantern-silhouette-structure-test";
+
+Succeeded :: (problem: string!?) -> bool {
+    worked: bool = problem == null;
+    delete problem;
+    return worked;
+}
+
+Copy :: (name: string, file: string) -> bool {
+    from: string! = `../assets/silhouettes/${name}/${file}`;
+    defer delete from;
+    folder: string! = `${SCRATCH}/assets/silhouettes/${name}`;
+    defer delete folder;
+    createDirectories(folder);
+    to: string! = `${folder}/${file}`;
+    defer delete to;
+    when readTextFile(from) {
+        Result:::Err(error) -> {
+            delete error;
+            return false;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when writeTextFile(to, text) {
+                Result:::Err(error) -> {
+                    delete error;
+                    return false;
+                },
+                Result:::Ok(written) -> {
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+main :: () -> i32 {
+    assets: string = "/tmp/lantern-silhouette-structure-test/assets";
+    if directoryExists(SCRATCH) {
+        Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH));
+    }
+    assert(Copy("lamp_post", "root.calamus") && Copy("lamp_post", "light.calamus"), "the lamp post is copied");
+    assert(Copy("moving_platform", "root.calamus") && Copy("moving_platform_wide", "root.calamus") && Copy("block", "root.calamus"), "the platforms and block are copied");
+    palette := new lantern:::editor:::Palette();
+    defer delete palette;
+    lantern:::editorbackend:::AddSilhouetteTemplates(palette, assets);
+
+    assert(Succeeded(lantern:::editorbackend:::AddSilhouetteChild(assets, "lamp_post", "", "block")), "a second child is added");
+    assert(Succeeded(lantern:::editorbackend:::MoveSilhouetteComponent(assets, "lamp_post", "light", "block")), "the light moves under the block");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "lamp_post")), "the lamp post loads");
+    guard post := palette->Template("lamp_post") return 1;
+    foundMoved~ bool = false;
+    for componentPath in post->componentPaths {
+        if componentPath == "block.light" {
+            foundMoved = true;
+        }
+    }
+    assert(foundMoved, "the light is now block.light");
+    intoItself: bool = !Succeeded(lantern:::editorbackend:::MoveSilhouetteComponent(assets, "lamp_post", "block", "block.light"));
+    assert(intoItself, "a component can't go under its own child");
+    sameParent: bool = !Succeeded(lantern:::editorbackend:::MoveSilhouetteComponent(assets, "lamp_post", "block.light", "block"));
+    assert(sameParent, "moving to the same parent is refused");
+    assert(Succeeded(lantern:::editorbackend:::MoveSilhouetteComponent(assets, "lamp_post", "block.light", "")), "the light moves back to the root");
+    rootMove: bool = !Succeeded(lantern:::editorbackend:::MoveSilhouetteComponent(assets, "lamp_post", "", "block"));
+    assert(rootMove, "the root can't be moved");
+
+    assert(Succeeded(lantern:::editorbackend:::SetSilhouetteBase(assets, "moving_platform_wide", "block")), "the variant takes another base");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "moving_platform_wide")), "the variant loads on its new base");
+    missingBase: bool = !Succeeded(lantern:::editorbackend:::SetSilhouetteBase(assets, "moving_platform_wide", "nothing_here"));
+    assert(missingBase, "a missing base is refused");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "moving_platform_wide")), "the variant still loads after the refusal");
+    notVariant: bool = !Succeeded(lantern:::editorbackend:::SetSilhouetteBase(assets, "lamp_post", "block"));
+    assert(notVariant, "a Silhouette with no base has none to change");
+
+    usedBase: bool = !Succeeded(lantern:::editorbackend:::DeleteSilhouette(assets, "block"));
+    assert(usedBase, "a Silhouette something is made from can't be deleted");
+    assert(Succeeded(lantern:::editorbackend:::DeleteSilhouette(assets, "lamp_post")), "an unused Silhouette is deleted");
+    assert(!directoryExists("/tmp/lantern-silhouette-structure-test/assets/silhouettes/lamp_post"), "its folder is gone");
+
+    assert(Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH)), "the scratch folder is removed");
+    print("a silhouette component moves and a variant changes base");
+    return 0;
+}
