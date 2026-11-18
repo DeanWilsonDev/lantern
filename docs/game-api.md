@@ -195,6 +195,7 @@ any floor.
 | `lantern:::screen:::Width() / Height() -> f32` | pixels |
 | `lantern:::screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `lantern:::screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |
+| `lantern:::screen:::Capture(path)` | saves the next drawn frame as a PNG at `path` (its folder is created), without the UI or debug HUD |
 
 ### Sky, `lantern:::sky`
 
