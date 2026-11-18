@@ -68,6 +68,31 @@ lantern:::graphs :: namespace {
         return hit!;
     }
 
+    // The comment under a screen point, topmost first, as `index * 4 + part`, or -1 for none. The part is 1 for the title bar,
+    // 2 for the resize handle in the corner and 0 for the body.
+    CommentAt :: (graphEditor: GraphEditor*, screenX: i32, screenY: i32) -> i32 {
+        function: GraphFunction* = graphEditor->Function();
+        index~ usize = function->commentTexts.length();
+        while index > 0 {
+            index -= 1;
+            left: i32 = graphEditor->ScreenX(function->commentXs[index]);
+            top: i32 = graphEditor->ScreenY(function->commentYs[index]);
+            boxWidth: i32 = graphEditor->Scaled(function->commentWidths[index]);
+            boxHeight: i32 = graphEditor->Scaled(function->commentHeights[index]);
+            if screenX >= left && screenX < left + boxWidth && screenY >= top && screenY < top + boxHeight {
+                handle: i32 = graphEditor->Scaled(COMMENT_HANDLE);
+                part~ i32 = 0;
+                if screenX >= left + boxWidth - handle && screenY >= top + boxHeight - handle {
+                    part = 2;
+                } else if screenY < top + graphEditor->Scaled(COMMENT_TITLE_HEIGHT) {
+                    part = 1;
+                }
+                return i32(index) * 4 + part;
+            }
+        }
+        return -1;
+    }
+
     // Snaps a coordinate to the grid.
     Snapped :: (value: i32) -> i32 {
         half: i32 = GRID_STEP / 2;
@@ -153,6 +178,10 @@ lantern:::graphs :: namespace {
             delete hit;
             return;
         }
+        commentHit: i32 = hit->kind == HIT_NOTHING ? CommentAt(graphEditor, graphEditor->pointerX, graphEditor->pointerY) : -1;
+        if hit->kind != HIT_NOTHING {
+            graphEditor->selectedComment = -1;
+        }
         if hit->kind == HIT_PIN && hit->isOutput {
             graphEditor->dragMode = DRAG_WIRE;
             delete graphEditor->wireNode;
@@ -176,9 +205,30 @@ lantern:::graphs :: namespace {
                 graphEditor->dragOffsetX = graphEditor->WorldX(graphEditor->pointerX) - i32(grabbed->nodes[index]->x);
                 graphEditor->dragOffsetY = graphEditor->WorldY(graphEditor->pointerY) - i32(grabbed->nodes[index]->y);
             }
+        } else if commentHit >= 0 {
+            commentIndex: usize = usize(commentHit / 4);
+            part: i32 = commentHit % 4;
+            commentAnchorX: i32 = part == 2 ? function->commentWidths[commentIndex] : function->commentXs[commentIndex];
+            commentAnchorY: i32 = part == 2 ? function->commentHeights[commentIndex] : function->commentYs[commentIndex];
+            delete graphEditor->selected;
+            graphEditor->selected = "".copy();
+            graphEditor->selectedComment = i32(commentIndex);
+            graphEditor->generation += 1;
+            graphEditor->commentDragX = graphEditor->WorldX(graphEditor->pointerX) - commentAnchorX;
+            graphEditor->commentDragY = graphEditor->WorldY(graphEditor->pointerY) - commentAnchorY;
+            if part == 2 {
+                graphEditor->dragMode = DRAG_COMMENT_SIZE;
+            } else if part == 1 {
+                graphEditor->dragMode = DRAG_COMMENT;
+            } else {
+                graphEditor->dragMode = DRAG_PAN;
+                graphEditor->dragOffsetX = graphEditor->pointerX;
+                graphEditor->dragOffsetY = graphEditor->pointerY;
+            }
         } else {
             delete graphEditor->selected;
             graphEditor->selected = "".copy();
+            graphEditor->selectedComment = -1;
             graphEditor->generation += 1;
             graphEditor->dragMode = DRAG_PAN;
             graphEditor->dragOffsetX = graphEditor->pointerX;
@@ -211,6 +261,17 @@ lantern:::graphs :: namespace {
                 graphEditor->Touch();
             }
         }
+        if (graphEditor->dragMode == DRAG_COMMENT || graphEditor->dragMode == DRAG_COMMENT_SIZE) && graphEditor->graph->functions.length() > 0 && graphEditor->selectedComment >= 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            commentIndex: usize = usize(graphEditor->selectedComment);
+            if commentIndex < function->commentTexts.length() {
+                function->commentXs[commentIndex] = Snapped(function->commentXs[commentIndex]);
+                function->commentYs[commentIndex] = Snapped(function->commentYs[commentIndex]);
+                function->commentWidths[commentIndex] = Snapped(function->commentWidths[commentIndex]);
+                function->commentHeights[commentIndex] = Snapped(function->commentHeights[commentIndex]);
+                graphEditor->Touch();
+            }
+        }
         graphEditor->dragMode = DRAG_NONE;
     }
 
@@ -223,6 +284,22 @@ lantern:::graphs :: namespace {
                 graphEditor->nodeMoved = true;
                 function->nodes[index]->x = f32(graphEditor->WorldX(screenX) - graphEditor->dragOffsetX);
                 function->nodes[index]->y = f32(graphEditor->WorldY(screenY) - graphEditor->dragOffsetY);
+            }
+        } else if graphEditor->dragMode == DRAG_COMMENT && graphEditor->graph->functions.length() > 0 && graphEditor->selectedComment >= 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            commentIndex: usize = usize(graphEditor->selectedComment);
+            if commentIndex < function->commentTexts.length() {
+                function->commentXs[commentIndex] = graphEditor->WorldX(screenX) - graphEditor->commentDragX;
+                function->commentYs[commentIndex] = graphEditor->WorldY(screenY) - graphEditor->commentDragY;
+            }
+        } else if graphEditor->dragMode == DRAG_COMMENT_SIZE && graphEditor->graph->functions.length() > 0 && graphEditor->selectedComment >= 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            commentIndex: usize = usize(graphEditor->selectedComment);
+            if commentIndex < function->commentTexts.length() {
+                newWidth: i32 = graphEditor->WorldX(screenX) - graphEditor->commentDragX;
+                newHeight: i32 = graphEditor->WorldY(screenY) - graphEditor->commentDragY;
+                function->commentWidths[commentIndex] = newWidth < COMMENT_MIN_WIDTH ? COMMENT_MIN_WIDTH : newWidth;
+                function->commentHeights[commentIndex] = newHeight < COMMENT_MIN_HEIGHT ? COMMENT_MIN_HEIGHT : newHeight;
             }
         } else if graphEditor->dragMode == DRAG_PAN {
             graphEditor->panX += (screenX - graphEditor->dragOffsetX) * ZOOM_ONE / graphEditor->zoom;
@@ -320,6 +397,15 @@ lantern:::graphs :: namespace {
         if shortcut && (keyName == "d" || keyName == "D") {
             return DuplicateSelected(graphEditor);
         }
+        if (keyName == "Delete" || keyName == "Backspace") && graphEditor->selectedComment >= 0 && graphEditor->selected.length() == 0 && graphEditor->graph->functions.length() > 0 {
+            function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
+            if RemoveComment(function, usize(graphEditor->selectedComment)) {
+                graphEditor->selectedComment = -1;
+                graphEditor->Touch();
+                graphEditor->SetStatus("Comment deleted.");
+            }
+            return true;
+        }
         if (keyName == "Delete" || keyName == "Backspace") && graphEditor->selected.length() > 0 && graphEditor->graph->functions.length() > 0 {
             function: GraphFunction~* = graphEditor->graph->functions[graphEditor->functionIndex];
             doomed: string! = `${graphEditor->selected}`;
@@ -340,6 +426,7 @@ lantern:::graphs :: namespace {
     SelectNode :: (graphEditor: GraphEditor~*, nodeId: string) -> void {
         delete graphEditor->selected;
         graphEditor->selected = `${nodeId}`;
+        graphEditor->selectedComment = -1;
         graphEditor->generation += 1;
     }
 

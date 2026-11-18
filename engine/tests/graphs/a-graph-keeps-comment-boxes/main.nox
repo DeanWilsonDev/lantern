@@ -1,0 +1,73 @@
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"lift_pad\", \"functions\": [{\"name\": \"Lift\", \"returns\": \"f32\", \"inputs\": [{\"name\": \"height\", \"type\": \"f32\"}], \"nodes\": [{\"id\": \"entry\", \"kind\": \"entry\", \"x\": 20, \"y\": 20}, {\"id\": \"branch\", \"kind\": \"branch\", \"condition\": \"less\", \"x\": 240, \"y\": 20}, {\"id\": \"less\", \"kind\": \"less\", \"a\": \"height\", \"b\": {\"f32\": 1.0}, \"x\": 20, \"y\": 140}, {\"id\": \"return\", \"kind\": \"return\", \"value\": \"height\", \"x\": 480, \"y\": 20}]}]}";
+
+Move :: (editor: lantern:::graphs:::GraphEditor~*, x: i32, y: i32) -> void {
+    lantern:::graphs:::PointerMoved(editor, x, y);
+}
+
+Press :: (editor: lantern:::graphs:::GraphEditor~*, x: i32, y: i32) -> void {
+    lantern:::graphs:::PointerMoved(editor, x, y);
+    lantern:::graphs:::PointerPressed(editor, 0);
+}
+
+Release :: (editor: lantern:::graphs:::GraphEditor~*, x: i32, y: i32) -> void {
+    lantern:::graphs:::PointerMoved(editor, x, y);
+    lantern:::graphs:::PointerReleased(editor, 0);
+}
+
+main :: () -> i32 {
+    editor~ lantern:::graphs:::GraphEditor*! = new lantern:::graphs:::GraphEditor("lift_pad", lantern:::graphs:::NewGraph("placeholder"));
+    when lantern:::graphs:::LoadGraph(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph loads");
+            delete message;
+        },
+        Result:::Ok(graph) -> {
+            delete editor;
+            editor = new lantern:::graphs:::GraphEditor("lift_pad", graph!);
+        }
+    }
+    editor->zoom = 100;
+    editor->panX = 0;
+    editor->panY = 0;
+    function: lantern:::graphs:::GraphFunction~* = editor->graph->functions[0];
+    index: usize = lantern:::graphs:::AddComment(function, "Jump logic", 20, 200);
+    assert(index == 0 && function->commentTexts.length() == 1, "a comment is added");
+
+    saved: string! = lantern:::graphs:::WriteGraph(editor->graph);
+    assert(saved.contains("\"comments\""), "a graph file keeps its comments");
+    when lantern:::graphs:::LoadGraph(saved) {
+        Result:::Err(message) -> {
+            assert(false, "the saved graph loads");
+            delete message;
+        },
+        Result:::Ok(reloaded) -> {
+            assert(reloaded->functions[0]->commentTexts.length() == 1, "a reloaded graph has its comment");
+            assert(reloaded->functions[0]->commentTexts[0] == "Jump logic", "with its text");
+            assert(reloaded->functions[0]->commentWidths[0] == 240, "and its size");
+            delete reloaded;
+        }
+    }
+    delete saved;
+
+    Press(editor, 100, 210);
+    assert(editor->selectedComment == 0, "pressing a comment's title bar selects it");
+    Move(editor, 160, 250);
+    Release(editor, 160, 250);
+    assert(editor->Function()->commentXs[0] == 80 && editor->Function()->commentYs[0] == 240, "dragging the title bar moves it, snapped to the grid");
+
+    Press(editor, 80 + 240 - 4, 240 + 120 - 4);
+    Move(editor, 80 + 340 - 4, 240 + 160 - 4);
+    Release(editor, 80 + 340 - 4, 240 + 160 - 4);
+    assert(editor->Function()->commentWidths[0] > 240 && editor->Function()->commentHeights[0] > 120, "dragging the corner resizes it");
+
+    assert(lantern:::graphs:::KeyPressed(editor, "Delete", false), "delete is used on a selected comment");
+    assert(editor->Function()->commentTexts.length() == 0, "the comment is deleted");
+    assert(editor->Function()->nodes.length() == 4, "and no node is");
+
+    delete editor;
+    print("a graph keeps comment boxes");
+    return 0;
+}
