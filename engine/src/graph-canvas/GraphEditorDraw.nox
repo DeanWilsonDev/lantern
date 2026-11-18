@@ -56,10 +56,15 @@ lantern:::graphs :: namespace {
         step: i32 = GRID_STEP * graphEditor->zoom;
         startX: i32 = graphEditor->ScreenX(0) % step;
         startY: i32 = graphEditor->ScreenY(0) % step;
+        for x~ i32 = startX; x < i32(canvas->width); x += step {
+            column: i32 = (x - graphEditor->ScreenX(0)) / step;
+            isMajor: bool = column % 5 == 0;
+            canvas->Rectangle(x, 0, 1, i32(canvas->height), isMajor ? COLOR_GRID_MAJOR : COLOR_GRID);
+        }
         for y~ i32 = startY; y < i32(canvas->height); y += step {
-            for x~ i32 = startX; x < i32(canvas->width); x += step {
-                canvas->Rectangle(x, y, graphEditor->zoom, graphEditor->zoom, COLOR_GRID);
-            }
+            row: i32 = (y - graphEditor->ScreenY(0)) / step;
+            isMajor: bool = row % 5 == 0;
+            canvas->Rectangle(0, y, i32(canvas->width), 1, isMajor ? COLOR_GRID_MAJOR : COLOR_GRID);
         }
     }
 
@@ -91,13 +96,16 @@ lantern:::graphs :: namespace {
 
     DrawPin :: (graphEditor: GraphEditor*, canvas: PixelCanvas~*, x: i32, y: i32, isExecution: bool, isLinked: bool) -> void {
         color: u32 = isExecution ? COLOR_EXECUTION : COLOR_VALUE;
-        size: i32 = 4 * graphEditor->zoom;
-        canvas->Rectangle(x - size / 2, y - size / 2, size, size, color);
-        if !isLinked {
-            inner: i32 = size - 2 * graphEditor->zoom;
-            if inner > 0 {
-                canvas->Rectangle(x - inner / 2, y - inner / 2, inner, inner, COLOR_NODE);
-            }
+        zoom: f32 = f32(graphEditor->zoom);
+        if isExecution {
+            canvas->Arrow(f32(x), f32(y), 3.0f * zoom + 0.5f, color);
+            return;
+        }
+        radius: f32 = 2.4f * zoom + 0.5f;
+        if isLinked {
+            canvas->Disc(f32(x), f32(y), radius, color);
+        } else {
+            canvas->Ring(f32(x), f32(y), radius, 0.5f * zoom + 0.5f, color);
         }
     }
 
@@ -120,12 +128,16 @@ lantern:::graphs :: namespace {
         top: i32 = graphEditor->ScreenY(i32(node->y));
         nodeWidth: i32 = NODE_WIDTH * zoom;
         nodeHeight: i32 = NodeHeight(pins) * zoom;
-        canvas->Rectangle(left, top, nodeWidth, nodeHeight, COLOR_NODE);
-        canvas->Rectangle(left, top, nodeWidth, HEADER_HEIGHT * zoom, HeaderColor(node->kind));
+        radius: i32 = 3 * zoom;
+        frame: i32 = zoom > 1 ? zoom / 2 + 1 : 1;
         isSelected: bool = node->id == graphEditor->selected;
-        canvas->Outline(left, top, nodeWidth, nodeHeight, isSelected ? 2 * zoom / 2 + 1 : 1, isSelected ? COLOR_SELECTED : COLOR_NODE_EDGE);
+        headerColor: u32 = HeaderColor(node->kind);
+        canvas->FillRounded(left + 2 * zoom, top + 3 * zoom, nodeWidth, nodeHeight, radius, true, COLOR_SHADOW, COLOR_SHADOW);
+        canvas->FillRounded(left - frame, top - frame, nodeWidth + 2 * frame, nodeHeight + 2 * frame, radius + frame, true, isSelected ? COLOR_SELECTED : COLOR_NODE_EDGE, isSelected ? COLOR_SELECTED : COLOR_NODE_EDGE);
+        canvas->FillRounded(left, top, nodeWidth, nodeHeight, radius, true, COLOR_NODE, COLOR_NODE);
+        canvas->FillRounded(left, top, nodeWidth, HEADER_HEIGHT * zoom, radius, false, canvas->Mixed(headerColor, COLOR_TEXT, 1, 9), canvas->Mixed(headerColor, COLOR_SHADOW, 2, 5));
         title: string! = NodeTitle(node);
-        canvas->Text(left + 10 * zoom, top + (HEADER_HEIGHT - 8) * zoom / 2, title, COLOR_TEXT, nodeWidth - 20 * zoom);
+        canvas->Text(left + 9 * zoom, top + HEADER_HEIGHT * zoom / 2 + canvas->fontAscent() * 35 / 100, title, COLOR_TEXT, nodeWidth - 18 * zoom);
         delete title;
         for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
             pin: PinSlot* = pins->items[pinIndex];
@@ -141,12 +153,12 @@ lantern:::graphs :: namespace {
             }
             DrawPin(graphEditor, canvas, pinX, pinY, pin->isExecution, isLinked);
             if pin->label.length() > 0 {
-                labelWidth: i32 = (NODE_WIDTH / 2 - 8) * zoom;
+                labelBaseline: i32 = pinY + canvas->fontAscent() * 35 / 100;
                 if pin->isOutput {
-                    labelX: i32 = pinX - 8 * zoom - i32(pin->label.length()) * 6 * zoom;
-                    canvas->Text(labelX, pinY - 4 * zoom, pin->label, COLOR_DIM_TEXT, nodeWidth);
+                    labelX: i32 = pinX - 8 * zoom - canvas->TextWidth(pin->label);
+                    canvas->Text(labelX, labelBaseline, pin->label, COLOR_DIM_TEXT, nodeWidth);
                 } else {
-                    canvas->Text(pinX + 8 * zoom, pinY - 4 * zoom, pin->label, COLOR_DIM_TEXT, nodeWidth - 12 * zoom);
+                    canvas->Text(pinX + 8 * zoom, labelBaseline, pin->label, COLOR_DIM_TEXT, nodeWidth - 12 * zoom);
                 }
             }
         }
@@ -158,6 +170,7 @@ lantern:::graphs :: namespace {
         canvas->width = newWidth;
         canvas->height = newHeight;
         canvas->zoom = graphEditor->zoom;
+        canvas->LoadFont();
         canvas->Clear(COLOR_BACKGROUND);
         if graphEditor->graph->functions.length() == 0 {
             return;
