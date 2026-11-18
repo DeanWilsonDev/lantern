@@ -1,0 +1,39 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"mixed\", \"functions\": [{\"name\": \"Run\", \"inputs\": [{\"name\": \"count\", \"type\": \"i32\"}], \"returns\": \"i32\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\", \"next\": \"twice\"}, {\"id\": \"twice\", \"kind\": \"call\", \"function\": \"Double\", \"args\": [\"count\"], \"name\": \"doubled\", \"type\": \"i32\", \"next\": \"loop\"}, {\"id\": \"loop\", \"kind\": \"nyx\", \"text\": \"for step~ i32 = 0; step < 3; step += 1 {\\n    doubled = doubled + step;\\n}\", \"next\": \"done\"}, {\"id\": \"done\", \"kind\": \"return\", \"value\": \"scaled\"}, {\"id\": \"scaled\", \"kind\": \"nyx_value\", \"text\": \"doubled * 10\"}]}]}";
+
+main :: () -> i32 {
+    generated~ string! = "".copy();
+    when lantern:::graphs:::GenerateNyxFromText(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph generates");
+            delete message;
+        },
+        Result:::Ok(source) -> {
+            delete generated;
+            generated = source!;
+        }
+    }
+    assert(generated.contains("doubled~ i32 = Double(count);"), "a call node keeps its result in a typed local");
+    assert(generated.contains("    for step~ i32 = 0; step < 3; step += 1 {"), "a Nyx node is written as it was typed");
+    assert(generated.contains("return doubled * 10;"), "a Nyx value node is an expression");
+
+    runtime := new lantern:::nyx:::Runtime();
+    script~ string! = "Double :: (value: i32) -> i32 { return value * 2; }\n".copy();
+    script += generated;
+    script += "\nRunFour :: () -> i32 { return Mixed:::Run(4); }\n";
+    program := lantern:::testing:::Mount(runtime, script);
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    result := lantern:::testing:::ValueOrFail(program->CallFunction("RunFour", noArguments));
+    delete noArguments;
+    assert(lantern:::testing:::I32OrFail(result->I32()) == 110, "a graph calls Nyx, runs Nyx text and is called from Nyx");
+    delete result;
+    delete script;
+    delete generated;
+    delete program;
+    delete runtime;
+    print("a graph mixes nodes with Nyx text");
+    return 0;
+}

@@ -19,6 +19,10 @@ lantern:::graphs :: namespace {
         b~ string!;
         value~ string!;
         condition~ string!;
+        functionPath~ string!;
+        text~ string!;
+        arguments~ Array<string!>! = [];
+        declares~ Array<string!>! = [];
 
         GraphNode~: (newId: string, newKind: string) {
             id = `${newId}`;
@@ -32,6 +36,8 @@ lantern:::graphs :: namespace {
             b = "".copy();
             value = "".copy();
             condition = "".copy();
+            functionPath = "".copy();
+            text = "".copy();
         }
 
         !GraphNode~: () {
@@ -46,6 +52,10 @@ lantern:::graphs :: namespace {
             delete b;
             delete value;
             delete condition;
+            delete functionPath;
+            delete text;
+            arguments.freeAll();
+            declares.freeAll();
         }
     }
 
@@ -108,6 +118,36 @@ lantern:::graphs :: namespace {
         }
     }
 
+    // True for a Nyx path that is safe to write into source: names joined by `:::`, such as `lantern:::world:::Position`.
+    IsPath :: (text: string) -> bool {
+        parts := text.split(":::");
+        valid~ bool = parts.length() > 0;
+        for index~ usize = 0; index < parts.length(); index++ {
+            if !IsName(parts[index]) {
+                valid = false;
+            }
+        }
+        delete parts;
+        return valid;
+    }
+
+    // True when a snippet's braces, brackets and parentheses are balanced, so it cannot close the function around it.
+    IsBalanced :: (text: string) -> bool {
+        depth~ i32 = 0;
+        for position~ usize = 0; position < text.length(); position++ {
+            byte: u8 = text.byteAt(position);
+            if byte == 123 || byte == 40 || byte == 91 {
+                depth += 1;
+            } else if byte == 125 || byte == 41 || byte == 93 {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+        }
+        return depth == 0;
+    }
+
     // True for a name that is safe to write into Nyx source: letters, digits and underscores, not starting with a digit.
     IsName :: (text: string) -> bool {
         if text.length() == 0 {
@@ -155,6 +195,11 @@ lantern:::graphs :: namespace {
         if present := memberAt {
             at = present;
         }
+        return ReferenceAt(document, at);
+    }
+
+    // The value reference a JSON value stands for: a name as text, or a literal as an object.
+    ReferenceAt :: (document: lantern:::json:::JsonDocument*, at: u32) -> string! {
         kind: lantern:::json:::JsonKind = document->Kind(at);
         if kind == lantern:::json:::JsonKind:::Text {
             return `${document->Text(at)}`;
@@ -215,6 +260,24 @@ lantern:::graphs :: namespace {
         node->value = ReferenceMember(document, nodeAt, "value");
         delete node->condition;
         node->condition = ReferenceMember(document, nodeAt, "condition");
+        delete node->functionPath;
+        node->functionPath = TextMember(document, nodeAt, "function");
+        delete node->text;
+        node->text = TextMember(document, nodeAt, "text");
+        if argumentsAt := document->Member(nodeAt, "args") {
+            argumentAt~ u32 = document->FirstChild(argumentsAt);
+            for step~ usize = 0; step < usize(document->ChildCount(argumentsAt)); step++ {
+                node->arguments.push(ReferenceAt(document, argumentAt));
+                argumentAt = document->NextSibling(argumentAt);
+            }
+        }
+        if declaresAt := document->Member(nodeAt, "declares") {
+            declaredAt~ u32 = document->FirstChild(declaresAt);
+            for step~ usize = 0; step < usize(document->ChildCount(declaresAt)); step++ {
+                node->declares.push(`${document->Text(declaredAt)}`);
+                declaredAt = document->NextSibling(declaredAt);
+            }
+        }
         return node!;
     }
 
