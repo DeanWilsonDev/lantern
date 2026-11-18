@@ -7,7 +7,7 @@ A cloud session can run the whole suite with `mist run test`, so a game change c
 | Building from source (Nox 2m17, Mist 0m41, `mist install` 5m23) | about 8m25 |
 | Nox and Mist release downloads, Mist cache seeded from the Lantern bundle | about 1m30 |
 | Nox and Mist release downloads, no cache | about 5m |
-| `mist run test` once set up | about 15s |
+| `mist run test` once set up (suites, then a build of the world editor) | about 15s |
 
 Threads should use the default path. The source build is the fallback when a download or checksum fails, or when the
 session isn't Linux x86-64.

@@ -14,3 +14,12 @@ for suite_directory in tests/*/; do
     test_suites+=("${suite_directory%/}")
 done
 "$nox_command" test "$@" "${test_suites[@]}"
+
+editor_project="$engine_directory/../apps/world-editor/nox"
+if [[ -d "$editor_project" && $# -eq 0 ]]; then
+    editor_check_output="$(mktemp)"
+    trap 'rm -f "$editor_check_output"' EXIT
+    "$nox_command" build --release --project "$engine_directory" > /dev/null
+    "$nox_command" build --release --project "$editor_project" -o "$editor_check_output" > /dev/null
+    echo "the world editor builds"
+fi
