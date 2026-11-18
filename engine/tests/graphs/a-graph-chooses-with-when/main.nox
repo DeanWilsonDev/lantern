@@ -1,0 +1,70 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"pick\", \"functions\": [{\"name\": \"Name\", \"inputs\": [{\"name\": \"choice\", \"type\": \"i32\"}], \"returns\": \"i32\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\", \"next\": \"mk\"}, {\"id\": \"mk\", \"kind\": \"set\", \"name\": \"result\", \"type\": \"i32\", \"value\": {\"i32\": 0}, \"next\": \"pick\"}, {\"id\": \"pick\", \"kind\": \"when\", \"a\": \"choice\", \"cases\": [{\"match\": {\"i32\": 1}, \"do\": \"one\"}, {\"match\": {\"i32\": 2}, \"do\": \"two\"}], \"else\": \"other\", \"next\": \"done\"}, {\"id\": \"one\", \"kind\": \"set\", \"name\": \"result\", \"value\": {\"i32\": 10}}, {\"id\": \"two\", \"kind\": \"set\", \"name\": \"result\", \"value\": {\"i32\": 20}}, {\"id\": \"other\", \"kind\": \"set\", \"name\": \"result\", \"value\": {\"i32\": 99}}, {\"id\": \"done\", \"kind\": \"return\", \"value\": \"result\"}]}]}";
+
+CallNoArguments :: (program: lantern:::nyx:::Program*, name: string) -> lantern:::nyx:::Value*! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    return value!;
+}
+
+main :: () -> i32 {
+    generated~ string! = "".copy();
+    when lantern:::graphs:::GenerateNyxFromText(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph generates");
+            delete message;
+        },
+        Result:::Ok(source) -> {
+            delete generated;
+            generated = source!;
+        }
+    }
+    assert(generated.contains("when choice {"), "a when node reads its subject");
+    assert(generated.contains("default -> {"), "an else wire is the default arm");
+    when lantern:::graphs:::LoadGraph(GRAPH) {
+        Result:::Err(message) -> {
+            assert(false, "the graph loads");
+            delete message;
+        },
+        Result:::Ok(graph) -> {
+            written: string! = lantern:::graphs:::WriteGraph(graph);
+            delete graph;
+            when lantern:::graphs:::GenerateNyxFromText(written) {
+                Result:::Err(message) -> {
+                    assert(false, "the written graph generates");
+                    delete message;
+                },
+                Result:::Ok(again) -> {
+                    assert(again == generated, "cases survive writing and reading");
+                    delete again;
+                }
+            }
+            delete written;
+        }
+    }
+    runtime := new lantern:::nyx:::Runtime();
+    script~ string! = `${generated}`;
+    script += "\nOne :: () -> i32 { return Pick:::Name(1); }\n";
+    script += "Two :: () -> i32 { return Pick:::Name(2); }\n";
+    script += "Other :: () -> i32 { return Pick:::Name(7); }\n";
+    program := lantern:::testing:::Mount(runtime, script);
+    one := CallNoArguments(program, "One");
+    assert(lantern:::testing:::I32OrFail(one->I32()) == 10, "case one runs its own chain");
+    delete one;
+    two := CallNoArguments(program, "Two");
+    assert(lantern:::testing:::I32OrFail(two->I32()) == 20, "case two runs its own chain");
+    delete two;
+    other := CallNoArguments(program, "Other");
+    assert(lantern:::testing:::I32OrFail(other->I32()) == 99, "anything else takes the else wire");
+    delete other;
+    delete script;
+    delete generated;
+    delete program;
+    delete runtime;
+    print("a graph chooses with when");
+    return 0;
+}

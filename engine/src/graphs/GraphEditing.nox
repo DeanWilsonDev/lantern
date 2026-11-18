@@ -3,16 +3,26 @@
 lantern:::graphs :: namespace {
     // The node kinds the tab offers.
     IsKnownKind :: (kind: string) -> bool {
-        return kind == "entry" || kind == "branch" || kind == "while" || kind == "set" || kind == "return" || kind == "call" || kind == "nyx"
+        return kind == "entry" || kind == "branch" || kind == "while" || kind == "when" || kind == "set" || kind == "return" || kind == "call" || kind == "nyx"
             || kind == "nyx_value" || OperatorFor(kind).length() > 0 || kind == "not";
     }
 
     IsExecutionPort :: (port: string) -> bool {
-        return port == "next" || port == "then" || port == "else";
+        return port == "next" || port == "then" || port == "else" || port.startsWith("case");
+    }
+
+    // The number after a port's prefix: `case2` is 2.
+    PortNumber :: (port: string, prefixLength: usize) -> usize {
+        number~ usize = 0;
+        digits: string = port.substring(prefixLength, port.length() - prefixLength);
+        for digit~ usize = 0; digit < digits.length(); digit++ {
+            number = number * 10 + usize(digits.byteAt(digit) - 48);
+        }
+        return number;
     }
 
     IsValuePort :: (port: string) -> bool {
-        return port == "a" || port == "b" || port == "value" || port == "condition" || port.startsWith("arg");
+        return port == "a" || port == "b" || port == "value" || port == "condition" || port.startsWith("arg") || port.startsWith("match");
     }
 
     // A node id that no node of the function has: `add`, then `add2`, `add3`.
@@ -116,6 +126,10 @@ lantern:::graphs :: namespace {
         } else if port == "condition" {
             delete node->condition;
             node->condition = `${value}`;
+        } else if port.startsWith("case") {
+            node->SetTarget(PortNumber(port, 4), value);
+        } else if port.startsWith("match") {
+            node->SetArgument(PortNumber(port, 5), value);
         } else if port.startsWith("arg") {
             argumentNumber~ usize = 0;
             digits: string = port.substring(3, port.length() - 3);

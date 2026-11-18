@@ -49,6 +49,29 @@ lantern:::graphs :: namespace {
             }
         }
 
+        Cases~: (node: GraphNode*) -> void {
+            if node->arguments.length() == 0 {
+                return;
+            }
+            list~ string! = "[".copy();
+            for index~ usize = 0; index < node->arguments.length(); index++ {
+                if index > 0 {
+                    list += ", ";
+                }
+                matchJson: string! = ReferenceJson(node->arguments[index]);
+                targetText~ string = "";
+                if index < node->targets.length() {
+                    targetText = node->targets[index];
+                }
+                targetJson: string! = lantern:::json:::QuotedText(targetText);
+                list += `{ "match": ${matchJson}, "do": ${targetJson} }`;
+                delete matchJson;
+                delete targetJson;
+            }
+            list += "]";
+            this->Member("cases", list!);
+        }
+
         List~: (key: string, node: GraphNode*, isReference: bool) -> void {
             itemCount: usize = isReference ? node->arguments.length() : node->declares.length();
             if itemCount == 0 {
@@ -86,7 +109,11 @@ lantern:::graphs :: namespace {
         line->Reference("value", node->value);
         line->Reference("condition", node->condition);
         line->Text("function", node->functionPath);
-        line->List("args", node, true);
+        if node->kind == "when" {
+            line->Cases(node);
+        } else {
+            line->List("args", node, true);
+        }
         line->Text("text", node->text);
         line->List("declares", node, false);
         line->Member("x", `${node->x}`);
