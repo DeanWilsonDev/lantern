@@ -1845,3 +1845,9 @@ Silhouette files belong to the game project and the editor, not to the built gam
 ## D-214: Photos are saved by `lantern:::screen:::Capture(path)`, taken on the next frame without the UI
 
 A shutter press asks the engine to save the next drawn frame as a PNG. The engine leaves the game UI and debug HUD out of that frame, so the viewfinder, flash and counter are not in the picture, creates the folder, and writes the file. The game saves every press, counted or not, as `photos/photo-N.png` relative to the folder it runs in (git-ignored). Provisional: a per-user pictures folder and an album screen are not decided.
+
+## D-215: The Rust workspace is removed; Lantern is Nox, Nyx, Mist and the C libraries they build
+
+Nothing built or ran the Rust engine after the port: `mist run game|editor|test|build-shaders|graphs`, the shell scripts under `engine/tools`, the editor's and `lantern-native`'s CMake builds and the cloud bootstrap never invoked Cargo, and there is no CI. `crates/`, `apps/lantern`, `examples/frame-loop`, `tools/asset-gen`, `Cargo.toml`, `Cargo.lock`, `rustfmt.toml` and the root `shaders/*.wgsl` (superseded by the GLSL in `engine/shaders`) are deleted. The old crates' C++ copies (`crates/chaos-ui/native`, `crates/editor-backend/include`) were older versions of `engine/native` and `engine/editor-backend`, which stay. `docs/architecture.md`, a tour of the Rust crates, is deleted with them; `docs/engine-structure.md` is its replacement.
+
+`tools/asset-gen` was the only thing that regenerated the placeholder textures, sounds and `gem.glb` (D-008). The committed files in `assets/` are now the source of truth; to change one, edit it or write a Nox generator. This is provisional: if reproducible assets matter again, port the generator to Nox. The `rust-*.trace` goldens under `engine/tests` stay as frozen fixtures, and the Rust code is still in git history. To undo: `git revert` the commit that removed them.
