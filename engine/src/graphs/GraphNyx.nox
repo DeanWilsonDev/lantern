@@ -339,6 +339,33 @@ lantern:::graphs :: namespace {
         emitter->Line(1, "}".copy());
     }
 
+    // The import lines for the standard library namespaces a graph's call nodes name (`Math:::sin` needs
+    // `Math :: import standard:::Math;`), one per namespace, in a fixed order.
+    StandardImports :: (graph: Graph*) -> string! {
+        names: Array<string>! = "Math,Json,Console,File,Directory,DateTime,Log,Debug".split(",");
+        imports~ string! = "".copy();
+        for nameIndex~ usize = 0; nameIndex < names.length(); nameIndex++ {
+            prefix: string! = `${names[nameIndex]}:::`;
+            isUsed~ bool = false;
+            for functionIndex~ usize = 0; functionIndex < graph->functions.length(); functionIndex++ {
+                function: GraphFunction* = graph->functions[functionIndex];
+                for nodeIndex~ usize = 0; nodeIndex < function->nodes.length(); nodeIndex++ {
+                    node: GraphNode* = function->nodes[nodeIndex];
+                    if node->kind == "call" && node->functionPath.startsWith(prefix) {
+                        isUsed = true;
+                    }
+                }
+            }
+            if isUsed {
+                imports += `${names[nameIndex]} :: import standard:::${names[nameIndex]};`;
+                imports += "\n";
+            }
+            delete prefix;
+        }
+        delete names;
+        return imports!;
+    }
+
     // The Nyx source of a graph, or the first problem found.
     GenerateNyx :: (graph: Graph*) -> Result<string!, string!> {
         return GenerateNyxWith(graph, false);
@@ -351,6 +378,9 @@ lantern:::graphs :: namespace {
         namespaceName: string! = NamespaceName(graph->name);
         emitter->text += `// Generated from ${graph->name}.graph.json by lantern:::graphs. Edit the graph, not this file.`;
         emitter->text += "\n";
+        standardImports: string! = StandardImports(graph);
+        emitter->text += standardImports;
+        delete standardImports;
         emitter->text += `${namespaceName} :: namespace {`;
         emitter->text += "\n";
         delete namespaceName;

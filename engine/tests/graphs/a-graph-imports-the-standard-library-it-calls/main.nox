@@ -1,0 +1,38 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"waves\", \"functions\": [{\"name\": \"Swing\", \"inputs\": [{\"name\": \"angle\", \"type\": \"f32\"}], \"returns\": \"f32\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\", \"next\": \"done\"}, {\"id\": \"done\", \"kind\": \"return\", \"value\": \"wave\"}, {\"id\": \"wave\", \"kind\": \"call\", \"function\": \"Math:::sin\", \"args\": [\"angle\"]}]}]}";
+
+CallNoArguments :: (program: lantern:::nyx:::Program*, name: string) -> lantern:::nyx:::Value*! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    return value!;
+}
+
+main :: () -> i32 {
+    when lantern:::graphs:::GenerateNyxFromText(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph generates");
+            delete message;
+        },
+        Result:::Ok(source) -> {
+            assert(source.contains("Math :: import standard:::Math;"), "a call to Math names its import");
+            assert(!source.contains("Json :: import"), "an unused namespace is not imported");
+            runtime := new lantern:::nyx:::Runtime();
+            script~ string! = `${source}`;
+            script += "\nZero :: () -> f32 { return Waves:::Swing(0.0f); }\n";
+            program := lantern:::testing:::Mount(runtime, script);
+            zero := CallNoArguments(program, "Zero");
+            assert(lantern:::testing:::F32OrFail(zero->F32()) == 0.0f, "the imported sin runs");
+            delete zero;
+            delete script;
+            delete program;
+            delete runtime;
+            delete source;
+        }
+    }
+    print("a graph imports the standard library it calls");
+    return 0;
+}
