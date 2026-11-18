@@ -111,6 +111,10 @@ The outliner and the details panel are docked on the right, the viewport fills t
 drawer (assets, console, history) sits under it. Each can be shown or hidden from the Window menu or with
 Alt + 1, 2 and 3, and the choice is remembered. F11 hides all of them for a clean viewport.
 
+The viewport's own settings are in its header: `Perspective` opens the Camera menu (presets, orthographic, frame
+and align) and `Show` opens the Show menu (grid, wireframe, colliders, markers, level bounds, hidden entities,
+statistics, snapping, grid size). Alt+C and Alt+V open them from the keyboard.
+
 
 - **Menu bar**: File (new, open, recent files, save, save as, play, settings, quit), Edit
   (undo, redo, duplicate, duplicate along an axis, mirror, delete, snap, space, pivot),
