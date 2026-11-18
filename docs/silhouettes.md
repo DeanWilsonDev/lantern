@@ -49,7 +49,7 @@ When the editor starts it reads `assets/editor/palette.json`, then adds one temp
 
 ## The Silhouette tab
 
-Select a Silhouette in the asset browser and press **Edit** to open it in its own document tab, beside Level. The tab lists the Silhouette's components, the root first and its children indented below it, with each one's kind, and names the selected component with its resolved values, one line each (`transform.position: [0, 0, 0]`). Ctrl+W closes the tab. It reads the same templates the Add menu uses, so what the tab shows is what placing it would make.
+Select a Silhouette in the asset browser and press **Edit** to open it in its own document tab, beside Level. The tab lists the Silhouette's components, the root first and its children indented below it, with each one's kind, and names the selected component with its resolved values, one line each (`transform.position: [0, 0, 0]`). A preview of the Silhouette is drawn in the tab, with the same renderer as the asset browser's preview. Ctrl+W closes the tab. It reads the same templates the Add menu uses, so what the tab shows is what placing it would make.
 
 ## Calamus from Nox
 
@@ -58,6 +58,6 @@ Select a Silhouette in the asset browser and press **Edit** to open it in its ow
 ## Known gaps
 
 - The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
-- The Silhouette editor tab shows the components tree and each component's resolved values. Inherited and overridden markers, editing values, a preview, editing and saving Calamus files are not built. Visual scripting comes after them.
+- The Silhouette editor tab shows the components tree and each component's resolved values. Inherited and overridden markers, editing values, editing and saving Calamus files are not built. Visual scripting comes after them.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.
