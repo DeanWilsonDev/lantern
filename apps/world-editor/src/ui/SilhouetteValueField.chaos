@@ -1,0 +1,39 @@
+SilhouetteValues :: import SilhouetteValues;
+
+SilhouetteValueFieldProps :: data {
+    valueKey: string;
+    valueText: string;
+    isOwn: bool;
+    onCommit: (key: string, text: string) -> void;
+    onPick: (key: string, text: string) -> void;
+}
+
+SilhouetteValueField :: (props: SilhouetteValueFieldProps) -> Penumbra:::Component {
+    kind := SilhouetteValues:::KindOf(props.valueText);
+    return (
+        <frame ref={`silhouette-field-${props.valueKey}`} class="field">
+            <frame class="field-row">
+                <text class="field-label" onRelease={() -> props.onPick(props.valueKey, props.valueText)}>{props.isOwn ? props.valueKey + " *" : props.valueKey}</text>
+                <slot>
+                    !{kind == "bool"
+                        ? <checkbox ref={`silhouette-check-${props.valueKey}`} class="field-checkbox"
+                                    checked={props.valueText.trim() == "true"}
+                                    onToggle={(checked: bool) -> props.onCommit(props.valueKey, checked ? "true" : "false")} />
+                        : kind == "vector"
+                            ? <frame class="vector-row">
+                                  <slot>
+                                      !{SilhouetteValues:::Axes(props.valueText).map((axis: i32) ->
+                                          <input key={`${props.valueKey}-${axis}`} ref={`silhouette-input-${props.valueKey}-${axis}`} class="vector-input"
+                                                 text={SilhouetteValues:::Parts(props.valueText)[axis]} preferredWidth={54.0f}
+                                                 onSubmit={(typed: string) -> props.onCommit(props.valueKey, SilhouetteValues:::Commit("vector", props.valueText, axis, typed))} />)}
+                                  </slot>
+                              </frame>
+                            : <input ref={`silhouette-input-${props.valueKey}`} class="field-input"
+                                     text={kind == "text" ? SilhouetteValues:::Unquoted(props.valueText) : props.valueText}
+                                     preferredWidth={150.0f}
+                                     onSubmit={(typed: string) -> props.onCommit(props.valueKey, SilhouetteValues:::Commit(kind, props.valueText, 0, typed))} />}
+                </slot>
+            </frame>
+        </frame>
+    );
+}
