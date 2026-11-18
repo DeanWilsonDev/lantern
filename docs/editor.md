@@ -276,3 +276,7 @@ The Silhouette editor has three columns: the component tree with Add a child and
 ## Game lighting
 
 Show > Game Lighting (or Settings > Graphics) draws the viewport with the game's night look: its sky, fog, moon, ambient light, bloom and colour grade. Lights placed in the level light it as they will in the game. It shows the first chapter's night; other chapters, the day look and wet streets are not in the viewport yet.
+
+## Material Silhouettes
+
+A material is a Silhouette of type `material` (`@type material` in its `root.calamus`) with `texture`, `tint`, `metallic`, `roughness` and `emissive`. Put one in `assets/silhouettes/materials/NAME` (or `assets/silhouettes/NAME`) and give an entity that `material` name: the viewport draws it with the material's metallic, roughness, emissive and tint on top of its texture. A material name with no Silhouette still means the texture of that name. The content browser lists material Silhouettes with a material icon; the Silhouettes tab doesn't, since they aren't placed in a level. Starters: `brushed_steel`, `warm_plaster`, `wet_asphalt` and `neon_sign`. The game does not read material Silhouettes yet.
