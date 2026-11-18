@@ -47,6 +47,10 @@ When the editor starts it reads `assets/editor/palette.json`, then adds one temp
 
 `SilhouetteWorld(library, name)` turns one Silhouette into a world file (entity 1 is the root, the rest are its descendants), which is also how the platformer Silhouettes are tested.
 
+## The Silhouette tab
+
+Select a Silhouette in the asset browser and press **Edit** to open it in its own document tab, beside Level. The tab lists the Silhouette's components, the root first and its children indented below it, with each one's kind, and names the selected component. It reads the same templates the Add menu uses, so what the tab shows is what placing it would make.
+
 ## Calamus from Nox
 
 `lantern:::calamus` wraps Amanuensis's C API (`capi/` in the amanuensis repository), which `lantern-native` links: `ParseCalamus(text)` gives a `CalamusDocument` (header, `Resolve(baseJson)`), `WriteCalamus` writes an entity as Calamus text with `*` marks against a base, and `StableHash` is the hash Calamus records for a base. Values cross the boundary as JSON text.
@@ -54,6 +58,6 @@ When the editor starts it reads `assets/editor/palette.json`, then adds one temp
 ## Known gaps
 
 - The editor places Silhouettes (see below) but still saves world files as JSON. Writing Silhouette files from the editor, linked instances in a Calamus scene folder, and the inspector's inherited and overridden states are not built.
-- There is no Silhouette editor tab yet (components tree, details, preview). It is the next slice; visual scripting comes after it.
+- The Silhouette editor tab shows only the components tree so far. Details with inherited and overridden fields, a preview, editing and saving Calamus files are not built. Visual scripting comes after them.
 - Types have no schema, so a Silhouette's values are only checked when a scene is loaded into a world file.
 - Removing an inherited child in an instance is not supported; disable or hide it with a patch.

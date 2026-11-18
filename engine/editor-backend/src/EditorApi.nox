@@ -31,6 +31,9 @@ lantern:::editorapi :: namespace {
     TEMPLATE_ID: u32 : 0;
     TEMPLATE_LABEL: u32 : 1;
     TEMPLATE_KIND: u32 : 2;
+    TEMPLATE_SILHOUETTE: u32 : 3;
+    COMPONENT_NAME: u32 : 0;
+    COMPONENT_KIND: u32 : 1;
 
     // Turns the API's signed entity number into the editor's key; a negative number becomes 0 (no entity).
     EntityKey :: (entity: i64) -> u64 {
@@ -465,6 +468,50 @@ lantern:::editorapi :: namespace {
         }
         if part == TEMPLATE_KIND {
             return template->prototype->kind.copy();
+        }
+        if part == TEMPLATE_SILHOUETTE {
+            return when template->fromSilhouette { true -> "1".copy(), false -> "".copy() };
+        }
+        return "".copy();
+    }
+
+    // The components of a template as the Silhouette editor lists them: the root first, then its
+    // descendants in order. A template that is not from a Silhouette has just the root.
+    export SilhouetteComponentCount :: (editorInstance: Editor*, templateId: string) -> u32 {
+        guard template := editorInstance->backend->session->palette->Template(templateId) return 0;
+        return u32(template->descendants.length() + 1);
+    }
+
+    // How deep a component is in its Silhouette: the root is 0, its children 1, and so on.
+    export SilhouetteComponentDepth :: (editorInstance: Editor*, templateId: string, index: u32) -> u32 {
+        guard template := editorInstance->backend->session->palette->Template(templateId) return 0;
+        if index == 0 || usize(index) > template->descendants.length() {
+            return 0;
+        }
+        depth~ u32 = 1;
+        ancestor~ usize = template->descendantParents[usize(index) - 1];
+        while ancestor > 0 {
+            depth += 1;
+            ancestor = template->descendantParents[ancestor - 1];
+        }
+        return depth;
+    }
+
+    // One piece (COMPONENT_NAME or COMPONENT_KIND) of one component of a template.
+    export SilhouetteComponent :: (editorInstance: Editor*, templateId: string, index: u32, part: u32) -> string! {
+        guard template := editorInstance->backend->session->palette->Template(templateId) return "".copy();
+        if usize(index) > template->descendants.length() {
+            return "".copy();
+        }
+        entity~ lantern:::world:::WorldEntity* = template->prototype;
+        if index > 0 {
+            entity = template->descendants[usize(index) - 1];
+        }
+        if part == COMPONENT_NAME {
+            return entity->name.copy();
+        }
+        if part == COMPONENT_KIND {
+            return entity->kind.copy();
         }
         return "".copy();
     }
