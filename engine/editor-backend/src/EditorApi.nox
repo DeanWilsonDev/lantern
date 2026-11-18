@@ -683,6 +683,30 @@ lantern:::editorapi :: namespace {
         return problemText!;
     }
 
+    // Renames a whole Silhouette and the variants made from it, and updates the palette. Returns an error message, empty when
+    // it worked.
+    export SilhouetteRename :: (editorInstance: Editor~*, templateId: string, newName: string) -> string! {
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        defer delete assetsDirectory;
+        users~ Array<string!>! = lantern:::editorbackend:::SilhouettesUsing(assetsDirectory, templateId);
+        defer users.freeAll();
+        problem: string!? = lantern:::editorbackend:::RenameSilhouette(assetsDirectory, templateId, newName);
+        problemText: string! = ProblemText(problem!);
+        defer delete problemText;
+        if problemText.length() > 0 {
+            return problemText.copy();
+        }
+        editorInstance->Session()->palette->RemoveTemplate(templateId);
+        result~ string! = SilhouetteEdit(editorInstance, newName, "");
+        for user in users {
+            if result.length() == 0 {
+                delete result;
+                result = SilhouetteEdit(editorInstance, user, "");
+            }
+        }
+        return result!;
+    }
+
     // Creates a Silhouette called `newName`: an empty one of `kind`, or, with `baseTemplateId` set, a variant of that
     // Silhouette. Returns an error message, empty when it worked.
     export SilhouetteCreate :: (editorInstance: Editor~*, newName: string, kind: string, baseTemplateId: string) -> string! {

@@ -546,6 +546,154 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // The text of a file with every occurrence of `oldNeedle` replaced by `newNeedle`, and no `@base_hash` line (a changed base
+    // path makes the old hash stale, as in SetSilhouetteBase).
+    RewrittenBaseText :: (original: string, oldNeedle: string, newNeedle: string) -> string! {
+        lines := original.lines();
+        defer delete lines;
+        rewritten~ string! = "".copy();
+        for line in lines {
+            if !line.startsWith("@base_hash") {
+                rewritten += line.replace(oldNeedle, newNeedle);
+                rewritten += "\n";
+            }
+        }
+        return rewritten!;
+    }
+
+    // Rewrites every file under a folder that mentions `oldNeedle`. Returns an error message or null.
+    RewriteFolderMentions :: (directory: string, oldNeedle: string, newNeedle: string) -> string!? {
+        when lantern:::silhouette:::SortedEntries(directory) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(listed) -> {
+                entries~ Array<string!>! = listed!;
+                defer entries.freeAll();
+                for entry in entries {
+                    child: string! = `${directory}/${entry}`;
+                    defer delete child;
+                    if directoryExists(child) {
+                        problem: string!? = RewriteFolderMentions(child, oldNeedle, newNeedle);
+                        if problem != null {
+                            return problem!;
+                        }
+                    } else if entry.endsWith(SILHOUETTE_FILE_EXTENSION) {
+                        when readTextFile(child) {
+                            Result:::Err(error) -> {
+                                failure: string! = `${child}: ${error.message()}`;
+                                delete error;
+                                return failure!;
+                            },
+                            Result:::Ok(text) -> {
+                                defer delete text;
+                                if text.contains(oldNeedle) {
+                                    rewritten: string! = RewrittenBaseText(text, oldNeedle, newNeedle);
+                                    writeProblem: string!? = WriteFileText(child, rewritten);
+                                    delete rewritten;
+                                    if writeProblem != null {
+                                        return writeProblem!;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+        }
+    }
+
+    // The names of the other Silhouettes with a file that names this one.
+    SilhouettesUsing :: (assetsDirectory: string, silhouetteName: string) -> Array<string!>! {
+        users~ Array<string!>! = [];
+        folder: string! = `${assetsDirectory}/${SILHOUETTES_FOLDER}`;
+        defer delete folder;
+        needle: string! = `"${SILHOUETTES_FOLDER}/${silhouetteName}"`;
+        defer delete needle;
+        when lantern:::silhouette:::SortedEntries(folder) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(listed) -> {
+                names~ Array<string!>! = listed!;
+                for name in names {
+                    if name != silhouetteName {
+                        entryFolder: string! = `${folder}/${name}`;
+                        if FolderMentions(entryFolder, needle) {
+                            users.push(`${name}`);
+                        }
+                        delete entryFolder;
+                    }
+                }
+                names.freeAll();
+            }
+        }
+        return users!;
+    }
+
+    // Renames a whole Silhouette: its folder, and the `@base` line of every Silhouette made from it. Nothing is changed when the
+    // new name is taken or unusable. Returns an error message or null.
+    RenameSilhouette :: (assetsDirectory: string, silhouetteName: string, newName: string) -> string!? {
+        if !SilhouetteNameIsUsable(silhouetteName) {
+            return "No such Silhouette.".copy();
+        }
+        if !SilhouetteNameIsUsable(newName) {
+            return "A Silhouette's name can only hold lowercase letters, digits and underscores.".copy();
+        }
+        if newName == silhouetteName {
+            return "That is already its name.".copy();
+        }
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        if !directoryExists(silhouetteFolder) {
+            return "No such Silhouette.".copy();
+        }
+        newFolder: string! = SilhouetteFolderOf(assetsDirectory, newName);
+        defer delete newFolder;
+        if pathExists(newFolder) {
+            return "A Silhouette with that name already exists.".copy();
+        }
+        oldNeedle: string! = `"${SILHOUETTES_FOLDER}/${silhouetteName}"`;
+        defer delete oldNeedle;
+        newNeedle: string! = `"${SILHOUETTES_FOLDER}/${newName}"`;
+        defer delete newNeedle;
+        users~ Array<string!>! = SilhouettesUsing(assetsDirectory, silhouetteName);
+        defer users.freeAll();
+        for user in users {
+            userFolder: string! = SilhouetteFolderOf(assetsDirectory, user);
+            problem: string!? = RewriteFolderMentions(userFolder, oldNeedle, newNeedle);
+            delete userFolder;
+            if problem != null {
+                return problem!;
+            }
+        }
+        when renameFile(silhouetteFolder, newFolder) {
+            Result:::Ok(moved) -> { },
+            Result:::Err(error) -> {
+                failure: string! = `${silhouetteFolder}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        library := new lantern:::silhouette:::SilhouetteLibrary(assetsDirectory);
+        defer delete library;
+        for user in users {
+            resolvedName: string! = `${SILHOUETTES_FOLDER}/${user}`;
+            when library->Resolve(resolvedName) {
+                Result:::Ok(resolved) -> {
+                    delete resolved;
+                },
+                Result:::Err(message) -> {
+                    delete resolvedName;
+                    return message!;
+                }
+            }
+            delete resolvedName;
+        }
+        return null;
+    }
+
     // Deletes a whole Silhouette folder, unless another Silhouette is made from it.
     DeleteSilhouette :: (assetsDirectory: string, silhouetteName: string) -> string!? {
         if !SilhouetteNameIsUsable(silhouetteName) {

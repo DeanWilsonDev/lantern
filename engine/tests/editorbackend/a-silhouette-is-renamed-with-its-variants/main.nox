@@ -1,0 +1,74 @@
+lantern :: import lantern;
+
+SCRATCH: string : "/tmp/lantern-silhouette-rename-test";
+
+Succeeded :: (problem: string!?) -> bool {
+    worked: bool = problem == null;
+    delete problem;
+    return worked;
+}
+
+Copy :: (name: string, file: string) -> bool {
+    from: string! = `../assets/silhouettes/${name}/${file}`;
+    defer delete from;
+    folder: string! = `${SCRATCH}/assets/silhouettes/${name}`;
+    defer delete folder;
+    createDirectories(folder);
+    to: string! = `${folder}/${file}`;
+    defer delete to;
+    when readTextFile(from) {
+        Result:::Err(error) -> {
+            delete error;
+            return false;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when writeTextFile(to, text) {
+                Result:::Err(error) -> {
+                    delete error;
+                    return false;
+                },
+                Result:::Ok(written) -> {
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+main :: () -> i32 {
+    assets: string = "/tmp/lantern-silhouette-rename-test/assets";
+    if directoryExists(SCRATCH) {
+        Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH));
+    }
+    assert(Copy("moving_platform", "root.calamus") && Copy("moving_platform_wide", "root.calamus") && Copy("block", "root.calamus"), "the platforms and block are copied");
+
+    taken: bool = !Succeeded(lantern:::editorbackend:::RenameSilhouette(assets, "moving_platform", "block"));
+    assert(taken, "a taken name is refused");
+    unusable: bool = !Succeeded(lantern:::editorbackend:::RenameSilhouette(assets, "moving_platform", "Bad Name"));
+    assert(unusable, "an unusable name is refused");
+    missing: bool = !Succeeded(lantern:::editorbackend:::RenameSilhouette(assets, "nothing_here", "anything"));
+    assert(missing, "a missing Silhouette is refused");
+    assert(directoryExists("/tmp/lantern-silhouette-rename-test/assets/silhouettes/moving_platform"), "a refused rename changes nothing");
+
+    assert(Succeeded(lantern:::editorbackend:::RenameSilhouette(assets, "moving_platform", "mover")), "the base is renamed");
+    assert(directoryExists("/tmp/lantern-silhouette-rename-test/assets/silhouettes/mover"), "the folder has the new name");
+    assert(!directoryExists("/tmp/lantern-silhouette-rename-test/assets/silhouettes/moving_platform"), "the old folder is gone");
+    when readTextFile("/tmp/lantern-silhouette-rename-test/assets/silhouettes/moving_platform_wide/root.calamus") {
+        Result:::Err(error) -> {
+            delete error;
+            assert(false, "the variant is readable");
+        },
+        Result:::Ok(text) -> {
+            assert(text.contains("\"silhouettes/mover\""), "the variant's @base names the new name");
+            assert(!text.contains("silhouettes/moving_platform\""), "no @base names the old name");
+            delete text;
+        }
+    }
+    palette := new lantern:::editor:::Palette();
+    defer delete palette;
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "moving_platform_wide")), "the variant still loads");
+    assert(Succeeded(lantern:::editorbackend:::RefreshSilhouetteTemplate(palette, assets, "mover")), "the renamed Silhouette loads");
+    print("a silhouette is renamed with its variants");
+    return 0;
+}
