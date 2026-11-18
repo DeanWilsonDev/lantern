@@ -1,0 +1,54 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"adder\", \"functions\": [{\"name\": \"UpTo\", \"inputs\": [{\"name\": \"count\", \"type\": \"i32\"}], \"returns\": \"i32\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\", \"next\": \"mk\"}, {\"id\": \"mk\", \"kind\": \"set\", \"name\": \"total\", \"type\": \"i32\", \"value\": {\"i32\": 0}, \"next\": \"mk2\"}, {\"id\": \"mk2\", \"kind\": \"set\", \"name\": \"step\", \"type\": \"i32\", \"value\": {\"i32\": 1}, \"next\": \"loop\"}, {\"id\": \"loop\", \"kind\": \"while\", \"condition\": \"within\", \"then\": \"grow\", \"next\": \"done\"}, {\"id\": \"within\", \"kind\": \"not\", \"a\": \"past\"}, {\"id\": \"past\", \"kind\": \"less\", \"a\": \"count\", \"b\": \"step\"}, {\"id\": \"grow\", \"kind\": \"set\", \"name\": \"total\", \"value\": \"plus\", \"next\": \"advance\"}, {\"id\": \"plus\", \"kind\": \"add\", \"a\": \"total\", \"b\": \"step\"}, {\"id\": \"advance\", \"kind\": \"set\", \"name\": \"step\", \"value\": \"nextStep\"}, {\"id\": \"nextStep\", \"kind\": \"add\", \"a\": \"step\", \"b\": {\"i32\": 1}}, {\"id\": \"done\", \"kind\": \"return\", \"value\": \"total\"}]}]}";
+
+
+main :: () -> i32 {
+    when lantern:::graphs:::LoadGraph(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph loads");
+            delete message;
+        },
+        Result:::Ok(graph) -> {
+            when lantern:::graphs:::GenerateNyx(graph) {
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                },
+                Result:::Ok(source) -> {
+                    rows := source.lines();
+                    for index~ usize = 0; index < rows.length(); index++ {
+                        if rows[index].contains("while ") {
+                            id: string! = lantern:::graphs:::NodeAtLine(graph, u32(index + 1));
+                            assert(id == "loop", "the while line belongs to the loop node");
+                            delete id;
+                        }
+                        if rows[index].contains("total = total + step;") {
+                            id: string! = lantern:::graphs:::NodeAtLine(graph, u32(index + 1));
+                            assert(id == "grow", "the body line belongs to its set node");
+                            delete id;
+                        }
+                        if rows[index].contains("return total;") {
+                            id: string! = lantern:::graphs:::NodeAtLine(graph, u32(index + 1));
+                            assert(id == "done", "the return line belongs to the return node");
+                            delete id;
+                        }
+                    }
+                    first: string! = lantern:::graphs:::NodeAtLine(graph, 1);
+                    assert(first == "", "the comment line belongs to no node");
+                    delete first;
+                    outside: string! = lantern:::graphs:::NodeAtLine(graph, 999);
+                    assert(outside == "", "a line past the end belongs to no node");
+                    delete outside;
+                    delete rows;
+                    delete source;
+                }
+            }
+            delete graph;
+        }
+    }
+    print("a generated line names its node");
+    return 0;
+}
