@@ -1,0 +1,302 @@
+// Turns a graph into Nyx source (docs/visual-scripting.md). Execution nodes become statements in order, data nodes become
+// expressions written where they are used, and the first thing wrong with the graph stops the generator with a message that
+// names the function and the node.
+lantern:::graphs :: namespace {
+    // How many data nodes deep an expression may go, and how many execution nodes a function may walk: a graph that goes
+    // past either has a cycle.
+    MAX_EXPRESSION_DEPTH: u32 : 64;
+    MAX_STEPS: u32 : 10000;
+
+    Emitter :: class {
+    public:
+        text~ string!;
+        problem~ string!;
+        declared~ Array<string!>! = [];
+        steps~ u32 = 0;
+
+        Emitter~: () {
+            text = "".copy();
+            problem = "".copy();
+        }
+
+        !Emitter~: () {
+            delete text;
+            delete problem;
+            declared.freeAll();
+        }
+
+        Fail~: (functionName: string, message: string!) -> void {
+            if problem.length() == 0 {
+                delete problem;
+                problem = `function ${functionName}: ${message}`;
+            }
+            delete message;
+        }
+
+        IsDeclared :: (name: string) -> bool {
+            for index~ usize = 0; index < declared.length(); index++ {
+                if declared[index] == name {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        Line~: (depth: u32, line: string!) -> void {
+            for step~ u32 = 0; step < depth; step++ {
+                text += "    ";
+            }
+            text += line;
+            text += "\n";
+            delete line;
+        }
+    }
+
+    // The Nyx operator a data node's kind stands for, or the empty string.
+    OperatorFor :: (kind: string) -> string {
+        if kind == "add" {
+            return "+";
+        }
+        if kind == "sub" {
+            return "-";
+        }
+        if kind == "mul" {
+            return "*";
+        }
+        if kind == "div" {
+            return "/";
+        }
+        if kind == "less" {
+            return "<";
+        }
+        if kind == "greater" {
+            return ">";
+        }
+        if kind == "equal" {
+            return "==";
+        }
+        if kind == "and" {
+            return "&&";
+        }
+        if kind == "or" {
+            return "||";
+        }
+        return "";
+    }
+
+    // A whole expression without the parentheses a binary node puts around it.
+    Bare :: (expression: string!) -> string! {
+        if expression.startsWith("(") && expression.endsWith(")") {
+            inner: string! = `${expression.substring(1, expression.length() - 2)}`;
+            delete expression;
+            return inner!;
+        }
+        return expression!;
+    }
+
+    // The Nyx expression for a value reference: a literal, an input or local, or the data node it names.
+    Expression :: (function: GraphFunction*, emitter: Emitter~*, reference: string, depth: u32) -> string! {
+        if emitter->problem.length() > 0 {
+            return "".copy();
+        }
+        if reference.length() == 0 {
+            emitter->Fail(function->name, "a node is missing a value".copy());
+            return "".copy();
+        }
+        if reference.startsWith(LITERAL_MARK) {
+            return `${reference.substring(1, reference.length() - 1)}`;
+        }
+        if depth > MAX_EXPRESSION_DEPTH {
+            emitter->Fail(function->name, `the values around '${reference}' loop back on themselves`);
+            return "".copy();
+        }
+        if index := function->IndexOfNode(reference) {
+            node: GraphNode* = function->nodes[index];
+            operatorText: string = OperatorFor(node->kind);
+            if operatorText.length() > 0 {
+                left: string! = Expression(function, emitter, node->a, depth + 1);
+                right: string! = Expression(function, emitter, node->b, depth + 1);
+                joined: string! = `(${left} ${operatorText} ${right})`;
+                delete left;
+                delete right;
+                return joined!;
+            }
+            if node->kind == "not" {
+                inner: string! = Expression(function, emitter, node->a, depth + 1);
+                negated: string! = `!${inner}`;
+                delete inner;
+                return negated!;
+            }
+            emitter->Fail(function->name, `node '${reference}' (${node->kind}) does not give a value`);
+            return "".copy();
+        }
+        if function->IndexOfInput(reference) != null || emitter->IsDeclared(reference) {
+            return `${reference}`;
+        }
+        emitter->Fail(function->name, `'${reference}' is not an input, a local or a node`);
+        return "".copy();
+    }
+
+    // Writes the statements of the chain that starts at a node, following `next` until it ends. A branch writes both of its
+    // arms and then goes on with its own `next`.
+    EmitChain :: (function: GraphFunction*, emitter: Emitter~*, startId: string, depth: u32) -> void {
+        currentId~ string = startId;
+        declaredBefore: usize = emitter->declared.length();
+        while currentId.length() > 0 && emitter->problem.length() == 0 {
+            emitter->steps += 1;
+            if emitter->steps > MAX_STEPS {
+                emitter->Fail(function->name, "the execution wires loop back on themselves".copy());
+                break;
+            }
+            index: usize? = function->IndexOfNode(currentId);
+            if index == null {
+                emitter->Fail(function->name, `a wire goes to '${currentId}', which is not a node`);
+                break;
+            }
+            nodeIndex~ usize = 0;
+            if present := index {
+                nodeIndex = present;
+            }
+            node: GraphNode* = function->nodes[nodeIndex];
+            nextId~ string = node->next;
+            if node->kind == "entry" {
+            } else if node->kind == "return" {
+                if node->value.length() == 0 {
+                    emitter->Line(depth, "return;".copy());
+                } else {
+                    valueText: string! = Bare(Expression(function, emitter, node->value, 0));
+                    emitter->Line(depth, `return ${valueText};`);
+                    delete valueText;
+                }
+                nextId = "";
+            } else if node->kind == "set" {
+                if !IsName(node->name) {
+                    emitter->Fail(function->name, `node '${node->id}' needs a local name`);
+                } else {
+                    valueText: string! = Bare(Expression(function, emitter, node->value, 0));
+                    if node->typeName.length() > 0 {
+                        emitter->Line(depth, `${node->name}~ ${node->typeName} = ${valueText};`);
+                        emitter->declared.push(`${node->name}`);
+                    } else if emitter->IsDeclared(node->name) || function->IndexOfInput(node->name) != null {
+                        emitter->Line(depth, `${node->name} = ${valueText};`);
+                    } else {
+                        emitter->Fail(function->name, `node '${node->id}' sets '${node->name}' before it has a type`);
+                    }
+                    delete valueText;
+                }
+            } else if node->kind == "branch" {
+                conditionText: string! = Bare(Expression(function, emitter, node->condition, 0));
+                emitter->Line(depth, `if ${conditionText} {`);
+                delete conditionText;
+                EmitChain(function, emitter, node->thenId, depth + 1);
+                if node->elseId.length() > 0 {
+                    emitter->Line(depth, "} else {".copy());
+                    EmitChain(function, emitter, node->elseId, depth + 1);
+                }
+                emitter->Line(depth, "}".copy());
+            } else {
+                emitter->Fail(function->name, `node '${node->id}' has kind '${node->kind}', which is not a step`);
+            }
+            currentId = nextId;
+        }
+        while emitter->declared.length() > declaredBefore {
+            popped: string!? = emitter->declared.pop();
+            delete popped;
+        }
+    }
+
+    // The Nyx name for a graph: `bounce_pad` is `BouncePad`.
+    NamespaceName :: (graphName: string) -> string! {
+        result~ string! = "".copy();
+        startsWord~ bool = true;
+        for position~ usize = 0; position < graphName.length(); position++ {
+            piece: string = graphName.substring(position, 1);
+            if piece == "_" {
+                startsWord = true;
+            } else if startsWord {
+                result += piece.toUpper();
+                startsWord = false;
+            } else {
+                result += piece;
+            }
+        }
+        return result!;
+    }
+
+    EmitFunction :: (function: GraphFunction*, emitter: Emitter~*) -> void {
+        if !IsName(function->name) {
+            emitter->Fail(function->name, "a function needs a name of letters, digits and underscores".copy());
+            return;
+        }
+        header~ string! = `${function->name} :: (`;
+        for index~ usize = 0; index < function->inputNames.length(); index++ {
+            if !IsName(function->inputNames[index]) || function->inputTypes[index].length() == 0 {
+                emitter->Fail(function->name, "an input needs a name and a type".copy());
+                delete header;
+                return;
+            }
+            if index > 0 {
+                header += ", ";
+            }
+            header += `${function->inputNames[index]}: ${function->inputTypes[index]}`;
+        }
+        header += ") -> ";
+        header += function->returns.length() > 0 ? function->returns : "void";
+        header += " {";
+        emitter->Line(1, header!);
+        entryIndex~ i32 = -1;
+        entryCount~ u32 = 0;
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            if function->nodes[index]->kind == "entry" {
+                entryCount += 1;
+                entryIndex = i32(index);
+            }
+        }
+        if entryCount != 1 {
+            emitter->Fail(function->name, `it needs exactly one entry node and has ${entryCount}`);
+            return;
+        }
+        EmitChain(function, emitter, function->nodes[usize(entryIndex)]->id, 2);
+        emitter->Line(1, "}".copy());
+    }
+
+    // The Nyx source of a graph, or the first problem found.
+    GenerateNyx :: (graph: Graph*) -> Result<string!, string!> {
+        emitter := new Emitter();
+        namespaceName: string! = NamespaceName(graph->name);
+        emitter->text += `// Generated from ${graph->name}.graph.json by lantern:::graphs. Edit the graph, not this file.`;
+        emitter->text += "\n";
+        emitter->text += `${namespaceName} :: namespace {`;
+        emitter->text += "\n";
+        delete namespaceName;
+        for index~ usize = 0; index < graph->functions.length(); index++ {
+            if index > 0 {
+                emitter->text += "\n";
+            }
+            EmitFunction(graph->functions[index], emitter);
+        }
+        emitter->text += "}\n";
+        if emitter->problem.length() > 0 {
+            failure: string! = `${emitter->problem}`;
+            delete emitter;
+            return Result<string!, string!>:::Err(failure!);
+        }
+        source: string! = `${emitter->text}`;
+        delete emitter;
+        return Result<string!, string!>:::Ok(source!);
+    }
+
+    // Reads a graph file and generates its Nyx in one step.
+    GenerateNyxFromText :: (jsonText: string) -> Result<string!, string!> {
+        when LoadGraph(jsonText) {
+            Result:::Err(message) -> {
+                return Result<string!, string!>:::Err(message!);
+            },
+            Result:::Ok(graph) -> {
+                result := GenerateNyx(graph);
+                delete graph;
+                return result!;
+            }
+        }
+    }
+}

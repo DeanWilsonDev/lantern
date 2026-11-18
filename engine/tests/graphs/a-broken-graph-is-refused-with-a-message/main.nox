@@ -1,0 +1,35 @@
+lantern :: import lantern;
+
+Refusal :: (jsonText: string) -> string! {
+    when lantern:::graphs:::GenerateNyxFromText(jsonText) {
+        Result:::Err(message) -> {
+            return message!;
+        },
+        Result:::Ok(source) -> {
+            delete source;
+            return "generated".copy();
+        }
+    }
+}
+
+Expect :: (jsonText: string, expected: string) -> void {
+    message: string! = Refusal(jsonText);
+    if message != expected {
+        print(message);
+    }
+    assert(message == expected, "the graph is refused with the expected message");
+    delete message;
+}
+
+main :: () -> i32 {
+    Expect("{", "graph file is not valid JSON: key must be a string at line 1 column 2");
+    Expect("{\"functions\": []}", "a graph needs a \"graph\" name of letters, digits and underscores");
+    Expect("{\"graph\": \"g\", \"functions\": [{\"name\": \"F\", \"nodes\": []}]}", "function F: it needs exactly one entry node and has 0");
+    Expect("{\"graph\": \"g\", \"functions\": [{\"name\": \"F\", \"nodes\": [{\"id\": \"s\", \"kind\": \"entry\", \"next\": \"gone\"}]}]}", "function F: a wire goes to 'gone', which is not a node");
+    Expect("{\"graph\": \"g\", \"functions\": [{\"name\": \"F\", \"returns\": \"i32\", \"nodes\": [{\"id\": \"s\", \"kind\": \"entry\", \"next\": \"r\"}, {\"id\": \"r\", \"kind\": \"return\", \"value\": \"mystery\"}]}]}", "function F: 'mystery' is not an input, a local or a node");
+    Expect("{\"graph\": \"g\", \"functions\": [{\"name\": \"F\", \"returns\": \"i32\", \"nodes\": [{\"id\": \"s\", \"kind\": \"entry\", \"next\": \"r\"}, {\"id\": \"r\", \"kind\": \"return\", \"value\": \"x\"}, {\"id\": \"x\", \"kind\": \"add\", \"a\": \"x\", \"b\": {\"i32\": 1}}]}]}", "function F: the values around 'x' loop back on themselves");
+    Expect("{\"graph\": \"g\", \"functions\": [{\"name\": \"F\", \"nodes\": [{\"id\": \"s\", \"kind\": \"entry\", \"next\": \"s\"}]}]}", "function F: the execution wires loop back on themselves");
+    Expect("{\"graph\": \"g\", \"functions\": [{\"name\": \"F\", \"nodes\": [{\"id\": \"s\", \"kind\": \"entry\", \"next\": \"t\"}, {\"id\": \"t\", \"kind\": \"set\", \"name\": \"n\", \"value\": {\"i32\": 1}}]}]}", "function F: node 't' sets 'n' before it has a type");
+    print("a broken graph is refused with a message");
+    return 0;
+}

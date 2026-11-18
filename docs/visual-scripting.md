@@ -93,6 +93,10 @@ A **Graph** document tab, beside Level and Silhouette. A node canvas: nodes are 
 4. **In a game.** The build step, the `behaviour.graph` property on Silhouettes, and one platformer behaviour as a graph.
 5. **Later.** Loops and `when`, event entries (`OnTick`, `OnTouch`), per-node debugging (highlight the node that threw), comment boxes, reroutes, copy and paste.
 
+## What is built
+
+- Slice 1: `engine/src/graphs/` (`Graph.nox` the model and `LoadGraph`, `GraphNyx.nox` the generator). `lantern:::graphs:::GenerateNyxFromText(jsonText)` returns the Nyx source or the first problem, named by function and node. Node kinds so far: `entry`, `branch` (with an optional `else`, then on to its own `next`), `set` (a `type` declares the local), `return`, the data nodes `add` `sub` `mul` `div` `less` `greater` `equal` `and` `or` `not`, and literals written `{ "f32": 1.0 }`, `{ "i32": 3 }`, `{ "bool": true }`, `{ "string": "hi" }`. Tests: `engine/tests/graphs/` (a graph's Nyx is mounted on a Nyx runtime and called, and eight broken graphs are refused with their messages).
+
 ## Known open questions
 
 - Whether the generated `.nyx` is committed or only built; slice 4 starts with built-only and revisits.

@@ -1,0 +1,53 @@
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"bounce_pad\", \"functions\": [{\"name\": \"Lift\", \"inputs\": [{\"name\": \"height\", \"type\": \"f32\"}], \"returns\": \"f32\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\", \"next\": \"check\"}, {\"id\": \"check\", \"kind\": \"branch\", \"condition\": \"low\", \"then\": \"raise\", \"else\": \"keep\"}, {\"id\": \"low\", \"kind\": \"less\", \"a\": \"height\", \"b\": {\"f32\": 1}}, {\"id\": \"raise\", \"kind\": \"return\", \"value\": \"sum\"}, {\"id\": \"keep\", \"kind\": \"return\", \"value\": \"height\"}, {\"id\": \"sum\", \"kind\": \"add\", \"a\": \"height\", \"b\": {\"f32\": 0.5}}]}, {\"name\": \"Total\", \"inputs\": [{\"name\": \"count\", \"type\": \"i32\"}], \"returns\": \"i32\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\", \"next\": \"make\"}, {\"id\": \"make\", \"kind\": \"set\", \"name\": \"total\", \"type\": \"i32\", \"value\": {\"i32\": 10}, \"next\": \"grow\"}, {\"id\": \"grow\", \"kind\": \"set\", \"name\": \"total\", \"value\": \"plus\", \"next\": \"done\"}, {\"id\": \"plus\", \"kind\": \"add\", \"a\": \"total\", \"b\": \"count\"}, {\"id\": \"done\", \"kind\": \"return\", \"value\": \"total\"}]}]}";
+
+CallNoArguments :: (program: lantern:::nyx:::Program*, name: string) -> lantern:::nyx:::Value*! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    return value!;
+}
+
+main :: () -> i32 {
+    generated~ string! = "".copy();
+    when lantern:::graphs:::GenerateNyxFromText(GRAPH) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the graph generates");
+            delete message;
+        },
+        Result:::Ok(source) -> {
+            delete generated;
+            generated = source!;
+        }
+    }
+    assert(generated.startsWith("// Generated from bounce_pad.graph.json"), "the file says where it came from");
+    assert(generated.contains("BouncePad :: namespace {"), "the namespace is the graph's name in Pascal case");
+    assert(generated.contains("Lift :: (height: f32) -> f32 {"), "a function has typed inputs and a return type");
+    assert(generated.contains("if height < 1.0f {"), "a branch reads its condition");
+    assert(generated.contains("total~ i32 = 10;"), "a typed set declares a local");
+
+    runtime := new lantern:::nyx:::Runtime();
+    script~ string! = `${generated}`;
+    script += "\nLow :: () -> f32 { return BouncePad:::Lift(0.25f); }\n";
+    script += "High :: () -> f32 { return BouncePad:::Lift(3.0f); }\n";
+    script += "Sum :: () -> i32 { return BouncePad:::Total(5); }\n";
+    program := lantern:::testing:::Mount(runtime, script);
+    low := CallNoArguments(program, "Low");
+    assert(lantern:::testing:::F32OrFail(low->F32()) == 0.75f, "a low height is raised");
+    delete low;
+    high := CallNoArguments(program, "High");
+    assert(lantern:::testing:::F32OrFail(high->F32()) == 3.0f, "a high height is kept");
+    delete high;
+    sum := CallNoArguments(program, "Sum");
+    assert(lantern:::testing:::I32OrFail(sum->I32()) == 15, "a local is set and read");
+    delete sum;
+    delete script;
+    delete generated;
+    delete program;
+    delete runtime;
+    print("a graph generates Nyx that runs");
+    return 0;
+}
