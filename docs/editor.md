@@ -262,3 +262,7 @@ These are filed under the "Game engine" epic on the Nyx kanban in fearless-hq.
 - **Non-ASCII text in a `.chaos` element is a lex error** (NYX0001), so labels use ASCII.
 - **Per-frame hover.** Penumbra fires `onHover` every frame the pointer is over an element, so
   tooltips and hover state are debounced in Nyx.
+
+## Content browser
+
+The Assets panel shows a folder list on the left and the open folder as cards. Silhouettes show their rendered thumbnail, can be dragged into the level and opened with Edit; scripts, graphs, textures, models, sounds, music and worlds show an icon and their kind, and a graph opens in the Graph tab. The search box finds anything by name across every folder.
