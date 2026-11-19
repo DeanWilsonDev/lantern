@@ -1,0 +1,180 @@
+lantern:::assetgen:::synth :: namespace {
+    SAMPLE_RATE: u32 : 22050;
+
+    Waveform :: enum {
+        Sine,
+        Triangle,
+        SoftSquare,
+        Noise
+    }
+
+    /**
+     * One synthesised note. Its pitch glides from `startHz` to `endHz`, with a linear attack and an exponential decay.
+     */
+    Note :: struct {
+        waveform: Waveform;
+        startHz: f32;
+        endHz: f32;
+        durationSeconds: f32;
+        decayRate: f32;
+        volume: f32;
+    }
+
+    Tone :: (waveform: Waveform, hz: f32, durationSeconds: f32, volume: f32) -> Note {
+        return Note { waveform: waveform, startHz: hz, endHz: hz, durationSeconds: durationSeconds, decayRate: 3.0f / durationSeconds, volume: volume };
+    }
+
+    Glide :: (note: Note, endHz: f32) -> Note {
+        return Note { waveform: note.waveform, startHz: note.startHz, endHz: endHz, durationSeconds: note.durationSeconds, decayRate: note.decayRate, volume: note.volume };
+    }
+
+    Decay :: (note: Note, decayRate: f32) -> Note {
+        return Note { waveform: note.waveform, startHz: note.startHz, endHz: note.endHz, durationSeconds: note.durationSeconds, decayRate: decayRate, volume: note.volume };
+    }
+
+    Oscillator :: (waveform: Waveform, phase: f32, noiseState: u32) -> f32 {
+        wrapped: f32 = Math:::fract(phase);
+        when waveform {
+            Waveform:::Sine -> {
+                return Math:::sin(wrapped * Math:::TAU);
+            },
+            Waveform:::Triangle -> {
+                return 1.0f - 4.0f * Math:::abs(wrapped - 0.5f);
+            },
+            Waveform:::SoftSquare -> {
+                return Math:::tanh(Math:::sin(wrapped * Math:::TAU) * 3.0f);
+            },
+            Waveform:::Noise -> {
+                return f32(noiseState >> 8) / 8388608.0f - 1.0f;
+            }
+        }
+    }
+
+    /**
+     * Adds the note into `buffer` starting at `startSeconds`.
+     */
+    RenderInto :: (note: Note, buffer: Array<f32~>, startSeconds: f32) -> void {
+        sampleRate: f32 = f32(SAMPLE_RATE);
+        samplePeriod: f32 = 1.0f / sampleRate;
+        firstSample: usize = usize(startSeconds * sampleRate);
+        sampleCount: usize = usize(note.durationSeconds * sampleRate);
+        noiseState~ u32 = 305419896 ^ u32(firstSample);
+        phase~ f32 = 0.0f;
+        releaseSamples: f32 = f32(usize(0.004f * sampleRate));
+        for index~ usize = 0; index < sampleCount; index++ {
+            if firstSample + index >= buffer.length() {
+                break;
+            }
+            time: f32 = f32(index) * samplePeriod;
+            progress: f32 = time / note.durationSeconds;
+            frequency: f32 = note.startHz * Math:::pow(note.endHz / note.startHz, progress);
+            phase = phase + frequency * samplePeriod;
+            noiseState = noiseState.wrappingMultiply(1664525).wrappingAdd(1013904223);
+            attack: f32 = Math:::min(time / 0.005f, 1.0f);
+            release: f32 = Math:::min(f32(sampleCount - index) / releaseSamples, 1.0f);
+            envelope: f32 = attack * Math:::exp(-note.decayRate * time) * release;
+            buffer[firstSample + index] = buffer[firstSample + index] + Oscillator(note.waveform, phase, noiseState) * envelope * note.volume;
+        }
+    }
+
+    Silence :: (durationSeconds: f32) -> Array<f32>! {
+        buffer~ Array<f32>! = [];
+        count: usize = usize(durationSeconds * f32(SAMPLE_RATE));
+        for index~ usize = 0; index < count; index++ {
+            buffer.push(0.0f);
+        }
+        return buffer!;
+    }
+
+    /**
+     * Scales the buffer so its loudest sample is `peak`.
+     */
+    Normalise :: (buffer: Array<f32~>, peak: f32) -> void {
+        loudest~ f32 = 0.0f;
+        for sample in buffer {
+            loudest = Math:::max(loudest, Math:::abs(sample));
+        }
+        if loudest > 0.0f {
+            scale: f32 = peak / loudest;
+            for index~ usize = 0; index < buffer.length(); index++ {
+                buffer[index] = buffer[index] * scale;
+            }
+        }
+    }
+
+    MidiToHz :: (midiNote: i32) -> f32 {
+        return 440.0f * Math:::pow(2.0f, f32(midiNote - 69) / 12.0f);
+    }
+
+    Jump :: () -> Array<f32>! {
+        buffer~ Array<f32>! = Silence(0.18f);
+        RenderInto(Decay(Glide(Tone(Waveform:::SoftSquare, 280.0f, 0.18f, 1.0f), 720.0f), 12.0f), buffer, 0.0f);
+        Normalise(buffer, 0.7f);
+        return buffer!;
+    }
+
+    Land :: () -> Array<f32>! {
+        buffer~ Array<f32>! = Silence(0.14f);
+        RenderInto(Decay(Glide(Tone(Waveform:::Sine, 140.0f, 0.14f, 1.0f), 55.0f), 25.0f), buffer, 0.0f);
+        RenderInto(Decay(Tone(Waveform:::Noise, 1.0f, 0.06f, 0.35f), 60.0f), buffer, 0.0f);
+        Normalise(buffer, 0.8f);
+        return buffer!;
+    }
+
+    Pickup :: () -> Array<f32>! {
+        buffer~ Array<f32>! = Silence(0.32f);
+        RenderInto(Decay(Tone(Waveform:::Triangle, MidiToHz(83), 0.09f, 1.0f), 10.0f), buffer, 0.0f);
+        RenderInto(Decay(Tone(Waveform:::Triangle, MidiToHz(88), 0.23f, 1.0f), 12.0f), buffer, 0.08f);
+        Normalise(buffer, 0.7f);
+        return buffer!;
+    }
+
+    MenuMove :: () -> Array<f32>! {
+        buffer~ Array<f32>! = Silence(0.05f);
+        RenderInto(Decay(Tone(Waveform:::Triangle, MidiToHz(76), 0.05f, 1.0f), 40.0f), buffer, 0.0f);
+        Normalise(buffer, 0.5f);
+        return buffer!;
+    }
+
+    MenuSelect :: () -> Array<f32>! {
+        buffer~ Array<f32>! = Silence(0.22f);
+        RenderInto(Decay(Tone(Waveform:::Triangle, MidiToHz(72), 0.08f, 1.0f), 15.0f), buffer, 0.0f);
+        RenderInto(Decay(Tone(Waveform:::Triangle, MidiToHz(79), 0.16f, 1.0f), 15.0f), buffer, 0.06f);
+        Normalise(buffer, 0.6f);
+        return buffer!;
+    }
+
+    Reset :: () -> Array<f32>! {
+        buffer~ Array<f32>! = Silence(0.35f);
+        RenderInto(Decay(Glide(Tone(Waveform:::SoftSquare, 620.0f, 0.35f, 1.0f), 150.0f), 6.0f), buffer, 0.0f);
+        Normalise(buffer, 0.6f);
+        return buffer!;
+    }
+
+    /**
+     * An 8-second loop at 120 bpm: four bars of Am, F, C, G with a triangle bass on the eighth notes and a sine arpeggio
+     * on the sixteenths.
+     */
+    ThemeLoop :: () -> Array<f32>! {
+        beatSeconds: f32 = 0.5f;
+        chords: i32[12] = [57, 60, 64, 53, 57, 60, 48, 52, 55, 55, 59, 62];
+        pattern: usize[8] = [0, 1, 2, 1, 0, 2, 1, 2];
+        buffer~ Array<f32>! = Silence(beatSeconds * 4.0f * 4.0f);
+        for barIndex~ usize = 0; barIndex < 4; barIndex++ {
+            barStart: f32 = f32(barIndex) * beatSeconds * 4.0f;
+            for eighth~ usize = 0; eighth < 8; eighth++ {
+                start: f32 = barStart + f32(eighth) * beatSeconds / 2.0f;
+                bassNote: i32 = chords[barIndex * 3] - 12 + (eighth % 4 == 3 ? 7 : 0);
+                RenderInto(Decay(Tone(Waveform:::Triangle, MidiToHz(bassNote), beatSeconds / 2.0f, 0.5f), 5.0f), buffer, start);
+            }
+            for sixteenth~ usize = 0; sixteenth < 16; sixteenth++ {
+                start: f32 = barStart + f32(sixteenth) * beatSeconds / 4.0f;
+                note: i32 = chords[barIndex * 3 + pattern[sixteenth % 8]] + 12;
+                accent: f32 = sixteenth % 4 == 0 ? 0.32f : 0.2f;
+                RenderInto(Decay(Tone(Waveform:::Sine, MidiToHz(note), beatSeconds / 4.0f, accent), 14.0f), buffer, start);
+            }
+        }
+        Normalise(buffer, 0.55f);
+        return buffer!;
+    }
+}

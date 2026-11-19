@@ -15,6 +15,10 @@ for suite_directory in tests/*/; do
 done
 "$nox_command" test "$@" "${test_suites[@]}"
 
+if [[ $# -eq 0 ]]; then
+    "$nox_command" run --release --project tools/generate-assets -- --check "$engine_directory/../games/platformer/assets"
+fi
+
 editor_project="$engine_directory/../apps/world-editor/nox"
 if [[ -d "$editor_project" && $# -eq 0 ]]; then
     editor_check_output="$(mktemp)"
