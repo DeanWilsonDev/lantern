@@ -13,6 +13,8 @@ game_directory="$(cd "$game_directory" && pwd)"
 built_program="$engine_directory/build/lantern"
 [[ -x "$built_program" ]] || { echo "the build left no program at $built_program" >&2; exit 1; }
 
+(cd "$engine_directory" && nox run --release --project tools/build-graphs >/dev/null && nox run --release --project tools/build-materials >/dev/null)
+
 staging_directory="$(mktemp -d)"
 trap 'rm -rf "$staging_directory"' EXIT
 cp -R "$game_directory/." "$staging_directory/"

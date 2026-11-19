@@ -3,7 +3,7 @@ lantern :: import lantern;
 main :: () -> i32 {
     root: string! = `/tmp/lantern-content-watcher-test-${monotonicNanoseconds()}`;
     defer delete root;
-    silhouette: string! = `${root}/assets/silhouettes/lamp`;
+    silhouette: string! = `${root}/assets/silhouettes/materials/steel`;
     defer delete silhouette;
     graphs: string! = `${root}/game-graphs`;
     defer delete graphs;
@@ -13,7 +13,32 @@ main :: () -> i32 {
     defer delete material;
     createDirectories(silhouette);
     createDirectories(graphs);
-    writeTextFile(material, "@type block\nname \"lamp\"\n");
+    gameAssets: string! = `${root}/game-assets`;
+    defer delete gameAssets;
+    createDirectories(gameAssets);
+    steelText~ string! = "".copy();
+    when readTextFile("../games/platformer/assets/silhouettes/materials/brushed_steel/root.calamus") {
+        Result:::Ok(text) -> {
+            delete steelText;
+            steelText = text!;
+        },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    defer delete steelText;
+    writeTextFile(material, steelText);
+    graphText~ string! = "".copy();
+    when readTextFile("../games/platformer/game-graphs/lamp_pulse.graph.json") {
+        Result:::Ok(text) -> {
+            delete graphText;
+            graphText = text!;
+        },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    defer delete graphText;
 
     packagedRoot: string! = `${root}/packaged`;
     defer delete packagedRoot;
@@ -30,7 +55,9 @@ main :: () -> i32 {
     poll2: bool = watcher->Poll(0.6f);
     assert(!poll2, "nothing changed, so nothing reloads");
 
-    writeTextFile(material, "@type block\nname \"lamp\"\nlift 2\n");
+    changedSteel: string! = steelText.replace("roughness : 0.35", "roughness : 0.2");
+    defer delete changedSteel;
+    writeTextFile(material, changedSteel);
     poll3: bool = watcher->Poll(0.1f);
     assert(!poll3, "a change is noticed at the next poll");
     poll4: bool = watcher->Poll(0.6f);
@@ -40,10 +67,16 @@ main :: () -> i32 {
 
     graphFile: string! = `${graphs}/example.graph.json`;
     defer delete graphFile;
-    writeTextFile(graphFile, "{}");
+    writeTextFile(graphFile, graphText);
     poll6: bool = watcher->Poll(0.6f);
     assert(poll6, "a new graph file asks for a reload");
 
+    bakedFile: string! = `${root}/game-assets/BakedMaterials.nyx`;
+    defer delete bakedFile;
+    generatedFile: string! = `${graphs}/generated`;
+    defer delete generatedFile;
+    assert(pathExists(bakedFile), "the baked materials were written");
+    assert(directoryExists(generatedFile), "the graphs' Nyx was written");
     delete found;
     removeDirectory(root);
     print("the content watcher regenerates when a silhouette or graph changes");
