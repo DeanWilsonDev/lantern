@@ -1871,3 +1871,7 @@ Nothing built or ran the Rust engine after the port: `mist run game|editor|test|
 ## D-220: A game run from its project folder reloads when a Silhouette or graph changes
 
 `lantern:::host:::ContentWatcher` hashes the project's `assets/silhouettes`, `game-graphs` (graph JSON and its generated Nyx) and `game-assets/BakedMaterials.nyx` every half second. On a change it runs `BuildGameMaterials` and `BuildGameGraphs`, which write only files whose text changed, and the game host reloads its scripts as F5 does. A failed generation is logged and the previous Nyx stays. No watcher exists when the game has neither folder, which is every packaged game, and `LANTERN_HOT_RELOAD=0` turns it off. A Silhouette already placed in a world file is a copy (D-217), so it isn't touched; a reload restarts the game, as F5 does. Edits to `.nyx`, `.chaos` and `.cosmos` are not watched.
+
+## D-221: The crossing's cameras and photo sights are authored in the world file
+
+Five photo sights and four camera volumes (three with shots, one a framing change for the watcher hall) were added to `the-crossing.world.json` with the existing `photo_sight`, `camera_volume` and `camera_shot` entities, so no engine or game code changed. Shots sit inside the floor's outline so nothing solid is between them and the player; volumes carry a higher `priority` than the follow framing. The crossing's host test now checks it loads with five sights. Provisional: the shot positions are judged from lavapipe screenshots with the pilot walking, not from play on a Mac. Not reviewed by Dean.
