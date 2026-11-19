@@ -1,0 +1,47 @@
+lantern :: import lantern;
+
+main :: (arguments: Array<string>) -> i32 {
+    if arguments.length() != 5 {
+        print("usage: pack-game GAME-DIRECTORY SHADER-DIRECTORY PROGRAM OUTPUT");
+        return 2;
+    }
+    archive~ Array<u8>! = [];
+    defer delete archive;
+    for step~ usize = 0; step < 2; step++ {
+        problem: string!? = step == 0
+            ? lantern:::archive:::AppendDirectory(archive, arguments[1], "game")
+            : lantern:::archive:::AppendDirectory(archive, arguments[2], "shaders/compiled");
+        if message := problem {
+            print(message);
+            delete problem;
+            return 1;
+        }
+        delete problem;
+    }
+    lantern:::archive:::Finish(archive);
+    when readFileBytes(arguments[3]) {
+        Result:::Err(error) -> {
+            print(error.message());
+            delete error;
+            return 1;
+        },
+        Result:::Ok(program) -> {
+            combined~ Array<u8>! = program!;
+            defer delete combined;
+            for byte in archive {
+                combined.push(byte);
+            }
+            when writeFileBytes(arguments[4], combined) {
+                Result:::Ok(written) -> {
+                    print(`packed ${arguments[4]} (${written} bytes)`);
+                    return 0;
+                },
+                Result:::Err(error) -> {
+                    print(error.message());
+                    delete error;
+                    return 1;
+                }
+            }
+        }
+    }
+}

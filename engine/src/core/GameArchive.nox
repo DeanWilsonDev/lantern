@@ -1,0 +1,205 @@
+lantern:::archivecalls :: foreign "c" {
+    setenv :: (name: string, value: string, overwrite: i32) -> i32;
+}
+
+lantern:::archive :: namespace {
+    MAGIC: string : "LANTERNPAK1";
+    TRAILER_LENGTH: usize : 15;
+    COMPLETE_MARKER: string : ".complete";
+
+    ReadU32 :: (bytes: Array<u8>, offset: usize) -> u32 {
+        return u32(bytes[offset]) | (u32(bytes[offset + 1]) << 8) | (u32(bytes[offset + 2]) << 16) | (u32(bytes[offset + 3]) << 24);
+    }
+
+    PushU32 :: (output: Array<u8>!~*, value: u32) -> void {
+        output->push(u8(value & 255));
+        output->push(u8((value >> 8) & 255));
+        output->push(u8((value >> 16) & 255));
+        output->push(u8((value >> 24) & 255));
+    }
+
+    /**
+     * Appends one file: its archive path and its bytes.
+     */
+    AppendFile :: (output: Array<u8>!~*, archivePath: string, contents: Array<u8>) -> void {
+        PushU32(output, u32(archivePath.length()));
+        for index~ usize = 0; index < archivePath.length(); index++ {
+            output->push(archivePath.byteAt(index));
+        }
+        PushU32(output, u32(contents.length()));
+        for byte in contents {
+            output->push(byte);
+        }
+    }
+
+    /**
+     * Appends every file under a directory, recursively, with `prefix` in front of its path relative to the directory.
+     * Returns a message when something can't be read.
+     */
+    AppendDirectory :: (output: Array<u8>!~*, directory: string, prefix: string) -> string!? {
+        when listDirectory(directory) {
+            Result:::Err(error) -> {
+                failure: string! = `${directory}: ${error.message()}`;
+                delete error;
+                return failure!;
+            },
+            Result:::Ok(names) -> {
+                entries~ Array<string!>! = names!;
+                defer entries.freeAll();
+                for name in entries {
+                    path: string! = `${directory}/${name}`;
+                    defer delete path;
+                    archivePath: string! = `${prefix}/${name}`;
+                    defer delete archivePath;
+                    if directoryExists(path) {
+                        problem: string!? = AppendDirectory(output, path, archivePath);
+                        if problem != null {
+                            return problem!;
+                        }
+                    } else {
+                        when readFileBytes(path) {
+                            Result:::Err(error) -> {
+                                failure: string! = `${path}: ${error.message()}`;
+                                delete error;
+                                return failure!;
+                            },
+                            Result:::Ok(contents) -> {
+                                AppendFile(output, archivePath, contents);
+                                delete contents;
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Closes an archive: the length of everything before the trailer, then the magic text.
+     */
+    Finish :: (output: Array<u8>!~*) -> void {
+        PushU32(output, u32(output->length()));
+        for index~ usize = 0; index < MAGIC.length(); index++ {
+            output->push(MAGIC.byteAt(index));
+        }
+    }
+
+    /**
+     * Where the archive starts in a program's bytes, or null when the program has no archive appended.
+     */
+    FindStart :: (program: Array<u8>) -> usize? {
+        if program.length() < TRAILER_LENGTH {
+            return null;
+        }
+        magicStart: usize = program.length() - MAGIC.length();
+        for index~ usize = 0; index < MAGIC.length(); index++ {
+            if program[magicStart + index] != MAGIC.byteAt(index) {
+                return null;
+            }
+        }
+        archiveLength: usize = usize(ReadU32(program, magicStart - 4));
+        if archiveLength + TRAILER_LENGTH > program.length() {
+            return null;
+        }
+        return program.length() - TRAILER_LENGTH - archiveLength;
+    }
+
+    /**
+     * A fingerprint of the archive's bytes (FNV-1a), which names its unpacked folder so a new build unpacks afresh.
+     */
+    Fingerprint :: (program: Array<u8>, start: usize) -> u32 {
+        hash~ u32 = 2166136261;
+        for index~ usize = start; index < program.length(); index++ {
+            hash = (hash ^ u32(program[index])).wrappingMultiply(16777619);
+        }
+        return hash;
+    }
+
+    ParentDirectory :: (path: string) -> string! {
+        if slash := path.lastIndexOf("/") {
+            return `${path.substring(0, slash)}`;
+        }
+        return ".".copy();
+    }
+
+    /**
+     * Writes every file of the archive under `destination`, then a marker file. Returns a message on failure.
+     */
+    Unpack :: (program: Array<u8>, start: usize, destination: string) -> string!? {
+        end: usize = program.length() - TRAILER_LENGTH;
+        position~ usize = start;
+        while position < end {
+            if position + 4 > end {
+                return "the archive is damaged: an entry is cut short".copy();
+            }
+            pathLength: usize = usize(ReadU32(program, position));
+            if pathLength > end - position - 4 || end - position - 4 - pathLength < 4 {
+                return "the archive is damaged: a path runs past the end".copy();
+            }
+            pathBytes~ Array<u8>! = [];
+            defer delete pathBytes;
+            for index~ usize = 0; index < pathLength; index++ {
+                pathBytes.push(program[position + 4 + index]);
+            }
+            relativePath: string! = StringFromBytes(pathBytes);
+            defer delete relativePath;
+            position = position + 4 + pathLength;
+            dataLength: usize = usize(ReadU32(program, position));
+            position = position + 4;
+            if dataLength > end - position {
+                return "the archive is damaged: a file runs past the end".copy();
+            }
+            target: string! = `${destination}/${relativePath}`;
+            defer delete target;
+            parent: string! = ParentDirectory(target);
+            defer delete parent;
+            when createDirectories(parent) {
+                Result:::Ok(created) -> {
+                },
+                Result:::Err(error) -> {
+                    failure: string! = `${parent}: ${error.message()}`;
+                    delete error;
+                    return failure!;
+                }
+            }
+            when writeFileBytes(target, program.slice(position, position + dataLength)) {
+                Result:::Ok(written) -> {
+                },
+                Result:::Err(error) -> {
+                    failure: string! = `${target}: ${error.message()}`;
+                    delete error;
+                    return failure!;
+                }
+            }
+            position = position + dataLength;
+        }
+        marker: string! = `${destination}/${COMPLETE_MARKER}`;
+        defer delete marker;
+        when writeTextFile(marker, "ok") {
+            Result:::Ok(written) -> {
+                return null;
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${marker}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+    }
+
+    StringFromBytes :: (bytes: Array<u8>) -> string! {
+        terminated~ Array<u8>! = [];
+        defer delete terminated;
+        for byte in bytes {
+            terminated.push(byte);
+        }
+        terminated.push(0);
+        text~ string! = "".copy();
+        unsafe {
+            delete text;
+            text = copyCString(rawElements(terminated));
+        }
+        return text!;
+    }
+}

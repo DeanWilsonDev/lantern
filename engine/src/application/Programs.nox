@@ -53,6 +53,11 @@ lantern:::application :: namespace {
                     Result:::Ok(state) -> {
                         gameHost := new lantern:::host:::GameHost(state!, manifest->ScriptSourceFor(gameDirectory));
                         ConfigureHost(gameHost, applicationClassName->config);
+                        if watchedAssets := assetsView {
+                            if !HotReloadDisabled() {
+                                gameHost->contentWatcher = ContentWatcher:::For(gameDirectory, watchedAssets);
+                            }
+                        }
                         applicationClassName->Run(gameHost);
                         gameHost->Shutdown();
                         delete gameHost;
@@ -71,6 +76,18 @@ lantern:::application :: namespace {
                 return 1;
             }
         }
+    }
+
+    /**
+     * True when LANTERN_HOT_RELOAD is 0, which turns the watcher off.
+     */
+    HotReloadDisabled :: () -> bool {
+        value: string!? = environmentVariable("LANTERN_HOT_RELOAD");
+        defer delete value;
+        if text := value {
+            return text == "0";
+        }
+        return false;
     }
 
     /**

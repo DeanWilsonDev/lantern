@@ -1,0 +1,141 @@
+lantern:::assetgen:::png :: namespace {
+    /**
+     * The CRC-32 table for PNG chunks (polynomial 0xEDB88320).
+     */
+    CrcTable :: () -> Array<u32>! {
+        table~ Array<u32>! = [];
+        for entry~ u32 = 0; entry < 256; entry++ {
+            value~ u32 = entry;
+            for bit~ u32 = 0; bit < 8; bit++ {
+                if (value & 1) == 1 {
+                    value = 3988292384 ^ (value >> 1);
+                } else {
+                    value = value >> 1;
+                }
+            }
+            table.push(value);
+        }
+        return table!;
+    }
+
+    /**
+     * The CRC-32 of a chunk's type and data.
+     */
+    Crc32 :: (table: Array<u32>, data: Array<u8>) -> u32 {
+        crc~ u32 = 4294967295;
+        for byte in data {
+            crc = table[usize((crc ^ u32(byte)) & 255)] ^ (crc >> 8);
+        }
+        return crc ^ 4294967295;
+    }
+
+    /**
+     * The Adler-32 checksum of the uncompressed data, which closes a zlib stream.
+     */
+    Adler32 :: (data: Array<u8>) -> u32 {
+        low~ u32 = 1;
+        high~ u32 = 0;
+        for byte in data {
+            low = (low + u32(byte)) % 65521;
+            high = (high + low) % 65521;
+        }
+        return (high << 16) | low;
+    }
+
+    /**
+     * A zlib stream holding the data in stored (uncompressed) blocks.
+     */
+    ZlibStored :: (data: Array<u8>) -> Array<u8>! {
+        output~ Array<u8>! = [];
+        output.push(120);
+        output.push(1);
+        position~ usize = 0;
+        total: usize = data.length();
+        while true {
+            remaining: usize = total - position;
+            blockLength: usize = remaining > 65535 ? 65535 : remaining;
+            isLast: bool = position + blockLength >= total;
+            output.push(isLast ? 1 : 0);
+            lengthValue: u32 = u32(blockLength);
+            lantern:::assetgen:::bytes:::PushU16(output, lengthValue);
+            lantern:::assetgen:::bytes:::PushU16(output, lengthValue ^ 65535);
+            for index~ usize = 0; index < blockLength; index++ {
+                output.push(data[position + index]);
+            }
+            position = position + blockLength;
+            if isLast {
+                break;
+            }
+        }
+        lantern:::assetgen:::bytes:::PushU32BigEndian(output, Adler32(data));
+        return output!;
+    }
+
+    /**
+     * Appends one chunk: length, type, data and the CRC of type and data.
+     */
+    PushChunk :: (output: Array<u8>!~*, table: Array<u32>, kind: string, data: Array<u8>) -> void {
+        lantern:::assetgen:::bytes:::PushU32BigEndian(output, u32(data.length()));
+        covered~ Array<u8>! = [];
+        defer delete covered;
+        lantern:::assetgen:::bytes:::PushTag(covered, kind);
+        for byte in data {
+            covered.push(byte);
+        }
+        for byte in covered {
+            output->push(byte);
+        }
+        lantern:::assetgen:::bytes:::PushU32BigEndian(output, Crc32(table, covered));
+    }
+
+    /**
+     * The linear colour channel as an 8-bit sRGB byte.
+     */
+    ToSrgbByte :: (linear: f32) -> u8 {
+        clamped: f32 = Math:::clamp(linear, 0.0f, 1.0f);
+        encoded: f32 = clamped <= 0.0031308f ? clamped * 12.92f : 1.055f * Math:::pow(clamped, 1.0f / 2.4f) - 0.055f;
+        return u8(Math:::round(encoded * 255.0f));
+    }
+
+    /**
+     * An RGBA PNG of a square checkerboard: `cells` squares across, the first colour on the top left square.
+     */
+    CheckerPng :: (size: u32, cells: u32, first: Vec3, second: Vec3) -> Array<u8>! {
+        cellSize: u32 = size / cells > 1 ? size / cells : 1;
+        raw~ Array<u8>! = [];
+        defer delete raw;
+        for row~ u32 = 0; row < size; row++ {
+            raw.push(0);
+            for column~ u32 = 0; column < size; column++ {
+                useFirst: bool = ((column / cellSize) + (row / cellSize)) % 2 == 0;
+                colour: Vec3 = useFirst ? first : second;
+                raw.push(ToSrgbByte(colour.x));
+                raw.push(ToSrgbByte(colour.y));
+                raw.push(ToSrgbByte(colour.z));
+                raw.push(255);
+            }
+        }
+        table := CrcTable();
+        defer delete table;
+        header~ Array<u8>! = [];
+        defer delete header;
+        lantern:::assetgen:::bytes:::PushU32BigEndian(header, size);
+        lantern:::assetgen:::bytes:::PushU32BigEndian(header, size);
+        header.push(8);
+        header.push(6);
+        header.push(0);
+        header.push(0);
+        header.push(0);
+        compressed := ZlibStored(raw);
+        defer delete compressed;
+        empty: Array<u8> = [];
+        output~ Array<u8>! = [];
+        for signature in [137, 80, 78, 71, 13, 10, 26, 10] {
+            output.push(u8(signature));
+        }
+        PushChunk(output, table, "IHDR", header);
+        PushChunk(output, table, "IDAT", compressed);
+        PushChunk(output, table, "IEND", empty);
+        return output!;
+    }
+}

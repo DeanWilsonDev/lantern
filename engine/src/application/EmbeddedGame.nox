@@ -1,0 +1,81 @@
+lantern:::application :: namespace {
+    /**
+     * The bytes of the running program: /proc/self/exe where there is one, else the file its first argument names.
+     */
+    ReadOwnProgram :: (arguments: Array<string>) -> Result<Array<u8>!, FileError> {
+        if pathExists("/proc/self/exe") {
+            return readFileBytes("/proc/self/exe");
+        }
+        return readFileBytes(arguments.length() > 0 ? arguments[0] : "");
+    }
+
+    /**
+     * The folder a packaged game's files are unpacked into: LANTERN_CACHE_DIRECTORY, else TMPDIR, else /tmp, then
+     * `lantern-<fingerprint of the archive>`, so a new build unpacks afresh and the same build only once.
+     */
+    UnpackDirectory :: (fingerprint: u32) -> string! {
+        configured: string!? = environmentVariable("LANTERN_CACHE_DIRECTORY");
+        if text := configured {
+            if text.length() > 0 {
+                directory: string! = `${text}/lantern-${fingerprint}`;
+                delete configured;
+                return directory!;
+            }
+        }
+        delete configured;
+        temporary: string!? = environmentVariable("TMPDIR");
+        if text := temporary {
+            if text.length() > 0 {
+                directory: string! = `${text}/lantern-${fingerprint}`;
+                delete temporary;
+                return directory!;
+            }
+        }
+        delete temporary;
+        return `/tmp/lantern-${fingerprint}`;
+    }
+
+    /**
+     * When the running program has a game archive appended (`mist run package`), unpacks it if this build hasn't been
+     * unpacked yet, points the shader directory at it and runs the game. Returns null for a program with no archive.
+     */
+    RunEmbeddedGame :: (arguments: Array<string>) -> i32? {
+        when ReadOwnProgram(arguments) {
+            Result:::Err(error) -> {
+                delete error;
+                return null;
+            },
+            Result:::Ok(program) -> {
+                programBytes: Array<u8>! = program!;
+                defer delete programBytes;
+                return RunEmbeddedFrom(programBytes);
+            }
+        }
+    }
+
+    RunEmbeddedFrom :: (programBytes: Array<u8>) -> i32? {
+        start: usize? = lantern:::archive:::FindStart(programBytes);
+        guard archiveStart := start return null;
+        directory: string! = UnpackDirectory(lantern:::archive:::Fingerprint(programBytes, archiveStart));
+        defer delete directory;
+        marker: string! = `${directory}/${lantern:::archive:::COMPLETE_MARKER}`;
+        defer delete marker;
+        if !pathExists(marker) {
+            problem: string!? = lantern:::archive:::Unpack(programBytes, archiveStart, directory);
+            if message := problem {
+                lantern:::core:::LogError("game", message);
+                delete problem;
+                return 1;
+            }
+            delete problem;
+        }
+        shaders: string! = `${directory}/shaders/compiled`;
+        defer delete shaders;
+        unsafe {
+            lantern:::archivecalls:::setenv("LANTERN_SHADER_DIRECTORY", shaders, 1);
+        }
+        gameDirectory: string! = `${directory}/game`;
+        defer delete gameDirectory;
+        return RunGame(gameDirectory);
+    }
+}
