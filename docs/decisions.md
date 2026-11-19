@@ -1875,3 +1875,7 @@ Nothing built or ran the Rust engine after the port: `mist run game|editor|test|
 ## D-221: The crossing's cameras and photo sights are authored in the world file
 
 Five photo sights and four camera volumes (three with shots, one a framing change for the watcher hall) were added to `the-crossing.world.json` with the existing `photo_sight`, `camera_volume` and `camera_shot` entities, so no engine or game code changed. Shots sit inside the floor's outline so nothing solid is between them and the player; volumes carry a higher `priority` than the follow framing. The crossing's host test now checks it loads with five sights. Provisional: the shot positions are judged from lavapipe screenshots with the pilot walking, not from play on a Mac. Not reviewed by Dean.
+
+## D-222: Wayland and Windows are checked from the cloud as far as they can be
+
+Provisional (2026-11-19): not reviewed by Dean. `engine/tools/check-wayland.sh` runs the game and the stub window script on Weston's headless backend with lavapipe, and `docs/platform-checks.md` records what that showed, the Windows cross-build result and a checklist for a real machine. `SdlContext` sets `SDL_HINT_APP_ID` to `lantern` so a Wayland compositor can match the window to a desktop entry, and `engine/native/CMakeLists.txt` exports every symbol on Windows. Mist's lack of Windows script support is MIST-29.
