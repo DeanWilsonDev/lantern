@@ -343,6 +343,42 @@ lantern:::host :: namespace {
         }
 
         /**
+         * When the script called `lantern:::screen:::SavePhoto` this frame, draws the frame again without the overlay (so no
+         * HUD or viewfinder is in the picture) and saves it as a PNG in the folder the script named, making the folder
+         * first.
+         */
+        SavePendingPhoto~: (frame: lantern:::engine:::FrameContext) -> void {
+            engineState: raw EngineState~* = StatePointer();
+            unsafe {
+                guard prefix := engineState->photoPath return;
+                guard folder := engineState->photoFolder return;
+                target~ string! = `${folder}/${prefix}-0001.png`;
+                for number~ u32 = 1; pathExists(target) && number < 9999; number++ {
+                    delete target;
+                    next: u32 = number + 1;
+                    padding: string = next < 10 ? "000" : (next < 100 ? "00" : (next < 1000 ? "0" : ""));
+                    target = `${folder}/${prefix}-${padding}${next}.png`;
+                }
+                when createDirectories(folder) {
+                    Result:::Ok(created) -> { },
+                    Result:::Err(error) -> {
+                        failure: string! = `${folder}: ${error.message()}`;
+                        lantern:::core:::LogError("photo", failure);
+                        delete failure;
+                        delete error;
+                    }
+                }
+                engineState->renderWorld->overlay->Clear();
+                SaveCapture(target, frame);
+                delete target;
+                delete engineState->photoPath;
+                engineState->photoPath = null;
+                delete engineState->photoFolder;
+                engineState->photoFolder = null;
+            }
+        }
+
+        /**
          * Renders the frame to an image and saves it as a PNG. It is how `LANTERN_CAPTURE_PATH` makes a screenshot.
          */
         SaveCapture~: (path: string, frame: lantern:::engine:::FrameContext) -> void {
@@ -568,6 +604,7 @@ lantern:::host :: namespace {
             if report := reportFromRender {
                 lastFrameReport = report;
             }
+            SavePendingPhoto(frame);
             if quit {
                 if path := capturePath {
                     target: string! = `${path}`;

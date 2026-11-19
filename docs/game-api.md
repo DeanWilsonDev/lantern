@@ -194,6 +194,7 @@ any floor.
 | `lantern:::screen:::Width() / Height() -> f32` | pixels |
 | `lantern:::screen:::UiScale() -> f32` | whole-pixel text scale for the display density |
 | `lantern:::screen:::SetMouseCaptured(captured)` | applied after this frame's `OnUpdate` |
+| `lantern:::screen:::SavePhoto(folder, namePrefix)` | saves this frame, drawn without the overlay, as `folder/namePrefix-0001.png` (the first number not already used), making the folder |
 
 ### Sky, `lantern:::sky`
 
@@ -584,6 +585,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `Height` | `() -> f32` |
 | `UiScale` | `() -> f32` |
 | `SetMouseCaptured` | `(captured: bool) -> void` |
+| `SavePhoto` | `(folder: string, namePrefix: string) -> void` |
 
 ### `lantern:::lights`
 
