@@ -74,6 +74,7 @@ then upload the two files it writes as the release's assets. Settings: `LANTERN_
   "could not read Username" when the session cannot reach it.
 - No window or GPU. `engine/tools/run-tests.sh` sets `SDL_VIDEO_DRIVER=offscreen` when there is no display, the
   committed `engine/shaders/compiled/` files are used as they are, and the GPU suite passed without `mesa-vulkan-drivers`.
+- To check the Wayland path, `sudo apt install weston mesa-vulkan-drivers` and run `engine/tools/check-wayland.sh` (about 15 seconds). See `platform-checks.md`.
   Install it (with `openbox`) only when a screenshot or a real window is needed.
 
 ## Running tests

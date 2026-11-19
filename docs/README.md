@@ -65,6 +65,7 @@ finding what to turn down when a frame is slow. Each effect has its own guide.
 | Document | What it tells you |
 | --- | --- |
 | [`decisions.md`](decisions.md) | Every decision made along the way with reasons and how to undo it (D-001 to D-073, in order). |
+| [`platform-checks.md`](platform-checks.md) | What a cloud session checked for Wayland and Windows, what it found and what only a real machine can show. |
 | [`known-gaps.md`](known-gaps.md) | What hasn't been checked, what isn't built and what is half-way. |
 | [`future-work.md`](future-work.md) | Ideas out of scope for the prototype, and the experiments to try next. |
 | [`dependencies.md`](dependencies.md) | Each third-party library and why, and the toolchain. |
@@ -88,7 +89,8 @@ editor. Before and after pictures for each renderer effect are attached to the p
 - Lantern's names are `lantern:::<lowercase-namespace>:::Name` (types are PascalCase), and no document names another
   engine.
 - Documents are plain Markdown.
-- Every `.nox` and `.nyx` file explains itself in comments written for someone learning the technique; keep that up when you
+- Every `.nox`, `.nyx`, `.chaos`, `.cosmos` and test file explains itself in comments written for someone learning the
+  technique; keep that up when you
   change one.
 - A change that adds a decision adds the next `D-` number to `decisions.md`, and work is tracked as a card on the board
   before it starts.

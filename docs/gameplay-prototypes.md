@@ -133,9 +133,22 @@ The pacing is one beat of about 25 to 35 m at a time, so the character does some
 | 5 Stealth | -134 to -190 | The watcher hall: cover behind pillars, or she lures the light | A checkpoint behind each pillar |
 | Vista | -190 to -208 | Four steps up to a terrace with a sign, two gems and the goal | The end |
 
-Every beat has a gem or two off the main line, and the beats are separated by open ground, so a photo sight can go on
-any of the rests (the terrace and the pad ledge are the obvious two). The streets, rooftops and `streets-later` are
-unchanged apart from the rooftops' next level; `streets-later` still ends the chapter.
+Every beat has a gem or two off the main line, and the beats are separated by open ground.
+
+### Sights and cameras
+
+Five photo sights (`sight_*`): the door she held (together), the slabs over the dark (together), the slot in the wall, the
+searchlight, and the two of you at the terrace (together). Four camera volumes frame the big moments (see `camera.md`):
+
+| Volume | Where | What it does |
+| --- | --- | --- |
+| `cam_doors_volume` | the door beat, z -45 to -59 | A shot from a high corner, tracking the player, that cuts in over 0.9 s and glides out |
+| `cam_slabs_volume` | the slabs, z -76 to -92 | A shot from the far landing looking back at the player on the slabs |
+| `cam_hall_volume` | the watcher hall | No shot: the camera pulls back and rises (distance 8, fov 66) so the pillars read |
+| `cam_terrace_volume` | the vista | A fixed shot of the terrace |
+
+The streets, rooftops and `streets-later` are unchanged apart from the rooftops' next level; `streets-later` still ends the
+chapter.
 
 ## Tunables
 

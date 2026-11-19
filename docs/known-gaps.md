@@ -13,8 +13,8 @@ hardware.
 | --- | --- | --- |
 | **60 frames per second on a real GPU** | The target is 60 fps on the platformer scene. The cloud machine has only lavapipe, a software Vulkan driver, so its frame times say nothing about a GPU. The quality levels (`graphics-effects.md`) are chosen by what each effect costs, not by measurement. Ambient occlusion is the costliest effect and the first to turn down if a machine misses 60. | `renderer-visuals` epic; D-064 to D-073 |
 | **Metal output of the renderer effects** | The shaders are translated to Metal Shading Language by `spirv-cross` (`mist run build-shaders`). The HDR scene, bloom, sky, ambient occlusion, FXAA, fog, light shafts, soft shadows, blob shadows, colour grade, particles and normal maps have been checked only through Vulkan. | `renderer-visuals` epic |
-| **Wayland on Arch Linux** | SDL picks Wayland by itself, but a Wayland run (window, mouse capture, gamepad, audio) hasn't been done. `SDL_VIDEO_DRIVER=x11` forces XWayland. | `running.md` |
-| **Windows** | Never built. SDL GPU would use Vulkan; Nox's Windows support and Mist's shell scripts are open questions (`running.md`). | `running.md` |
+| **Wayland on Arch Linux** | Checked headless (Weston and lavapipe, `engine/tools/check-wayland.sh`): the window, Vulkan, resize and minimise work. Mouse capture, gamepad, audio and fractional scale need a real machine. | `platform-checks.md` |
+| **Windows** | Cross-compiles to object code, stops at the link: no Windows builds of SDL3, cgltf, stb_image or lantern-native, and Mist can't run scripts there (MIST-29). | `platform-checks.md` |
 | **Feel tuning** | The Boost height (3.6 m) and the Guide Light radii (8 m and 5 m) are first guesses that need a play test; the jump and camera distances can be tuned in `games/platformer/settings/` and `game-systems/third-person-camera.nyx` (F5 reloads them). | `crimson-and-thorn-slice.md`, open questions |
 | **Gamepad** | Bindings exist for a standard gamepad, but no run with real hardware is recorded. | `game-api.md`, Input |
 
@@ -32,7 +32,7 @@ hardware.
 | **A Vulkan `RenderBackend`** | `GpuRenderer` over SDL GPU. | Card `engine-follow-ups/a-vulkan-renderbackend-for-full-control-of-the-renderer` (todo) |
 | **Text beyond ASCII, compressed audio, audio on its own thread** | An 8x8 bitmap font, WAV files and a mixer on the main thread. | `future-work.md` |
 | **Sound behind walls, height, Doppler, a duller sound behind the listener** | Positional sound is distance and left-right pan only; the sound of a thing on a floor above sounds the same as one beside you. | `audio.md` |
-| **Automatic hot reload** | F5 reloads by hand and restarts the game. | `future-work.md` |
+| **Automatic hot reload** | Silhouettes and graphs reload by themselves; `.nyx`, `.chaos` and `.cosmos` edits still need F5, and every reload restarts the game. | `future-work.md` |
 | **Input rebinding and saved settings** | Bindings are set in `games/platformer/settings/input-settings.nyx`. | `future-work.md` |
 
 ## The game

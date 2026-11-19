@@ -10,7 +10,8 @@ driven by [Mist](https://github.com/fearlessgamelabs/mist-package-manager) from 
 | --- | --- |
 | `mist install` | Fetches and builds every dependency in `mist.json`: SDL3, SDL3_image, SDL3_ttf, cgltf, stb_image, Penumbra (`penumbra-ui-engine`, branch `nox-proto`), `penumbra-bridge` and `lantern-native`. `lantern-native` is the one library holding Nyx's C API, the Chaos UI bridge and penumbra-bridge's C API (`engine/native/`). Run it once, and again after pulling changes to `mist.json` or `mist.lock`. |
 | `mist run game [game-directory]` | Builds the engine in release mode and runs it from `engine/`. With no argument it plays the platformer. A game directory is relative to `engine/`: `mist run game ../games/platformer`. `mist run game --stub` runs the engine's stub scene (a lit block and a gem), which is a quick smoke test. |
-| `mist run package [game-folder] [output-folder]` | Builds the release engine and writes a runnable copy of the game to `engine/build/package` (`bin/lantern`, `shaders/`, `game/`, and `play.sh` to start it). The copy has the game's scripts, UI and runtime assets (worlds, textures, models, sounds, music) but none of the project's Calamus files: no Silhouettes, no material Silhouettes, no editor palette, no graph JSON. Their values are already in the world files and in the generated Nyx. |
+| `mist run package [game-folder] [output-folder]` | Builds the release engine and writes one file, `engine/build/package/lantern`: the engine with the game's scripts, UI and runtime assets (worlds, textures, models, sounds, music) and the compiled shaders appended to it. None of the project's Calamus files go in: no Silhouettes, no material Silhouettes, no editor palette, no graph JSON. The first run unpacks the data into `$LANTERN_CACHE_DIRECTORY` (else `$TMPDIR`, else `/tmp`) under `lantern-<fingerprint>`; later runs of the same build reuse it. |
+| `mist run assets [--check] [assets-folder]` | Writes the placeholder textures, sounds, music loop and `gem.glb` from code (`engine/tools/generate-assets`). `--check` fails when a file differs from what the generator makes; `mist run test` runs it. |
 | `mist run editor [world-file]` | Builds the engine (the editor's Play button runs it), then builds and runs the world editor, `apps/world-editor/nox`. It opens `games/platformer/assets/worlds/course.world.json` unless given another world. |
 | `mist run test` | Runs `engine/tools/run-tests.sh`: `nox test` over every suite under `engine/tests/`. Arguments pass through, for example `--backend c`. |
 | `mist run build-shaders` | Recompiles `engine/shaders/*` to SPIR-V and Metal Shading Language into `engine/shaders/compiled/`. The compiled files are committed, so you only need this after editing a shader, and it needs `glslangValidator` and `spirv-cross`. |
@@ -65,6 +66,9 @@ Arch's GCC is 14 or newer, so the default compiler works. SDL builds only the wi
 development headers it finds, which is why the Wayland, X11 and audio packages are in the list. On Wayland SDL picks the
 Wayland backend by itself; `SDL_VIDEO_DRIVER=x11` forces XWayland for comparison. Rendering goes through Vulkan.
 
+A cloud session ran the game and the editor on a headless Wayland compositor (`engine/tools/check-wayland.sh`); what still
+needs your machine is listed in [`platform-checks.md`](platform-checks.md).
+
 ## Other Linux (Ubuntu and Debian)
 
 ```sh
@@ -83,13 +87,14 @@ development package and run `mist install` again.
 
 ## Windows
 
-**Not yet tried.** The pieces that should make it work, and the ones that don't exist yet:
+**Not yet run.** `nox build --target-platform windows` compiles all of Lantern's Nox to object code, then stops at the link,
+because there are no Windows builds of SDL3, cgltf, stb_image or `lantern-native` yet. [`platform-checks.md`](platform-checks.md)
+has the findings and the cross-build route to try. In short:
 
 - SDL GPU draws through Vulkan on Windows, so a Vulkan driver is needed. Direct3D 12 would need shaders compiled to DXIL,
   which the build doesn't produce (see `known-gaps.md`).
-- Nox's own Windows support was still an open card when this was written, and Mist's scripts are shell scripts (`engine/tools/*.sh`),
-  so use a POSIX shell such as Git Bash or WSL until that's checked.
-- Nox uses the C backend where it has no native one (`nox build --backend c`), which needs a C compiler on the path.
+- Mist can't run scripts on Windows yet (it starts each with `/bin/sh -c`), so run the commands the scripts hold by hand.
+- `lantern-native` needs a C++26 compiler (GCC 14 or Clang 19), so a MinGW with GCC 14 or `llvm-mingw` is needed.
 
 Treat a Windows run as an experiment, and note what breaks in `known-gaps.md`.
 
@@ -110,7 +115,7 @@ mist run game ../games/platformer
 | Up, Down, Enter, Space | Menu: move, confirm |
 | F1 | Show or hide the debug window: pages of frame, audio, renderer, camera, player and other values |
 | F3 | Focus the debug window to filter, change page and scroll (see `debug-window.md`) |
-| F5 | Reload the game's `.nyx`, `.chaos` and `.cosmos` files from disk |
+| F5 | Reload the game's `.nyx`, `.chaos` and `.cosmos` files from disk. A game run from its project folder also reloads by itself, within half a second, when a Silhouette, a graph or the generated Nyx beside them changes: it writes `BakedMaterials.nyx` and the graphs' generated Nyx again first. `LANTERN_HOT_RELOAD=0` turns that off. A packaged game never does. |
 
 The main menu offers Play (the jump course), The streets and The streets, later (the streets in Chapter 3's look, with thorns). A script edit needs no rebuild: save and
 press F5.
