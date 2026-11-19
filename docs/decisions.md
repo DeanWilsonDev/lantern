@@ -1859,3 +1859,7 @@ Nothing built or ran the Rust engine after the port: `mist run game|editor|test|
 ## D-217: A built game is a package without the project's Calamus files
 
 `mist run package` (`engine/tools/package-game.sh`) builds the release engine and copies the game into `engine/build/package` beside the binary and the compiled shaders, leaving out `assets/silhouettes` (Silhouettes and material Silhouettes), `assets/editor`, every `.calamus` and `.graph.json` file, and the editor's scratch files; it fails if a Calamus file reaches the package. This is possible because a placed Silhouette is already a plain entity in the world file, and the values of the game's material Silhouettes and graphs are generated Nyx (D-213), so the running game never reads a Calamus file. Provisional: the data is still loose files beside the binary, not embedded in it. Packing worlds, textures, sounds and models into the executable itself is not decided.
+
+## D-218: Wayland and Windows are checked from the cloud as far as they can be
+
+Provisional (2026-11-19): not reviewed by Dean. `engine/tools/check-wayland.sh` runs the game and the stub window script on Weston's headless backend with lavapipe, and `docs/platform-checks.md` records what that showed, the Windows cross-build result and a checklist for a real machine. `SdlContext` sets `SDL_HINT_APP_ID` to `lantern` so a Wayland compositor can match the window to a desktop entry, and `engine/native/CMakeLists.txt` exports every symbol on Windows. Mist's lack of Windows script support is MIST-29.

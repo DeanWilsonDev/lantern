@@ -65,6 +65,9 @@ Arch's GCC is 14 or newer, so the default compiler works. SDL builds only the wi
 development headers it finds, which is why the Wayland, X11 and audio packages are in the list. On Wayland SDL picks the
 Wayland backend by itself; `SDL_VIDEO_DRIVER=x11` forces XWayland for comparison. Rendering goes through Vulkan.
 
+A cloud session ran the game and the editor on a headless Wayland compositor (`engine/tools/check-wayland.sh`); what still
+needs your machine is listed in [`platform-checks.md`](platform-checks.md).
+
 ## Other Linux (Ubuntu and Debian)
 
 ```sh
@@ -83,13 +86,14 @@ development package and run `mist install` again.
 
 ## Windows
 
-**Not yet tried.** The pieces that should make it work, and the ones that don't exist yet:
+**Not yet run.** `nox build --target-platform windows` compiles all of Lantern's Nox to object code, then stops at the link,
+because there are no Windows builds of SDL3, cgltf, stb_image or `lantern-native` yet. [`platform-checks.md`](platform-checks.md)
+has the findings and the cross-build route to try. In short:
 
 - SDL GPU draws through Vulkan on Windows, so a Vulkan driver is needed. Direct3D 12 would need shaders compiled to DXIL,
   which the build doesn't produce (see `known-gaps.md`).
-- Nox's own Windows support was still an open card when this was written, and Mist's scripts are shell scripts (`engine/tools/*.sh`),
-  so use a POSIX shell such as Git Bash or WSL until that's checked.
-- Nox uses the C backend where it has no native one (`nox build --backend c`), which needs a C compiler on the path.
+- Mist can't run scripts on Windows yet (it starts each with `/bin/sh -c`), so run the commands the scripts hold by hand.
+- `lantern-native` needs a C++26 compiler (GCC 14 or Clang 19), so a MinGW with GCC 14 or `llvm-mingw` is needed.
 
 Treat a Windows run as an experiment, and note what breaks in `known-gaps.md`.
 

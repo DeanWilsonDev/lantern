@@ -13,7 +13,7 @@ engine/
   native/            lantern-native: Nyx's C API, the Chaos UI bridge and penumbra-bridge's C API in one library
   editor-backend/    the world editor's backend built as a static library with a C header
   benchmarks/        the headless platformer's timings
-  tools/             build-shaders.sh, run-tests.sh and check-window.sh (run through `mist run`)
+  tools/             build-shaders.sh, run-tests.sh, check-window.sh and check-wayland.sh (run through `mist run`)
 games/platformer/    a game: Nyx code, Chaos UI, and game.json naming its entry file, class and assets
 apps/world-editor/   the editor: Chaos UI in src/ui, its Nox host in nox/
 games/platformer/assets/  the game project's textures, models, sounds, music, Silhouettes, worlds and the editor palette
