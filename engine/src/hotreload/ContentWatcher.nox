@@ -1,0 +1,163 @@
+lantern:::application :: namespace {
+    /**
+     * How often, in seconds, the watcher looks at the project's files.
+     */
+    CONTENT_POLL_SECONDS: f32 : 0.5f;
+
+    /**
+     * Folds the bytes of a text into an FNV-1a hash.
+     */
+    FoldText :: (hash: u32, text: string) -> u32 {
+        folded~ u32 = hash;
+        for index~ usize = 0; index < text.length(); index++ {
+            folded = (folded ^ u32(text.byteAt(index))).wrappingMultiply(16777619);
+        }
+        return folded;
+    }
+
+    /**
+     * Folds every file's path and bytes under `path` (a file or a folder) into a hash, in name order so the result
+     * doesn't depend on the order the system lists them.
+     */
+    FoldTree :: (hash: u32, path: string) -> u32 {
+        folded~ u32 = FoldText(hash, path);
+        if directoryExists(path) {
+            when lantern:::silhouette:::SortedEntries(path) {
+                Result:::Err(message) -> {
+                    delete message;
+                },
+                Result:::Ok(listed) -> {
+                    entries~ Array<string!>! = listed!;
+                    for entry in entries {
+                        child: string! = `${path}/${entry}`;
+                        folded = FoldTree(folded, child);
+                        delete child;
+                    }
+                    entries.freeAll();
+                }
+            }
+            return folded;
+        }
+        when readFileBytes(path) {
+            Result:::Err(error) -> {
+                delete error;
+            },
+            Result:::Ok(contents) -> {
+                for byte in contents {
+                    folded = (folded ^ u32(byte)).wrappingMultiply(16777619);
+                }
+                delete contents;
+            }
+        }
+        return folded;
+    }
+
+    /**
+     * Watches a game project's Silhouettes and graphs while the game runs from its source folder. When one changes it
+     * writes the generated Nyx again (`BakedMaterials.nyx` and the graphs' generated files) and says the scripts should
+     * reload. A packaged game has none of these folders, so it has no watcher.
+     */
+    ContentWatcher :: class {
+        implements:
+            lantern:::host:::ReloadSource;
+    public:
+        gameDirectory~ string!;
+        assetsDirectory~ string!;
+        secondsSincePoll~ f32 = 0.0f;
+        stamp~ u32 = 0;
+
+        ContentWatcher~: (game: string, assets: string) {
+            gameDirectory = `${game}`;
+            assetsDirectory = `${assets}`;
+            stamp = CurrentStamp();
+        }
+
+        !ContentWatcher~: () {
+            delete gameDirectory;
+            delete assetsDirectory;
+        }
+
+        /**
+         * A watcher for the game when its Silhouettes or graphs are present, else null.
+         */
+        static For :: (game: string, assets: string) -> ContentWatcher*!? {
+            silhouettes: string! = `${assets}/silhouettes`;
+            graphsPath: string! = `${game}/game-graphs`;
+            present: bool = directoryExists(silhouettes) || directoryExists(graphsPath);
+            delete silhouettes;
+            delete graphsPath;
+            if !present {
+                return null;
+            }
+            return new ContentWatcher(game, assets);
+        }
+
+        /**
+         * A hash of everything the watcher looks at: the Silhouettes, the graphs with their generated Nyx, and the baked
+         * materials.
+         */
+        CurrentStamp :: () -> u32 {
+            silhouettes: string! = `${assetsDirectory}/silhouettes`;
+            graphsPath: string! = `${gameDirectory}/game-graphs`;
+            baked: string! = `${gameDirectory}/game-assets/BakedMaterials.nyx`;
+            hash: u32 = FoldTree(FoldTree(FoldTree(2166136261, silhouettes), graphsPath), baked);
+            delete silhouettes;
+            delete graphsPath;
+            delete baked;
+            return hash;
+        }
+
+        /**
+         * Generates the Nyx the game reads from the Silhouettes and graphs as they are now. A failure is logged and
+         * leaves the previous generated files.
+         */
+        Regenerate :: () -> void {
+            graphsFolder: string! = `${gameDirectory}/game-graphs`;
+            generatedFolder: string! = `${gameDirectory}/game-graphs/generated`;
+            materialsFolder: string! = `${gameDirectory}/game-assets`;
+            defer delete graphsFolder;
+            defer delete generatedFolder;
+            defer delete materialsFolder;
+            silhouettesFolder: string! = `${assetsDirectory}/silhouettes`;
+            defer delete silhouettesFolder;
+            if directoryExists(silhouettesFolder) {
+                when lantern:::editorbackend:::BuildGameMaterials(assetsDirectory, materialsFolder, true) {
+                    Result:::Err(message) -> {
+                        lantern:::core:::LogError("reload", message);
+                        delete message;
+                    },
+                    Result:::Ok(changed) -> { }
+                }
+            }
+            when lantern:::editorbackend:::BuildGameGraphs(graphsFolder, generatedFolder, true) {
+                Result:::Err(message) -> {
+                    lantern:::core:::LogError("reload", message);
+                    delete message;
+                },
+                Result:::Ok(written) -> {
+                    delete written;
+                }
+            }
+        }
+
+        /**
+         * Call once per frame. Every half second it compares the files with how they were; on a change it regenerates
+         * the Nyx and returns true, meaning the scripts should reload.
+         */
+        Poll~: (frameSeconds: f32) -> bool {
+            secondsSincePoll += frameSeconds;
+            if secondsSincePoll < CONTENT_POLL_SECONDS {
+                return false;
+            }
+            secondsSincePoll = 0.0f;
+            current: u32 = CurrentStamp();
+            if current == stamp {
+                return false;
+            }
+            Regenerate();
+            stamp = CurrentStamp();
+            lantern:::core:::LogInfo("reload", "a Silhouette or graph changed; regenerated the game's Nyx");
+            return true;
+        }
+    }
+}

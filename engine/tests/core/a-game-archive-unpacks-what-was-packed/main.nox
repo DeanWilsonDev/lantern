@@ -1,0 +1,85 @@
+lantern :: import lantern;
+
+SameBytes :: (left: Array<u8>, right: Array<u8>) -> bool {
+    if left.length() != right.length() {
+        return false;
+    }
+    for index~ usize = 0; index < left.length(); index++ {
+        if left[index] != right[index] {
+            return false;
+        }
+    }
+    return true;
+}
+
+main :: () -> i32 {
+    root: string! = `/tmp/lantern-archive-test-${monotonicNanoseconds()}`;
+    defer delete root;
+    source: string! = `${root}/source`;
+    defer delete source;
+    nested: string! = `${source}/worlds/deep`;
+    defer delete nested;
+    createDirectories(nested);
+    manifestFile: string! = `${source}/game.json`;
+    defer delete manifestFile;
+    writeTextFile(manifestFile, "{\"title\":\"x\"}");
+    nestedFile: string! = `${nested}/level.json`;
+    defer delete nestedFile;
+    payload: u8[5] = [0, 1, 2, 255, 254];
+    writeFileBytes(nestedFile, payload.borrow());
+
+    archive~ Array<u8>! = [];
+    defer delete archive;
+    problem: string!? = lantern:::archive:::AppendDirectory(archive, source, "game");
+    assert(problem == null, "the folder packs");
+    delete problem;
+    lantern:::archive:::Finish(archive);
+
+    program~ Array<u8>! = [];
+    defer delete program;
+    for index~ u8 = 0; index < 100; index++ {
+        program.push(index);
+    }
+    programLength: usize = program.length();
+    for byte in archive {
+        program.push(byte);
+    }
+    start: usize? = lantern:::archive:::FindStart(program);
+    guard archiveStart := start return 1;
+    assert(archiveStart == programLength, "the archive starts where the program ends");
+
+    destination: string! = `${root}/unpacked`;
+    defer delete destination;
+    unpackProblem: string!? = lantern:::archive:::Unpack(program, archiveStart, destination);
+    assert(unpackProblem == null, "the archive unpacks");
+    delete unpackProblem;
+
+    movedFile: string! = `${destination}/game/worlds/deep/level.json`;
+    defer delete movedFile;
+    when readFileBytes(movedFile) {
+        Result:::Ok(contents) -> {
+            assert(SameBytes(contents, payload.borrow()), "a nested file keeps its bytes");
+            delete contents;
+        },
+        Result:::Err(error) -> {
+            print(error.message());
+            delete error;
+            return 1;
+        }
+    }
+    marker: string! = `${destination}/${lantern:::archive:::COMPLETE_MARKER}`;
+    defer delete marker;
+    assert(pathExists(marker), "the unpacked folder is marked complete");
+
+    plain~ Array<u8>! = [];
+    defer delete plain;
+    for index~ u8 = 0; index < 40; index++ {
+        plain.push(index);
+    }
+    plainStart: usize? = lantern:::archive:::FindStart(plain);
+    assert(plainStart == null, "a program with no archive has none");
+
+    removeDirectory(root);
+    print("a game archive unpacks what was packed");
+    return 0;
+}

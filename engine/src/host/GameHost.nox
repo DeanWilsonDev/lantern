@@ -42,6 +42,13 @@ lantern:::host :: namespace {
     }
 
     /**
+     * Something the game host asks every frame whether the game's scripts should reload.
+     */
+    ReloadSource :: interface {
+        Poll~ (frameSeconds: f32) -> bool : 0;
+    }
+
+    /**
      * The `Game` that runs a Nyx game: it forwards each of the loop's hooks to the game's script (`OnFixedUpdate`,
      * `OnUpdate`, `OnRender`) and does the engine's own work around each call.
      */
@@ -63,6 +70,7 @@ lantern:::host :: namespace {
         mouseCapturedNow~ bool = false;
         pixelsPerPoint~ f32 = 1.0f;
         mouse~ MouseForUi = MouseForUi { };
+        contentWatcher~ ReloadSource*!? = null;
 
         GameHost~: (engineState: EngineState*!, scriptSource: ScriptSource*!) {
             state = engineState!;
@@ -76,6 +84,7 @@ lantern:::host :: namespace {
             delete source;
             delete scriptError;
             delete capturePath;
+            delete contentWatcher;
         }
 
         /**
@@ -481,10 +490,15 @@ lantern:::host :: namespace {
             } else {
                 state->input->SetSnapshot(frame.input->Copy());
             }
-            reload: bool = frame.input->Pressed(EngineReloadAction());
+            reload~ bool = frame.input->Pressed(EngineReloadAction());
             toggleHud: bool = frame.input->Pressed(EngineToggleHudAction());
             if toggleHud {
                 state->debugWindow->Toggle();
+            }
+            if watcher ~= contentWatcher {
+                if watcher->Poll(frame.frameSeconds) {
+                    reload = true;
+                }
             }
             if reload {
                 Reload();
