@@ -1879,3 +1879,7 @@ Five photo sights and four camera volumes (three with shots, one a framing chang
 ## D-222: Wayland and Windows are checked from the cloud as far as they can be
 
 Provisional (2026-11-19): not reviewed by Dean. `engine/tools/check-wayland.sh` runs the game and the stub window script on Weston's headless backend with lavapipe, and `docs/platform-checks.md` records what that showed, the Windows cross-build result and a checklist for a real machine. `SdlContext` sets `SDL_HINT_APP_ID` to `lantern` so a Wayland compositor can match the window to a desktop entry, and `engine/native/CMakeLists.txt` exports every symbol on Windows. Mist's lack of Windows script support is MIST-29.
+
+## D-223: The help line is a wrapped box in the bottom right corner, and the status line sits at the top right
+
+Provisional (2026-11-19): not reviewed by Dean. The station level showed the status line centred under the debug window, which takes the top left, and a 32 px hint that ran off the screen. The status line is now 16 px at the top right, and the hint (`HintText` in `main.nyx`) goes to its own `GameUiModel.hintRows` signal and draws as one 16 px row per wrapped line, at most 30 characters each, in a small bottom right box (`hud.chaos`, `hud.cosmos`). Rule messages such as "Level complete" keep the large centred message. Chaos UI has no text wrapping, so `HintWrap:::Lines` in `ui/hint-wrap.nyx` wraps in the game; wrapping to the box's width inside the engine is a later card. Checked with a lavapipe screenshot of the station at 1280 by 720, not on a Mac.
