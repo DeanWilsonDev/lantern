@@ -115,7 +115,7 @@ Alt + 1, 2 and 3, and the choice is remembered. F11 hides all of them for a clea
 
 The viewport's own settings are in its header: `Perspective` opens the Camera menu (presets, orthographic, frame
 and align) and `Show` opens the Show menu (grid, wireframe, colliders, markers, level bounds, hidden entities,
-statistics, snapping, grid size). Alt+C and Alt+V open them from the keyboard.
+statistics, snapping, grid size). Alt+C and Alt+V open them from the keyboard, and pressing the same keys again closes the menu. An entity's tab (F4) shows a turning picture of that entity drawn with its current values above its component list.
 
 Above the viewport is a row of document tabs. `Level` is the viewport. F4, Entity > Edit in Tab or the entity's right
 click menu opens a tab for the selected entity, which lists its components (Entity, Transform, Shape and so on) and edits the chosen one's values in the page itself; the outliner and details

@@ -223,6 +223,59 @@ lantern:::worldeditor:::viewports :: namespace {
         spinRadians~ f32 = 0.0f;
     }
 
+    // The turning picture of the placed entity open in its tab, drawn with its current values. It ignores all
+    // input, and each tick advances the angle, wrapping at a full turn.
+    EntityRenderer :: class {
+        implements:
+            ViewportRenderer;
+    public:
+        entityId~ i64 = -1;
+
+        EntityRenderer~: (editorInstance: raw Editor~*) : editorInstance(editorInstance) {
+        }
+
+        SetEntity~: (chosen: i64) -> void {
+            this->entityId = chosen;
+        }
+
+        Render~: (widthPhysical: u32, heightPhysical: u32, frame: ViewportFrame~*) -> bool {
+            guard this->entityId >= 0 return false;
+            unsafe {
+                editorInstance: Editor~* = this->editorInstance;
+                guard Api:::RenderEntityPreview(editorInstance, this->entityId, widthPhysical, heightPhysical, this->spinRadians) == true return false;
+                SizeFrame(frame, Api:::PreviewWidth(editorInstance), Api:::PreviewHeight(editorInstance));
+                return Api:::CopyPreviewPixels(editorInstance, frame->rgbaPixels);
+            }
+        }
+
+        PointerMoved~: (xPhysical: f32, yPhysical: f32) -> void {
+        }
+
+        PointerButton~: (button: usize, down: bool, modifiers: Modifiers) -> void {
+        }
+
+        Wheel~: (notches: f32, notchesX: f32) -> void {
+        }
+
+        Key~: (keyName: string, down: bool, modifiers: Modifiers) -> bool {
+            return false;
+        }
+
+        HoverChanged~: (pointerIsOver: bool) -> void {
+        }
+
+        Tick~: (deltaSeconds: f32) -> void {
+            this->spinRadians = this->spinRadians + deltaSeconds * PREVIEW_TURNS_PER_SECOND_RADIANS;
+            while this->spinRadians >= FULL_TURN_RADIANS {
+                this->spinRadians = this->spinRadians - FULL_TURN_RADIANS;
+            }
+        }
+
+    private:
+        editorInstance~ raw Editor~* = null;
+        spinRadians~ f32 = 0.0f;
+    }
+
     // The small still picture of one template in the palette grid. It is square (the smaller side), and
     // the editor only redraws it when the template or palette has changed. It ignores all input.
     ThumbnailRenderer :: class {
