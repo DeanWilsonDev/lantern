@@ -108,6 +108,34 @@ lantern:::application :: namespace {
         }
 
         /**
+         * A hash of only what people edit: the Silhouettes and the graph JSON, not the Nyx generated from them.
+         */
+        SourceStamp :: () -> u32 {
+            silhouettes: string! = `${assetsDirectory}/silhouettes`;
+            graphsFolder: string! = `${gameDirectory}/game-graphs`;
+            hash~ u32 = FoldTree(2166136261, silhouettes);
+            delete silhouettes;
+            when lantern:::silhouette:::SortedEntries(graphsFolder) {
+                Result:::Err(message) -> {
+                    delete message;
+                },
+                Result:::Ok(listed) -> {
+                    entries~ Array<string!>! = listed!;
+                    for entry in entries {
+                        if entry.endsWith(".graph.json") {
+                            child: string! = `${graphsFolder}/${entry}`;
+                            hash = FoldTree(hash, child);
+                            delete child;
+                        }
+                    }
+                    entries.freeAll();
+                }
+            }
+            delete graphsFolder;
+            return hash;
+        }
+
+        /**
          * Generates the Nyx the game reads from the Silhouettes and graphs as they are now. A failure is logged and
          * leaves the previous generated files.
          */
@@ -154,8 +182,11 @@ lantern:::application :: namespace {
             if current == stamp {
                 return false;
             }
+            sourcesBefore: u32 = SourceStamp();
             Regenerate();
-            stamp = CurrentStamp();
+            if SourceStamp() == sourcesBefore {
+                stamp = CurrentStamp();
+            }
             lantern:::core:::LogInfo("reload", "a Silhouette or graph changed; regenerated the game's Nyx");
             return true;
         }

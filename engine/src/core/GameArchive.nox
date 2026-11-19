@@ -130,7 +130,13 @@ lantern:::archive :: namespace {
         end: usize = program.length() - TRAILER_LENGTH;
         position~ usize = start;
         while position < end {
+            if position + 4 > end {
+                return "the archive is damaged: an entry is cut short".copy();
+            }
             pathLength: usize = usize(ReadU32(program, position));
+            if pathLength > end - position - 4 || end - position - 4 - pathLength < 4 {
+                return "the archive is damaged: a path runs past the end".copy();
+            }
             pathBytes~ Array<u8>! = [];
             defer delete pathBytes;
             for index~ usize = 0; index < pathLength; index++ {
@@ -141,6 +147,9 @@ lantern:::archive :: namespace {
             position = position + 4 + pathLength;
             dataLength: usize = usize(ReadU32(program, position));
             position = position + 4;
+            if dataLength > end - position {
+                return "the archive is damaged: a file runs past the end".copy();
+            }
             target: string! = `${destination}/${relativePath}`;
             defer delete target;
             parent: string! = ParentDirectory(target);
