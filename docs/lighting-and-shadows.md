@@ -72,7 +72,7 @@ are the entity's properties, edited in the inspector like a moving platform's pe
 | `sun` | `color`, `sky_ambient`, `ground_ambient`, `casts_shadows` (true) | the way the entity points |
 
 With no rotation a spot light and the sun point straight down; rotate the entity to aim it. Colours are `"#RRGGBB"`
-text, like a tint. `assets/worlds/lamp-yard.world.json` is a small level with a sun, a red lamp and a torch.
+text, like a tint. `games/platformer/assets/worlds/lamp-yard.world.json` is a small level with a sun, a red lamp and a torch.
 
 In the editor, **Point light**, **Spot light** and **Sun** are in the palette. The viewport lights the scene with
 them as you edit, so what you see is what the game draws, hiding a light in the outliner puts it out, and a selected

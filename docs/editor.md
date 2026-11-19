@@ -59,20 +59,20 @@ apps/world-editor                                     engine/ (Nox)
 
 ### What the editor knows about the game
 
-Nothing by name. The game ships `assets/editor/palette.json`, which lists:
+Nothing by name. The game ships `games/platformer/assets/editor/palette.json`, which lists:
 
 - **templates** for the asset browser and the Entity menu (a label plus a partial entity: kind,
   shape, material, tint, collider, properties, and how far to lift it above the surface it
   lands on);
 - **markers**: how to draw an entity that has no shape (a gem mesh, a capsule, a plane outline),
   by kind;
-- **materials**: the names the inspector offers, each a texture in `assets/textures/`.
+- **materials**: the names the inspector offers, each a texture in `games/platformer/assets/textures/`.
 
 The palette also offers **Point light**, **Spot light** and **Sun**. They are entities like any other (their kinds
 are `point_light`, `spot_light` and `sun`), their numbers are properties in the inspector, and the viewport lights the
 scene with them as you edit. See `lighting-and-shadows.md`.
 
-Every folder in `assets/silhouettes/` is added to the same list as a template (a Silhouette with the same name as a
+Every folder in `games/platformer/assets/silhouettes/` is added to the same list as a template (a Silhouette with the same name as a
 palette entry replaces it). Placing one inserts its root and children together as one undo step, and **Edit** in the asset browser opens its components in a tab. See `silhouettes.md`.
 
 Without a palette the editor still works, with generic blocks, ramps and markers.
@@ -81,7 +81,7 @@ Without a palette the editor still works, with generic blocks, ramps and markers
 
 From the lantern checkout's root, `mist install` fetches and builds everything the editor needs
 (`engine/README.md`), and `mist run editor` builds the Nox host and opens
-`assets/worlds/course.world.json`, or the world given after `editor`:
+`games/platformer/assets/worlds/course.world.json`, or the world given after `editor`:
 
 ```sh
 mist install
@@ -278,4 +278,4 @@ Show > Game Lighting (or Settings > Graphics) draws the viewport with the game's
 
 ## Material Silhouettes
 
-A material is a Silhouette of type `material` (`@type material` in its `root.calamus`) with `texture`, `tint`, `metallic`, `roughness` and `emissive`. Put one in `assets/silhouettes/materials/NAME` (or `assets/silhouettes/NAME`) and give an entity that `material` name: the viewport draws it with the material's metallic, roughness, emissive and tint on top of its texture. A material name with no Silhouette still means the texture of that name. The content browser lists material Silhouettes with a material icon; the Silhouettes tab doesn't, since they aren't placed in a level. Starters: `brushed_steel`, `warm_plaster`, `wet_asphalt` and `neon_sign`. The game never reads Silhouette files: saving in the editor (or `mist run materials`) writes `games/platformer/game-assets/BakedMaterials.nyx`, a generated Nyx file whose `Register()` calls `lantern:::world:::SetMaterialLook` for each material, and the game imports it.
+A material is a Silhouette of type `material` (`@type material` in its `root.calamus`) with `texture`, `tint`, `metallic`, `roughness` and `emissive`. Put one in `games/platformer/assets/silhouettes/materials/NAME` (or `games/platformer/assets/silhouettes/NAME`) and give an entity that `material` name: the viewport draws it with the material's metallic, roughness, emissive and tint on top of its texture. A material name with no Silhouette still means the texture of that name. The content browser lists material Silhouettes with a material icon; the Silhouettes tab doesn't, since they aren't placed in a level. Starters: `brushed_steel`, `warm_plaster`, `wet_asphalt` and `neon_sign`. The game never reads Silhouette files: saving in the editor (or `mist run materials`) writes `games/platformer/game-assets/BakedMaterials.nyx`, a generated Nyx file whose `Register()` calls `lantern:::world:::SetMaterialLook` for each material, and the game imports it.

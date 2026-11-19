@@ -39,11 +39,11 @@ Resolution runs from the inside out: the type's values (none yet, so the empty o
 
 ## The platformer's Silhouettes
 
-`assets/silhouettes/` holds the platformer's pieces: block, ramp, moving platform (and `moving_platform_wide`, a variant of it), gem, spawn, kill plane, the point light, spot light and sun, street lamp, lit window, photo sight, camera volume and camera shot, and `lamp_post`, a post with a point light as its child. Each root has an `editor` object (`label`, `lift`) that the editor reads for its menu entry; the `editor` values are not part of the entity.
+`games/platformer/assets/silhouettes/` holds the platformer's pieces: block, ramp, moving platform (and `moving_platform_wide`, a variant of it), gem, spawn, kill plane, the point light, spot light and sun, street lamp, lit window, photo sight, camera volume and camera shot, and `lamp_post`, a post with a point light as its child. Each root has an `editor` object (`label`, `lift`) that the editor reads for its menu entry; the `editor` values are not part of the entity.
 
 ## In the editor
 
-When the editor starts it reads `assets/editor/palette.json`, then adds one template for every folder in `<assets>/silhouettes`. A Silhouette with the same name as a palette entry replaces it, so the Silhouette is the source of truth once it exists; the palette entries stay as the fallback when there is no Silhouettes folder. Placing a Silhouette from the asset browser or Entity menu expands it into the open world file: the root and all its descendants are inserted with new ids, parent links and unique names, as one undo step. This is a copy, not a link: later edits to the Silhouette do not reach entities already placed. A Silhouette that fails to resolve is logged and left out of the menu.
+When the editor starts it reads `games/platformer/assets/editor/palette.json`, then adds one template for every folder in `<assets>/silhouettes`. A Silhouette with the same name as a palette entry replaces it, so the Silhouette is the source of truth once it exists; the palette entries stay as the fallback when there is no Silhouettes folder. Placing a Silhouette from the asset browser or Entity menu expands it into the open world file: the root and all its descendants are inserted with new ids, parent links and unique names, as one undo step. This is a copy, not a link: later edits to the Silhouette do not reach entities already placed. A Silhouette that fails to resolve is logged and left out of the menu.
 
 `SilhouetteWorld(library, name)` turns one Silhouette into a world file (entity 1 is the root, the rest are its descendants), which is also how the platformer Silhouettes are tested.
 

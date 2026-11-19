@@ -49,7 +49,7 @@ mist run game
 from Mist's index, penumbra-ui-engine and penumbra-bridge, and lantern-native (below). `mist run game` runs
 `nox run --release` in this directory, with Mist's library directories on the search paths. Arguments after the
 script's name go to the program: `mist run game ../games/other`, or `mist run game --stub` for the stub scene. With none it plays the platformer. `nox run` builds `build/lantern` and runs it. The stub prints the
-SDL version, the size of `assets/textures/ground.png` and the number of meshes in `assets/models/gem.glb`, read through
+SDL version, the size of `games/platformer/assets/textures/ground.png` and the number of meshes in `games/platformer/assets/models/gem.glb`, read through
 stb_image and cgltf, then opens a window and draws a lit scene through SDL GPU (a textured ground, the gem spinning, a
 cube with debug lines, and overlay text) from a stub game in the frame loop, until you press Escape or close the
 window. It logs window events to standard error and prints a summary of frames, fixed steps and renders when it stops.
@@ -171,7 +171,7 @@ renderer one frame at a time, and `../docs/application-and-game-loop.md` the sta
   collision triangles).
 - `src/editor/` is the world editor's logic, the Rust `editor-core` crate, `lantern:::editor`: `Document.nox`
   (`EditorDocument`: the open world, its undo and redo history of `Edit`s, coalesced typing, previews that commit as
-  one step, dirty tracking and saving), `Palette.nox` (`Palette`: the game's `assets/editor/palette.json`, its Add menu
+  one step, dirty tracking and saving), `Palette.nox` (`Palette`: the game's `games/platformer/assets/editor/palette.json`, its Add menu
   `EntityTemplate`s, `MarkerStyle`s and materials, or `Palette:::Fallback`), `Preferences.nox` (`EditorPreferences`, a
   sorted map of strings saved as JSON in the user's config directory), `Camera.nox` (`OrbitCamera`, `Ray` and
   `ViewportProjection`), `SceneGeometry.nox` (each entity's world-space triangles and bounds, picking and placement),

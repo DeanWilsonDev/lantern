@@ -16,7 +16,7 @@ engine/
   tools/             build-shaders.sh, run-tests.sh and check-window.sh (run through `mist run`)
 games/platformer/    a game: Nyx code, Chaos UI, and game.json naming its entry file, class and assets
 apps/world-editor/   the editor: Chaos UI in src/ui, its Nox host in nox/
-assets/              textures, models, sounds, music, worlds and the editor palette
+games/platformer/assets/  the game project's textures, models, sounds, music, Silhouettes, worlds and the editor palette
 ```
 
 `mist.json` at the root names the dependencies and the scripts (`running.md`).

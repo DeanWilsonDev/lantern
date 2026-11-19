@@ -30,8 +30,8 @@ and `lantern:::camera:::SetFieldOfView`.
 | Frame-rate independent easing used by all of them | `game-systems/smoothing.nyx` |
 | The `camera_volume` entity | `game-entities/camera-volume.nyx` |
 | The `camera_shot` entity | `game-entities/camera-shot.nyx` |
-| Placing them in the world editor | `assets/editor/palette.json` |
-| A room that shows all of it | `assets/worlds/prototypes/the-camera-room.world.json` (Prototypes, number 11) |
+| Placing them in the world editor | `games/platformer/assets/editor/palette.json` |
+| A room that shows all of it | `games/platformer/assets/worlds/prototypes/the-camera-room.world.json` (Prototypes, number 11) |
 
 ### The frame, step by step
 

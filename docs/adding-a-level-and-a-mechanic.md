@@ -38,7 +38,7 @@ on `engine-follow-ups`, and the workaround is named in the code.
 
 ### The world file
 
-A level is a JSON world file in `assets/worlds/`. The editor writes it; you can also write one by hand. The shape
+A level is a JSON world file in `games/platformer/assets/worlds/`. The editor writes it; you can also write one by hand. The shape
 (`engine/src/world/WorldFile.nox` is the authority):
 
 ```json
@@ -82,7 +82,7 @@ A level is a JSON world file in `assets/worlds/`. The editor writes it; you can 
   `VectorProperty` (and `HasProperty` first when it's optional).
 
 The fastest way to make one is the editor: `mist run editor`, then File, New, place blocks and markers from the Entity menu
-(`editor.md`), and Save into `assets/worlds/`. Copy a shipped level (`course.world.json`, `streets.world.json`) when you
+(`editor.md`), and Save into `games/platformer/assets/worlds/`. Copy a shipped level (`course.world.json`, `streets.world.json`) when you
 want a model.
 
 ### Try it without touching the game
@@ -112,7 +112,7 @@ layer: a world kind, an entity, a system, an event, a rule and a debug value.
 
 ### 1. The world kind
 
-Place a marker with `"kind": "speed_shoes"` in the world file (by hand, or add a template to `assets/editor/palette.json`
+Place a marker with `"kind": "speed_shoes"` in the world file (by hand, or add a template to `games/platformer/assets/editor/palette.json`
 so the editor's Entity menu offers it, with a `markers` entry saying how to draw it: `{ "mesh": "gem", "color": "#FF9A3D" }`).
 The engine needs nothing: it already loads an entity with that kind.
 
