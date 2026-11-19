@@ -38,6 +38,7 @@ Paths :: import lantern:::worldeditor:::paths;
 FileDialog :: import lantern:::worldeditor:::filedialogs:::FileDialog;
 LevelRenderer :: import lantern:::worldeditor:::viewports:::LevelRenderer;
 PreviewRenderer :: import lantern:::worldeditor:::viewports:::PreviewRenderer;
+EntityRenderer :: import lantern:::worldeditor:::viewports:::EntityRenderer;
 GraphRenderer :: import lantern:::worldeditor:::viewports:::GraphRenderer;
 GraphFunctions :: import lantern:::worldeditor:::graphfunctions;
 ThumbnailRenderer :: import lantern:::worldeditor:::viewports:::ThumbnailRenderer;
@@ -81,12 +82,14 @@ lantern:::worldeditor :: namespace {
     public:
         level~ LevelRenderer*!;
         preview~ PreviewRenderer*!;
+        entity~ EntityRenderer*!;
         graph~ GraphRenderer*!;
         thumbnails~ Array<ThumbnailRenderer*!>! = [];
 
         EditorRenderers~: (editorInstance: raw Editor~*) {
             this->level = new LevelRenderer(editorInstance);
             this->preview = new PreviewRenderer(editorInstance);
+            this->entity = new EntityRenderer(editorInstance);
             this->graph = new GraphRenderer(editorInstance);
             unsafe {
                 borrowed: Editor~* = editorInstance;
@@ -102,6 +105,7 @@ lantern:::worldeditor :: namespace {
         !EditorRenderers~: () {
             this->thumbnails.freeAll();
             delete this->graph;
+            delete this->entity;
             delete this->preview;
             delete this->level;
         }
@@ -113,6 +117,8 @@ lantern:::worldeditor :: namespace {
                 host->RegisterViewportRenderer("level", levelPointer);
                 previewPointer: raw ViewportRenderer~* = this->preview;
                 host->RegisterViewportRenderer("preview", previewPointer);
+                entityPointer: raw ViewportRenderer~* = this->entity;
+                host->RegisterViewportRenderer("entity", entityPointer);
                 graphPointer: raw ViewportRenderer~* = this->graph;
                 host->RegisterViewportRenderer("graph", graphPointer);
             }
@@ -148,6 +154,18 @@ lantern:::worldeditor :: namespace {
         return failure!;
     }
 
+    // Registers `editorSetEntityPicture`, which chooses the placed entity the "entity" picture shows.
+    RegisterEntityPictureFunction :: (runtime: Runtime~*, entityPicture: raw EntityRenderer~*) -> NyxError*!? {
+        return runtime->RegisterFunction("editorSetEntityPicture", "(entity: i64) -> void", new (context: CallContext~*) -> void [entityPicture] {
+            entity: i64 = context->I64(0);
+            unsafe {
+                chosen: EntityRenderer~* = entityPicture;
+                chosen->SetEntity(entity);
+            }
+            context->ReturnNull();
+        });
+    }
+
     // Registers every function the editor's Nyx code can call: the editor's own (EditorFunctions), the
     // preview ones and the frame time ones (FrameTimeFunctions). Prints the reason and returns false if any
     // registration fails.
@@ -156,6 +174,8 @@ lantern:::worldeditor :: namespace {
         unsafe {
             previewPointer: raw PreviewRenderer~* = renderers->preview;
             failure = HostFunctions:::FirstFailure(failure!, RegisterPreviewFunctions(runtime, previewPointer));
+            entityPointer: raw EntityRenderer~* = renderers->entity;
+            failure = HostFunctions:::FirstFailure(failure!, RegisterEntityPictureFunction(runtime, entityPointer));
         }
         failure = HostFunctions:::FirstFailure(failure!, GraphFunctions:::RegisterGraphFunctions(runtime, editorInstance));
         failure = HostFunctions:::FirstFailure(failure!, FrameTimeFunctions:::RegisterFrameTimeFunctions(runtime, frameTimes));

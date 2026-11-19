@@ -16,12 +16,12 @@ lantern:::editorbackend :: namespace {
     // The local box to frame in the preview: the shape's bounds for a template with a shape, otherwise
     // the bounds of its marker mesh. An empty box becomes a one metre cube so the camera still has
     // something to look at.
-    TemplateBounds :: (template: lantern:::editor:::EntityTemplate*, palette: lantern:::editor:::Palette*) -> lantern:::core:::Aabb {
+    EntityBounds :: (entity: lantern:::world:::WorldEntity*, palette: lantern:::editor:::Palette*) -> lantern:::core:::Aabb {
         bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb { };
-        if shape := template->prototype->shape {
+        if shape := entity->shape {
             bounds = lantern:::editor:::ShapeLocalBounds(shape);
         } else {
-            style := palette->MarkerStyleFor(template->Kind());
+            style := palette->MarkerStyleFor(entity->kind);
             bounds = lantern:::editor:::MarkerLocalBounds(style->mesh);
             delete style;
         }
@@ -35,7 +35,7 @@ lantern:::editorbackend :: namespace {
     // angle is `spin`), a floor grid under it, then the template's mesh with its material and tint, or
     // its marker. A flat marker (a plane) is drawn as an outline instead. Fog is pushed far away so
     // the backdrop is not tinted.
-    BuildTemplatePreview :: (template: lantern:::editor:::EntityTemplate*, palette: lantern:::editor:::Palette*, resources: lantern:::editor:::ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*, spin: f32) -> void {
+    BuildEntityPreview :: (entity: lantern:::world:::WorldEntity*, palette: lantern:::editor:::Palette*, resources: lantern:::editor:::ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*, spin: f32) -> void {
         renderWorld->Clear();
         renderWorld->clearColor = PreviewSkyColor();
         renderWorld->sky.zenith = lantern:::core:::Color:::Rgb(0.2f, 0.21f, 0.23f);
@@ -44,7 +44,7 @@ lantern:::editorbackend :: namespace {
         renderWorld->sky.sunDiscStrength = 0.0f;
         renderWorld->fogStart = 1000.0f;
         renderWorld->fogEnd = 2000.0f;
-        bounds: lantern:::core:::Aabb = TemplateBounds(template, palette);
+        bounds: lantern:::core:::Aabb = EntityBounds(entity, palette);
         radius: f32 = Math:::max(bounds.HalfExtents().length(), 0.3f);
         center: Vec3 = bounds.Center();
         orbitDirection: Vec3 = Vec3 { x: Math:::sin(spin + 0.7f), y: 0.65f, z: Math:::cos(spin + 0.7f) };
@@ -61,15 +61,15 @@ lantern:::editorbackend :: namespace {
             renderWorld->Line(Vec3 { x: center.x + offset, y: floorHeight, z: center.z - 4.0f * step }, Vec3 { x: center.x + offset, y: floorHeight, z: center.z + 4.0f * step }, PreviewGridColor());
             renderWorld->Line(Vec3 { x: center.x - 4.0f * step, y: floorHeight, z: center.z + offset }, Vec3 { x: center.x + 4.0f * step, y: floorHeight, z: center.z + offset }, PreviewGridColor());
         }
-        if shape := template->prototype->shape {
+        if shape := entity->shape {
             if mesh := resources->ShapeMesh(shape) {
                 materialName~ string? = null;
-                if material := template->prototype->material {
+                if material := entity->material {
                     materialName = material;
                 }
                 texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = resources->MaterialTexture(materialName);
                 tint~ lantern:::core:::Color = lantern:::core:::Color:::White();
-                if tintText := template->prototype->tint {
+                if tintText := entity->tint {
                     tint = lantern:::world:::ParseHexColor(tintText) ?? lantern:::core:::Color:::White();
                 }
                 look: lantern:::renderer:::MaterialLook? = resources->MaterialLook(materialName);
@@ -83,7 +83,7 @@ lantern:::editorbackend :: namespace {
             lantern:::editor:::OrientedBoxLines(renderWorld, bounds, Mat4 { }, PreviewOutlineColor());
             return;
         }
-        style := palette->MarkerStyleFor(template->Kind());
+        style := palette->MarkerStyleFor(entity->kind);
         color: lantern:::core:::Color = lantern:::world:::ParseHexColor(style->color) ?? lantern:::core:::Color:::White();
         marker: lantern:::editor:::MarkerMesh = style->mesh;
         delete style;
@@ -97,6 +97,14 @@ lantern:::editorbackend :: namespace {
         if mesh := resources->MarkerMeshHandle(marker) {
             renderWorld->Draw(mesh, null, lantern:::editor:::MarkerLocalMatrix(marker), color);
         }
+    }
+
+    TemplateBounds :: (template: lantern:::editor:::EntityTemplate*, palette: lantern:::editor:::Palette*) -> lantern:::core:::Aabb {
+        return EntityBounds(template->prototype, palette);
+    }
+
+    BuildTemplatePreview :: (template: lantern:::editor:::EntityTemplate*, palette: lantern:::editor:::Palette*, resources: lantern:::editor:::ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*, spin: f32) -> void {
+        BuildEntityPreview(template->prototype, palette, resources, renderWorld, spin);
     }
 
     // One rendered palette thumbnail kept in memory: which template it is for, its pixels and size,

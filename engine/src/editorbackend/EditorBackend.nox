@@ -542,11 +542,27 @@ lantern:::editorbackend :: namespace {
 
         // Draws one palette template, spinning by `spin`, into the preview pixels.
         RenderTemplatePreview~: (templateId: string, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
+            if template := session->palette->Template(templateId) {
+                copied: lantern:::world:::WorldEntity*! = template->prototype->Copy();
+                failure: string!? = RenderEntityPreviewOf(copied, requestedWidth, requestedHeight, spin);
+                delete copied;
+                return failure!;
+            }
+            return `no template '${templateId}'`;
+        }
+
+        // Draws one placed entity with its current values, spinning by `spin`, into the preview pixels.
+        RenderEntityPreview~: (entityKey: u64, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
+            guard index := session->document->documentWorldFile->IndexOf(entityKey) return `no entity ${entityKey}`;
+            copied: lantern:::world:::WorldEntity*! = session->document->documentWorldFile->entities[index]->Copy();
+            failure: string!? = RenderEntityPreviewOf(copied, requestedWidth, requestedHeight, spin);
+            delete copied;
+            return failure!;
+        }
+
+        RenderEntityPreviewOf~: (entity: lantern:::world:::WorldEntity*, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
             width: u32 = ClampSide(requestedWidth, MAXIMUM_PREVIEW_SIDE);
             height: u32 = ClampSide(requestedHeight, MAXIMUM_PREVIEW_SIDE);
-            if session->palette->Template(templateId) == null {
-                return `no template '${templateId}'`;
-            }
             failure: string!? = EnsureGpu();
             if failure != null {
                 return failure!;
@@ -557,19 +573,15 @@ lantern:::editorbackend :: namespace {
             guard active return "viewport GPU unavailable".copy();
             activeRenderWorld~ lantern:::renderer:::RenderWorld*! = previewWorld!;
             outcome~ string!? = null;
-            if template := session->palette->Template(templateId) {
-                BuildTemplatePreview(template, session->palette, active, activeRenderWorld, spin);
-                when active->viewportRenderer->RenderOffscreen(activeRenderWorld, width, height, previewPixels) {
-                    Result:::Ok(report) -> { },
-                    Result:::Err(problem) -> {
-                        outcome = problem!;
-                    }
+            BuildEntityPreview(entity, session->palette, active, activeRenderWorld, spin);
+            when active->viewportRenderer->RenderOffscreen(activeRenderWorld, width, height, previewPixels) {
+                Result:::Ok(report) -> { },
+                Result:::Err(problem) -> {
+                    outcome = problem!;
                 }
-                previewWidth = width;
-                previewHeight = height;
-            } else {
-                outcome = `no template '${templateId}'`;
             }
+            previewWidth = width;
+            previewHeight = height;
             previewWorld = activeRenderWorld!;
             gpuResources = active!;
             return outcome!;
