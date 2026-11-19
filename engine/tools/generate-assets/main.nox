@@ -1,0 +1,101 @@
+lantern :: import lantern;
+
+Asset :: struct {
+    relativePath: string;
+    bytes~ Array<u8>! = [];
+}
+
+WavBytes :: (samples: Array<f32>!) -> Array<u8>! {
+    defer delete samples;
+    return lantern:::audio:::EncodeWavMono(samples, lantern:::assetgen:::synth:::SAMPLE_RATE);
+}
+
+GenerateAll :: () -> Array<Asset>! {
+    assets~ Array<Asset>! = [];
+    assets.push(Asset { relativePath: "textures/ground.png", bytes: lantern:::assetgen:::png:::CheckerPng(128, 2, Vec3 { x: 0.30f, y: 0.42f, z: 0.26f }, Vec3 { x: 0.24f, y: 0.34f, z: 0.21f }) });
+    assets.push(Asset { relativePath: "textures/platform.png", bytes: lantern:::assetgen:::png:::CheckerPng(128, 2, Vec3 { x: 0.80f, y: 0.55f, z: 0.25f }, Vec3 { x: 0.68f, y: 0.45f, z: 0.20f }) });
+    assets.push(Asset { relativePath: "models/gem.glb", bytes: lantern:::assetgen:::glb:::GemGlb() });
+    assets.push(Asset { relativePath: "sounds/jump.wav", bytes: WavBytes(lantern:::assetgen:::synth:::Jump()) });
+    assets.push(Asset { relativePath: "sounds/land.wav", bytes: WavBytes(lantern:::assetgen:::synth:::Land()) });
+    assets.push(Asset { relativePath: "sounds/pickup.wav", bytes: WavBytes(lantern:::assetgen:::synth:::Pickup()) });
+    assets.push(Asset { relativePath: "sounds/menu_move.wav", bytes: WavBytes(lantern:::assetgen:::synth:::MenuMove()) });
+    assets.push(Asset { relativePath: "sounds/menu_select.wav", bytes: WavBytes(lantern:::assetgen:::synth:::MenuSelect()) });
+    assets.push(Asset { relativePath: "sounds/reset.wav", bytes: WavBytes(lantern:::assetgen:::synth:::Reset()) });
+    assets.push(Asset { relativePath: "music/theme.wav", bytes: WavBytes(lantern:::assetgen:::synth:::ThemeLoop()) });
+    return assets!;
+}
+
+SameBytes :: (left: Array<u8>, right: Array<u8>) -> bool {
+    if left.length() != right.length() {
+        return false;
+    }
+    for index~ usize = 0; index < left.length(); index++ {
+        if left[index] != right[index] {
+            return false;
+        }
+    }
+    return true;
+}
+
+main :: (arguments: Array<string>) -> i32 {
+    checkOnly~ bool = false;
+    assetsDirectory~ string = "../games/platformer/assets";
+    for index~ usize = 1; index < arguments.length(); index++ {
+        if arguments[index] == "--check" {
+            checkOnly = true;
+        } else {
+            assetsDirectory = arguments[index];
+        }
+    }
+    assets~ Array<Asset>! = GenerateAll();
+    mismatches~ i32 = 0;
+    if !checkOnly {
+        for folder in ["textures", "models", "sounds", "music"] {
+            folderPath: string! = `${assetsDirectory}/${folder}`;
+            defer delete folderPath;
+            when createDirectories(folderPath) {
+                Result:::Ok(created) -> {
+                },
+                Result:::Err(failure) -> {
+                    delete failure;
+                }
+            }
+        }
+    }
+    for asset in assets {
+        path: string! = `${assetsDirectory}/${asset.relativePath}`;
+        defer delete path;
+        if checkOnly {
+            when readFileBytes(path) {
+                Result:::Ok(existing) -> {
+                    if !SameBytes(existing, asset.bytes) {
+                        print(`out of date: ${asset.relativePath}`);
+                        mismatches = mismatches + 1;
+                    }
+                    delete existing;
+                },
+                Result:::Err(failure) -> {
+                    print(`missing: ${asset.relativePath}`);
+                    mismatches = mismatches + 1;
+                    delete failure;
+                }
+            }
+        } else {
+            when writeFileBytes(path, asset.bytes) {
+                Result:::Ok(written) -> {
+                    print(`wrote ${asset.relativePath} (${written} bytes)`);
+                },
+                Result:::Err(failure) -> {
+                    print(`could not write ${asset.relativePath}`);
+                    mismatches = mismatches + 1;
+                    delete failure;
+                }
+            }
+        }
+    }
+    assets.freeAll();
+    if checkOnly && mismatches == 0 {
+        print("the assets are up to date");
+    }
+    return mismatches == 0 ? 0 : 1;
+}

@@ -13,25 +13,25 @@ game_directory="$(cd "$game_directory" && pwd)"
 built_program="$engine_directory/build/lantern"
 [[ -x "$built_program" ]] || { echo "the build left no program at $built_program" >&2; exit 1; }
 
-rm -rf "$output_directory"
-mkdir -p "$output_directory/bin" "$output_directory/shaders" "$output_directory/game"
-cp "$built_program" "$output_directory/bin/lantern"
-cp -R "$engine_directory/shaders/compiled" "$output_directory/shaders/compiled"
-cp -R "$game_directory/." "$output_directory/game/"
+(cd "$engine_directory" && nox run --release --project tools/build-graphs >/dev/null && nox run --release --project tools/build-materials >/dev/null)
 
-packaged_game="$output_directory/game"
-rm -rf "$packaged_game/assets/silhouettes" "$packaged_game/assets/editor"
-find "$packaged_game" \( -name '*.calamus' -o -name '*.graph.json' -o -name '.editor-play*' \) -delete
-
-cat > "$output_directory/play.sh" <<'SCRIPT'
-#!/usr/bin/env bash
-cd "$(dirname "$0")"
-exec bin/lantern game "$@"
-SCRIPT
-chmod +x "$output_directory/play.sh"
-
-if find "$output_directory" -name '*.calamus' | grep -q .; then
+staging_directory="$(mktemp -d)"
+trap 'rm -rf "$staging_directory"' EXIT
+cp -R "$game_directory/." "$staging_directory/"
+rm -rf "$staging_directory/assets/silhouettes" "$staging_directory/assets/editor"
+find "$staging_directory" \( -name '*.calamus' -o -name '*.graph.json' -o -name '.editor-play*' \) -delete
+if find "$staging_directory" -name '*.calamus' | grep -q .; then
     echo "a Calamus file reached the package" >&2
     exit 1
 fi
-echo "packaged $game_directory into $output_directory"
+
+(cd "$engine_directory" && nox build --release --project tools/pack-game >/dev/null)
+packer="$engine_directory/tools/pack-game/build/pack-game"
+[[ -x "$packer" ]] || packer="$engine_directory/build/pack-game"
+[[ -x "$packer" ]] || { echo "the build left no pack-game program" >&2; exit 1; }
+
+rm -rf "$output_directory"
+mkdir -p "$output_directory"
+"$packer" "$staging_directory" "$engine_directory/shaders/compiled" "$built_program" "$output_directory/lantern"
+chmod +x "$output_directory/lantern"
+echo "packaged $game_directory into $output_directory/lantern"

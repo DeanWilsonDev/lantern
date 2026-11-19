@@ -1,0 +1,182 @@
+lantern:::assetgen:::glb :: namespace {
+    SIDES: usize : 8;
+    GIRDLE_RADIUS: f32 : 0.25f;
+    TABLE_RADIUS: f32 : 0.15f;
+    TABLE_HEIGHT: f32 : 0.14f;
+    PAVILION_DEPTH: f32 : 0.32f;
+
+    /**
+     * A mesh with the four vertex attributes the engine's loader reads and 32-bit indices.
+     */
+    GemMesh :: struct {
+        positions~ Array<f32>! = [];
+        normals~ Array<f32>! = [];
+        coordinates~ Array<f32>! = [];
+        colours~ Array<f32>! = [];
+        indices~ Array<u32>! = [];
+    }
+
+    RingPoint :: (radius: f32, height: f32, index: usize) -> Vec3 {
+        angle: f32 = f32(index) / f32(SIDES) * Math:::TAU;
+        return Vec3 { x: Math:::cos(angle) * radius, y: height, z: -Math:::sin(angle) * radius };
+    }
+
+    /**
+     * Adds one flat-shaded facet as a triangle fan. The gem is convex around the origin, so a facet whose normal points
+     * toward the centre is flipped.
+     */
+    AddFacet :: (mesh: GemMesh~*, corners: Array<Vec3>, colour: Vec4) -> void {
+        centroid~ Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+        for corner in corners {
+            centroid = Vec3 { x: centroid.x + corner.x, y: centroid.y + corner.y, z: centroid.z + corner.z };
+        }
+        count: f32 = f32(corners.length());
+        centroid = Vec3 { x: centroid.x / count, y: centroid.y / count, z: centroid.z / count };
+        edgeA := Vec3 { x: corners[1].x - corners[0].x, y: corners[1].y - corners[0].y, z: corners[1].z - corners[0].z };
+        edgeB := Vec3 { x: corners[2].x - corners[0].x, y: corners[2].y - corners[0].y, z: corners[2].z - corners[0].z };
+        normal~ Vec3 = edgeA.cross(edgeB).normalized();
+        flipWinding: bool = normal.dot(centroid) < 0.0f;
+        if flipWinding {
+            normal = Vec3 { x: -normal.x, y: -normal.y, z: -normal.z };
+        }
+        base: u32 = u32(mesh->positions.length() / 3);
+        for corner in corners {
+            mesh->positions.push(corner.x);
+            mesh->positions.push(corner.y);
+            mesh->positions.push(corner.z);
+            mesh->normals.push(normal.x);
+            mesh->normals.push(normal.y);
+            mesh->normals.push(normal.z);
+            mesh->coordinates.push(corner.x / GIRDLE_RADIUS * 0.5f + 0.5f);
+            mesh->coordinates.push(corner.z / GIRDLE_RADIUS * 0.5f + 0.5f);
+            mesh->colours.push(colour.x);
+            mesh->colours.push(colour.y);
+            mesh->colours.push(colour.z);
+            mesh->colours.push(colour.w);
+        }
+        for fan~ u32 = 1; fan < u32(corners.length()) - 1; fan++ {
+            if flipWinding {
+                mesh->indices.push(base);
+                mesh->indices.push(base + fan + 1);
+                mesh->indices.push(base + fan);
+            } else {
+                mesh->indices.push(base);
+                mesh->indices.push(base + fan);
+                mesh->indices.push(base + fan + 1);
+            }
+        }
+    }
+
+    /**
+     * A faceted gem about 0.5 m wide: an eight-sided crown with a flat table and a pointed pavilion. Crown facets are
+     * bright cyan and the pavilion deeper blue.
+     */
+    BuildGem :: () -> GemMesh {
+        crownColour := Vec4 { x: 0.35f, y: 0.95f, z: 1.0f, w: 1.0f };
+        pavilionColour := Vec4 { x: 0.15f, y: 0.55f, z: 0.95f, w: 1.0f };
+        mesh~ GemMesh = GemMesh {};
+        table~ Array<Vec3>! = [];
+        defer delete table;
+        for index~ usize = 0; index < SIDES; index++ {
+            table.push(RingPoint(TABLE_RADIUS, TABLE_HEIGHT, index));
+        }
+        AddFacet(mesh, table, crownColour);
+        bottom := Vec3 { x: 0.0f, y: -PAVILION_DEPTH, z: 0.0f };
+        for index~ usize = 0; index < SIDES; index++ {
+            next: usize = (index + 1) % SIDES;
+            crown: Vec3[4] = [table[index], RingPoint(GIRDLE_RADIUS, 0.0f, index), RingPoint(GIRDLE_RADIUS, 0.0f, next), table[next]];
+            AddFacet(mesh, crown.borrow(), crownColour);
+            pavilion: Vec3[3] = [RingPoint(GIRDLE_RADIUS, 0.0f, index), bottom, RingPoint(GIRDLE_RADIUS, 0.0f, next)];
+            AddFacet(mesh, pavilion.borrow(), pavilionColour);
+        }
+        return mesh!;
+    }
+
+    PushFloats :: (binary: Array<u8>!~*, values: Array<f32>) -> void {
+        for value in values {
+            lantern:::assetgen:::bytes:::PushF32(binary, value);
+        }
+    }
+
+    ViewJson :: (offset: usize, length: usize, target: u32) -> string! {
+        return `{"buffer":0,"byteOffset":${offset},"byteLength":${length},"target":${target}}`;
+    }
+
+    /**
+     * The gem as the bytes of a binary glTF file: one mesh, one triangle primitive with POSITION, NORMAL, TEXCOORD_0 and
+     * COLOR_0, and 32-bit indices.
+     */
+    GemGlb :: () -> Array<u8>! {
+        mesh~ GemMesh = BuildGem();
+        defer delete mesh.positions;
+        defer delete mesh.normals;
+        defer delete mesh.coordinates;
+        defer delete mesh.colours;
+        defer delete mesh.indices;
+        vertexCount: usize = mesh.positions.length() / 3;
+        binary~ Array<u8>! = [];
+        defer delete binary;
+
+        positionsEnd: usize = mesh.positions.length() * 4;
+        PushFloats(binary, mesh.positions);
+        normalsEnd: usize = binary.length() + mesh.normals.length() * 4;
+        PushFloats(binary, mesh.normals);
+        coordinatesEnd: usize = binary.length() + mesh.coordinates.length() * 4;
+        PushFloats(binary, mesh.coordinates);
+        coloursEnd: usize = binary.length() + mesh.colours.length() * 4;
+        PushFloats(binary, mesh.colours);
+        for index in mesh.indices {
+            lantern:::assetgen:::bytes:::PushU32(binary, index);
+        }
+
+        minimum~ Vec3 = Vec3 { x: mesh.positions[0], y: mesh.positions[1], z: mesh.positions[2] };
+        maximum~ Vec3 = minimum;
+        for vertex~ usize = 0; vertex < vertexCount; vertex++ {
+            x: f32 = mesh.positions[vertex * 3];
+            y: f32 = mesh.positions[vertex * 3 + 1];
+            z: f32 = mesh.positions[vertex * 3 + 2];
+            minimum = Vec3 { x: Math:::min(minimum.x, x), y: Math:::min(minimum.y, y), z: Math:::min(minimum.z, z) };
+            maximum = Vec3 { x: Math:::max(maximum.x, x), y: Math:::max(maximum.y, y), z: Math:::max(maximum.z, z) };
+        }
+
+        view0 := ViewJson(0, positionsEnd, 34962);
+        defer delete view0;
+        view1 := ViewJson(positionsEnd, normalsEnd - positionsEnd, 34962);
+        defer delete view1;
+        view2 := ViewJson(normalsEnd, coordinatesEnd - normalsEnd, 34962);
+        defer delete view2;
+        view3 := ViewJson(coordinatesEnd, coloursEnd - coordinatesEnd, 34962);
+        defer delete view3;
+        view4 := ViewJson(coloursEnd, binary.length() - coloursEnd, 34963);
+        defer delete view4;
+
+        glbJson: string! = `{"asset":{"version":"2.0","generator":"lantern generate-assets"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0,"name":"gem"}],"meshes":[{"name":"gem","primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"COLOR_0":3},"indices":4,"mode":4}]}],"accessors":[{"bufferView":0,"componentType":5126,"count":${vertexCount},"type":"VEC3","min":[${minimum.x},${minimum.y},${minimum.z}],"max":[${maximum.x},${maximum.y},${maximum.z}]},{"bufferView":1,"componentType":5126,"count":${vertexCount},"type":"VEC3"},{"bufferView":2,"componentType":5126,"count":${vertexCount},"type":"VEC2"},{"bufferView":3,"componentType":5126,"count":${vertexCount},"type":"VEC4"},{"bufferView":4,"componentType":5125,"count":${mesh.indices.length()},"type":"SCALAR"}],"bufferViews":[${view0},${view1},${view2},${view3},${view4}],"buffers":[{"byteLength":${binary.length()}}]}`;
+        defer delete glbJson;
+
+        jsonLength~ usize = glbJson.length();
+        while jsonLength % 4 != 0 {
+            jsonLength = jsonLength + 1;
+        }
+        while binary.length() % 4 != 0 {
+            binary.push(0);
+        }
+        totalLength: usize = 12 + 8 + jsonLength + 8 + binary.length();
+        glbBytes~ Array<u8>! = [];
+        lantern:::assetgen:::bytes:::PushTag(glbBytes, "glTF");
+        lantern:::assetgen:::bytes:::PushU32(glbBytes, 2);
+        lantern:::assetgen:::bytes:::PushU32(glbBytes, u32(totalLength));
+        lantern:::assetgen:::bytes:::PushU32(glbBytes, u32(jsonLength));
+        lantern:::assetgen:::bytes:::PushTag(glbBytes, "JSON");
+        lantern:::assetgen:::bytes:::PushTag(glbBytes, glbJson);
+        for index~ usize = glbJson.length(); index < jsonLength; index++ {
+            glbBytes.push(32);
+        }
+        lantern:::assetgen:::bytes:::PushU32(glbBytes, u32(binary.length()));
+        lantern:::assetgen:::bytes:::PushTag(glbBytes, "BIN");
+        glbBytes.push(0);
+        for byte in binary {
+            glbBytes.push(byte);
+        }
+        return glbBytes!;
+    }
+}
