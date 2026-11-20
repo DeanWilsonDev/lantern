@@ -1071,6 +1071,38 @@ lantern:::editor :: namespace {
             return key;
         }
 
+        // Places a `scene_instance` of the world file `scenePath` (written from the folder of the level being edited) where the
+        // mouse ray, or the centre of the viewport, meets the level, rounded to the snap step on x and z, and selects it. One undo
+        // step. Returns the new key, or null if it failed.
+        AddSceneInstance~: (scenePath: string, atCursor: bool) -> u64? {
+            if scenePath.length() == 0 {
+                Refuse("a scene needs a file".copy());
+                return null;
+            }
+            pixel: Vec2 = when atCursor { true -> pointer, false -> viewportSize * 0.5f };
+            ray: Ray = Projection().RayThrough(pixel);
+            RefreshGeometry();
+            placed: Vec3? = geometry->PlacementPoint(ray);
+            surface: Vec3 = placed ?? camera.target;
+            step: f32 = when snap.enabled { true -> snap.translateStep, false -> 0.0f };
+            position: Vec3 = Vec3 { x: Snap(surface.x, step), y: surface.y, z: Snap(surface.z, step) };
+            key: u64 = document->documentWorldFile->NextEntityKey();
+            name: string! = UniqueName(document->documentWorldFile, "scene");
+            entity := new lantern:::world:::WorldEntity(key, name, lantern:::world:::SCENE_INSTANCE_KIND);
+            delete name;
+            entity->transform = lantern:::world:::TransformData:::FromPosition(position);
+            entity->SetTextProperty(lantern:::world:::SCENE_PROPERTY, scenePath);
+            edits~ Array<Edit*!>! = [];
+            edits.push(Edit:::Insert(document->documentWorldFile->entities.length(), entity!));
+            added: bool = ExecuteEdits("Add scene", edits!);
+            if !added {
+                return null;
+            }
+            SelectOnly(key);
+            SetStatus(`Added scene ${scenePath}`);
+            return key;
+        }
+
         // Deletes the selected entities and all their descendants as one undo step. The removes are ordered
         // from the last position to the first, so the positions stay valid, and undo puts each back where it
         // was.
