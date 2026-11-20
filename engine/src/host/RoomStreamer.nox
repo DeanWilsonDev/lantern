@@ -15,6 +15,11 @@ public:
     meshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
     groups~ Array<u32>! = [];
     lightIds~ Array<u32>! = [];
+    boxMin~ Array<Vec3>! = [];
+    boxMax~ Array<Vec3>! = [];
+    boxTint~ Array<lantern:::core:::Color>! = [];
+    peek~ Array<lantern:::core:::Handle<lantern:::engine:::EntityTag>>! = [];
+    peekBoxes~ Array<usize>! = [];
 
     StreamedRoom~: (roomName: string) {
         name = `${roomName}`;
@@ -27,6 +32,11 @@ public:
         delete meshes;
         delete groups;
         delete lightIds;
+        delete boxMin;
+        delete boxMax;
+        delete boxTint;
+        delete peek;
+        delete peekBoxes;
     }
 
     IsComplete :: () -> bool {
@@ -47,6 +57,7 @@ public:
     worldFile~ lantern:::world:::WorldFile*!? = null;
     rooms~ Array<StreamedRoom*!>! = [];
     focus~ Array<Vec3>! = [];
+    peekMesh~ lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = null;
     links~ Array<SceneLink*!>! = [];
 
     RoomStreamer~: () { }
@@ -70,6 +81,7 @@ public:
         delete worldFile;
         worldFile = null;
         focus.clear();
+        peekMesh = null;
     }
 
     /**
@@ -99,6 +111,15 @@ public:
 }
 
 lantern:::host :: namespace {
+    /**
+     * How far into an unloaded neighbour, in metres from the opening, the peek draws.
+     */
+    PEEK_DEPTH: f32 : 40.0f;
+    /**
+     * The most boxes the peek draws for one neighbour.
+     */
+    PEEK_MAX_BOXES: usize : 16;
+
     /**
      * Groups the entities that stream into rooms and works out each room's bounds from its members' boxes. Returns which
      * entities of the file stream (the others are spawned by the load itself).
@@ -141,12 +162,132 @@ lantern:::host :: namespace {
             } else {
                 points.push(lantern:::core:::TransformPoint3(piece->worldMatrix, Vec3 { }));
             }
+            if piece->HasMesh() {
+                boxLow~ Vec3 = points[0];
+                boxHigh~ Vec3 = points[0];
+                for corner in points {
+                    boxLow = Vec3 { x: Math:::min(boxLow.x, corner.x), y: Math:::min(boxLow.y, corner.y), z: Math:::min(boxLow.z, corner.z) };
+                    boxHigh = Vec3 { x: Math:::max(boxHigh.x, corner.x), y: Math:::max(boxHigh.y, corner.y), z: Math:::max(boxHigh.z, corner.z) };
+                }
+                room->boxMin.push(boxLow);
+                room->boxMax.push(boxHigh);
+                room->boxTint.push(piece->tint);
+            }
             for corner in points {
                 room->boundsMin = Vec3 { x: Math:::min(room->boundsMin.x, corner.x), y: Math:::min(room->boundsMin.y, corner.y), z: Math:::min(room->boundsMin.z, corner.z) };
                 room->boundsMax = Vec3 { x: Math:::max(room->boundsMax.x, corner.x), y: Math:::max(room->boundsMax.y, corner.y), z: Math:::max(room->boundsMax.z, corner.z) };
             }
         }
         return streams!;
+    }
+
+    /**
+     * Takes a room's peek boxes out of the engine.
+     */
+    RemovePeek :: (state: raw EngineState~*, room: StreamedRoom~*) -> void {
+        unsafe {
+            for handle in room->peek {
+                state->entityWorld->Despawn(handle);
+            }
+        }
+        room->peek.clear();
+        room->peekBoxes.clear();
+    }
+
+    /**
+     * Draws a stand-in for a room that isn't loaded when it joins a room that is: up to `maxBoxes` boxes, each the size of
+     * a real piece's box and its colour, no collision, no tags, no lights, and no shadows. Each step it hides the boxes the
+     * camera can't see through the opening. A room that loads, or that has no loaded neighbour any more, loses its boxes.
+     */
+    UpdatePeeks :: (state: raw EngineState~*, streamer: RoomStreamer~*, depth: f32, maxBoxes: usize) -> void {
+        eye~ Vec3 = Vec3 { };
+        unsafe {
+            eye = state->renderWorld->camera.position;
+        }
+        for roomIndex~ usize = 0; roomIndex < streamer->rooms.length(); roomIndex++ {
+            room: StreamedRoom~* = streamer->rooms[roomIndex];
+            if room->IsPresent() {
+                continue;
+            }
+            linkIndex~ usize? = null;
+            for candidate~ usize = 0; candidate < streamer->links.length(); candidate++ {
+                otherName~ string = streamer->links[candidate]->roomB;
+                if streamer->links[candidate]->roomB == room->name {
+                    otherName = streamer->links[candidate]->roomA;
+                } else if streamer->links[candidate]->roomA != room->name {
+                    continue;
+                }
+                found: usize? = streamer->IndexOf(otherName);
+                if neighbour := found {
+                    if streamer->rooms[neighbour]->IsComplete() {
+                        linkIndex = candidate;
+                        break;
+                    }
+                }
+            }
+            if linkIndex == null {
+                RemovePeek(state, room);
+                continue;
+            }
+            chosenLink: usize = linkIndex ?? 0;
+            link: SceneLink* = streamer->links[chosenLink];
+            if room->peek.length() == 0 && room->boxMin.length() > 0 {
+                SpawnPeek(state, streamer, room, link, depth, maxBoxes);
+            }
+            corners: Array<Vec3>! = lantern:::world:::OpeningCorners(link->position, link->yawDegrees, link->width, link->height);
+            for slot~ usize = 0; slot < room->peek.length(); slot++ {
+                box: usize = room->peekBoxes[slot];
+                seen: bool = lantern:::world:::BoxSeenThroughOpening(eye, corners, room->boxMin[box], room->boxMax[box]);
+                unsafe {
+                    if record ~= state->entityWorld->BorrowMutable(room->peek[slot]) {
+                        if existing := record->meshRenderer {
+                            updated~ lantern:::engine:::MeshRenderer = existing;
+                            updated.visible = seen;
+                            record->meshRenderer = updated;
+                        }
+                    }
+                }
+            }
+            delete corners;
+        }
+    }
+
+    /**
+     * Makes a room's peek boxes for the opening `link`.
+     */
+    SpawnPeek :: (state: raw EngineState~*, streamer: RoomStreamer~*, room: StreamedRoom~*, link: SceneLink*, depth: f32, maxBoxes: usize) -> void {
+        unsafe {
+            if streamer->peekMesh == null {
+                cubeData := lantern:::renderer:::BoxMesh(Vec3 { x: 0.5f, y: 0.5f, z: 0.5f }, true);
+                created := state->renderBackend->CreateMesh(cubeData);
+                delete cubeData;
+                when created! {
+                    Result:::Ok(mesh) -> {
+                        state->worldMeshes.push(mesh);
+                        streamer->peekMesh = mesh;
+                    },
+                    Result:::Err(message) -> {
+                        delete message;
+                        return;
+                    }
+                }
+            }
+            guard cube := streamer->peekMesh return;
+            chosen: Array<usize>! = lantern:::world:::PeekBoxes(room->boxMin, room->boxMax, link->position, depth, maxBoxes);
+            for box in chosen {
+                size: Vec3 = room->boxMax[box] - room->boxMin[box];
+                centre: Vec3 = (room->boxMax[box] + room->boxMin[box]) * 0.5f;
+                transform: lantern:::engine:::Transform = lantern:::engine:::Transform:::FromTranslation(centre).WithScale(size);
+                look~ lantern:::engine:::MeshRenderer = lantern:::engine:::MeshRenderer:::Create(cube, null, room->boxTint[box]);
+                look.castsShadows = false;
+                handle := state->entityWorld->SpawnMesh("peek", GameScene(), transform, look);
+                room->peek.push(handle);
+                room->peekBoxes.push(box);
+            }
+            delete chosen;
+            state->entityWorld->UpdateWorldTransforms();
+            state->entityWorld->StorePreviousTransforms();
+        }
     }
 
     /**
@@ -157,6 +298,9 @@ lantern:::host :: namespace {
         room: StreamedRoom~* = streamer->rooms[roomIndex];
         if room->IsComplete() {
             return false;
+        }
+        if room->nextMember == 0 {
+            RemovePeek(state, room);
         }
         entityIndex: usize = room->members[room->nextMember];
         room->nextMember = room->nextMember + 1;
@@ -260,6 +404,8 @@ lantern:::host :: namespace {
      * `budget` entities between them. Returns how many entities were spawned.
      */
     StreamRooms :: (state: raw EngineState~*, streamer: RoomStreamer~*, loadDistance: f32, unloadDistance: f32, urgentDistance: f32, budget: i32) -> i32 {
+        peekDepth: f32 = PEEK_DEPTH;
+        peekMaxBoxes: usize = PEEK_MAX_BOXES;
         if streamer->rooms.length() == 0 {
             streamer->focus.clear();
             return 0;
@@ -305,6 +451,7 @@ lantern:::host :: namespace {
         delete distances;
         delete present;
         delete complete;
+        UpdatePeeks(state, streamer, peekDepth, peekMaxBoxes);
         streamer->focus.clear();
         return spawnedCount;
     }
