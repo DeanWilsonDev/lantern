@@ -77,6 +77,18 @@ The game's own lamps (`street_lamp`, a game kind) stay resident, so the night lo
 - `engine/tests/host/rooms-stream-in-and-out-as-the-player-walks` loads a synthetic level hundreds of metres long in rooms, walks along it and checks the live entity and triangle counts stay bounded, no step spawns more than the budget outside the urgent ring, and the player is never without a floor.
 - `engine/tests/host/the-crossing-streams-its-scenery` loads the crossing, checks it streams, and plays its opening.
 
+## Composed scenes (design, not built)
+
+Dean's second idea builds on rooms: a **scene** is an object that holds other objects, and scenes are placed into the world and stitched together. The plan keeps one concept: a scene is a world file, a placed scene is a room.
+
+- **Instances.** A `scene_instance` entity has a `scene` property (the scene's world file) and a transform. The loader expands the file's entities into the parent world with the instance's transform composed in, and puts them all in one room named for the instance, so streaming loads and unloads scenes with no new machinery. Entity ids inside an instance are namespaced by the instance, so two instances of one scene don't collide. Scenes nest, to a depth limit. The expansion happens when the world file is loaded or baked, so the running game reads plain entities and never a scene's source.
+- **Sockets.** A `scene_socket` entity inside a scene marks an opening: a position, a facing (its yaw), a width and a height. Stitching places an instance so one of its sockets lies on a socket of its neighbour, facing the other way; the loader keeps each joined pair as an adjacency.
+- **Peeking.** A neighbour that streaming hasn't loaded is drawn only through its opening: a cheap proxy of its near geometry (boxes merged and simplified, no collision, no lights, no entities), shown while the opening is on screen and clipped to the socket's rectangle. Only what is immediately visible, at a lower level of detail, is the point: the proxy is a few hundred triangles and costs one draw. The proxy is baked with the scene, so the game binary still carries no Calamus data.
+- **Navigation and lights across the seam.** The adjacency tells the partner's graph which sockets to join when each side's nodes exist, and tells the streamer that a scene next to a loaded one should load as soon as its socket is within the urgent distance, since someone can walk through.
+- **The editor** places an instance, shows its sockets and snaps the dragged instance to the nearest compatible socket.
+
+Four cards track it under `level-streaming`. The room streaming in this page is the first PR; instances and sockets are the second (engine only, with tests); the peek proxy is the third; the editor is the fourth, in the editor app.
+
 ## Not done
 
 - **Per-room navigation.** Load time is O(level). Build each room's nodes when it loads and join across the boundary, spread over frames.

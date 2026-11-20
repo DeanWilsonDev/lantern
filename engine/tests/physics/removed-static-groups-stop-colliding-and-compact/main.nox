@@ -1,0 +1,54 @@
+// A removed group of static triangles stops colliding at once, an unrelated group and permanent triangles stay, a
+// compaction after many removals keeps what is alive where it was, and a group's id is reused.
+lantern :: import lantern;
+
+DOWN: Vec3 : Vec3 { x: 0.0f, y: -1.0f, z: 0.0f };
+
+DropDistance :: (world: lantern:::physics:::CollisionWorld*, x: f32) -> f32? {
+    hit := world->Raycast(Vec3 { x: x, y: 3.0f, z: 0.0f }, DOWN, 10.0f);
+    guard found := hit return null;
+    return found.distance;
+}
+
+AddSlab :: (world: lantern:::physics:::CollisionWorld~*, x: f32) -> u32 {
+    group := world->BeginStaticGroup();
+    world->AddStaticBox(Vec3 { x: x, y: -0.5f, z: 0.0f }, Vec3 { x: 0.5f, y: 0.5f, z: 0.5f });
+    world->EndStaticGroup();
+    return group;
+}
+
+main :: () -> i32 {
+    world := new lantern:::physics:::CollisionWorld();
+    defer delete world;
+    world->AddStaticBox(Vec3 { x: 100.0f, y: -0.5f, z: 0.0f }, Vec3 { x: 0.5f, y: 0.5f, z: 0.5f });
+    permanentCount: usize = world->StaticTriangleCount();
+    near := AddSlab(world, 0.0f);
+    far := AddSlab(world, 20.0f);
+    assert(world->StaticTriangleCount() == permanentCount * 3, "three boxes");
+    assert(DropDistance(world, 0.0f) != null, "the first slab is there");
+    world->RemoveStaticGroup(near);
+    assert(DropDistance(world, 0.0f) == null, "the removed slab stops colliding");
+    assert(DropDistance(world, 20.0f) != null, "the other slab stays");
+    assert(DropDistance(world, 100.0f) != null, "the permanent box stays");
+    assert(world->StaticTriangleCount() == permanentCount * 2, "the count is the live triangles");
+    reused := AddSlab(world, 40.0f);
+    assert(reused == near, "a removed group's id is handed out again");
+    assert(DropDistance(world, 40.0f) != null, "the new slab collides");
+    assert(DropDistance(world, 0.0f) == null, "the old place is still empty");
+    for round~ i32 = 0; round < 500; round++ {
+        slab := AddSlab(world, 200.0f + f32(round) * 2.0f);
+        world->RemoveStaticGroup(slab);
+    }
+    assert(world->deadStaticCount < 4096 + permanentCount * 2, "compaction ran and left few dead triangles");
+    assert(world->StaticTriangleCount() == permanentCount * 3, "the live triangles are all still counted");
+    assert(DropDistance(world, 20.0f) != null, "a live slab survives compaction");
+    assert(DropDistance(world, 40.0f) != null, "the reused slab survives compaction");
+    assert(DropDistance(world, 100.0f) != null, "the permanent box survives compaction");
+    world->RemoveStaticGroup(far);
+    assert(DropDistance(world, 20.0f) == null, "a group removed after compaction is found at its new place");
+    assert(DropDistance(world, 40.0f) != null, "its neighbour stays");
+    bounds := world->StaticBounds();
+    assert(bounds.max.x < 101.0f, "dead triangles don't count towards the bounds");
+    print("removed static groups stop colliding and compact");
+    return 0;
+}
