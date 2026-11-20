@@ -1,0 +1,33 @@
+// The crossing is split into rooms and the platformer streams them: at the start only the rooms near the player and the
+// partner are alive, and after the player has gone through the first door and she has led on, rooms behind have been
+// let go and the ones ahead have come, with the partner never left without a floor.
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+LoadedRooms :: (host: lantern:::host:::GameHost*) -> i32 {
+    text: string = lantern:::testing:::DebugText(host, "Streaming/Rooms");
+    return i32(text.byteAt(0)) - 48;
+}
+
+main :: () -> i32 {
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := lantern:::testing:::StartPlatformer(manifest, false);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+
+    lantern:::testing:::OpenPrototypeRoom(host, platform, frameLoop, 7);
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 60);
+    lantern:::testing:::AssertNoScriptError(host, "after choosing the crossing");
+    assert(lantern:::testing:::DebugText(host, "Streaming/Rooms").endsWith("of 6 loaded"), "the crossing has six rooms");
+    startRooms: i32 = LoadedRooms(host);
+    assert(startRooms >= 2 && startRooms < 6, "only the rooms near the start are alive");
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyDown(lantern:::core:::KeyCode:::W, false));
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 400);
+    lantern:::testing:::QueueEvent(platform, lantern:::platform:::PlatformEvent:::KeyUp(lantern:::core:::KeyCode:::W));
+    lantern:::testing:::WaitFrames(host, platform, frameLoop, 700);
+    assert(lantern:::testing:::DebugText(host, "Channel/1") == "on", "she holds the first door with streaming on");
+    lantern:::testing:::AssertNoScriptError(host, "at the end");
+    print("the crossing streams its scenery");
+    return 0;
+}

@@ -1,0 +1,117 @@
+/**
+ * Which rooms of a streamed level should be alive. These functions only compare numbers; the engine's host code does the
+ * spawning (`docs/level-streaming.md`).
+ */
+lantern:::world :: namespace {
+    /**
+     * The property that puts a world entity in a room.
+     */
+    ROOM_PROPERTY: string : "room";
+
+    /**
+     * Whether an entity of this kind may live in a room. These are the kinds only the engine gives meaning to; a kind the
+     * game wraps in a class stays resident.
+     */
+    IsStreamableKind :: (kind: string) -> bool {
+        return kind == "block" || kind == "ramp" || kind == PointLightKind() || kind == SpotLightKind();
+    }
+
+    /**
+     * The flat distance from a point to a box: 0 when the point is over or inside it, height ignored.
+     */
+    DistanceToBounds :: (point: Vec3, boundsMin: Vec3, boundsMax: Vec3) -> f32 {
+        outsideX: f32 = Math:::max(Math:::max(boundsMin.x - point.x, point.x - boundsMax.x), 0.0f);
+        outsideZ: f32 = Math:::max(Math:::max(boundsMin.z - point.z, point.z - boundsMax.z), 0.0f);
+        return Math:::sqrt(outsideX * outsideX + outsideZ * outsideZ);
+    }
+
+    /**
+     * The distance from the nearest of the focus points to a box. With no focus points every room is infinitely far.
+     */
+    NearestFocusDistance :: (focus: Array<Vec3>, boundsMin: Vec3, boundsMax: Vec3) -> f32 {
+        nearest~ f32 = 1000000000.0f;
+        for point in focus {
+            distance: f32 = DistanceToBounds(point, boundsMin, boundsMax);
+            if distance < nearest {
+                nearest = distance;
+            }
+        }
+        return nearest;
+    }
+
+    /**
+     * The rooms to load, nearest first: those within `loadDistance` that are not complete yet.
+     */
+    RoomsToLoad :: (distances: Array<f32>, complete: Array<bool>, loadDistance: f32) -> Array<usize>! {
+        order~ Array<usize>! = [];
+        for room~ usize = 0; room < distances.length(); room++ {
+            if complete[room] || distances[room] > loadDistance {
+                continue;
+            }
+            position~ usize = order.length();
+            order.push(room);
+            while position > 0 && distances[order[position - 1]] > distances[room] {
+                order[position] = order[position - 1];
+                position--;
+            }
+            order[position] = room;
+        }
+        return order!;
+    }
+
+    /**
+     * The rooms to unload: those with something alive that are farther than `unloadDistance`.
+     */
+    RoomsToUnload :: (distances: Array<f32>, present: Array<bool>, unloadDistance: f32) -> Array<usize>! {
+        rooms~ Array<usize>! = [];
+        for room~ usize = 0; room < distances.length(); room++ {
+            if present[room] && distances[room] > unloadDistance {
+                rooms.push(room);
+            }
+        }
+        return rooms!;
+    }
+
+    /**
+     * The room one entity belongs to, or "" when it stays resident. An entity with a `room` property that can't stream (the
+     * wrong kind, a parent or a child, a kinematic collider) stays resident and is reported as a warning.
+     */
+    RoomOf :: (worldFile: WorldFile*, index: usize) -> string! {
+        entity: WorldEntity* = worldFile->entities[index];
+        roomText: string!? = entity->TextProperty(ROOM_PROPERTY);
+        defer delete roomText;
+        guard roomName := roomText return "".copy();
+        problem~ string? = null;
+        if !IsStreamableKind(entity->kind) {
+            problem = "its kind is one the game gives behaviour to";
+        } else if entity->parent != null {
+            problem = "it has a parent";
+        } else if entity->collider == ColliderKind:::Kinematic {
+            problem = "its collider is kinematic";
+        } else {
+            for other~ usize = 0; other < worldFile->entities.length(); other++ {
+                if worldFile->entities[other]->parent == entity->id {
+                    problem = "it has a child";
+                }
+            }
+        }
+        if reason := problem {
+            warning: string! = `'${entity->name}' has a room but stays resident: ${reason}`;
+            lantern:::core:::LogWarn("world", warning);
+            delete warning;
+            return "".copy();
+        }
+        return `${roomName}`;
+    }
+
+    /**
+     * The room each entity of the file belongs to, in file order: "" for an entity that stays resident.
+     */
+    RoomMembership :: (worldFile: WorldFile*) -> Array<string!>! {
+        names~ Array<string!>! = [];
+        for index~ usize = 0; index < worldFile->entities.length(); index++ {
+            names.push(RoomOf(worldFile, index));
+        }
+        return names!;
+    }
+}
