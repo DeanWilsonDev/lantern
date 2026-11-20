@@ -77,7 +77,7 @@ A level is a JSON world file in `games/platformer/assets/worlds/`. The editor wr
   (a moving platform), and the engine builds its mesh and collision.
 - A **marker** has only a transform and a `kind`. The game gives it meaning: `spawn` is where the player starts (its
   `chapter` property picks the look from `settings/chapter-looks.nyx`), `kill_plane` is a height below which the player has
-  fallen, `gem` is a collectable. Any other kind is a free label.
+  fallen, `gem` is a collectable, `play_start` is added by the editor's Play button to its scratch copy (see `LevelScene:::PlaceAtPlayStart`) and moves the start to where the editor is looking, so don't place one by hand. Any other kind is a free label.
 - `properties` is free-form data per entity, read from Nyx with `lantern:::world:::NumberProperty`, `TextProperty` and
   `VectorProperty` (and `HasProperty` first when it's optional).
 

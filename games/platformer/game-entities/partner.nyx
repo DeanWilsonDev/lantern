@@ -45,6 +45,8 @@ public:
     action~ string = "";
     // The beat she is walking to, or working at. Equal to the number of beats once she has finished them all.
     beatIndex~ i32 = 0;
+    // The beat she begins at when the level starts or restarts: 0, unless play in editor dropped the player partway through.
+    firstBeat~ i32 = 0;
     // Set when she can't do what she meant to; the game shows it once and clears it.
     note~ string = "";
     controller~ lantern:::physics:::CharacterController = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, lantern:::math:::Vec3:::Zero());
@@ -53,6 +55,7 @@ public:
     // companion wear too (docs/animation.md). A level with no partner marker has no partner at all.
     Spawn~: (start: lantern:::math:::Vec3, rig: i64, bodyTexture: i64, beatsInOrder~ Array<TeamBeat>) -> void {
         isPresent = true;
+        firstBeat = 0;
         beats = beatsInOrder;
         controller = new lantern:::physics:::CharacterController(PartnerTuning:::RADIUS, PartnerTuning:::HEIGHT, start);
         controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED);
@@ -62,6 +65,13 @@ public:
         animation = new CharacterAnimator();
         animation.Create(root, "partner_body", rig, bodyTexture, "E8506A");
         BeginAgain(start);
+    }
+
+    // Makes `index` the beat she begins at, now and after a restart, so a level started partway through does not
+    // send her back to its first beat.
+    BeginAtBeat~: (index: i32) -> void {
+        firstBeat = Math:::clamp(index, 0, beats.length());
+        beatIndex = firstBeat;
     }
 
     // Back at `start`, starting her beats again: the level was restarted.
@@ -215,7 +225,7 @@ private:
         mode = PartnerMode:::Waiting;
         action = "";
         note = "";
-        beatIndex = 0;
+        beatIndex = firstBeat;
         route = [];
         routeIndex = 0;
         trail = [];
