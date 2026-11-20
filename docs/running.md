@@ -137,6 +137,7 @@ These environment variables are read by the engine and the game:
 | `LANTERN_GPU_DRIVER` | Force an SDL GPU driver, such as `vulkan` or `metal`. |
 | `LANTERN_GPU_DEBUG=1` | SDL GPU's debug mode (validation layers where the driver has them). |
 | `LANTERN_MAX_FRAMES=N` | Stop after N frames, so a run ends on its own. |
+| `LANTERN_DEBUG_FILTER=text` | Start the debug window with this filter typed, so a screenshot shows one group of values (`Streaming`). |
 | `LANTERN_CAPTURE_PATH=out.png` | Save the last frame as a PNG when the run ends. Combine with `LANTERN_MAX_FRAMES` for a screenshot. |
 | `LANTERN_SHADER_DIRECTORY` | Load compiled shaders from another directory (`mist run test` sets it to `engine/shaders/compiled`). |
 | `LANTERN_RUNNER` | The path of the game executable the editor's Play button starts. |
