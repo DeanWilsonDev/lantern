@@ -1,0 +1,96 @@
+// The folder a packaged game unpacks into must be one only the running user can write. This sets the environment the
+// way a player's machine would and checks which folder is chosen, that the folder is created and reused, and that a
+// symbolic link planted where the folder should be is refused.
+
+lantern:::testcalls :: foreign "c" {
+    symlink :: (target: string, link: string) -> i32;
+    unsetenv :: (name: string) -> i32;
+}
+
+SetVariable :: (name: string, value: string) -> void {
+    unsafe {
+        lantern:::archivecalls:::setenv(name, value, 1);
+    }
+}
+
+ClearVariable :: (name: string) -> void {
+    unsafe {
+        lantern:::testcalls:::unsetenv(name);
+    }
+}
+
+RootEquals :: (expected: string) -> bool {
+    root: string!? = lantern:::privatedirectory:::UnpackRoot();
+    matches~ bool = false;
+    if found := root {
+        matches = found == expected;
+    }
+    delete root;
+    return matches;
+}
+
+main :: () -> i32 {
+    base: string! = `/tmp/lantern-private-test-${monotonicNanoseconds()}`;
+    defer delete base;
+    createDirectories(base);
+    home: string! = `${base}/home`;
+    defer delete home;
+    createDirectories(home);
+
+    ClearVariable("LANTERN_CACHE_DIRECTORY");
+    ClearVariable("XDG_CACHE_HOME");
+    ClearVariable("TMPDIR");
+    SetVariable("HOME", home);
+
+    expectedCache: string! = when const TARGET_PLATFORM <Platform> {
+        MacOS -> `${home}/Library/Caches/lantern`,
+        default -> `${home}/.cache/lantern`
+    };
+    defer delete expectedCache;
+    assert(RootEquals(expectedCache), "with nothing chosen the folder is under the user's cache folder");
+
+    explicit: string! = `${base}/chosen`;
+    defer delete explicit;
+    expectedExplicit: string! = `${explicit}/lantern`;
+    defer delete expectedExplicit;
+    SetVariable("LANTERN_CACHE_DIRECTORY", explicit);
+    assert(RootEquals(expectedExplicit), "LANTERN_CACHE_DIRECTORY wins");
+    ClearVariable("LANTERN_CACHE_DIRECTORY");
+
+    problem: string!? = lantern:::privatedirectory:::EnsurePrivate(expectedExplicit);
+    assert(problem == null, "a missing folder is created");
+    delete problem;
+    assert(directoryExists(expectedExplicit), "the folder exists afterwards");
+    again: string!? = lantern:::privatedirectory:::EnsurePrivate(expectedExplicit);
+    assert(again == null, "the folder is accepted again on the next start");
+    delete again;
+    assert(!lantern:::privatedirectory:::IsSymbolicLink(expectedExplicit), "a real folder is not a link");
+
+    elsewhere: string! = `${base}/elsewhere`;
+    defer delete elsewhere;
+    createDirectories(elsewhere);
+    planted: string! = `${base}/planted`;
+    defer delete planted;
+    unsafe {
+        lantern:::testcalls:::symlink(elsewhere, planted);
+    }
+    assert(lantern:::privatedirectory:::IsSymbolicLink(planted), "a link is seen as a link");
+    refused: string!? = lantern:::privatedirectory:::EnsurePrivate(planted);
+    if message := refused {
+        assert(message.contains("symbolic link"), "the refusal says why");
+    } else {
+        assert(false, "a symbolic link is refused");
+    }
+    delete refused;
+
+    marker: string! = `${expectedExplicit}/${lantern:::archive:::COMPLETE_MARKER}`;
+    defer delete marker;
+    writeTextFile(marker, "12345");
+    assert(lantern:::archive:::IsUnpacked(expectedExplicit, 12345), "a marker with this fingerprint counts as unpacked");
+    assert(!lantern:::archive:::IsUnpacked(expectedExplicit, 54321), "a marker from another build does not");
+    removeFile(marker);
+    assert(!lantern:::archive:::IsUnpacked(expectedExplicit, 12345), "a folder with no marker is not unpacked");
+
+    print("a packaged game unpacks only into a private folder");
+    return 0;
+}

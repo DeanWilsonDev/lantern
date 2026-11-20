@@ -1,0 +1,231 @@
+// Where a packaged game unpacks itself, and how that folder is kept private.
+//
+// A packaged game (`mist run package`) carries its scripts, worlds and shaders inside the executable and writes them
+// to a folder on the first start, then runs from there. Whatever is in that folder runs with the player's rights, so
+// nobody else may be able to write to it. A shared folder such as /tmp is the wrong home: its names are predictable, and
+// another user could create `/tmp/lantern-<name>` first, or a symbolic link with that name, and fill it with files of
+// their own. So the folder lives under the player's own cache folder, and is made mode 0700 and checked before it is used.
+
+lantern:::privatecalls :: foreign "c" {
+    // The effective user id of the running program. Zero is the administrator.
+    geteuid :: () -> u32;
+    // Sets a folder's permission bits. It succeeds only for the folder's owner (and the administrator), which is how
+    // this file proves a folder that already existed is ours, without reading the platform's `struct stat` layout.
+    chmod :: (path: string, mode: u32) -> i32;
+    // Reads where a symbolic link points. It fails when the path is not a link, which is the only answer needed here.
+    readlink :: (path: string, buffer: Array<u8~>, size: usize) -> isize;
+}
+
+lantern:::privatedirectory :: namespace {
+    // 0700 written in decimal: the owner may read, write and enter, nobody else may do anything.
+    OWNER_ONLY_MODE: u32 : 448;
+    LINK_BUFFER_SIZE: usize : 4096;
+
+    RunningOnWindows :: () -> bool {
+        return when const TARGET_PLATFORM <Platform> {
+            Windows -> true,
+            default -> false
+        };
+    }
+
+    // True when the path itself is a symbolic link, whatever it points at. Windows has no such links to follow here.
+    IsSymbolicLink :: (path: string) -> bool {
+        linked~ bool = false;
+        unsafe {
+            when const TARGET_PLATFORM <Platform> {
+                Windows -> {
+                },
+                default -> {
+                    buffer~ u8[4096] = filled<u8, 4096>(0);
+                    linked = lantern:::privatecalls:::readlink(path, buffer.borrow().mutable(), LINK_BUFFER_SIZE) >= 0;
+                }
+            }
+        }
+        return linked;
+    }
+
+    // True when the running program is the administrator, who can change any folder's mode, so the ownership check
+    // below proves nothing for them.
+    RunningAsAdministrator :: () -> bool {
+        administrator~ bool = false;
+        unsafe {
+            when const TARGET_PLATFORM <Platform> {
+                Windows -> {
+                },
+                default -> {
+                    administrator = lantern:::privatecalls:::geteuid() == 0;
+                }
+            }
+        }
+        return administrator;
+    }
+
+    // The effective user id as text, for naming a folder in a shared place. Windows has none and never needs it.
+    UserName :: () -> string! {
+        name~ string! = "0".copy();
+        unsafe {
+            when const TARGET_PLATFORM <Platform> {
+                Windows -> {
+                },
+                default -> {
+                    delete name;
+                    name = `${lantern:::privatecalls:::geteuid()}`;
+                }
+            }
+        }
+        return name!;
+    }
+
+    // The value of an environment variable, or null when it is unset or empty.
+    NonEmptyVariable :: (name: string) -> string!? {
+        value: string!? = environmentVariable(name);
+        if text := value {
+            if text.length() > 0 {
+                copied: string! = `${text}`;
+                delete value;
+                return copied!;
+            }
+        }
+        delete value;
+        return null;
+    }
+
+    // `parent/lantern` for a parent taken from the environment, or null when the variable is not set.
+    UnderVariable :: (name: string, suffix: string) -> string!? {
+        value: string!? = NonEmptyVariable(name);
+        if base := value {
+            joined: string! = `${base}${suffix}`;
+            delete value;
+            return joined!;
+        }
+        delete value;
+        return null;
+    }
+
+    WindowsCacheBase :: () -> string!? {
+        local: string!? = UnderVariable("LOCALAPPDATA", "");
+        if local != null {
+            return local!;
+        }
+        delete local;
+        return UnderVariable("USERPROFILE", "/AppData/Local");
+    }
+
+    // XDG_CACHE_HOME when it is set to an absolute path (the specification ignores a relative one), else `.cache`.
+    LinuxCacheBase :: () -> string!? {
+        configured: string!? = NonEmptyVariable("XDG_CACHE_HOME");
+        if base := configured {
+            if base.startsWith("/") {
+                joined: string! = `${base}`;
+                delete configured;
+                return joined!;
+            }
+        }
+        delete configured;
+        return UnderVariable("HOME", "/.cache");
+    }
+
+    // Where the player's cache folder is, as the platform names it: LOCALAPPDATA on Windows, `Library/Caches` on macOS,
+    // XDG_CACHE_HOME or `.cache` elsewhere. Null when the home folder isn't known either.
+    CacheBase :: () -> string!? {
+        return when const TARGET_PLATFORM <Platform> {
+            Windows -> WindowsCacheBase(),
+            MacOS -> UnderVariable("HOME", "/Library/Caches"),
+            default -> LinuxCacheBase()
+        };
+    }
+
+    // The folder every packaged build unpacks under, before it is made private. In order: LANTERN_CACHE_DIRECTORY (the
+    // player's own choice), the platform's cache folder, then a folder named for the user inside TMPDIR or /tmp. The last
+    // is refused for the administrator, since nothing can show that a folder they find there is theirs. Null when no
+    // folder is safe to use.
+    UnpackRoot :: () -> string!? {
+        chosen: string!? = UnderVariable("LANTERN_CACHE_DIRECTORY", "/lantern");
+        if chosen != null {
+            return chosen!;
+        }
+        delete chosen;
+        cacheBase: string!? = CacheBase();
+        if base := cacheBase {
+            joined: string! = `${base}/lantern`;
+            delete cacheBase;
+            return joined!;
+        }
+        delete cacheBase;
+        if RunningOnWindows() || RunningAsAdministrator() {
+            return null;
+        }
+        user: string! = UserName();
+        defer delete user;
+        temporary: string!? = NonEmptyVariable("TMPDIR");
+        if base := temporary {
+            joined: string! = `${base}/lantern-${user}`;
+            delete temporary;
+            return joined!;
+        }
+        delete temporary;
+        return `/tmp/lantern-${user}`;
+    }
+
+    // The part of a path before its last slash.
+    Parent :: (path: string) -> string! {
+        if slash := path.lastIndexOf("/") {
+            return `${path.substring(0, slash)}`;
+        }
+        return ".".copy();
+    }
+
+    // Makes `path` a folder that only the running user can write, creating it (and its parents) when needed. Returns a
+    // message, and leaves the folder alone, when it can't be trusted: when it is a symbolic link, when it isn't a folder,
+    // or when another user owns it. A folder this user owns is tightened to mode 0700, so one made earlier with a looser
+    // mode is repaired rather than refused.
+    EnsurePrivate :: (path: string) -> string!? {
+        if IsSymbolicLink(path) {
+            failure: string! = `${path} is a symbolic link, so the game will not unpack into it`;
+            return failure!;
+        }
+        parent: string! = Parent(path);
+        defer delete parent;
+        when createDirectories(parent) {
+            Result:::Ok(created) -> {
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${parent}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        when createDirectories(path) {
+            Result:::Ok(created) -> {
+            },
+            Result:::Err(error) -> {
+                failure: string! = `${path}: ${error.message()}`;
+                delete error;
+                return failure!;
+            }
+        }
+        if !directoryExists(path) {
+            failure: string! = `${path} is not a folder, so the game will not unpack into it`;
+            return failure!;
+        }
+        denied~ bool = false;
+        unsafe {
+            when const TARGET_PLATFORM <Platform> {
+                Windows -> {
+                },
+                default -> {
+                    denied = lantern:::privatecalls:::chmod(path, OWNER_ONLY_MODE) != 0;
+                }
+            }
+        }
+        if denied {
+            failure: string! = `${path} belongs to another user, so the game will not unpack into it`;
+            return failure!;
+        }
+        if IsSymbolicLink(path) {
+            failure: string! = `${path} became a symbolic link, so the game will not unpack into it`;
+            return failure!;
+        }
+        return null;
+    }
+}
