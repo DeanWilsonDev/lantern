@@ -11,11 +11,13 @@ fi
 export LANTERN_SHADER_DIRECTORY="$engine_directory/shaders/compiled"
 test_suites=()
 for suite_directory in tests/*/; do
+    [[ "$suite_directory" == tests/screenshots/ ]] && continue
     test_suites+=("${suite_directory%/}")
 done
 "$nox_command" test "$@" "${test_suites[@]}"
 
 if [[ $# -eq 0 ]]; then
+    "$engine_directory/tools/run-screenshot-tests.sh"
     "$nox_command" run --release --project tools/generate-assets -- --check "$engine_directory/../games/platformer/assets"
 fi
 
