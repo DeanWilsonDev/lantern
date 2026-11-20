@@ -753,6 +753,30 @@ lantern:::editorapi :: namespace {
         return EntityId(editorInstance->Session()->AddEntity(templateId, false));
     }
 
+    // Places a scene instance of the world file the asset browser calls `virtualWorldPath` (`Worlds/scenes/hall.world.json`) at
+    // the centre of the view and returns its key, or 0. The scene is named from the folder of the level being edited, so the
+    // level has to be saved first and the asset has to live under the same assets folder as the level.
+    export AddSceneInstance :: (editorInstance: Editor~*, virtualWorldPath: string) -> i64 {
+        editorInstance->ClearApiStatus();
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        defer delete assetsDirectory;
+        if editorInstance->Session()->document->path == null {
+            editorInstance->Session()->SetStatus("Save the level before placing a scene in it".copy());
+            return 0;
+        }
+        sceneFile: string! = lantern:::editorbackend:::ResolveAssetFile(assetsDirectory, virtualWorldPath);
+        defer delete sceneFile;
+        levelDirectory~ string! = "".copy();
+        if levelPath := editorInstance->Session()->document->path {
+            delete levelDirectory;
+            levelDirectory = lantern:::world:::DirectoryOf(levelPath);
+        }
+        defer delete levelDirectory;
+        relative: string! = lantern:::world:::RelativePath(levelDirectory, sceneFile);
+        defer delete relative;
+        return EntityId(editorInstance->Session()->AddSceneInstance(relative, false));
+    }
+
     export DeleteSelection :: (editorInstance: Editor~*) -> bool {
         return editorInstance->Session()->DeleteSelection();
     }

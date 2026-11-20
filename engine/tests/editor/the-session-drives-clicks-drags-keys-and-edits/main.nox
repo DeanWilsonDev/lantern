@@ -233,6 +233,28 @@ TypingIntoAFieldIsOneUndoStep :: () -> void {
     assert(!session->document->IsDirty(), "both undos leave it clean");
 }
 
+AddASceneInstance :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    count: usize = session->World()->entities.length();
+    addedFound: u64? = session->AddSceneInstance("scenes/hall.world.json", false);
+    guard added := addedFound return;
+    assert(session->World()->entities.length() == count + 1, "adding a scene inserts one entity");
+    assert(OnlySelected(session, added), "the new scene instance is selected");
+    if instance := EntityOf(session, added) {
+        assert(instance->kind == "scene_instance", "it is a scene instance");
+        scenePath: string!? = instance->TextProperty("scene");
+        defer delete scenePath;
+        guard named := scenePath return;
+        assert(named == "scenes/hall.world.json", "it names the scene file");
+    }
+    session->Undo();
+    assert(session->World()->entities.length() == count, "one undo takes the scene back out");
+    refused: u64? = session->AddSceneInstance("", false);
+    assert(refused == null, "a scene needs a file");
+}
+
 AddDuplicateAndDelete :: () -> void {
     session~ lantern:::editor:::EditorSession*!? = CourseSession();
     guard session return;
@@ -640,6 +662,7 @@ main :: () -> i32 {
     RotateAndScaleTools();
     TypingIntoAFieldIsOneUndoStep();
     AddDuplicateAndDelete();
+    AddASceneInstance();
     DeletingAParentTakesItsChildrenAndOutlineNestsThem();
     SavingRoundTripsAndClearsDirty();
     CameraControls();
