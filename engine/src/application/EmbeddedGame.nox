@@ -10,34 +10,9 @@ lantern:::application :: namespace {
     }
 
     /**
-     * The folder a packaged game's files are unpacked into: LANTERN_CACHE_DIRECTORY, else TMPDIR, else /tmp, then
-     * `lantern-<fingerprint of the archive>`, so a new build unpacks afresh and the same build only once.
-     */
-    UnpackDirectory :: (fingerprint: u32) -> string! {
-        configured: string!? = environmentVariable("LANTERN_CACHE_DIRECTORY");
-        if text := configured {
-            if text.length() > 0 {
-                directory: string! = `${text}/lantern-${fingerprint}`;
-                delete configured;
-                return directory!;
-            }
-        }
-        delete configured;
-        temporary: string!? = environmentVariable("TMPDIR");
-        if text := temporary {
-            if text.length() > 0 {
-                directory: string! = `${text}/lantern-${fingerprint}`;
-                delete temporary;
-                return directory!;
-            }
-        }
-        delete temporary;
-        return `/tmp/lantern-${fingerprint}`;
-    }
-
-    /**
-     * When the running program has a game archive appended (`mist run package`), unpacks it if this build hasn't been
-     * unpacked yet, points the shader directory at it and runs the game. Returns null for a program with no archive.
+     * When the running program has a game archive appended (`mist run package`), unpacks it into the player's private
+     * folder if this build hasn't been unpacked there yet, points the shader directory at it and runs the game. Returns
+     * null for a program with no archive.
      */
     RunEmbeddedGame :: (arguments: Array<string>) -> i32? {
         when ReadOwnProgram(arguments) {
@@ -53,14 +28,49 @@ lantern:::application :: namespace {
         }
     }
 
+    // The folder this build unpacks into: the fingerprint inside a folder only this user can write. The unpacked game runs
+    // with the player's rights, so a shared folder such as /tmp is never used as it stands (lantern:::privatedirectory).
+    // Logs why and returns null when no such folder can be had.
+    PrivateUnpackDirectory :: (fingerprint: u32) -> string!? {
+        root: string!? = lantern:::privatedirectory:::UnpackRoot();
+        if rootPath := root {
+            problem: string!? = lantern:::privatedirectory:::EnsurePrivate(rootPath);
+            if message := problem {
+                lantern:::core:::LogError("game", message);
+                delete problem;
+                delete root;
+                return null;
+            }
+            delete problem;
+            directory: string! = `${rootPath}/${fingerprint}`;
+            delete root;
+            // The build's own folder gets the same checks as the root, so one planted there (a link, or a folder
+            // another user made) is refused before its marker is believed.
+            folderProblem: string!? = lantern:::privatedirectory:::EnsurePrivate(directory);
+            if folderMessage := folderProblem {
+                lantern:::core:::LogError("game", folderMessage);
+                delete folderProblem;
+                delete directory;
+                return null;
+            }
+            delete folderProblem;
+            return directory!;
+        }
+        delete root;
+        lantern:::core:::LogError("game", "no private folder to unpack into: set LANTERN_CACHE_DIRECTORY to one you own");
+        return null;
+    }
+
     RunEmbeddedFrom :: (programBytes: Array<u8>) -> i32? {
         start: usize? = lantern:::archive:::FindStart(programBytes);
         guard archiveStart := start return null;
-        directory: string! = UnpackDirectory(lantern:::archive:::Fingerprint(programBytes, archiveStart));
-        defer delete directory;
-        marker: string! = `${directory}/${lantern:::archive:::COMPLETE_MARKER}`;
-        defer delete marker;
-        if !pathExists(marker) {
+        fingerprint: u32 = lantern:::archive:::Fingerprint(programBytes, archiveStart);
+        choice: string!? = PrivateUnpackDirectory(fingerprint);
+        defer delete choice;
+        guard directory := choice return 1;
+        // The marker is written last and holds the fingerprint, so a start reuses the folder only when a complete
+        // unpack of this very build is already there, and otherwise unpacks again over it.
+        if !lantern:::archive:::IsUnpacked(directory, fingerprint) {
             problem: string!? = lantern:::archive:::Unpack(programBytes, archiveStart, directory);
             if message := problem {
                 lantern:::core:::LogError("game", message);
