@@ -80,6 +80,7 @@ then upload the two files it writes as the release's assets. Settings: `LANTERN_
 ## Running tests
 
 - `mist run test` runs every suite under `engine/tests/` in about 12 seconds once built.
+- `mist run test` also runs the screenshot comparison tests when lavapipe is installed (`apt-get install mesa-vulkan-drivers`); `mist run screenshots -- --update` re-records them. See `screenshot-tests.md`.
 - `mist run test --filter TEXT` printed nothing in a trial run, so don't rely on it.
 - `engine/tools/run-one-test.sh TEST-NAME` builds and runs one test program (for example `the-watcher-room`) directly,
   and prints the failing assertion's file, line and message, which `nox test` hides behind "it exited abort".

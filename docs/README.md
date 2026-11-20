@@ -26,6 +26,7 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`grounded-adventure.md`](grounded-adventure.md) | The grounded feel, player-only climbing, the word and food minigames, the station and its trains, and every tunable. |
 | [`grounded-adventure-ideas.md`](grounded-adventure-ideas.md) | Five more ideas to test for the action-adventure direction, with how each would be fun and what it costs. |
 | [`playtest-checklist.md`](playtest-checklist.md) | What to try in each prototype room, with and without her, and what to note. |
+| [`screenshot-tests.md`](screenshot-tests.md) | Comparing fixed scenes with reference screenshots on the software renderer: the command, updating references, tolerance, adding a scene. |
 | [`night-look.md`](night-look.md) | Why the platformer is played at night, the moon, sky and lamps that make it readable, and the day look. |
 | [`camera.md`](camera.md) | The follow camera, camera volumes, authored shots, blends and how a level designer places them. |
 | [`audio.md`](audio.md) | The mixer and its buses, positional sound, ambience and music layers, footsteps, and how to swap in real recordings. |
