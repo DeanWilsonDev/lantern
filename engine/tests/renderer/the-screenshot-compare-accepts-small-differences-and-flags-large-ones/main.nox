@@ -1,0 +1,59 @@
+// The screenshot comparison accepts a rounding-sized difference, counts the pixels that differ by more than the tolerance,
+// ignores alpha, rejects images of different sizes, and draws a diff image that marks the differing pixels in red.
+lantern :: import lantern;
+
+SolidImage :: (width: u32, height: u32, value: u8) -> lantern:::renderer:::TextureData*! {
+    image := new lantern:::renderer:::TextureData(width, height, lantern:::renderer:::TextureFilter:::Linear, lantern:::renderer:::TextureWrap:::Repeat);
+    for pixelIndex~ u32 = 0; pixelIndex < width * height; pixelIndex++ {
+        image->rgba8.push(value);
+        image->rgba8.push(value);
+        image->rgba8.push(value);
+        image->rgba8.push(255);
+    }
+    return image!;
+}
+
+main :: () -> i32 {
+    reference := SolidImage(10, 10, 100);
+    defer delete reference;
+
+    identical := SolidImage(10, 10, 100);
+    defer delete identical;
+    sameResult := lantern:::screenshots:::Compare(identical, reference, 6, 0.0f);
+    assert(sameResult.matches, "identical images match with no tolerance at all");
+    assert(sameResult.differingPixels == 0 && sameResult.largestDifference == 0, "identical images have no difference");
+
+    rounded := SolidImage(10, 10, 104);
+    defer delete rounded;
+    roundedResult := lantern:::screenshots:::Compare(rounded, reference, 6, 0.0f);
+    assert(roundedResult.matches, "a difference within the channel tolerance is not counted");
+    assert(roundedResult.largestDifference == 4, "the largest difference is still reported");
+
+    changed := SolidImage(10, 10, 100);
+    defer delete changed;
+    changed->rgba8[0] = 200;
+    changed->rgba8[4 * 7 + 1] = 20;
+    changed->rgba8[3] = 0;
+    strictResult := lantern:::screenshots:::Compare(changed, reference, 6, 0.0f);
+    assert(!strictResult.matches, "two pixels far off fail when no pixel may differ");
+    assert(strictResult.differingPixels == 2, "both far-off pixels are counted, and the alpha change is not");
+    assert(strictResult.largestDifference == 100, "the largest difference is the 100 step on red");
+    shareResult := lantern:::screenshots:::Compare(changed, reference, 6, 0.02f);
+    assert(shareResult.matches, "two of a hundred pixels pass when two percent may differ");
+    tightShareResult := lantern:::screenshots:::Compare(changed, reference, 6, 0.01f);
+    assert(!tightShareResult.matches, "two of a hundred pixels fail when one percent may differ");
+
+    smaller := SolidImage(10, 9, 100);
+    defer delete smaller;
+    sizeResult := lantern:::screenshots:::Compare(smaller, reference, 6, 1.0f);
+    assert(!sizeResult.sameSize && !sizeResult.matches, "images of different sizes never match");
+
+    diff := lantern:::screenshots:::DiffImage(changed, reference, 6);
+    defer delete diff;
+    assert(diff->width == 10 && diff->height == 10, "the diff image is the size of the images");
+    assert(diff->rgba8[0] > 128 && diff->rgba8[1] == 0 && diff->rgba8[2] == 0, "a differing pixel is red");
+    assert(diff->rgba8[4 * 2] == diff->rgba8[4 * 2 + 1], "a matching pixel is grey");
+
+    print("the screenshot compare accepts small differences and flags large ones");
+    return 0;
+}

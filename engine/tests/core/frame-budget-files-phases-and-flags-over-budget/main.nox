@@ -1,0 +1,55 @@
+// The frame budget files each frame's phases, takes physics out of scripting, measures a frame from one end to the next and
+// counts the frames that ran more than a millisecond past 1000/60 ms.
+lantern :: import lantern;
+
+NANOSECONDS_PER_MILLISECOND: u64 : 1000000;
+
+NearlyEqual :: (first: f64, second: f64) -> bool {
+    difference: f64 = first - second;
+    return difference < 0.000001f && difference > -0.000001f;
+}
+
+main :: () -> i32 {
+    budget := new lantern:::core:::FrameBudget();
+    defer delete budget;
+    budget->recording = true;
+
+    budget->Add(lantern:::core:::BUDGET_PHASE_SCRIPTING, 5.0f);
+    budget->Add(lantern:::core:::BUDGET_PHASE_PHYSICS, 2.0f);
+    budget->Add(lantern:::core:::BUDGET_PHASE_RENDER, 8.0f);
+    budget->EndFrame(1000 * NANOSECONDS_PER_MILLISECOND);
+    assert(budget->filledCount == 1, "one frame is filed");
+    assert(NearlyEqual(budget->PhaseMillisecondsAgo(lantern:::core:::BUDGET_PHASE_SCRIPTING, 0), 3.0f), "physics is taken out of scripting");
+    assert(NearlyEqual(budget->PhaseMillisecondsAgo(lantern:::core:::BUDGET_PHASE_PHYSICS, 0), 2.0f), "physics keeps its time");
+    assert(NearlyEqual(budget->FrameMillisecondsAgo(0), 13.0f), "with no earlier frame the length is the phases' sum");
+    assert(!budget->IsOver(budget->FrameMillisecondsAgo(0)), "13 ms is inside the budget");
+
+    budget->Add(lantern:::core:::BUDGET_PHASE_RENDER, 10.0f);
+    budget->EndFrame((1000 + 17) * NANOSECONDS_PER_MILLISECOND);
+    assert(NearlyEqual(budget->FrameMillisecondsAgo(0), 17.0f), "the length runs from one EndFrame to the next");
+    assert(NearlyEqual(budget->OtherMillisecondsAgo(0), 7.0f), "what no phase accounts for is other");
+    assert(budget->OverBudgetInHistory() == 0, "17 ms is within the millisecond of tolerance");
+
+    budget->Add(lantern:::core:::BUDGET_PHASE_SCRIPTING, 25.0f);
+    budget->EndFrame((1000 + 17 + 26) * NANOSECONDS_PER_MILLISECOND);
+    assert(budget->IsOver(budget->FrameMillisecondsAgo(0)), "26 ms is over");
+    assert(budget->OverBudgetInHistory() == 1 && budget->overBudgetTotal == 1, "one frame is over budget");
+    assert(NearlyEqual(budget->WorstFrameMilliseconds(), 26.0f), "the worst frame is the long one");
+    assert(NearlyEqual(budget->PhaseMillisecondsAgo(lantern:::core:::BUDGET_PHASE_SCRIPTING, 1), 0.0f), "the frame before had no scripting");
+    assert(NearlyEqual(budget->FrameMillisecondsAgo(2), 13.0f), "the history reaches back to the first frame");
+    assert(budget->FrameMillisecondsAgo(3) == 0.0f, "beyond the history is zero");
+
+    budget->EndFrame((1000 + 17 + 26 + 900) * NANOSECONDS_PER_MILLISECOND);
+    assert(NearlyEqual(budget->FrameMillisecondsAgo(0), 0.0f), "a gap of over a quarter second isn't taken as a frame length");
+
+    for frame~ usize = 0; frame < 300; frame++ {
+        budget->Add(lantern:::core:::BUDGET_PHASE_AUDIO, 1.0f);
+        budget->EndFrame((5000 + u64(frame) * 16) * NANOSECONDS_PER_MILLISECOND);
+    }
+    assert(budget->filledCount == lantern:::core:::BUDGET_HISTORY_LENGTH, "the history holds 120 frames");
+    assert(NearlyEqual(budget->AveragePhaseMilliseconds(lantern:::core:::BUDGET_PHASE_AUDIO), 1.0f), "the average runs over the history");
+    assert(budget->OverBudgetInHistory() == 0, "the early long frame has left the history");
+    assert(budget->overBudgetTotal == 1, "the total keeps counting what left it");
+    print("frame budget files phases and flags over budget");
+    return 0;
+}
