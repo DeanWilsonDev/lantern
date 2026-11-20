@@ -1,0 +1,251 @@
+// Screenshot comparison: a captured frame is checked against a reference PNG kept in the repository.
+//
+// A screenshot test renders a fixed scene, then calls `lantern:::screenshots:::Check("scene-name", image)`. Check does
+// one of three things, depending on the environment:
+//
+// - Normally it loads `references/scene-name.png`, compares it pixel by pixel with the capture, and fails the test when
+//   too many pixels differ by too much. On failure it writes `scene-name.actual.png` and `scene-name.diff.png` into the
+//   output folder, so the difference can be looked at instead of guessed at.
+// - With `LANTERN_UPDATE_SCREENSHOTS=1` it writes the capture over the reference instead, which is how references are
+//   recorded and re-recorded. Look at the new image before committing it.
+// - Unless `LANTERN_SCREENSHOT_SOFTWARE=1` is set it does nothing, because the references belong to one renderer: the
+//   software Vulkan driver (Mesa's lavapipe). A real GPU rounds differently, and Metal differently again, so the same
+//   scene would "fail" on a Mac for no reason. `engine/tools/run-screenshot-tests.sh` selects lavapipe and sets the
+//   variable, so tests only compare when they are really on it.
+//
+// Two numbers decide whether a capture matches: `channelTolerance`, how far one colour channel may move (0 to 255)
+// before the pixel counts as different, and `differingShare`, the fraction of pixels that may be different. A tolerance
+// of a few steps hides rounding between Mesa versions; a small share lets a handful of edge pixels move without hiding a
+// lamp that disappeared or a shadow that went missing.
+
+lantern:::screenshots :: namespace {
+    /** The default for how far one colour channel may differ, out of 255, before a pixel counts as different. */
+    CHANNEL_TOLERANCE: u32 = 6;
+
+    /** The default for the share of pixels (0 to 1) allowed to differ before the comparison fails. */
+    DIFFERING_SHARE: f32 = 0.002f;
+
+    /** What a comparison found. */
+    Comparison :: struct {
+        /** False when the two images are not the same size. */
+        sameSize~ bool = true;
+        /** How many pixels differ by more than the channel tolerance. */
+        differingPixels~ u32 = 0;
+        /** How many pixels were compared. */
+        totalPixels~ u32 = 0;
+        /** The largest difference in any single colour channel, 0 to 255. */
+        largestDifference~ u32 = 0;
+        /** Whether the capture matches within the tolerance and the allowed share. */
+        matches~ bool = true;
+    }
+
+    /** The environment variable `name`, or the empty string when it is not set. */
+    Setting :: (name: string) -> string! {
+        value: string!? = environmentVariable(name);
+        defer delete value;
+        if text := value {
+            return `${text}`;
+        }
+        return "" + "";
+    }
+
+    /** True when the variable `name` is exactly "1". */
+    SettingIsOn :: (name: string) -> bool {
+        value := Setting(name);
+        defer delete value;
+        return value == "1";
+    }
+
+    /** True when screenshot tests should compare, that is, when the renderer is the software one the references use. */
+    Enabled :: () -> bool {
+        return SettingIsOn("LANTERN_SCREENSHOT_SOFTWARE");
+    }
+
+    /** True when references should be written instead of checked. */
+    UpdateRequested :: () -> bool {
+        return SettingIsOn("LANTERN_UPDATE_SCREENSHOTS");
+    }
+
+    /** The folder holding the reference PNGs: `LANTERN_SCREENSHOT_REFERENCES`, else `tests/screenshots/references`. */
+    ReferenceFolder :: () -> string! {
+        folder := Setting("LANTERN_SCREENSHOT_REFERENCES");
+        if folder.length() == 0 {
+            delete folder;
+            return "tests/screenshots/references" + "";
+        }
+        return folder!;
+    }
+
+    /** The folder failed comparisons write their images into: `LANTERN_SCREENSHOT_OUTPUT`, else `build/screenshot-failures`. */
+    OutputFolder :: () -> string! {
+        folder := Setting("LANTERN_SCREENSHOT_OUTPUT");
+        if folder.length() == 0 {
+            delete folder;
+            return "build/screenshot-failures" + "";
+        }
+        return folder!;
+    }
+
+    /** `value` taken from `other`, whichever way round, never below zero. */
+    Distance :: (value: u8, other: u8) -> u32 {
+        if value > other {
+            return u32(value - other);
+        }
+        return u32(other - value);
+    }
+
+    /**
+     * Compares `actual` with `reference`, pixel by pixel, on red, green and blue (alpha is ignored). A pixel differs when
+     * any channel is more than `channelTolerance` away. The images match when the share of differing pixels is at most
+     * `differingShare`.
+     */
+    Compare :: (actual: lantern:::renderer:::TextureData*, reference: lantern:::renderer:::TextureData*, channelTolerance: u32, differingShare: f32) -> Comparison {
+        result~ Comparison = Comparison { };
+        if actual->width != reference->width || actual->height != reference->height {
+            result.sameSize = false;
+            result.matches = false;
+            return result;
+        }
+        result.totalPixels = actual->width * actual->height;
+        for pixelIndex~ u32 = 0; pixelIndex < result.totalPixels; pixelIndex++ {
+            offset: usize = usize(pixelIndex) * 4;
+            pixelDifference~ u32 = 0;
+            for channel~ usize = 0; channel < 3; channel++ {
+                channelDifference: u32 = Distance(actual->rgba8[offset + channel], reference->rgba8[offset + channel]);
+                if channelDifference > pixelDifference {
+                    pixelDifference = channelDifference;
+                }
+            }
+            if pixelDifference > result.largestDifference {
+                result.largestDifference = pixelDifference;
+            }
+            if pixelDifference > channelTolerance {
+                result.differingPixels += 1;
+            }
+        }
+        allowedPixels: f32 = differingShare * f32(result.totalPixels);
+        result.matches = f32(result.differingPixels) <= allowedPixels;
+        return result;
+    }
+
+    /**
+     * A picture of where two images differ: the capture dimmed to grey, with every differing pixel painted red and
+     * brighter the further it is off. The images must be the same size.
+     */
+    DiffImage :: (actual: lantern:::renderer:::TextureData*, reference: lantern:::renderer:::TextureData*, channelTolerance: u32) -> lantern:::renderer:::TextureData*! {
+        diff := new lantern:::renderer:::TextureData(actual->width, actual->height, lantern:::renderer:::TextureFilter:::Linear, lantern:::renderer:::TextureWrap:::Repeat);
+        pixelCount: u32 = actual->width * actual->height;
+        for pixelIndex~ u32 = 0; pixelIndex < pixelCount; pixelIndex++ {
+            offset: usize = usize(pixelIndex) * 4;
+            pixelDifference~ u32 = 0;
+            for channel~ usize = 0; channel < 3; channel++ {
+                channelDifference: u32 = Distance(actual->rgba8[offset + channel], reference->rgba8[offset + channel]);
+                if channelDifference > pixelDifference {
+                    pixelDifference = channelDifference;
+                }
+            }
+            if pixelDifference > channelTolerance {
+                strength: u32 = 128 + pixelDifference / 2;
+                diff->rgba8.push(u8(strength));
+                diff->rgba8.push(0);
+                diff->rgba8.push(0);
+            } else {
+                grey: u32 = (u32(actual->rgba8[offset]) + u32(actual->rgba8[offset + 1]) + u32(actual->rgba8[offset + 2])) / 6;
+                diff->rgba8.push(u8(grey));
+                diff->rgba8.push(u8(grey));
+                diff->rgba8.push(u8(grey));
+            }
+            diff->rgba8.push(255);
+        }
+        return diff!;
+    }
+
+    /** Writes `image` as a PNG at `path`, making the folder first. Returns false when the write fails. */
+    SavePng :: (image: lantern:::renderer:::TextureData*, folder: string, path: string) -> bool {
+        when createDirectories(folder) {
+            Result:::Ok(created) -> { },
+            Result:::Err(error) -> { delete error; }
+        }
+        bytes: Array<u8>! = image->ToPngBytes();
+        defer delete bytes;
+        return lantern:::core:::WriteBytes(path, bytes);
+    }
+
+    /** Logs a line (to the log, not to the test's output, which `expected.txt` checks). */
+    Say :: (line: string) -> void {
+        lantern:::core:::LogInfo("screenshots", line);
+    }
+
+    /** Says how far off a capture was: always to the log, and to the test's output as well when it did not match. */
+    Report :: (name: string, result: Comparison) -> void {
+        line~ string! = `screenshot ${name}: the capture and the reference are different sizes`;
+        if result.sameSize {
+            percent: f32 = 100.0f * f32(result.differingPixels) / f32(result.totalPixels);
+            delete line;
+            line = `screenshot ${name}: ${result.differingPixels} of ${result.totalPixels} pixels differ (${percent}%), largest channel difference ${result.largestDifference}`;
+        }
+        Say(line);
+        if !result.matches {
+            print(line);
+        }
+        delete line;
+    }
+
+    /**
+     * Checks `image`, a capture of the scene called `name`, against `references/<name>.png` (see the top of this file).
+     * Asserts on a mismatch, after writing `<name>.actual.png` and `<name>.diff.png` to the output folder.
+     */
+    CheckWith :: (name: string, image: lantern:::renderer:::TextureData*, channelTolerance: u32, differingShare: f32) -> void {
+        if !Enabled() {
+            skipped: string! = `screenshot ${name}: skipped, not on the software renderer (run engine/tools/run-screenshot-tests.sh)`;
+            Say(skipped);
+            delete skipped;
+            return;
+        }
+        referenceFolder := ReferenceFolder();
+        defer delete referenceFolder;
+        referencePath: string! = `${referenceFolder}/${name}.png`;
+        defer delete referencePath;
+        if UpdateRequested() {
+            assert(SavePng(image, referenceFolder, referencePath), "the reference is written");
+            recorded: string! = `screenshot ${name}: reference recorded at ${referencePath}`;
+            Say(recorded);
+            delete recorded;
+            return;
+        }
+        loaded := lantern:::renderer:::TextureData:::LoadPng(referencePath);
+        when loaded! {
+            Result:::Ok(reference) -> {
+                defer delete reference;
+                result := Compare(image, reference, channelTolerance, differingShare);
+                Report(name, result);
+                if !result.matches {
+                    outputFolder := OutputFolder();
+                    defer delete outputFolder;
+                    actualPath: string! = `${outputFolder}/${name}.actual.png`;
+                    defer delete actualPath;
+                    SavePng(image, outputFolder, actualPath);
+                    if result.sameSize {
+                        diff := DiffImage(image, reference, channelTolerance);
+                        defer delete diff;
+                        diffPath: string! = `${outputFolder}/${name}.diff.png`;
+                        defer delete diffPath;
+                        SavePng(diff, outputFolder, diffPath);
+                        print(`screenshot ${name}: wrote ${actualPath} and ${diffPath}`);
+                    }
+                }
+                assert(result.matches, "the capture matches its reference screenshot");
+            },
+            Result:::Err(message) -> {
+                print(`screenshot ${name}: no reference at ${referencePath} (${message}); record one with LANTERN_UPDATE_SCREENSHOTS=1`);
+                delete message;
+                assert(false, "the reference screenshot exists");
+            }
+        }
+    }
+
+    /** `CheckWith` using the default tolerance and share. */
+    Check :: (name: string, image: lantern:::renderer:::TextureData*) -> void {
+        CheckWith(name, image, CHANNEL_TOLERANCE, DIFFERING_SHARE);
+    }
+}

@@ -176,7 +176,9 @@ lantern:::archive :: namespace {
         }
         marker: string! = `${destination}/${COMPLETE_MARKER}`;
         defer delete marker;
-        when writeTextFile(marker, "ok") {
+        fingerprintText: string! = `${Fingerprint(program, start)}`;
+        defer delete fingerprintText;
+        when writeTextFile(marker, fingerprintText) {
             Result:::Ok(written) -> {
                 return null;
             },
@@ -184,6 +186,24 @@ lantern:::archive :: namespace {
                 failure: string! = `${marker}: ${error.message()}`;
                 delete error;
                 return failure!;
+            }
+        }
+    }
+
+    // True when `destination` holds a complete unpack of this archive: the marker is written last and holds the archive's
+    // fingerprint, so a folder cut short, or left by another build, reads as not unpacked and is written again.
+    IsUnpacked :: (destination: string, fingerprint: u32) -> bool {
+        marker: string! = `${destination}/${COMPLETE_MARKER}`;
+        defer delete marker;
+        when readTextFile(marker) {
+            Result:::Ok(text) -> {
+                matches: bool = text == `${fingerprint}`;
+                delete text;
+                return matches;
+            },
+            Result:::Err(error) -> {
+                delete error;
+                return false;
             }
         }
     }

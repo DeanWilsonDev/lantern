@@ -10,7 +10,7 @@ driven by [Mist](https://github.com/fearlessgamelabs/mist-package-manager) from 
 | --- | --- |
 | `mist install` | Fetches and builds every dependency in `mist.json`: SDL3, SDL3_image, SDL3_ttf, cgltf, stb_image, Penumbra (`penumbra-ui-engine`, branch `nox-proto`), `penumbra-bridge` and `lantern-native`. `lantern-native` is the one library holding Nyx's C API, the Chaos UI bridge and penumbra-bridge's C API (`engine/native/`). Run it once, and again after pulling changes to `mist.json` or `mist.lock`. |
 | `mist run game [game-directory]` | Builds the engine in release mode and runs it from `engine/`. With no argument it plays the platformer. A game directory is relative to `engine/`: `mist run game ../games/platformer`. `mist run game --stub` runs the engine's stub scene (a lit block and a gem), which is a quick smoke test. |
-| `mist run package [game-folder] [output-folder]` | Builds the release engine and writes one file, `engine/build/package/lantern`: the engine with the game's scripts, UI and runtime assets (worlds, textures, models, sounds, music) and the compiled shaders appended to it. None of the project's Calamus files go in: no Silhouettes, no material Silhouettes, no editor palette, no graph JSON. The first run unpacks the data into `$LANTERN_CACHE_DIRECTORY` (else `$TMPDIR`, else `/tmp`) under `lantern-<fingerprint>`; later runs of the same build reuse it. |
+| `mist run package [game-folder] [output-folder]` | Builds the release engine and writes one file, `engine/build/package/lantern`: the engine with the game's scripts, UI and runtime assets (worlds, textures, models, sounds, music) and the compiled shaders appended to it. None of the project's Calamus files go in: no Silhouettes, no material Silhouettes, no editor palette, no graph JSON. The first run unpacks the data into a folder only you can write, `<cache folder>/lantern/<fingerprint>` (`$LANTERN_CACHE_DIRECTORY`, else `~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache` on Linux, `%LOCALAPPDATA%` on Windows), and refuses to use one that is a link or belongs to someone else; later runs of the same build reuse it. |
 | `mist run assets [--check] [assets-folder]` | Writes the placeholder textures, sounds, music loop and `gem.glb` from code (`engine/tools/generate-assets`). `--check` fails when a file differs from what the generator makes; `mist run test` runs it. |
 | `mist run editor [world-file]` | Builds the engine (the editor's Play button runs it), then builds and runs the world editor, `apps/world-editor/nox`. It opens `games/platformer/assets/worlds/course.world.json` unless given another world. |
 | `mist run test` | Runs `engine/tools/run-tests.sh`: `nox test` over every suite under `engine/tests/`. Arguments pass through, for example `--backend c`. |
@@ -131,12 +131,14 @@ These environment variables are read by the engine and the game:
 | `LANTERN_ASSETS` | The assets directory, overriding `game.json`'s `assets`. |
 | `LANTERN_AUTOPLAY=1` | The platformer plays itself (a scripted pilot), for smoke runs and screenshots. |
 | `LANTERN_DEBUG_HUD=1` | Start with the debug window showing. |
+| `LANTERN_DEBUG_PAGE=Budget` | Start the debug window on that page (see `docs/debug-window.md`). |
 | `LANTERN_COLLISION_VIEW=1` | Start with the platformer's collision overlay showing (nearby triangles, the player's capsule, ground normal, velocity and gem trigger spheres). F2 toggles it in game. |
 | `LANTERN_SSR` | `0` turns screen-space reflections off, `1` turns them on (at medium cost) whatever the quality level; see `docs/screen-space-reflections.md`. |
 | `LANTERN_VSYNC=0` | Turn vertical sync off, to see raw frame time. The world editor honours it too: it starts with vertical sync off, and Settings, Graphics, Frame rate turns it on or off while it runs. |
 | `LANTERN_GPU_DRIVER` | Force an SDL GPU driver, such as `vulkan` or `metal`. |
 | `LANTERN_GPU_DEBUG=1` | SDL GPU's debug mode (validation layers where the driver has them). |
 | `LANTERN_MAX_FRAMES=N` | Stop after N frames, so a run ends on its own. |
+| `LANTERN_DEBUG_FILTER=text` | Start the debug window with this filter typed, so a screenshot shows one group of values (`Streaming`). |
 | `LANTERN_CAPTURE_PATH=out.png` | Save the last frame as a PNG when the run ends. Combine with `LANTERN_MAX_FRAMES` for a screenshot. |
 | `LANTERN_SHADER_DIRECTORY` | Load compiled shaders from another directory (`mist run test` sets it to `engine/shaders/compiled`). |
 | `LANTERN_RUNNER` | The path of the game executable the editor's Play button starts. |

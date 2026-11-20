@@ -15,6 +15,14 @@ lantern:::physics :: namespace {
      * The "end of the list" value for the grid's linked lists (the largest u32).
      */
     NO_GRID_ENTRY: u32 : 4294967295;
+    /**
+     * The group of a static triangle added outside any group: it is never removed.
+     */
+    NO_STATIC_GROUP: u32 : 4294967295;
+    /**
+     * Dead triangles a world keeps before it compacts, as long as they also outnumber the live ones.
+     */
+    COMPACT_DEAD_TRIANGLES: usize : 4096;
 
     /**
      * A swept sphere: every point within `radius` of a vertical line segment `halfSegment` long on each side of the
@@ -291,6 +299,12 @@ lantern:::physics :: namespace {
         gridHeads~ HashMap<u64, u32>*!;
         gridEntryTriangles~ Array<u32>! = [];
         gridEntryNext~ Array<u32>! = [];
+        staticDead~ Array<bool>! = [];
+        deadStaticCount~ usize = 0;
+        groupFirst~ Array<usize>! = [];
+        groupCount~ Array<usize>! = [];
+        freeGroups~ Array<u32>! = [];
+        openGroup~ u32 = NO_STATIC_GROUP;
         bodies~ lantern:::core:::Pool<KinematicBody>*!;
         bodyLocalTriangles~ Array<Triangle>! = [];
         bodyWorldTriangles~ Array<Triangle>! = [];
@@ -305,6 +319,10 @@ lantern:::physics :: namespace {
             delete gridHeads;
             delete gridEntryTriangles;
             delete gridEntryNext;
+            delete staticDead;
+            delete groupFirst;
+            delete groupCount;
+            delete freeGroups;
             delete bodies;
             delete bodyLocalTriangles;
             delete bodyWorldTriangles;
@@ -333,6 +351,97 @@ lantern:::physics :: namespace {
                 }
             }
             staticTriangles.push(triangle);
+            staticDead.push(false);
+        }
+
+        /**
+         * Starts a group: every static triangle added until `EndStaticGroup` belongs to the returned id, and
+         * `RemoveStaticGroup` takes them all away again. Groups don't nest.
+         */
+        BeginStaticGroup~: () -> u32 {
+            group~ u32 = 0;
+            if freeGroups.length() > 0 {
+                group = freeGroups.pop() ?? 0;
+                groupFirst[usize(group)] = staticTriangles.length();
+                groupCount[usize(group)] = 0;
+            } else {
+                group = u32(groupFirst.length());
+                groupFirst.push(staticTriangles.length());
+                groupCount.push(0);
+            }
+            openGroup = group;
+            return group;
+        }
+
+        /**
+         * Ends the group `BeginStaticGroup` started.
+         */
+        EndStaticGroup~: () -> void {
+            if openGroup != NO_STATIC_GROUP {
+                groupCount[usize(openGroup)] = staticTriangles.length() - groupFirst[usize(openGroup)];
+            }
+            openGroup = NO_STATIC_GROUP;
+        }
+
+        /**
+         * Removes a group's triangles: queries stop seeing them at once. When the dead triangles pass
+         * `COMPACT_DEAD_TRIANGLES` and outnumber the live ones, the arrays and the grid are rebuilt without them. The
+         * group's id may be handed out again by a later `BeginStaticGroup`.
+         */
+        RemoveStaticGroup~: (group: u32) -> void {
+            if usize(group) >= groupFirst.length() {
+                return;
+            }
+            first: usize = groupFirst[usize(group)];
+            count: usize = groupCount[usize(group)];
+            if count == 0 {
+                return;
+            }
+            for offset~ usize = 0; offset < count; offset++ {
+                staticDead[first + offset] = true;
+            }
+            deadStaticCount += count;
+            groupCount[usize(group)] = 0;
+            freeGroups.push(group);
+            if deadStaticCount > COMPACT_DEAD_TRIANGLES && deadStaticCount > staticTriangles.length() - deadStaticCount {
+                CompactStatic();
+            }
+        }
+
+        /**
+         * Rebuilds the static triangle arrays and the grid without the dead triangles, keeping every live group's range.
+         */
+        CompactStatic~: () -> void {
+            if deadStaticCount == 0 {
+                return;
+            }
+            oldToNew~ Array<usize>! = [];
+            kept~ Array<Triangle>! = [];
+            for index~ usize = 0; index < staticTriangles.length(); index++ {
+                oldToNew.push(kept.length());
+                if !staticDead[index] {
+                    kept.push(staticTriangles[index]);
+                }
+            }
+            for group~ usize = 0; group < groupFirst.length(); group++ {
+                if groupCount[group] > 0 {
+                    groupFirst[group] = oldToNew[groupFirst[group]];
+                }
+            }
+            delete oldToNew;
+            delete staticTriangles;
+            staticTriangles = [];
+            staticDead.clear();
+            deadStaticCount = 0;
+            gridHeads->clear();
+            gridEntryTriangles.clear();
+            gridEntryNext.clear();
+            savedOpenGroup: u32 = openGroup;
+            for triangle in kept {
+                AddStaticTriangle(triangle);
+            }
+            openGroup = savedOpenGroup;
+            delete kept;
         }
 
         /**
@@ -357,7 +466,7 @@ lantern:::physics :: namespace {
          * How many static triangles the world holds.
          */
         StaticTriangleCount :: () -> usize {
-            return staticTriangles.length();
+            return staticTriangles.length() - deadStaticCount;
         }
 
         /**
@@ -365,7 +474,11 @@ lantern:::physics :: namespace {
          */
         StaticBounds :: () -> lantern:::core:::Aabb {
             bounds~ lantern:::core:::Aabb = lantern:::core:::Aabb:::Empty();
-            for triangle in staticTriangles {
+            for index~ usize = 0; index < staticTriangles.length(); index++ {
+                if staticDead[index] {
+                    continue;
+                }
+                triangle: Triangle = staticTriangles[index];
                 bounds = bounds.GrownTo(triangle.a).GrownTo(triangle.b).GrownTo(triangle.c);
             }
             return bounds;
@@ -478,7 +591,10 @@ lantern:::physics :: namespace {
                         for z~ i64 = minimumCell.z; z <= maximumCell.z; z++ {
                             entry~ u32 = gridHeads->getOr(GridCell:::Key(x, y, z), NO_GRID_ENTRY);
                             while entry != NO_GRID_ENTRY {
-                                near.push(NearTriangle { triangle: staticTriangles[usize(gridEntryTriangles[usize(entry)])], collider: ColliderId:::Static() });
+                                triangleIndex: usize = usize(gridEntryTriangles[usize(entry)]);
+                                if !staticDead[triangleIndex] {
+                                    near.push(NearTriangle { triangle: staticTriangles[triangleIndex], collider: ColliderId:::Static() });
+                                }
                                 entry = gridEntryNext[usize(entry)];
                             }
                         }

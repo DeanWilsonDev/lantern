@@ -1,0 +1,40 @@
+// Rooms are ranked by the flat distance to the nearest focus point, loaded nearest first inside the load distance, and
+// unloaded only past the larger unload distance.
+lantern :: import lantern;
+
+main :: () -> i32 {
+    low: Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: 0.0f };
+    high: Vec3 = Vec3 { x: 10.0f, y: 5.0f, z: 10.0f };
+    assert(lantern:::world:::DistanceToBounds(Vec3 { x: 5.0f, y: 99.0f, z: 5.0f }, low, high) == 0.0f, "over a room is distance zero, whatever the height");
+    assert(Math:::abs(lantern:::world:::DistanceToBounds(Vec3 { x: 13.0f, y: 0.0f, z: 14.0f }, low, high) - 5.0f) < 0.0001f, "a corner is measured diagonally");
+    assert(Math:::abs(lantern:::world:::DistanceToBounds(Vec3 { x: -7.0f, y: 0.0f, z: 5.0f }, low, high) - 7.0f) < 0.0001f, "a side is measured straight");
+    focusPoints := [Vec3 { x: -7.0f, y: 0.0f, z: 5.0f }, Vec3 { x: 12.0f, y: 0.0f, z: 5.0f }];
+    focus: Array<Vec3> = focusPoints.borrow();
+    assert(Math:::abs(lantern:::world:::NearestFocusDistance(focus, low, high) - 2.0f) < 0.0001f, "the nearest focus point counts");
+    noFocusPoints~ Array<Vec3>! = [];
+    defer delete noFocusPoints;
+    noFocus: Array<Vec3> = noFocusPoints;
+    assert(lantern:::world:::NearestFocusDistance(noFocus, low, high) > 1000000.0f, "no focus is infinitely far");
+
+    distanceValues := [50.0f, 10.0f, 30.0f, 80.0f, 20.0f];
+    distances: Array<f32> = distanceValues.borrow();
+    completeValues := [false, false, false, false, true];
+    complete: Array<bool> = completeValues.borrow();
+    toLoad := lantern:::world:::RoomsToLoad(distances, complete, 60.0f);
+    defer delete toLoad;
+    assert(toLoad.length() == 3, "three rooms are inside the load distance and incomplete");
+    assert(toLoad[0] == 1 && toLoad[1] == 2 && toLoad[2] == 0, "nearest first");
+    presentValues := [true, true, true, true, true];
+    present: Array<bool> = presentValues.borrow();
+    toUnload := lantern:::world:::RoomsToUnload(distances, present, 60.0f);
+    defer delete toUnload;
+    assert(toUnload.length() == 1 && toUnload[0] == 3, "only a room past the unload distance goes");
+    nothingToLoad := lantern:::world:::RoomsToLoad(distances, complete, 5.0f);
+    defer delete nothingToLoad;
+    assert(nothingToLoad.length() == 0, "nothing is near enough");
+    assert(lantern:::world:::IsStreamableKind("block"), "blocks stream");
+    assert(lantern:::world:::IsStreamableKind("point_light"), "point lights stream");
+    assert(!lantern:::world:::IsStreamableKind("gem"), "a gem stays resident");
+    print("rooms are chosen by distance with hysteresis");
+    return 0;
+}
