@@ -1,0 +1,79 @@
+// Play in editor starts the game where the editor is looking from: the level the editor hands over has a `play_start`
+// entity, the game skips the title screen, drops the point to the ground, puts the player there facing the way the camera
+// faced and puts the partner beside them. A point with no ground under it leaves the level's own start.
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+PLAY_LEVEL_PATH: string : "/tmp/lantern-play-in-editor-test.world.json";
+
+// Writes the hand-off room with a `play_start` entity at the given point, as the editor's Play button does.
+WritePlayLevel :: (position: Vec3, yaw: f32) -> void {
+    when lantern:::world:::Load("../games/platformer/assets/worlds/prototypes/hand-off.world.json") {
+        Result:::Ok(worldFile) -> {
+            playStart := new lantern:::world:::WorldEntity(worldFile->NextEntityKey(), "Play start", "play_start");
+            playStart->transform.position = position;
+            playStart->SetNumberProperty("yaw", yaw);
+            worldFile->Add(playStart!);
+            failure: string!? = worldFile->Save(PLAY_LEVEL_PATH);
+            if problem := failure {
+                print(`couldn't write the play level: ${problem}`);
+            }
+            assert(failure == null, "the play level is written");
+            delete failure;
+            delete worldFile;
+        },
+        Result:::Err(message) -> {
+            print(`couldn't read the hand-off room: ${message}`);
+            delete message;
+            assert(false, "the hand-off room loads");
+        }
+    }
+}
+
+StartOnPlayLevel :: (manifest: lantern:::host:::GameManifest*) -> lantern:::host:::GameHost*! {
+    unsafe {
+        lantern:::archivecalls:::setenv("LANTERN_LEVEL", PLAY_LEVEL_PATH, 1);
+    }
+    return lantern:::testing:::StartPlatformer(manifest, false);
+}
+
+main :: () -> i32 {
+    WritePlayLevel(Vec3 { x: 0.0f, y: 12.0f, z: -22.0f }, 1.0f);
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+    host := StartOnPlayLevel(manifest);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::RunFrames(frameLoop, platform, host, 90);
+    lantern:::testing:::AssertNoScriptError(host, "after starting from the editor's point");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::ParseDecimalOrFail(lantern:::testing:::DebugText(host, "Game/Time"), "Game/Time") > 0.5f, "the game is playing without the title screen");
+    playerX := lantern:::testing:::PlayerX(host);
+    playerY := lantern:::testing:::PlayerY(host);
+    playerZ := lantern:::testing:::PlayerZ(host);
+    lantern:::testing:::ExpectWithState(host, playerX > -0.5f && playerX < 0.5f && playerZ > -22.5f && playerZ < -21.5f, "the player is under the point the editor gave");
+    lantern:::testing:::ExpectWithState(host, playerY > 3.1f && playerY < 3.4f, "dropped onto the plateau's top, not in the air or on the floor below");
+    partnerX := lantern:::testing:::PartnerX(host);
+    partnerY := lantern:::testing:::PartnerY(host);
+    partnerZ := lantern:::testing:::PartnerZ(host);
+    lantern:::testing:::ExpectWithState(host, partnerY > 3.0f && partnerX > -2.0f && partnerX < 6.0f && partnerZ > -26.0f && partnerZ < -16.0f, "the partner starts on the plateau with the player and goes on to the beat nearest them");
+    delete frameLoop;
+    delete platform;
+    delete host;
+
+    WritePlayLevel(Vec3 { x: 100.0f, y: 5.0f, z: 100.0f }, 0.0f);
+    fallbackHost := StartOnPlayLevel(manifest);
+    fallbackPlatform := lantern:::testing:::NewPlatformerPlatform();
+    fallbackLoop := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::RunFrames(fallbackLoop, fallbackPlatform, fallbackHost, 90);
+    lantern:::testing:::AssertNoScriptError(fallbackHost, "after starting from a point with no ground");
+    fallbackX := lantern:::testing:::PlayerX(fallbackHost);
+    fallbackZ := lantern:::testing:::PlayerZ(fallbackHost);
+    lantern:::testing:::ExpectWithState(fallbackHost, fallbackX > -0.5f && fallbackX < 0.5f && fallbackZ > 5.5f && fallbackZ < 6.5f, "with no ground below, the player starts at the level's spawn");
+    delete fallbackLoop;
+    delete fallbackPlatform;
+    delete fallbackHost;
+    delete manifest;
+    removeFile(PLAY_LEVEL_PATH);
+    print("play in editor starts where the editor looks");
+    return 0;
+}

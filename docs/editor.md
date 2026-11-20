@@ -236,6 +236,14 @@ Play saves the level to `.editor-play.world.json` beside the game's worlds and r
 relative or an absolute assets directory.
 Stop ends the game. The game's own window opens; the editor stays usable.
 
+Play starts where you are looking, not at the start of the level. If something is selected the player starts at that
+entity; otherwise at the editor camera (the point the camera is centred on in an orthographic view such as top or front),
+facing the way the camera faces. The game skips the title screen, drops the point to the ground below it, puts the
+companion beside the player (the route companion at her nearest stop, the partner at the nearest team beat) and makes
+that spot the level's restart point. If there is no ground below the point, the game starts at the level's own spawn.
+The editor adds the starting point as a `play_start` entity in the scratch copy only, so the open level is not changed.
+Close the game window or press Stop to come back: the editor's camera, selection and undo history are as you left them.
+
 ## C API rules
 
 - One handle, used from one thread (the UI thread). A null handle is ignored.

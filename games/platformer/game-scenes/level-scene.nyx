@@ -70,6 +70,14 @@ public:
     // property (what the ground is, see game-systems/footstep-system.nyx); "" for none.
     ambience~ string = "";
     surface~ string = "";
+    // Play in editor from the editor's viewpoint: the editor adds a `play_start` marker to the level it hands the game
+    // (see PlaceAtPlayStart). `hasPlayStart` is true when the level had one, whether or not the ground was found under it;
+    // `playStartYaw` is the heading to face and `playStartCompanionStop` the stop on the companion's route nearest to it,
+    // both left at 0 when there was no ground.
+    hasPlayStart~ bool = false;
+    playStartYaw~ f32 = 0.0f;
+    playStartCompanionStop~ i32 = 0;
+    playStartBeat~ i32 = 0;
 
     // Returns the number of entities the file made.
     Load~: (path: string, gemMesh: i64, cubeMesh: i64) -> i32 {
@@ -209,12 +217,102 @@ public:
         // The file lists the stops in any order; the route follows their `order` property.
         companionStops = companionStops.sort((first, second) -> first.order < second.order);
         teamBeats = teamBeats.sort((first, second) -> first.order < second.order);
+        for entity: i64 in lantern:::world:::FindByKind("play_start") {
+            PlaceAtPlayStart(entity);
+        }
         lantern:::engine:::Log(`level ${path}: ${gems.length():d} gems, ${platforms.length():d} moving platforms`);
         return loaded;
     }
 
+    // The world editor's Play button saves the open level with one extra `play_start` entity where the editor is looking
+    // from (the camera's position, or the selected entity) and a `yaw` property, so the person lands in the part of the
+    // level they are working on instead of at the start. This moves everything that begins at the level's spawn to that
+    // point: the player (and so a restart and a respawn, which return to `spawnPosition`), the partner beside them and
+    // the route companion at her nearest stop. The point is dropped to the ground below it first. When there is no ground
+    // below (the camera is outside the level), the level starts where it normally does.
+    PlaceAtPlayStart~: (entity: i64) -> void {
+        hasPlayStart = true;
+        wanted: lantern:::math:::Vec3 = lantern:::world:::Position(entity);
+        standing := GroundBelow(wanted);
+        if standing == null {
+            lantern:::engine:::Log("play in editor: no ground under the editor's viewpoint, starting at the level's spawn");
+            return;
+        }
+        feet: lantern:::math:::Vec3 = standing ?? wanted;
+        playStartYaw = lantern:::world:::HasProperty(entity, "yaw") ? f32(lantern:::world:::NumberProperty(entity, "yaw")) : 0.0f;
+        spawnPosition = feet;
+        if hasPartner {
+            beside: lantern:::math:::Vec3 = lantern:::math:::Vec3:::FromYaw(playStartYaw - PLAY_START_QUARTER_TURN);
+            partnerSpot: lantern:::math:::Vec3 = { x: feet.x + beside.x * PLAY_START_PARTNER_DISTANCE, y: feet.y, z: feet.z + beside.z * PLAY_START_PARTNER_DISTANCE };
+            partnerGround := GroundBelow(partnerSpot);
+            partnerStart = partnerGround ?? feet;
+        }
+        playStartCompanionStop = NearestCompanionStop(feet);
+        playStartBeat = NearestTeamBeat(feet);
+    }
+
+    // The point on the ground straight below `above` (found by a ray from a little higher up, so a point resting on
+    // a surface still finds it), lifted a hair so a capsule does not start touching the floor. Null when nothing
+    // is below it.
+    GroundBelow :: (above: lantern:::math:::Vec3) -> lantern:::math:::Vec3? {
+        origin: lantern:::math:::Vec3 = { x: above.x, y: above.y + PLAY_START_RAY_LIFT, z: above.z };
+        down: lantern:::math:::Vec3 = { y: -1.0f };
+        return when lantern:::physics:::Raycast(origin, down, PLAY_START_SEARCH_DISTANCE) {
+            hit: lantern:::physics:::RayHit -> StandingOn(hit.Point()),
+            null -> null
+        };
+    }
+
+    StandingOn :: (floorPoint: lantern:::math:::Vec3) -> lantern:::math:::Vec3 {
+        landing: lantern:::math:::Vec3 = { x: floorPoint.x, y: floorPoint.y + PLAY_START_FLOOR_LIFT, z: floorPoint.z };
+        return landing;
+    }
+
+    // Which team beat (after sorting by order) is closest to `position`, the one the partner works toward first when the
+    // level starts partway through; 0 when there are none.
+    NearestTeamBeat :: (position: lantern:::math:::Vec3) -> i32 {
+        nearest~ i32 = 0;
+        nearestDistance~ f32 = 1000000.0f;
+        index~ i32 = 0;
+        for beat: TeamBeat in teamBeats {
+            offsetX := beat.position.x - position.x;
+            offsetY := beat.position.y - position.y;
+            offsetZ := beat.position.z - position.z;
+            distance := offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ;
+            if distance < nearestDistance {
+                nearestDistance = distance;
+                nearest = index;
+            }
+            index++;
+        }
+        return nearest;
+    }
+
+    // Which stop on the companion's route (after sorting by order) is closest to `position`; 0 when she has none.
+    NearestCompanionStop :: (position: lantern:::math:::Vec3) -> i32 {
+        nearest~ i32 = 0;
+        nearestDistance~ f32 = 1000000.0f;
+        index~ i32 = 0;
+        for stop: CompanionStop in companionStops {
+            offsetX := stop.position.x - position.x;
+            offsetY := stop.position.y - position.y;
+            offsetZ := stop.position.z - position.z;
+            distance := offsetX * offsetX + offsetY * offsetY + offsetZ * offsetZ;
+            if distance < nearestDistance {
+                nearestDistance = distance;
+                nearest = index;
+            }
+            index++;
+        }
+        return nearest;
+    }
+
     Unload~: () -> void {
         lantern:::world:::Clear();
+        hasPlayStart = false;
+        playStartYaw = 0.0f;
+        playStartCompanionStop = 0;
+        playStartBeat = 0;
         gems = [];
         platforms = [];
         checkpoints = [];
@@ -247,4 +345,9 @@ public:
 
 private:
     static LANTERN_TINT :: "FFD27A";
+    static PLAY_START_RAY_LIFT :: 0.5f;            // metres above the point the ray starts
+    static PLAY_START_SEARCH_DISTANCE :: 200.0f;   // metres the ray looks down
+    static PLAY_START_FLOOR_LIFT :: 0.05f;         // metres above the floor the player starts
+    static PLAY_START_PARTNER_DISTANCE :: 1.5f;    // metres to the player's right the partner starts
+    static PLAY_START_QUARTER_TURN :: 1.5707964f;  // radians
 }
