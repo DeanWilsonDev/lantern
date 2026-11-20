@@ -1,3 +1,5 @@
+SceneLink :: import SceneLink;
+
 lantern:::host :: namespace {
     /**
      * Reads argument `index` as an entity id and checks that entity still exists, failing the call with not-found if it
@@ -152,6 +154,15 @@ lantern:::host :: namespace {
                     state->renderWorld->light = sun;
                 }
             }
+        }
+    }
+
+    /**
+     * Hands the openings between the level's scenes to the streamer, which keeps them for as long as the level.
+     */
+    KeepSceneLinks :: (state: raw EngineState~*, links: Array<SceneLink*!>!) -> void {
+        unsafe {
+            state->streaming->links = links!;
         }
     }
 
@@ -756,22 +767,37 @@ lantern:::host :: namespace {
             loaded := lantern:::world:::Load(path);
             when loaded! {
                 Result:::Ok(worldFile) -> {
-                    problems~ Array<string!>! = worldFile->Validate();
-                    for problem in problems {
-                        warning: string! = `${path}: ${problem}`;
-                        lantern:::core:::LogWarn("world", warning);
-                        delete warning;
-                    }
-                    problems.freeAll();
-                    spawned := LoadWorldFile(state, worldFile!);
-                    when spawned! {
-                        Result:::Ok(count) -> {
-                            report: string! = `loaded ${path}: ${count} entities`;
-                            lantern:::core:::LogInfo("world", report);
-                            delete report;
-                            context->ReturnI32(i32(count));
+                    directory: string! = lantern:::world:::DirectoryOf(path);
+                    defer delete directory;
+                    expanded := lantern:::world:::ExpandScenes(worldFile, directory);
+                    when expanded! {
+                        Result:::Ok(links) -> {
+                            problems~ Array<string!>! = worldFile->Validate();
+                            for problem in problems {
+                                warning: string! = `${path}: ${problem}`;
+                                lantern:::core:::LogWarn("world", warning);
+                                delete warning;
+                            }
+                            problems.freeAll();
+                            sceneLinks~ Array<SceneLink*!>! = links!;
+                            spawned := LoadWorldFile(state, worldFile!);
+                            when spawned! {
+                                Result:::Ok(count) -> {
+                                    KeepSceneLinks(state, sceneLinks!);
+                                    report: string! = `loaded ${path}: ${count} entities`;
+                                    lantern:::core:::LogInfo("world", report);
+                                    delete report;
+                                    context->ReturnI32(i32(count));
+                                },
+                                Result:::Err(message) -> {
+                                    sceneLinks.freeAll();
+                                    Invalid(context, message);
+                                    delete message;
+                                }
+                            }
                         },
                         Result:::Err(message) -> {
+                            delete worldFile;
                             Invalid(context, message);
                             delete message;
                         }

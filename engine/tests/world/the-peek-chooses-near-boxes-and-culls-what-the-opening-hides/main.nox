@@ -1,0 +1,30 @@
+// The peek keeps the few boxes nearest an opening and hides the ones the opening can't show: with the eye in the loaded room
+// and the opening in the wall at z = 0 facing -z, a box straight ahead is seen and a box far to the side is not.
+lantern :: import lantern;
+
+main :: () -> i32 {
+    corners: Array<Vec3>! = lantern:::world:::OpeningCorners(Vec3 { x: 0.0f, y: 0.0f, z: 0.0f }, 0.0f, 4.0f, 3.0f);
+    defer delete corners;
+    assert(Math:::abs(corners[0].x + 2.0f) < 0.001f && Math:::abs(corners[1].x - 2.0f) < 0.001f, "the opening is as wide as asked, centred on the socket");
+    assert(Math:::abs(corners[2].y - 3.0f) < 0.001f, "and as tall");
+    eye: Vec3 = Vec3 { x: 0.0f, y: 1.5f, z: 6.0f };
+    ahead: Vec3 = Vec3 { x: -1.0f, y: 0.0f, z: -12.0f };
+    aheadMax: Vec3 = Vec3 { x: 1.0f, y: 2.0f, z: -10.0f };
+    assert(lantern:::world:::BoxSeenThroughOpening(eye, corners, ahead, aheadMax), "a box straight ahead is seen through the opening");
+    aside: Vec3 = Vec3 { x: 30.0f, y: 0.0f, z: -12.0f };
+    asideMax: Vec3 = Vec3 { x: 32.0f, y: 2.0f, z: -10.0f };
+    assert(!lantern:::world:::BoxSeenThroughOpening(eye, corners, aside, asideMax), "a box far to the side is hidden by the wall");
+    above: Vec3 = Vec3 { x: -1.0f, y: 40.0f, z: -12.0f };
+    aboveMax: Vec3 = Vec3 { x: 1.0f, y: 42.0f, z: -10.0f };
+    assert(!lantern:::world:::BoxSeenThroughOpening(eye, corners, above, aboveMax), "a box far above is hidden too");
+
+    minimums := [ahead, aside, Vec3 { x: -1.0f, y: 0.0f, z: -60.0f }, Vec3 { x: -1.0f, y: 0.0f, z: -20.0f }];
+    maximums := [aheadMax, asideMax, Vec3 { x: 1.0f, y: 2.0f, z: -58.0f }, Vec3 { x: 1.0f, y: 2.0f, z: -18.0f }];
+    near: Array<usize>! = lantern:::world:::PeekBoxes(minimums.borrow(), maximums.borrow(), Vec3 { }, 40.0f, 2);
+    defer delete near;
+    assert(near.length() == 2, "at most two boxes");
+    assert(near[0] == 0 || near[0] == 3, "the nearest come first");
+    assert(near[0] != 2 && near[1] != 2, "a box beyond the depth is left out");
+    print("the peek chooses near boxes and culls what the opening hides");
+    return 0;
+}

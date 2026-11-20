@@ -95,6 +95,7 @@ Defining an action twice is a script error (`the action 'jump' is defined twice`
 |---|---|
 | `lantern:::world:::Load(path) -> i32` | spawn a world file's entities, meshes and collision; returns the entity count |
 | `lantern:::world:::Clear() -> void` | remove every game entity, the world meshes and all collision |
+| `scene_instance` and `scene_socket` entities (world file kinds, not calls) | `Load` expands every `scene_instance` (`scene` property: another world file, relative to this one) into rooms and joins matching `scene_socket` openings; see [`level-streaming.md`](level-streaming.md) |
 | `lantern:::world:::RoomCount() -> i32` | how many rooms the loaded level has (entities sharing a `room` property); 0 for a level without rooms. Rooms start unspawned, see [`level-streaming.md`](level-streaming.md) |
 | `lantern:::world:::LoadedRoomCount() -> i32`, `RoomIsLoaded(name) -> bool` | how many rooms are completely spawned, and whether one is |
 | `lantern:::world:::LoadAllRooms() -> void` | spawn every room (the partner's graph is built from the whole static level) |

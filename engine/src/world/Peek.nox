@@ -1,0 +1,77 @@
+/**
+ * The peek into a neighbouring scene (`docs/level-streaming.md`): which of an unloaded room's boxes to draw through the
+ * opening that joins it to a loaded room, and which of those the camera can see through that opening. Only numbers are
+ * compared here; the host spawns the boxes.
+ */
+lantern:::world :: namespace {
+    /**
+     * The four corners of an opening, in the order bottom left, bottom right, top right, top left as seen from the loaded
+     * side. The socket's position is the middle of the opening's bottom edge and its yaw is the way it faces.
+     */
+    OpeningCorners :: (position: Vec3, yawDegrees: f32, width: f32, height: f32) -> Array<Vec3>! {
+        sideways: Vec3 = PlacedPoint(Vec3 { x: width * 0.5f, y: 0.0f, z: 0.0f }, Vec3 { }, yawDegrees);
+        lift: Vec3 = Vec3 { x: 0.0f, y: height, z: 0.0f };
+        corners~ Array<Vec3>! = [];
+        corners.push(position - sideways);
+        corners.push(position + sideways);
+        corners.push(position + sideways + lift);
+        corners.push(position - sideways + lift);
+        return corners!;
+    }
+
+    /**
+     * The boxes to draw for a room seen through an opening: the indices of up to `maxBoxes` of its boxes that lie within
+     * `depth` metres (flat) of the opening's position, nearest first.
+     */
+    PeekBoxes :: (boundsMin: Array<Vec3>, boundsMax: Array<Vec3>, opening: Vec3, depth: f32, maxBoxes: usize) -> Array<usize>! {
+        distances~ Array<f32>! = [];
+        defer delete distances;
+        for index~ usize = 0; index < boundsMin.length(); index++ {
+            distances.push(DistanceToBounds(opening, boundsMin[index], boundsMax[index]));
+        }
+        none~ Array<bool>! = [];
+        defer delete none;
+        for index~ usize = 0; index < boundsMin.length(); index++ {
+            none.push(false);
+        }
+        ordered: Array<usize>! = RoomsToLoad(distances, none, depth);
+        defer delete ordered;
+        chosen~ Array<usize>! = [];
+        for index~ usize = 0; index < ordered.length() && index < maxBoxes; index++ {
+            chosen.push(ordered[index]);
+        }
+        return chosen!;
+    }
+
+    /**
+     * Whether a box may be seen from `eye` through the opening: false only when all of the box lies outside one of the four
+     * planes from the eye along the opening's edges. It can say yes to a box that is hidden behind the opening's frame
+     * (the depth test hides it), but never no to one that shows.
+     */
+    BoxSeenThroughOpening :: (eye: Vec3, corners: Array<Vec3>, boxMin: Vec3, boxMax: Vec3) -> bool {
+        centre: Vec3 = (corners[0] + corners[1] + corners[2] + corners[3]) * 0.25f;
+        for edge~ usize = 0; edge < 4; edge++ {
+            first: Vec3 = corners[edge] - eye;
+            second: Vec3 = corners[(edge + 1) % 4] - eye;
+            normal~ Vec3 = first.cross(second);
+            if normal.dot(centre - eye) < 0.0f {
+                normal = normal * -1.0f;
+            }
+            anyInside~ bool = false;
+            for cornerX~ i32 = 0; cornerX < 2; cornerX++ {
+                for cornerY~ i32 = 0; cornerY < 2; cornerY++ {
+                    for cornerZ~ i32 = 0; cornerZ < 2; cornerZ++ {
+                        point: Vec3 = Vec3 { x: cornerX == 0 ? boxMin.x : boxMax.x, y: cornerY == 0 ? boxMin.y : boxMax.y, z: cornerZ == 0 ? boxMin.z : boxMax.z };
+                        if normal.dot(point - eye) >= 0.0f {
+                            anyInside = true;
+                        }
+                    }
+                }
+            }
+            if !anyInside {
+                return false;
+            }
+        }
+        return true;
+    }
+}
