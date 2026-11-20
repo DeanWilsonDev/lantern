@@ -1,0 +1,27 @@
+// With recording off the budget doesn't read the clock or keep anything, and turning it on starts from a clean frame.
+lantern :: import lantern;
+
+main :: () -> i32 {
+    budget := new lantern:::core:::FrameBudget();
+    defer delete budget;
+    assert(!budget->recording, "a new budget isn't recording");
+    started: u64 = budget->Start();
+    assert(started == 0, "Start doesn't read the clock when nothing is recorded");
+    budget->Stop(lantern:::core:::BUDGET_PHASE_RENDER, started);
+    budget->Add(lantern:::core:::BUDGET_PHASE_RENDER, 9.0f);
+    budget->EndFrame(5000000);
+    assert(budget->filledCount == 0 && budget->recordedFrames == 0, "no frame is kept");
+
+    budget->recording = true;
+    budget->EndFrame(9000000);
+    assert(budget->filledCount == 1, "the first frame after turning it on is kept");
+    assert(budget->PhaseMillisecondsAgo(lantern:::core:::BUDGET_PHASE_RENDER, 0) == 0.0f, "and holds nothing from while it was off");
+
+    timer: u64 = budget->Start();
+    assert(timer != 0, "Start reads the clock while recording");
+    budget->Stop(lantern:::core:::BUDGET_PHASE_AUDIO, timer);
+    budget->EndFrame(20000000);
+    assert(budget->PhaseMillisecondsAgo(lantern:::core:::BUDGET_PHASE_AUDIO, 0) >= 0.0f, "a timed phase is filed");
+    print("frame budget records nothing while hidden");
+    return 0;
+}

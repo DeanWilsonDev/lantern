@@ -1,0 +1,261 @@
+// The fixed scenes the screenshot tests draw. Every scene is built from the same handful of meshes, every number is
+// written out, and nothing depends on the clock or on random values, so the same scene gives the same picture every time
+// on the same renderer. That is what lets `ScreenshotCompare.nox` check a capture against a reference.
+//
+// A scene is a function that fills a `RenderWorld`. `LoadAssets` uploads the meshes the scenes share, `CaptureAndCheck`
+// renders the world to an image and compares it with the reference screenshot of the same name.
+lantern:::screenshots :: namespace {
+    /** The width of every capture, in pixels. */
+    CAPTURE_WIDTH: u32 = 640;
+
+    /** The height of every capture, in pixels. */
+    CAPTURE_HEIGHT: u32 = 360;
+
+    /** The GPU handles of the meshes and the font atlas the scenes share. */
+    SceneAssets :: struct {
+        /** A flat square 80 units across, for roads and floors. */
+        ground~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        /** A low box along the street, for a pavement. */
+        pavement~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        /** A tall box, for a building. */
+        tallBuilding~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        /** A shorter box, for a building. */
+        shortBuilding~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        /** A thin tall box, for a lamp post. */
+        pole~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        /** A cube a unit and a bit across, for crates and blockers. */
+        crate~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        /** A small sphere, for a lamp's glass and for props. */
+        globe~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        /** The built-in font atlas, which the overlay draws text and rectangles from. */
+        fontAtlas~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
+    }
+
+    /** Uploads `data` to the GPU and returns its handle, failing the test with the renderer's message when that fails. */
+    UploadMesh :: (gpuRenderer: lantern:::gpu:::GpuRenderer~*, data: lantern:::renderer:::MeshData*) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag> {
+        when gpuRenderer->CreateMesh(data) {
+            Result:::Ok(handle) -> {
+                return handle;
+            },
+            Result:::Err(message) -> {
+                print(message);
+                delete message;
+                assert(false, "the mesh is uploaded");
+                return lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            }
+        }
+    }
+
+    /** Builds a box mesh with the given half extents, uploads it, and frees the CPU copy. */
+    UploadBox :: (gpuRenderer: lantern:::gpu:::GpuRenderer~*, halfExtents: Vec3) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag> {
+        data := lantern:::renderer:::BoxMesh(halfExtents, true);
+        defer delete data;
+        return UploadMesh(gpuRenderer, data);
+    }
+
+    /** Uploads every mesh and the font atlas the scenes use. */
+    LoadAssets :: (gpuRenderer: lantern:::gpu:::GpuRenderer~*) -> SceneAssets {
+        assets~ SceneAssets = SceneAssets { };
+        groundData := lantern:::renderer:::Plane(80.0f, 80.0f);
+        defer delete groundData;
+        assets.ground = UploadMesh(gpuRenderer, groundData);
+        assets.pavement = UploadBox(gpuRenderer, Vec3 { x: 2.0f, y: 0.15f, z: 40.0f });
+        assets.tallBuilding = UploadBox(gpuRenderer, Vec3 { x: 4.0f, y: 9.0f, z: 5.0f });
+        assets.shortBuilding = UploadBox(gpuRenderer, Vec3 { x: 4.0f, y: 5.0f, z: 5.0f });
+        assets.pole = UploadBox(gpuRenderer, Vec3 { x: 0.12f, y: 2.6f, z: 0.12f });
+        assets.crate = UploadBox(gpuRenderer, Vec3 { x: 0.7f, y: 0.7f, z: 0.7f });
+        globeData := lantern:::renderer:::Sphere(0.4f, 24, 12);
+        defer delete globeData;
+        assets.globe = UploadMesh(gpuRenderer, globeData);
+        atlasData := lantern:::renderer:::FontAtlas();
+        defer delete atlasData;
+        when gpuRenderer->CreateTexture(atlasData) {
+            Result:::Ok(handle) -> {
+                assets.fontAtlas = handle;
+            },
+            Result:::Err(message) -> {
+                print(message);
+                delete message;
+                assert(false, "the font atlas is uploaded");
+            }
+        }
+        return assets;
+    }
+
+    /** Turns off everything but the lit meshes: no sky, fog, shafts, bloom, occlusion or reflections. */
+    PlainFrame :: (world: lantern:::renderer:::RenderWorld~*) -> void {
+        world->sky.enabled = false;
+        world->atmosphere.heightFogEnabled = false;
+        world->atmosphere.lightShaftsEnabled = false;
+        world->post.bloomEnabled = false;
+        world->post.ambientOcclusionEnabled = false;
+        world->post.reflectionsEnabled = false;
+    }
+
+    /**
+     * A street running away from the camera: a road, a pavement each side, two rows of buildings, a lamp post every twelve
+     * units with a glass globe and (when `lampLight` is true) a warm point light, a few crates, and a metal ball. `wet`
+     * (0 to 1) soaks the road, which darkens and shines it and puts puddles in it.
+     */
+    BuildStreet :: (world: lantern:::renderer:::RenderWorld~*, assets: SceneAssets, wet: f32, lampLight: bool) -> void {
+        world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 2.4f, z: 16.0f }, Vec3 { x: 0.0f, y: 3.2f, z: -20.0f });
+        road~ lantern:::renderer:::Material = lantern:::renderer:::Material { roughness: 0.85f };
+        if wet > 0.0f {
+            road = lantern:::renderer:::Material { roughness: 0.7f, wetness: wet, puddles: 0.55f };
+        }
+        world->DrawWithMaterial(assets.ground, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.16f, 0.16f, 0.17f), road);
+        pavementColor := lantern:::core:::Color:::Rgb(0.42f, 0.4f, 0.38f);
+        world->Draw(assets.pavement, null, Mat4:::translation(Vec3 { x: -6.5f, y: 0.15f, z: 0.0f }), pavementColor);
+        world->Draw(assets.pavement, null, Mat4:::translation(Vec3 { x: 6.5f, y: 0.15f, z: 0.0f }), pavementColor);
+        for row~ u32 = 0; row < 6; row++ {
+            z: f32 = 4.0f - f32(row) * 11.0f;
+            leftColor := lantern:::core:::Color:::Rgb(0.55f, 0.32f, 0.26f);
+            rightColor := lantern:::core:::Color:::Rgb(0.34f, 0.38f, 0.5f);
+            if row % 2 == 0 {
+                world->Draw(assets.tallBuilding, null, Mat4:::translation(Vec3 { x: -12.0f, y: 9.0f, z: z }), leftColor);
+                world->Draw(assets.shortBuilding, null, Mat4:::translation(Vec3 { x: 12.0f, y: 5.0f, z: z }), rightColor);
+            } else {
+                world->Draw(assets.shortBuilding, null, Mat4:::translation(Vec3 { x: -12.0f, y: 5.0f, z: z }), leftColor);
+                world->Draw(assets.tallBuilding, null, Mat4:::translation(Vec3 { x: 12.0f, y: 9.0f, z: z }), rightColor);
+            }
+        }
+        for post~ u32 = 0; post < 4; post++ {
+            z: f32 = 8.0f - f32(post) * 12.0f;
+            for side~ u32 = 0; side < 2; side++ {
+                x~ f32 = -5.0f;
+                if side == 1 {
+                    x = 5.0f;
+                }
+                world->Draw(assets.pole, null, Mat4:::translation(Vec3 { x: x, y: 2.9f, z: z }), lantern:::core:::Color:::Rgb(0.2f, 0.2f, 0.22f));
+                world->DrawWithMaterial(assets.globe, null, Mat4:::translation(Vec3 { x: x, y: 5.7f, z: z }), lantern:::core:::Color:::White(), lantern:::renderer:::Material:::Glowing(lantern:::core:::Color:::Rgb(4.0f, 2.6f, 1.2f)));
+                if lampLight {
+                    world->AddLight(lantern:::renderer:::Light:::Point(Vec3 { x: x, y: 5.4f, z: z }, lantern:::core:::Color:::Rgb(14.0f, 8.0f, 3.5f), 14.0f));
+                }
+            }
+        }
+        world->Draw(assets.crate, null, Mat4:::translation(Vec3 { x: -2.2f, y: 0.7f, z: 4.0f }), lantern:::core:::Color:::Rgb(0.6f, 0.45f, 0.25f));
+        world->Draw(assets.crate, null, Mat4:::translation(Vec3 { x: 2.6f, y: 0.7f, z: -6.0f }), lantern:::core:::Color:::Rgb(0.5f, 0.5f, 0.52f));
+        world->DrawWithMaterial(assets.globe, null, Mat4:::translation(Vec3 { x: 0.5f, y: 0.4f, z: 0.0f }), lantern:::core:::Color:::Rgb(0.8f, 0.8f, 0.85f), lantern:::renderer:::Material:::Metal());
+    }
+
+    /** The street by day: a warm sun with shadows, the procedural sky, the default fog and the default picture. */
+    LitStreet :: (assets: SceneAssets) -> lantern:::renderer:::RenderWorld*! {
+        world := new lantern:::renderer:::RenderWorld();
+        world->light.direction = lantern:::core:::Normalize3(Vec3 { x: -0.45f, y: -0.7f, z: -0.55f });
+        world->light.color = lantern:::core:::Color:::Rgb(1.0f, 0.9f, 0.74f);
+        world->light.ambient = lantern:::core:::Color:::Rgb(0.28f, 0.34f, 0.46f);
+        world->light.groundAmbient = lantern:::core:::Color:::Rgb(0.16f, 0.14f, 0.12f);
+        world->clearColor = lantern:::core:::Color:::Rgb(0.7f, 0.8f, 0.92f);
+        BuildStreet(world, assets, 0.0f, false);
+        return world!;
+    }
+
+    /**
+     * The street at night, set up the way the platformer's first chapter is: a dim blue moon with shadows, a dark sky
+     * whose horizon colours the fog, lamps that glow and light the wet road, bloom, a darker exposure, a vignette.
+     */
+    NightStreet :: (assets: SceneAssets) -> lantern:::renderer:::RenderWorld*! {
+        world := new lantern:::renderer:::RenderWorld();
+        world->light.direction = lantern:::core:::Normalize3(Vec3 { x: -0.3f, y: -0.55f, z: -0.6f });
+        world->light.color = lantern:::core:::Color:::Rgb(0.5f, 0.6f, 0.82f);
+        world->light.ambient = lantern:::core:::Color:::Rgb(0.2f, 0.27f, 0.43f);
+        world->light.groundAmbient = lantern:::core:::Color:::Rgb(0.09f, 0.11f, 0.17f);
+        world->sky.zenith = lantern:::core:::Color:::Rgb(0.03f, 0.045f, 0.1f);
+        world->sky.horizon = lantern:::core:::Color:::Rgb(0.08f, 0.11f, 0.2f);
+        world->sky.ground = lantern:::core:::Color:::Rgb(0.02f, 0.03f, 0.055f);
+        world->sky.sunDiscRadiusRadians = 0.038f;
+        world->sky.sunDiscStrength = 4.0f;
+        world->clearColor = lantern:::core:::Color:::Rgb(0.08f, 0.11f, 0.2f);
+        world->atmosphere.fogColor = lantern:::core:::Color:::Rgb(0.08f, 0.11f, 0.2f);
+        world->atmosphere.fogDensity = 0.02f;
+        world->post.bloomStrength = 0.35f;
+        world->post.bloomThreshold = 1.0f;
+        world->post.exposure = 1.1f;
+        world->post.grade = lantern:::renderer:::ColorGrade { saturation: 0.95f, contrast: 1.05f, tint: lantern:::core:::Color:::Rgb(0.95f, 0.97f, 1.0f), vignette: 0.25f };
+        BuildStreet(world, assets, 0.8f, true);
+        return world!;
+    }
+
+    /**
+     * Three shadow casters in one frame, on a plain floor with nothing else to look at: a low sun from the right (three
+     * cascades), a warm point light on the left (a cube map of shadows), and a cool spot light from above the right
+     * (one shadow tile). A column, a crate and a ball stand where each shadow can fall across the floor.
+     */
+    ShadowYard :: (assets: SceneAssets) -> lantern:::renderer:::RenderWorld*! {
+        world := new lantern:::renderer:::RenderWorld();
+        PlainFrame(world);
+        world->light.direction = lantern:::core:::Normalize3(Vec3 { x: -0.8f, y: -0.45f, z: -0.3f });
+        world->light.color = lantern:::core:::Color:::Rgb(0.7f, 0.66f, 0.58f);
+        world->light.ambient = lantern:::core:::Color:::Rgb(0.07f, 0.08f, 0.1f);
+        world->light.groundAmbient = lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f);
+        world->clearColor = lantern:::core:::Color:::Rgb(0.02f, 0.02f, 0.03f);
+        world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 13.0f, z: 13.0f }, Vec3 { x: 0.0f, y: 0.0f, z: 0.0f });
+        world->Draw(assets.ground, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.6f, 0.6f, 0.58f));
+        world->Draw(assets.crate, null, Mat4:::translation(Vec3 { x: 3.5f, y: 0.7f, z: 1.0f }), lantern:::core:::Color:::Rgb(0.7f, 0.5f, 0.3f));
+        world->Draw(assets.pole, null, Mat4:::translation(Vec3 { x: -3.0f, y: 2.6f, z: -2.0f }), lantern:::core:::Color:::Rgb(0.7f, 0.7f, 0.75f));
+        world->Draw(assets.crate, null, Mat4:::translation(Vec3 { x: -7.0f, y: 0.7f, z: 2.0f }), lantern:::core:::Color:::Rgb(0.5f, 0.55f, 0.7f));
+        world->Draw(assets.globe, null, Mat4:::translation(Vec3 { x: 7.0f, y: 0.4f, z: 4.0f }), lantern:::core:::Color:::Rgb(0.85f, 0.4f, 0.4f));
+        world->Draw(assets.crate, null, Mat4:::translation(Vec3 { x: 6.5f, y: 3.0f, z: -3.0f }), lantern:::core:::Color:::Rgb(0.4f, 0.65f, 0.45f));
+        pointId: u32 = world->AddLight(lantern:::renderer:::Light:::Point(Vec3 { x: -6.0f, y: 3.5f, z: -1.0f }, lantern:::core:::Color:::Rgb(30.0f, 17.0f, 8.0f), 18.0f));
+        spotId: u32 = world->AddLight(lantern:::renderer:::Light:::Spot(Vec3 { x: 6.5f, y: 9.0f, z: 0.0f }, Vec3 { x: 6.5f, y: 0.0f, z: -3.0f }, lantern:::core:::Color:::Rgb(40.0f, 42.0f, 55.0f), 18.0f, 0.25f, 0.45f));
+        world->lights[0].castsShadows = true;
+        world->lights[1].castsShadows = true;
+        return world!;
+    }
+
+    /**
+     * Overlay drawing over a small 3D backdrop: a title, a menu panel with a highlighted button, a translucent HUD box, a
+     * gradient triangle, and debug lines. It is what the main menu and the HUD are made of, without the game.
+     */
+    OverlayMenu :: (assets: SceneAssets) -> lantern:::renderer:::RenderWorld*! {
+        world := new lantern:::renderer:::RenderWorld();
+        PlainFrame(world);
+        world->light.direction = lantern:::core:::Normalize3(Vec3 { x: -0.4f, y: -0.8f, z: -0.4f });
+        world->light.color = lantern:::core:::Color:::Rgb(0.9f, 0.85f, 0.75f);
+        world->light.ambient = lantern:::core:::Color:::Rgb(0.2f, 0.22f, 0.3f);
+        world->clearColor = lantern:::core:::Color:::Rgb(0.05f, 0.07f, 0.14f);
+        world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 4.0f, y: 3.0f, z: 8.0f }, Vec3 { x: 0.0f, y: 0.8f, z: 0.0f });
+        world->Draw(assets.ground, null, Mat4 { }, lantern:::core:::Color:::Rgb(0.25f, 0.28f, 0.34f));
+        world->Draw(assets.crate, null, Mat4:::translation(Vec3 { x: 0.0f, y: 0.7f, z: 0.0f }), lantern:::core:::Color:::Rgb(0.7f, 0.5f, 0.3f));
+        world->Draw(assets.globe, null, Mat4:::translation(Vec3 { x: 2.0f, y: 0.4f, z: 1.0f }), lantern:::core:::Color:::Rgb(0.4f, 0.7f, 0.5f));
+        world->Line(Vec3 { x: -4.0f, y: 0.02f, z: 0.0f }, Vec3 { x: 4.0f, y: 0.02f, z: 0.0f }, lantern:::core:::Color:::Red());
+        world->Line(Vec3 { x: 0.0f, y: 0.02f, z: -4.0f }, Vec3 { x: 0.0f, y: 0.02f, z: 4.0f }, lantern:::core:::Color:::Blue());
+        world->overlayTexture = assets.fontAtlas;
+        world->overlay->Text("LANTERN", Vec2 { x: 24.0f, y: 20.0f }, 5.0f, lantern:::core:::Color:::Rgb(1.0f, 0.85f, 0.5f));
+        world->overlay->Rect(Vec2 { x: 20.0f, y: 90.0f }, Vec2 { x: 220.0f, y: 250.0f }, lantern:::core:::Color:::Rgba(0.0f, 0.0f, 0.0f, 0.6f));
+        world->overlay->Rect(Vec2 { x: 28.0f, y: 100.0f }, Vec2 { x: 212.0f, y: 134.0f }, lantern:::core:::Color:::Rgb(0.9f, 0.7f, 0.25f));
+        world->overlay->Text("Play", Vec2 { x: 40.0f, y: 108.0f }, 2.0f, lantern:::core:::Color:::Black());
+        world->overlay->Text("Settings", Vec2 { x: 40.0f, y: 150.0f }, 2.0f, lantern:::core:::Color:::White());
+        world->overlay->Text("Quit", Vec2 { x: 40.0f, y: 192.0f }, 2.0f, lantern:::core:::Color:::White());
+        world->overlay->Rect(Vec2 { x: 440.0f, y: 300.0f }, Vec2 { x: 630.0f, y: 350.0f }, lantern:::core:::Color:::Rgba(0.1f, 0.15f, 0.3f, 0.7f));
+        world->overlay->Text("Gems 3/9", Vec2 { x: 452.0f, y: 312.0f }, 2.0f, lantern:::core:::Color:::Yellow());
+        world->overlay->Triangle(Vec2 { x: 560.0f, y: 30.0f }, Vec2 { x: 620.0f, y: 90.0f }, Vec2 { x: 520.0f, y: 90.0f }, lantern:::core:::Color:::Red(), lantern:::core:::Color:::Green(), lantern:::core:::Color:::Blue());
+        return world!;
+    }
+
+    /** Renders `world` at the capture size and checks the picture against the reference screenshot called `name`. */
+    CaptureAndCheck :: (gpuRenderer: lantern:::gpu:::GpuRenderer~*, world: lantern:::renderer:::RenderWorld*, name: string) -> void {
+        when gpuRenderer->Capture(world, CAPTURE_WIDTH, CAPTURE_HEIGHT) {
+            Result:::Ok(image) -> {
+                Check(name, image);
+                delete image;
+            },
+            Result:::Err(message) -> {
+                print(message);
+                delete message;
+                assert(false, "the scene renders");
+            }
+        }
+    }
+
+    /** True when screenshots will be compared; a test that returns early otherwise saves building a renderer. */
+    ReadyToCompare :: (name: string) -> bool {
+        if Enabled() {
+            return true;
+        }
+        skipped: string! = `screenshot ${name}: skipped, not on the software renderer (run engine/tools/run-screenshot-tests.sh)`;
+        Say(skipped);
+        delete skipped;
+        return false;
+    }
+}
