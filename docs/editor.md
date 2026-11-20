@@ -242,6 +242,8 @@ facing the way the camera faces. The game skips the title screen, drops the poin
 companion beside the player (the route companion at her nearest stop, the partner at the nearest team beat) and makes
 that spot the level's restart point. If there is no ground below the point, the game starts at the level's own spawn.
 The editor adds the starting point as a `play_start` entity in the scratch copy only, so the open level is not changed.
+Select a **Player start** or **Debug start** (Entity menu) before pressing Play and the game starts at it as authored,
+with its own settings, instead of dropping the camera's point to the ground.
 Close the game window or press Stop to come back: the editor's camera, selection and undo history are as you left them.
 
 ## C API rules
@@ -287,3 +289,20 @@ Show > Game Lighting (or Settings > Graphics) draws the viewport with the game's
 ## Material Silhouettes
 
 A material is a Silhouette of type `material` (`@type material` in its `root.calamus`) with `texture`, `tint`, `metallic`, `roughness` and `emissive`. Put one in `games/platformer/assets/silhouettes/materials/NAME` (or `games/platformer/assets/silhouettes/NAME`) and give an entity that `material` name: the viewport draws it with the material's metallic, roughness, emissive and tint on top of its texture. A material name with no Silhouette still means the texture of that name. The content browser lists material Silhouettes with a material icon; the Silhouettes tab doesn't, since they aren't placed in a level. Starters: `brushed_steel`, `warm_plaster`, `wet_asphalt` and `neon_sign`. The game never reads Silhouette files: saving in the editor (or `mist run materials`) writes `games/platformer/game-assets/BakedMaterials.nyx`, a generated Nyx file whose `Register()` calls `lantern:::world:::SetMaterialLook` for each material, and the game imports it.
+
+## Player starts
+
+A level can hold any number of `player_start` entities: **Player start** and **Debug start** in the palette. Where the
+entity stands and which way it faces (rotate it about Y) is where the player begins. Its properties say the rest:
+
+| Property | Meaning |
+| --- | --- |
+| `label` | The name to pick it by. |
+| `order` | Of the ordinary starts, the lowest is the level's start. A level with none keeps its `spawn`. |
+| `debug` | 1 keeps it out of ordinary play. A debug start is used only when asked for. |
+| `spawns` | Who is made, comma separated: `player,partner,companion`. Leave one out to test without her. |
+| `give_lantern` | 1 starts the player carrying the lantern. |
+| `beat` | The team beat the partner begins at. Without it, the beat nearest the start. |
+
+Ask for a start by label with `LANTERN_START=gate mist run game` (this also skips the title screen), or select it in the
+editor and press Play.

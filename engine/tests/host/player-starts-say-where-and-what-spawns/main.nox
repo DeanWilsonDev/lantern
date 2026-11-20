@@ -1,0 +1,107 @@
+// A level's `player_start` entities say where the player begins and what spawns with them. The ordinary start with the
+// lowest order is the level's start, a debug start is used only when asked for by label (LANTERN_START), and a debug start
+// can leave the partner out and hand the player the lantern.
+NyxC :: import NyxC;
+ChaosUiC :: import ChaosUiC;
+lantern :: import lantern;
+
+LEVEL_PATH: string : "/tmp/lantern-player-starts-test.world.json";
+EDITOR_LEVEL_PATH: string : "/tmp/lantern-player-starts-editor-test.world.json";
+
+AddStart :: (worldFile: lantern:::world:::WorldFile~*, label: string, position: Vec3, order: f32, isDebug: bool, spawns: string, givesLantern: bool, yawDegrees: f32) -> void {
+    start := new lantern:::world:::WorldEntity(worldFile->NextEntityKey(), label, "player_start");
+    start->transform.position = position;
+    start->transform.rotationDegrees = Vec3 { x: 0.0f, y: yawDegrees, z: 0.0f };
+    start->SetTextProperty("label", label);
+    start->SetNumberProperty("order", order);
+    start->SetNumberProperty("debug", isDebug ? 1.0f : 0.0f);
+    start->SetTextProperty("spawns", spawns);
+    start->SetNumberProperty("give_lantern", givesLantern ? 1.0f : 0.0f);
+    worldFile->Add(start!);
+}
+
+WriteLevel :: (extraMarker: bool) -> void {
+    when lantern:::world:::Load("../games/platformer/assets/worlds/prototypes/hand-off.world.json") {
+        Result:::Ok(loaded) -> {
+            worldFile~ lantern:::world:::WorldFile*! = loaded!;
+            AddStart(worldFile, "late", Vec3 { x: 4.0f, y: 3.25f, z: -26.0f }, 1.0f, false, "player,partner,companion", false, 0.0f);
+            AddStart(worldFile, "gate", Vec3 { x: 0.0f, y: 3.25f, z: -22.0f }, 0.0f, false, "player,partner,companion", false, 90.0f);
+            AddStart(worldFile, "alone", Vec3 { x: -3.0f, y: 3.25f, z: -20.0f }, 0.0f, true, "player", true, 0.0f);
+            if extraMarker {
+                marker := new lantern:::world:::WorldEntity(worldFile->NextEntityKey(), "Play start", "play_start");
+                marker->transform.position = Vec3 { x: 0.0f, y: 12.0f, z: -5.0f };
+                marker->SetTextProperty("start", "late");
+                worldFile->Add(marker!);
+            }
+            failure: string!? = worldFile->Save(extraMarker ? EDITOR_LEVEL_PATH : LEVEL_PATH);
+            assert(failure == null, "the level is written");
+            delete failure;
+            delete worldFile;
+        },
+        Result:::Err(message) -> {
+            print(`couldn't read the hand-off room: ${message}`);
+            delete message;
+            assert(false, "the hand-off room loads");
+        }
+    }
+}
+
+SetSetting :: (name: string, value: string) -> void {
+    unsafe {
+        lantern:::archivecalls:::setenv(name, value, 1);
+    }
+}
+
+main :: () -> i32 {
+    WriteLevel(false);
+    WriteLevel(true);
+    SetSetting("LANTERN_LEVEL", LEVEL_PATH);
+    manifest := lantern:::testing:::LoadPlatformerManifest();
+
+    SetSetting("LANTERN_START", "");
+    host := lantern:::testing:::StartPlatformer(manifest, false);
+    platform := lantern:::testing:::NewPlatformerPlatform();
+    frameLoop := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::RunFrames(frameLoop, platform, host, 30);
+    lantern:::testing:::PressKey(platform, lantern:::core:::KeyCode:::Enter);
+    lantern:::testing:::RunFrames(frameLoop, platform, host, 60);
+    lantern:::testing:::AssertNoScriptError(host, "on the ordinary start");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Game/Start") == "gate", "the ordinary start with the lowest order is the level's start");
+    lantern:::testing:::ExpectWithState(host, Math:::abs(lantern:::testing:::PlayerX(host)) < 0.5f && Math:::abs(lantern:::testing:::PlayerZ(host) + 22.0f) < 0.5f, "the player begins at it");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Partner/Position") != "", "its spawns list includes the partner");
+    lantern:::testing:::ExpectWithState(host, lantern:::testing:::DebugText(host, "Glow/Carrying lantern") == "no", "and no lantern");
+    delete frameLoop;
+    delete platform;
+    delete host;
+
+    SetSetting("LANTERN_START", "alone");
+    debugHost := lantern:::testing:::StartPlatformer(manifest, false);
+    debugPlatform := lantern:::testing:::NewPlatformerPlatform();
+    debugLoop := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::RunFrames(debugLoop, debugPlatform, debugHost, 60);
+    lantern:::testing:::AssertNoScriptError(debugHost, "on the debug start");
+    lantern:::testing:::ExpectWithState(debugHost, lantern:::testing:::DebugText(debugHost, "Game/Start") == "alone", "a debug start is used when asked for by label");
+    lantern:::testing:::ExpectWithState(debugHost, Math:::abs(lantern:::testing:::PlayerX(debugHost) + 3.0f) < 0.5f && Math:::abs(lantern:::testing:::PlayerZ(debugHost) + 20.0f) < 0.5f, "the player begins at it, with no title screen");
+    lantern:::testing:::ExpectWithState(debugHost, lantern:::testing:::DebugText(debugHost, "Partner/Position") == "", "its spawns list leaves the partner out");
+    lantern:::testing:::ExpectWithState(debugHost, lantern:::testing:::DebugText(debugHost, "Glow/Carrying lantern") == "yes", "and hands the player the lantern");
+    delete debugLoop;
+    delete debugPlatform;
+    delete debugHost;
+    SetSetting("LANTERN_START", "");
+    SetSetting("LANTERN_LEVEL", EDITOR_LEVEL_PATH);
+    editorHost := lantern:::testing:::StartPlatformer(manifest, false);
+    editorPlatform := lantern:::testing:::NewPlatformerPlatform();
+    editorLoop := lantern:::testing:::NewFrameLoop();
+    lantern:::testing:::RunFrames(editorLoop, editorPlatform, editorHost, 60);
+    lantern:::testing:::AssertNoScriptError(editorHost, "on a start picked in the editor");
+    lantern:::testing:::ExpectWithState(editorHost, lantern:::testing:::DebugText(editorHost, "Game/Start") == "late", "Play with a start selected uses that start as authored");
+    lantern:::testing:::ExpectWithState(editorHost, Math:::abs(lantern:::testing:::PlayerX(editorHost) - 4.0f) < 0.5f && Math:::abs(lantern:::testing:::PlayerZ(editorHost) + 26.0f) < 0.5f, "instead of dropping the camera's point to the ground");
+    delete editorLoop;
+    delete editorPlatform;
+    delete editorHost;
+    delete manifest;
+    removeFile(LEVEL_PATH);
+    removeFile(EDITOR_LEVEL_PATH);
+    print("player starts say where and what spawns");
+    return 0;
+}
