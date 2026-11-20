@@ -250,6 +250,21 @@ lantern:::editor :: namespace {
             return CurrentStateId() != savedStateId || previewOriginals.length() > 0;
         }
 
+        // Writes the level as it stands, unsaved edits included, to `target` for play in editor, with one extra
+        // `play_start` entity at `position` facing `yaw` (the camera's heading, the same convention as the
+        // game's camera). The entity is added for the write and taken out again, so the open level, its undo
+        // history and its saved state are untouched. Returns null on success, else a message.
+        SavePlayCopy~: (target: string, position: Vec3, yaw: f32) -> string!? {
+            playStart := new lantern:::world:::WorldEntity(documentWorldFile->NextEntityKey(), "Play start", "play_start");
+            playStart->transform.position = position;
+            playStart->SetNumberProperty("yaw", yaw);
+            documentWorldFile->Add(playStart!);
+            failure: string!? = documentWorldFile->Save(target);
+            removed := documentWorldFile->entities.remove(documentWorldFile->entities.length() - 1);
+            delete removed;
+            return failure!;
+        }
+
         // Writes the level, to `target` or else to its own path (an error if it has neither). A drag in
         // progress is committed first. On success the path and saved state are updated.
         Save~: (target: string?) -> Result<string!, string!> {

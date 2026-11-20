@@ -95,6 +95,9 @@ public:
         // after OnRender and moves focus between its buttons with these three actions.
         lantern:::ui:::SetNavigation(InputSettings:::MENU_UP, InputSettings:::MENU_DOWN, InputSettings:::MENU_CONFIRM);
         uiMount = lantern:::ui:::Mount("ui/game-screen.chaos", "GameScreen");
+        if level.hasPlayStart {
+            SetState(GameState:::Playing);
+        }
     }
 
     // Every fixed step, with `dt` always 1/60 s. Only the Playing state simulates, so pausing
@@ -305,6 +308,7 @@ private:
         companion.Spawn(level.companionStops, level.anchors, assets.mannequinRig, assets.playerTexture);
         if level.hasPartner {
             partner.Spawn(level.partnerStart, assets.mannequinRig, assets.playerTexture, level.teamBeats);
+            partner.BeginAtBeat(level.playStartBeat);
             navigationDynamics.Register(level.gates, level.crumbles, level.platforms);
             partner.UseNavigationDynamics(navigationDynamics);
         } else {
@@ -317,8 +321,13 @@ private:
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
         completeSeconds = 0.0f;
-        camera.ResetBehind(0.0f);
+        camera.ResetBehind(level.playStartYaw);
         rules.Start(level);
+        if level.hasPlayStart {
+            rules.respawnCompanionStop = level.playStartCompanionStop;
+            companion.SendToStop(level.playStartCompanionStop);
+            player.FaceYaw(level.playStartYaw);
+        }
         seenRestartCount = rules.restartCount;
         seenClimbRestartCount = rules.restartCount;
         // Lights live in the engine until removed, so the last level's glows are turned off

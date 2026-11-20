@@ -1,0 +1,90 @@
+// Play in editor starts the player at the editor's viewpoint: the selected entity if there is one, else the camera, facing
+// the camera's heading. The scratch copy it writes has a `play_start` entity there and the open level has none.
+lantern :: import lantern;
+
+PLAY_COPY_PATH: string : "/tmp/lantern-editor-play-copy-test.world.json";
+
+CourseSession :: () -> lantern:::editor:::EditorSession*!? {
+    when lantern:::editor:::Palette:::Load("../games/platformer/assets/editor/palette.json") {
+        Result:::Ok(palette) -> {
+            when lantern:::editor:::EditorSession:::Open("../games/platformer/assets/worlds/course.world.json", palette!) {
+                Result:::Ok(session) -> {
+                    session->SetViewportSize(Vec2 { x: 1280.0f, y: 720.0f });
+                    return session!;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return null;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return null;
+        }
+    }
+}
+
+Near3 :: (left: Vec3, right: Vec3) -> bool {
+    return Math:::abs(left.x - right.x) <= 0.0001f && Math:::abs(left.y - right.y) <= 0.0001f && Math:::abs(left.z - right.z) <= 0.0001f;
+}
+
+WithoutASelectionItStartsAtTheCamera :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    start := session->PlayStart();
+    assert(!start.isFromSelection, "with nothing selected the start is the camera's");
+    assert(Near3(start.position, session->camera.Position()), "the start is where the camera is");
+    assert(start.yaw == session->camera.yaw, "facing where the camera faces");
+}
+
+WithASelectionItStartsAtTheEntity :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    gemKey: u64 = session->World()->entities[session->World()->FirstOfKind("gem") ?? 0]->id;
+    session->SelectOnly(gemKey);
+    start := session->PlayStart();
+    assert(start.isFromSelection, "a selection is the start");
+    gemPosition: Vec3 = session->World()->entities[session->World()->IndexOf(gemKey) ?? 0]->transform.position;
+    assert(Near3(start.position, gemPosition), "the start is the selected entity's position");
+}
+
+TheScratchCopyHasTheMarkerAndTheOpenLevelDoesNot :: () -> void {
+    session~ lantern:::editor:::EditorSession*!? = CourseSession();
+    guard session return;
+    defer delete session;
+    entityCount: usize = session->World()->entities.length();
+    failure: string!? = session->document->SavePlayCopy(PLAY_COPY_PATH, Vec3 { x: 1.0f, y: 2.0f, z: 3.0f }, 0.5f);
+    assert(failure == null, "the copy is written");
+    delete failure;
+    assert(session->World()->entities.length() == entityCount, "the open level has the same entities as before");
+    assert(session->World()->CountOfKind("play_start") == 0, "and no start marker");
+    assert(!session->document->IsDirty(), "writing the copy doesn't make the level unsaved");
+    when lantern:::world:::Load(PLAY_COPY_PATH) {
+        Result:::Ok(copy) -> {
+            assert(copy->entities.length() == entityCount + 1, "the copy has one more entity");
+            assert(copy->CountOfKind("play_start") == 1, "and it is the start marker");
+            index: usize = copy->FirstOfKind("play_start") ?? 0;
+            assert(Near3(copy->entities[index]->transform.position, Vec3 { x: 1.0f, y: 2.0f, z: 3.0f }), "at the given point");
+            delete copy;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the copy can be read back");
+        }
+    }
+    removeFile(PLAY_COPY_PATH);
+}
+
+main :: () -> i32 {
+    WithoutASelectionItStartsAtTheCamera();
+    WithASelectionItStartsAtTheEntity();
+    TheScratchCopyHasTheMarkerAndTheOpenLevelDoesNot();
+    print("play in editor copy carries the viewpoint");
+    return 0;
+}
