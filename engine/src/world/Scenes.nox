@@ -1,0 +1,216 @@
+/**
+ * An opening between two placed scenes: where it is in the world, which way it faces, how big it is, and the two rooms
+ * it joins.
+ */
+SceneLink :: class {
+public:
+    roomA~ string!;
+    roomB~ string!;
+    position~ Vec3 = Vec3 { };
+    yawDegrees~ f32 = 0.0f;
+    width~ f32 = 0.0f;
+    height~ f32 = 0.0f;
+
+    SceneLink~: (firstRoom: string, secondRoom: string) {
+        roomA = `${firstRoom}`;
+        roomB = `${secondRoom}`;
+    }
+
+    !SceneLink~: () {
+        delete roomA;
+        delete roomB;
+    }
+}
+
+/**
+ * Composed scenes (`docs/level-streaming.md`). A scene is a world file; a `scene_instance` entity in another world file places
+ * it with its position and yaw, and `ExpandScenes` copies the scene's entities into the placing file. Each instance becomes a
+ * room named for the instance entity, so room streaming loads and unloads scenes. A `scene_socket` entity marks an opening;
+ * `StitchTransform` places a scene so one of its sockets lies on another scene's, and `ExpandScenes` reports the joined pairs.
+ *
+ * | Kind | Properties |
+ * | --- | --- |
+ * | `scene_instance` | `scene` (text: the scene's file, relative to the file that places it) |
+ * | `scene_socket` | `width` (3), `height` (3); the entity's yaw is the way the opening faces, and `forward` of a yaw 0 socket is -z |
+ */
+lantern:::world :: namespace {
+    SCENE_INSTANCE_KIND: string : "scene_instance";
+    SCENE_SOCKET_KIND: string : "scene_socket";
+    SCENE_PROPERTY: string : "scene";
+    SCENE_ROOM_PROPERTY: string : "scene_room";
+    MAX_SCENE_DEPTH: i32 : 8;
+    SOCKET_JOIN_DISTANCE: f32 : 0.3f;
+    SOCKET_JOIN_YAW_DEGREES: f32 : 5.0f;
+    DEFAULT_SOCKET_SIZE: f32 : 3.0f;
+
+    /**
+     * The folder part of a path ("" when it has none), with no trailing slash.
+     */
+    DirectoryOf :: (path: string) -> string! {
+        lastSlash~ usize? = null;
+        for index~ usize = 0; index < path.length(); index++ {
+            if path.byteAt(index) == u8(47) {
+                lastSlash = index;
+            }
+        }
+        if slash := lastSlash {
+            return `${path.substring(0, slash)}`;
+        }
+        return "".copy();
+    }
+
+    /**
+     * Where a scene's own point lies in the world once the scene is placed at `position` turned `yawDegrees` about the up axis.
+     */
+    PlacedPoint :: (point: Vec3, position: Vec3, yawDegrees: f32) -> Vec3 {
+        radiansPerDegree: f32 = Math:::PI / 180.0f;
+        one: Vec3 = Vec3 { x: 1.0f, y: 1.0f, z: 1.0f };
+        matrix: Mat4 = lantern:::core:::MatrixFromScaleRotationTranslation(one, lantern:::core:::QuaternionFromEulerYxz(yawDegrees * radiansPerDegree, 0.0f, 0.0f), position);
+        return lantern:::core:::TransformPoint3(matrix, point);
+    }
+
+    /**
+     * The placement that puts a scene's socket on a socket that is already in the world, facing the other way. The first two
+     * arguments are the world socket's position and yaw; the next two are the new scene's socket in the scene's own space. The
+     * result is the position and yaw to give the new scene's instance.
+     */
+    StitchTransform :: (worldSocketPosition: Vec3, worldSocketYaw: f32, ownSocketPosition: Vec3, ownSocketYaw: f32) -> TransformData {
+        yaw: f32 = worldSocketYaw + 180.0f - ownSocketYaw;
+        turned: Vec3 = PlacedPoint(ownSocketPosition, Vec3 { }, yaw);
+        placement~ TransformData = TransformData { };
+        placement.position = worldSocketPosition - turned;
+        placement.rotationDegrees = Vec3 { x: 0.0f, y: yaw, z: 0.0f };
+        return placement;
+    }
+
+    /**
+     * Copies one scene's entities into `placingFile`, placed by the instance entity at `instanceIndex`. Ids become
+     * (instance id << 32 | scene id) so two instances never collide, parents follow, and every entity that can stream joins the
+     * instance's room.
+     */
+    PlaceScene :: (placingFile: WorldFile~*, instanceIndex: usize, scene: WorldFile*, roomName: string) -> void {
+        instance: WorldEntity* = placingFile->entities[instanceIndex];
+        placement: TransformData = instance->transform;
+        idBase: u64 = instance->id << 32;
+        for sceneIndex~ usize = 0; sceneIndex < scene->entities.length(); sceneIndex++ {
+            source: WorldEntity* = scene->entities[sceneIndex];
+            copied := source->Copy();
+            copied->id = idBase | source->id;
+            if parentId := source->parent {
+                copied->parent = idBase | parentId;
+            } else {
+                copied->transform.position = PlacedPoint(source->transform.position, placement.position, placement.rotationDegrees.y);
+                copied->transform.rotationDegrees = Vec3 { x: source->transform.rotationDegrees.x, y: source->transform.rotationDegrees.y + placement.rotationDegrees.y, z: source->transform.rotationDegrees.z };
+            }
+            innerRoom: string!? = source->TextProperty(ROOM_PROPERTY);
+            defer delete innerRoom;
+            if IsStreamableKind(source->kind) && source->parent == null {
+                if inner := innerRoom {
+                    nested: string! = `${roomName}/${inner}`;
+                    copied->SetTextProperty(ROOM_PROPERTY, nested);
+                    delete nested;
+                } else {
+                    copied->SetTextProperty(ROOM_PROPERTY, roomName);
+                }
+            }
+            copied->SetTextProperty(SCENE_ROOM_PROPERTY, roomName);
+            placingFile->Add(copied!);
+        }
+    }
+
+    /**
+     * Expands every `scene_instance` in `placingFile` (and, to a depth limit, in the scenes they place). `directory` is the folder the
+     * scene paths are relative to. Returns the first problem, or null.
+     */
+    ExpandInstances :: (placingFile: WorldFile~*, directory: string, depth: i32) -> string!? {
+        if depth > MAX_SCENE_DEPTH {
+            return `scenes are nested more than ${MAX_SCENE_DEPTH:d} deep, which is probably a scene that places itself`;
+        }
+        originalCount: usize = placingFile->entities.length();
+        for index~ usize = 0; index < originalCount; index++ {
+            if placingFile->entities[index]->kind != SCENE_INSTANCE_KIND {
+                continue;
+            }
+            instanceName: string! = `${placingFile->entities[index]->name}`;
+            defer delete instanceName;
+            scenePath: string!? = placingFile->entities[index]->TextProperty(SCENE_PROPERTY);
+            defer delete scenePath;
+            guard relative := scenePath return `'${instanceName}' is a scene_instance with no 'scene' property`;
+            fullPath: string! = directory.length() > 0 ? `${directory}/${relative}` : `${relative}`;
+            defer delete fullPath;
+            loaded := Load(fullPath);
+            when loaded! {
+                Result:::Ok(scene) -> {
+                    sceneDirectory: string! = DirectoryOf(fullPath);
+                    defer delete sceneDirectory;
+                    nested: string!? = ExpandInstances(scene, sceneDirectory, depth + 1);
+                    defer delete nested;
+                    if problem := nested {
+                        copied: string! = `${problem}`;
+                        delete scene;
+                        return copied!;
+                    }
+                    PlaceScene(placingFile, index, scene, instanceName);
+                    delete scene;
+                },
+                Result:::Err(message) -> {
+                    copied: string! = `${message}`;
+                    delete message;
+                    return copied!;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Expands the scene instances in a world file and returns the openings that line up: two `scene_socket` entities from
+     * different instances within `SOCKET_JOIN_DISTANCE` of each other, facing opposite ways. Fails with the first problem.
+     */
+    ExpandScenes :: (placingFile: WorldFile~*, directory: string) -> Result<Array<SceneLink*!>!, string!> {
+        failure: string!? = ExpandInstances(placingFile, directory, 0);
+        defer delete failure;
+        if problem := failure {
+            copied: string! = `${problem}`;
+            return Result<Array<SceneLink*!>!, string!>:::Err(copied!);
+        }
+        links~ Array<SceneLink*!>! = [];
+        for first~ usize = 0; first < placingFile->entities.length(); first++ {
+            left: WorldEntity* = placingFile->entities[first];
+            if left->kind != SCENE_SOCKET_KIND {
+                continue;
+            }
+            leftRoom: string!? = left->TextProperty(SCENE_ROOM_PROPERTY);
+            defer delete leftRoom;
+            guard leftName := leftRoom continue;
+            for second~ usize = first + 1; second < placingFile->entities.length(); second++ {
+                right: WorldEntity* = placingFile->entities[second];
+                if right->kind != SCENE_SOCKET_KIND {
+                    continue;
+                }
+                rightRoom: string!? = right->TextProperty(SCENE_ROOM_PROPERTY);
+                defer delete rightRoom;
+                guard rightName := rightRoom continue;
+                if leftName == rightName {
+                    continue;
+                }
+                if (left->transform.position - right->transform.position).length() > SOCKET_JOIN_DISTANCE {
+                    continue;
+                }
+                difference: f32 = left->transform.rotationDegrees.y - right->transform.rotationDegrees.y;
+                wrapped: f32 = difference - 360.0f * Math:::floor(difference / 360.0f);
+                turn: f32 = Math:::abs(wrapped - 180.0f);
+                if turn > SOCKET_JOIN_YAW_DEGREES {
+                    continue;
+                }
+                link := new SceneLink(leftName, rightName);
+                link->position = left->transform.position;
+                link->yawDegrees = left->transform.rotationDegrees.y;
+                link->width = Math:::min(left->NumberProperty("width") ?? DEFAULT_SOCKET_SIZE, right->NumberProperty("width") ?? DEFAULT_SOCKET_SIZE);
+                link->height = Math:::min(left->NumberProperty("height") ?? DEFAULT_SOCKET_SIZE, right->NumberProperty("height") ?? DEFAULT_SOCKET_SIZE);
+                links.push(link!);
+            }
+        }
+        return Result<Array<SceneLink*!>!, string!>:::Ok(links!);
+    }
+}

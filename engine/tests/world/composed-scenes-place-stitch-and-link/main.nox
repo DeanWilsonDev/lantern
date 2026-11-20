@@ -1,0 +1,108 @@
+// A scene is a world file placed by an instance entity: its entities are copied in with the instance's position and yaw,
+// their ids never collide, they join a room named for the instance, and stitching two scenes by their sockets puts the
+// second exactly where its entry meets the first's far end and reports the pair as a link.
+lantern :: import lantern;
+SceneLink :: import SceneLink;
+
+Near3 :: (left: Vec3, right: Vec3) -> bool {
+    return (left - right).length() < 0.001f;
+}
+
+MakeEntity :: (key: u64, name: string, kind: string, position: Vec3, yaw: f32) -> lantern:::world:::WorldEntity*! {
+    entity := new lantern:::world:::WorldEntity(key, name, kind);
+    entity->transform.position = position;
+    entity->transform.rotationDegrees = Vec3 { x: 0.0f, y: yaw, z: 0.0f };
+    return entity!;
+}
+
+SaveOrFail :: (world: lantern:::world:::WorldFile*, path: string) -> void {
+    failure: string!? = world->Save(path);
+    if text := failure {
+        print(text);
+    }
+    assert(failure == null, "the world saves");
+    delete failure;
+}
+
+CheckExpanded :: (level: lantern:::world:::WorldFile*, links: Array<SceneLink*!>, farInWorld: Vec3) -> void {
+    assert(level->entities.length() == 2 + 2 * 4, "each instance adds the scene's four entities");
+    floorIndex: usize? = level->IndexOf((u64(10) << 32) | u64(1));
+    guard placedFloor := floorIndex return;
+    assert(Near3(level->entities[placedFloor]->transform.position, Vec3 { x: 3.0f, y: -0.5f, z: 0.0f }), "the first floor is at the instance's position");
+    assert(Math:::abs(level->entities[placedFloor]->transform.rotationDegrees.y - 90.0f) < 0.001f, "and turned with it");
+    roomText: string!? = level->entities[placedFloor]->TextProperty("room");
+    defer delete roomText;
+    assert(roomText == "hall-one", "a block joins the room named for its instance");
+    gemIndex: usize? = level->IndexOf((u64(10) << 32) | u64(4));
+    guard placedGem := gemIndex return;
+    gemRoom: string!? = level->entities[placedGem]->TextProperty("room");
+    defer delete gemRoom;
+    assert(gemRoom == null, "a gem is not a streaming kind, so it stays resident");
+    assert(links.length() == 1, "the far end of one and the entry of the other are one link");
+    assert(Near3(links[0]->position, farInWorld), "at the shared opening");
+    assert(links[0]->width == 3.0f, "as wide as the narrower of the two sockets");
+    membership~ Array<string!>! = lantern:::world:::RoomMembership(level);
+    defer membership.freeAll();
+    resident~ i32 = 0;
+    for name in membership {
+        if name.length() == 0 {
+            resident++;
+        }
+    }
+    assert(resident == 2 + 2 * 3, "the instances, sockets and gems stay resident; only floors stream");
+}
+
+main :: () -> i32 {
+    when createDirectories("build/scenes") {
+        Result:::Ok(created) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    corridor := new lantern:::world:::WorldFile("corridor");
+    defer delete corridor;
+    floorEntity := MakeEntity(1, "floor", "block", Vec3 { x: 0.0f, y: -0.5f, z: 0.0f }, 0.0f);
+    floorEntity->shape = lantern:::world:::Shape:::Box(Vec3 { x: 2.0f, y: 0.5f, z: 5.0f });
+    floorEntity->collider = lantern:::world:::ColliderKind:::Static;
+    corridor->Add(floorEntity!);
+    far := MakeEntity(2, "far", "scene_socket", Vec3 { x: 0.0f, y: 0.0f, z: -5.0f }, 0.0f);
+    far->SetNumberProperty("width", 4.0f);
+    corridor->Add(far!);
+    entry := MakeEntity(3, "entry", "scene_socket", Vec3 { x: 0.0f, y: 0.0f, z: 5.0f }, 180.0f);
+    corridor->Add(entry!);
+    gem := MakeEntity(4, "gem", "gem", Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }, 0.0f);
+    corridor->Add(gem!);
+    SaveOrFail(corridor, "build/scenes/corridor.world.json");
+
+    firstPlacement~ lantern:::world:::TransformData = lantern:::world:::TransformData { };
+    firstPlacement.position = Vec3 { x: 3.0f, y: 0.0f, z: 0.0f };
+    firstPlacement.rotationDegrees = Vec3 { x: 0.0f, y: 90.0f, z: 0.0f };
+    farInWorld: Vec3 = lantern:::world:::PlacedPoint(Vec3 { x: 0.0f, y: 0.0f, z: -5.0f }, firstPlacement.position, 90.0f);
+    second: lantern:::world:::TransformData = lantern:::world:::StitchTransform(farInWorld, 90.0f, Vec3 { x: 0.0f, y: 0.0f, z: 5.0f }, 180.0f);
+    assert(Near3(lantern:::world:::PlacedPoint(Vec3 { x: 0.0f, y: 0.0f, z: 5.0f }, second.position, second.rotationDegrees.y), farInWorld), "the second scene's entry lies on the first scene's far end");
+    assert(Math:::abs(second.rotationDegrees.y - 90.0f) < 0.001f, "and it keeps the first scene's heading");
+
+    level := new lantern:::world:::WorldFile("level");
+    defer delete level;
+    first := MakeEntity(10, "hall-one", "scene_instance", firstPlacement.position, 90.0f);
+    first->SetTextProperty("scene", "corridor.world.json");
+    level->Add(first!);
+    next := MakeEntity(11, "hall-two", "scene_instance", second.position, second.rotationDegrees.y);
+    next->SetTextProperty("scene", "corridor.world.json");
+    level->Add(next!);
+    expanded := lantern:::world:::ExpandScenes(level, "build/scenes");
+    when expanded! {
+        Result:::Ok(links) -> {
+            CheckExpanded(level, links, farInWorld);
+            freeable~ Array<SceneLink*!>! = links!;
+            freeable.freeAll();
+        },
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the scenes expand");
+            delete message;
+        }
+    }
+    print("composed scenes place, stitch and link");
+    return 0;
+}

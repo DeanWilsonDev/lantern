@@ -1,0 +1,77 @@
+// A world file that places the same scene four times, stitched end to end, loads as four streaming rooms named for the
+// instances: nothing but the instance markers is spawned until rooms stream, the floors arrive nearest first, and the links
+// between them are kept for the neighbour peek.
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Load :: () -> i32 { return lantern:::world:::Load(\"build/scenes-level/level.world.json\"); }\nRooms :: () -> i32 { return lantern:::world:::RoomCount(); }";
+
+MakeEntity :: (key: u64, name: string, kind: string, position: Vec3, yaw: f32) -> lantern:::world:::WorldEntity*! {
+    entity := new lantern:::world:::WorldEntity(key, name, kind);
+    entity->transform.position = position;
+    entity->transform.rotationDegrees = Vec3 { x: 0.0f, y: yaw, z: 0.0f };
+    return entity!;
+}
+
+SaveOrFail :: (world: lantern:::world:::WorldFile*, path: string) -> void {
+    failure: string!? = world->Save(path);
+    assert(failure == null, "the world saves");
+    delete failure;
+}
+
+main :: () -> i32 {
+    when createDirectories("build/scenes-level") {
+        Result:::Ok(created) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    hall := new lantern:::world:::WorldFile("hall");
+    defer delete hall;
+    floorEntity := MakeEntity(1, "floor", "block", Vec3 { x: 0.0f, y: -0.5f, z: 0.0f }, 0.0f);
+    floorEntity->shape = lantern:::world:::Shape:::Box(Vec3 { x: 2.0f, y: 0.5f, z: 20.0f });
+    floorEntity->collider = lantern:::world:::ColliderKind:::Static;
+    hall->Add(floorEntity!);
+    far := MakeEntity(2, "far", "scene_socket", Vec3 { x: 0.0f, y: 0.0f, z: -20.0f }, 0.0f);
+    hall->Add(far!);
+    entry := MakeEntity(3, "entry", "scene_socket", Vec3 { x: 0.0f, y: 0.0f, z: 20.0f }, 180.0f);
+    hall->Add(entry!);
+    SaveOrFail(hall, "build/scenes-level/hall.world.json");
+
+    level := new lantern:::world:::WorldFile("level");
+    defer delete level;
+    for index~ i32 = 0; index < 4; index++ {
+        placement: lantern:::world:::TransformData = lantern:::world:::StitchTransform(Vec3 { x: 0.0f, y: 0.0f, z: f32(-index) * 40.0f + 20.0f }, 0.0f, Vec3 { x: 0.0f, y: 0.0f, z: 20.0f }, 180.0f);
+        name: string! = `hall-${index:d}`;
+        defer delete name;
+        instance := MakeEntity(u64(10 + index), name, "scene_instance", placement.position, placement.rotationDegrees.y);
+        instance->SetTextProperty("scene", "hall.world.json");
+        level->Add(instance!);
+    }
+    SaveOrFail(level, "build/scenes-level/level.world.json");
+
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    gameUi := lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    lantern:::testing:::CallOrFail(program, "Load");
+    assert(state->streaming->rooms.length() == 4, "each instance is a room");
+    assert(state->streaming->rooms[0]->name == "hall-0", "named for its instance");
+    assert(state->streaming->links.length() == 3, "three openings join four halls");
+    assert(state->entityWorld->Length() == 4 + 4 * 2, "the instances and the sockets are resident; floors wait");
+    assert(state->collision->StaticTriangleCount() == 0, "no floor yet");
+    unsafe {
+        lantern:::host:::AddStreamFocusTo(state, Vec3 { x: 0.0f, y: 1.0f, z: 0.0f });
+        lantern:::host:::StreamRoomsOf(state, 70.0f, 95.0f, 24.0f, 12);
+    }
+    assert(state->streaming->rooms[0]->IsComplete(), "the hall the player stands in is there at once");
+    assert(!state->streaming->rooms[3]->IsPresent(), "the farthest hall is not");
+    lantern:::testing:::CallOrFail(program, "Load");
+    delete program;
+    delete runtime;
+    delete gameUi;
+    delete state;
+    print("scenes in a world file become streaming rooms");
+    return 0;
+}
