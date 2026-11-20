@@ -1,0 +1,58 @@
+// Every `.chaos` file of the world editor lexes and parses. Mounting a file whose text Nyx can't read fails with a
+// lexer or parser code (NYX0001 to NYX0199), which is what an apostrophe inside a label looks like; a file that only
+// needs the editor's host functions fails with other codes, which this test ignores.
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+EDITOR_UI_DIRECTORY: string : "../apps/world-editor/src/ui";
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    failure: lantern:::nyx:::NyxError*!? = runtime->AddImportSearchPath(EDITOR_UI_DIRECTORY);
+    assert(failure == null, "the editor's ui directory is a search path");
+    delete failure;
+    created := lantern:::chaosui:::ChaosUi:::Create(runtime, EDITOR_UI_DIRECTORY, EDITOR_UI_DIRECTORY);
+    ui := lantern:::testing:::ChaosUiOrFail(created!);
+    checked~ usize = 0;
+    unreadable~ usize = 0;
+    when listDirectory(EDITOR_UI_DIRECTORY) {
+        Result:::Err(error) -> {
+            print(error.message());
+            delete error;
+            assert(false, "the editor's ui directory can be listed");
+        },
+        Result:::Ok(listed) -> {
+            entries~ Array<string!>! = listed!;
+            for entry in entries {
+                if !entry.endsWith(".chaos") {
+                    continue;
+                }
+                componentName: string = entry.substring(0, entry.length() - 6);
+                noArguments: Array<lantern:::nyx:::Value*>! = [];
+                mounted := ui->Mount(entry, componentName, noArguments);
+                delete noArguments;
+                checked++;
+                when mounted! {
+                    Result:::Ok(mount) -> {
+                        ui->Unmount(mount);
+                    },
+                    Result:::Err(message) -> {
+                        if message.contains("NYX00") || message.contains("NYX01") {
+                            print(`${entry} doesn't read as Nyx:`);
+                            print(message);
+                            unreadable++;
+                        }
+                        delete message;
+                    }
+                }
+            }
+            entries.freeAll();
+        }
+    }
+    assert(checked > 0, "the editor has .chaos files");
+    assert(unreadable == 0, "every editor .chaos file lexes and parses");
+    delete ui;
+    delete runtime;
+    print("the editor ui files all parse");
+    return 0;
+}
