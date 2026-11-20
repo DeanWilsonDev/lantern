@@ -1,0 +1,51 @@
+// Two instances of a hall scene (sockets 20 m either side of its origin) are in a level. Asking where the second would snap,
+// with it dropped near the first one's far socket, answers with the placement that lays the halls end to end; one dropped far
+// away does not snap.
+lantern :: import lantern;
+
+MakeEntity :: (key: u64, name: string, kind: string, position: Vec3, yaw: f32) -> lantern:::world:::WorldEntity*! {
+    entity := new lantern:::world:::WorldEntity(key, name, kind);
+    entity->transform.position = position;
+    entity->transform.rotationDegrees = Vec3 { x: 0.0f, y: yaw, z: 0.0f };
+    return entity!;
+}
+
+SaveOrFail :: (world: lantern:::world:::WorldFile*, path: string) -> void {
+    failure: string!? = world->Save(path);
+    assert(failure == null, "the world saves");
+    delete failure;
+}
+
+main :: () -> i32 {
+    when createDirectories("build/snap-level") {
+        Result:::Ok(created) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    hall := new lantern:::world:::WorldFile("hall");
+    defer delete hall;
+    hall->Add(MakeEntity(1, "far", "scene_socket", Vec3 { x: 0.0f, y: 0.0f, z: -20.0f }, 0.0f));
+    hall->Add(MakeEntity(2, "entry", "scene_socket", Vec3 { x: 0.0f, y: 0.0f, z: 20.0f }, 180.0f));
+    SaveOrFail(hall, "build/snap-level/hall.world.json");
+
+    level := new lantern:::world:::WorldFile("level");
+    defer delete level;
+    first := MakeEntity(10, "first", "scene_instance", Vec3 { x: 0.0f, y: 0.0f, z: 0.0f }, 0.0f);
+    first->SetTextProperty("scene", "hall.world.json");
+    level->Add(first!);
+    second := MakeEntity(11, "second", "scene_instance", Vec3 { x: 0.4f, y: 0.0f, z: -40.5f }, 0.0f);
+    second->SetTextProperty("scene", "hall.world.json");
+    level->Add(second!);
+
+    near: lantern:::world:::SceneSnap = lantern:::editor:::SnapSceneInstance(level, "build/snap-level", 1, Vec3 { x: 0.4f, y: 0.0f, z: -40.5f }, 0.0f);
+    assert(near.found, "a hall dropped beside the first one's far socket snaps");
+    assert(Math:::abs(near.placement.position.z - (-40.0f)) < 0.001f, "end to end, one hall length on");
+    assert(Math:::abs(near.placement.position.x) < 0.001f, "and lined up");
+
+    far: lantern:::world:::SceneSnap = lantern:::editor:::SnapSceneInstance(level, "build/snap-level", 1, Vec3 { x: 0.0f, y: 0.0f, z: -300.0f }, 0.0f);
+    assert(!far.found, "a hall dropped far away does not snap");
+
+    print("a dragged scene instance snaps onto its neighbours socket");
+    return 0;
+}

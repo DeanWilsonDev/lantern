@@ -1,0 +1,96 @@
+/**
+ * Sockets as two parallel lists, a position and a yaw each, for the editor's scene snapping.
+ */
+SocketList :: class {
+public:
+    positions~ Array<Vec3>! = [];
+    yaws~ Array<f32>! = [];
+
+    !SocketList~: () {
+        delete positions;
+        delete yaws;
+    }
+}
+
+lantern:::editor :: namespace {
+    SOCKET_SNAP_REACH: f32 : 3.0f;
+
+    /**
+     * The sockets of the scene file `scenePath` (relative to `directory`), in the scene's own space; empty when the file can't be
+     * read or has none.
+     */
+    SocketsOfScene :: (directory: string, scenePath: string) -> SocketList*! {
+        found := new SocketList();
+        full~ string! = `${scenePath}`;
+        if directory.length() > 0 {
+            delete full;
+            full = `${directory}/${scenePath}`;
+        }
+        defer delete full;
+        loaded := lantern:::world:::Load(full);
+        when loaded! {
+            Result:::Ok(scene) -> {
+                for entity in scene->entities {
+                    if entity->kind == lantern:::world:::SCENE_SOCKET_KIND {
+                        found->positions.push(entity->transform.position);
+                        found->yaws.push(entity->transform.rotationDegrees.y);
+                    }
+                }
+                delete scene;
+            },
+            Result:::Err(message) -> {
+                delete message;
+            }
+        }
+        return found!;
+    }
+
+    /**
+     * Every socket in `worldFile` in world space except those of the instance at `excludedIndex`: its own `scene_socket` entities,
+     * and the sockets of every other `scene_instance`'s scene, moved by that instance's position and yaw.
+     */
+    WorldSockets :: (worldFile: lantern:::world:::WorldFile*, directory: string, excludedIndex: usize) -> SocketList*! {
+        found := new SocketList();
+        for index~ usize = 0; index < worldFile->entities.length(); index++ {
+            if index == excludedIndex {
+                continue;
+            }
+            entity: lantern:::world:::WorldEntity* = worldFile->entities[index];
+            if entity->kind == lantern:::world:::SCENE_SOCKET_KIND {
+                found->positions.push(entity->transform.position);
+                found->yaws.push(entity->transform.rotationDegrees.y);
+                continue;
+            }
+            if entity->kind != lantern:::world:::SCENE_INSTANCE_KIND {
+                continue;
+            }
+            scenePath: string!? = entity->TextProperty(lantern:::world:::SCENE_PROPERTY);
+            defer delete scenePath;
+            guard path := scenePath continue;
+            own := SocketsOfScene(directory, path);
+            defer delete own;
+            yaw: f32 = entity->transform.rotationDegrees.y;
+            for socket~ usize = 0; socket < own->positions.length(); socket++ {
+                found->positions.push(lantern:::world:::PlacedPoint(own->positions[socket], entity->transform.position, yaw));
+                found->yaws.push(own->yaws[socket] + yaw);
+            }
+        }
+        return found!;
+    }
+
+    /**
+     * Where the `scene_instance` at `instanceIndex` would snap if dragged to `position` turned `yawDegrees`: the nearest of its
+     * scene's sockets that is within `SOCKET_SNAP_REACH` of a socket already in the level, laid onto it facing the other way.
+     */
+    SnapSceneInstance :: (worldFile: lantern:::world:::WorldFile*, directory: string, instanceIndex: usize, position: Vec3, yawDegrees: f32) -> lantern:::world:::SceneSnap {
+        entity: lantern:::world:::WorldEntity* = worldFile->entities[instanceIndex];
+        scenePath: string!? = entity->TextProperty(lantern:::world:::SCENE_PROPERTY);
+        defer delete scenePath;
+        guard path := scenePath return lantern:::world:::SceneSnap { };
+        own := SocketsOfScene(directory, path);
+        defer delete own;
+        others := WorldSockets(worldFile, directory, instanceIndex);
+        defer delete others;
+        return lantern:::world:::NearestSocketSnap(position, yawDegrees, own->positions.borrow(), own->yaws.borrow(), others->positions.borrow(), others->yaws.borrow(), SOCKET_SNAP_REACH);
+    }
+}

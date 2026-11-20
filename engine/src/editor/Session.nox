@@ -693,6 +693,14 @@ lantern:::editor :: namespace {
             }
         }
 
+        // Turns the snapping of a dragged scene instance onto the sockets of its neighbours on or off.
+        SetSocketSnapEnabled~: (enabled: bool) -> void {
+            if snap.sockets != enabled {
+                snap.sockets = enabled;
+                localRevision += 1;
+            }
+        }
+
         // Turns snapping on or off.
         SetSnapEnabled~: (enabled: bool) -> void {
             if snap.enabled != enabled {
@@ -2378,6 +2386,41 @@ lantern:::editor :: namespace {
                 entity->transform.position = original->LocalPosition(original->worldPosition + worldDelta);
                 document->PreviewReplace(entity!);
             }
+            if active->originals.length() > 0 {
+                SnapPrimaryToSockets(active->originals[active->originals.length() - 1]);
+            }
+        }
+
+        // When the primary dragged entity is a scene instance with no parent and socket snapping is on, moves it (and turns it)
+        // so its nearest socket lies on a socket within reach, facing the other way. Shown as part of the same preview, so
+        // releasing the mouse commits one undo step.
+        SnapPrimaryToSockets~: (primary: DragOriginal*) -> void {
+            if !snap.sockets || primary->entity->kind != lantern:::world:::SCENE_INSTANCE_KIND || primary->entity->parent != null {
+                return;
+            }
+            worldFile: lantern:::world:::WorldFile* = document->documentWorldFile;
+            found~ usize? = null;
+            for index~ usize = 0; index < worldFile->entities.length(); index++ {
+                if worldFile->entities[index]->id == primary->entity->id {
+                    found = index;
+                }
+            }
+            guard instanceIndex := found return;
+            current: lantern:::world:::WorldEntity* = worldFile->entities[instanceIndex];
+            directory~ string! = "".copy();
+            if own := document->path {
+                delete directory;
+                directory = lantern:::world:::DirectoryOf(own);
+            }
+            defer delete directory;
+            result: lantern:::world:::SceneSnap = SnapSceneInstance(worldFile, directory, instanceIndex, current->transform.position, current->transform.rotationDegrees.y);
+            if !result.found {
+                return;
+            }
+            entity := current->Copy();
+            entity->transform.position = result.placement.position;
+            entity->transform.rotationDegrees = result.placement.rotationDegrees;
+            document->PreviewReplace(entity!);
         }
 
         // Snaps the movement along one direction so the primary entity ends on a step of the grid.
