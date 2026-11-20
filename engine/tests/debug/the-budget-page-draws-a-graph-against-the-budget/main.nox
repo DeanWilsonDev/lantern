@@ -1,0 +1,56 @@
+// The Budget page draws a graph above its values: nothing but the heading before there are frames, bars and a budget line
+// once there are, and more for a frame that ran over the budget. A page too short for the graph shows only its values.
+lantern :: import lantern;
+
+DrawnVertexCount :: (window: lantern:::debug:::DebugWindow~*, values: lantern:::core:::DebugValues*, pages: lantern:::debug:::PageAssignments*, screen: Vec2) -> usize {
+    overlay := new lantern:::renderer:::Overlay();
+    defer delete overlay;
+    window->Draw(values, pages, overlay, screen, 1.0f);
+    return overlay->vertices.length();
+}
+
+main :: () -> i32 {
+    values := new lantern:::core:::DebugValues();
+    defer delete values;
+    pages := new lantern:::debug:::PageAssignments();
+    defer delete pages;
+    values->SetNumber("Budget/Frame ms", 12.0f);
+    values->SetText("Budget/Render", "8.00 avg 8.00 worst 9.00");
+    values->SetNumber("Frame/Average ms", 16.0f);
+
+    window := new lantern:::debug:::DebugWindow();
+    defer delete window;
+    summary := lantern:::debug:::SummarisePages(values, pages, "");
+    defer delete summary;
+    assert(summary->names[1] == "Frame" && summary->names[2] == "Budget", "the Budget page follows Frame");
+
+    window->SelectPage("Budget");
+    screen: Vec2 = Vec2 { x: 1920.0f, y: 1080.0f };
+    withoutFrames: usize = DrawnVertexCount(window, values, pages, screen);
+
+    window->budget->recording = true;
+    for frame~ usize = 0; frame < 60; frame++ {
+        window->budget->Add(lantern:::core:::BUDGET_PHASE_SCRIPTING, 3.0f);
+        window->budget->Add(lantern:::core:::BUDGET_PHASE_RENDER, 9.0f);
+        window->budget->EndFrame(u64(frame + 1) * 13000000);
+    }
+    withFrames: usize = DrawnVertexCount(window, values, pages, screen);
+    assert(withFrames > withoutFrames + 6 * 60, "each recorded frame adds bars to the graph");
+    assert(window->budget->OverBudgetInHistory() == 0, "13 ms frames are within budget");
+
+    window->budget->Add(lantern:::core:::BUDGET_PHASE_SCRIPTING, 30.0f);
+    window->budget->EndFrame(u64(61) * 13000000 + 30000000);
+    assert(window->budget->OverBudgetInHistory() == 1, "a 30 ms frame is over");
+    withOverBudgetFrame: usize = DrawnVertexCount(window, values, pages, screen);
+    assert(withOverBudgetFrame > withFrames, "an over-budget frame adds a bar and its red caps");
+
+    window->SelectPage("Frame");
+    onFramePage: usize = DrawnVertexCount(window, values, pages, screen);
+    assert(onFramePage < withOverBudgetFrame, "other pages draw no graph");
+
+    window->SelectPage("Budget");
+    short: usize = DrawnVertexCount(window, values, pages, Vec2 { x: 1920.0f, y: 130.0f });
+    assert(short > 0 && short < withOverBudgetFrame, "a short window keeps the values and drops the graph");
+    print("the budget page draws a graph against the budget");
+    return 0;
+}
