@@ -12,6 +12,7 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`engine-structure.md`](engine-structure.md) | How `engine/src/` is laid out, one folder per domain, with SDL behind a facade folder, and why. |
 | [`application-and-game-loop.md`](application-and-game-loop.md) | Start-up, the fixed-step game loop, input, and shutdown in order. |
 | [`navigation.md`](navigation.md) | The navigation graph, paths and how the partner walks them. |
+| [`level-streaming.md`](level-streaming.md) | Rooms of a level that load and unload by distance, and the plan for composed scenes. |
 | [`renderer.md`](renderer.md) | The renderer one frame at a time, from the game's `RenderWorld` to the screen. |
 
 ## Writing a game
