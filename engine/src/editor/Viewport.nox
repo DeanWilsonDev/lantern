@@ -189,6 +189,26 @@ lantern:::editor :: namespace {
         renderWorld->Line(end, back - other * head * 0.4f, color);
     }
 
+    // Draws a `scene_socket` as the opening it marks: a rectangle `width` wide and `height` tall standing on the entity's
+    // position, with an arrow out of the way it faces (the entity's -z).
+    DrawSocketOpening :: (renderWorld: lantern:::renderer:::RenderWorld~*, entity: lantern:::world:::WorldEntity*, worldMatrix: Mat4, color: lantern:::core:::Color) -> void {
+        width: f32 = entity->NumberProperty("width") ?? lantern:::world:::DEFAULT_SOCKET_SIZE;
+        height: f32 = entity->NumberProperty("height") ?? lantern:::world:::DEFAULT_SOCKET_SIZE;
+        half: f32 = width * 0.5f;
+        lowLeft: Vec3 = worldMatrix.transformPoint(Vec3 { x: -half, y: 0.0f, z: 0.0f });
+        lowRight: Vec3 = worldMatrix.transformPoint(Vec3 { x: half, y: 0.0f, z: 0.0f });
+        highRight: Vec3 = worldMatrix.transformPoint(Vec3 { x: half, y: height, z: 0.0f });
+        highLeft: Vec3 = worldMatrix.transformPoint(Vec3 { x: -half, y: height, z: 0.0f });
+        renderWorld->Line(lowLeft, lowRight, color);
+        renderWorld->Line(lowRight, highRight, color);
+        renderWorld->Line(highRight, highLeft, color);
+        renderWorld->Line(highLeft, lowLeft, color);
+        middle: Vec3 = worldMatrix.transformPoint(Vec3 { x: 0.0f, y: height * 0.5f, z: 0.0f });
+        backward: Vec3 = Vec3 { x: 0.0f, y: 0.0f, z: -1.0f };
+        facing: Vec3 = lantern:::core:::NormalizeOr3(worldMatrix.transformDirection(backward), backward);
+        DrawArrow(renderWorld, middle, middle + facing * 1.5f, color);
+    }
+
     // Draws the box being dragged to select. The corners are drawn on a plane just in front of the
     // camera so they stay under the mouse.
     DrawRubberBand :: (renderWorld: lantern:::renderer:::RenderWorld~*, projection: ViewportProjection, firstCorner: Vec2, secondCorner: Vec2) -> void {
@@ -358,6 +378,9 @@ lantern:::editor :: namespace {
                 }
                 if outline := outlineColor {
                     OrientedBoxLines(renderWorld, MarkerLocalBounds(markerMesh), placed->worldMatrix, outline);
+                }
+                if entity->kind == lantern:::world:::SCENE_SOCKET_KIND {
+                    DrawSocketOpening(renderWorld, entity, placed->worldMatrix, lantern:::core:::Color:::FromHex(4247807));
                 }
                 if entity->kind == "spawn" || entity->kind == "player_start" {
                     origin: Vec3 = placed->Origin();
