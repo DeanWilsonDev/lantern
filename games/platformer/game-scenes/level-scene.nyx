@@ -78,6 +78,11 @@ public:
     playStartYaw~ f32 = 0.0f;
     playStartCompanionStop~ i32 = 0;
     playStartBeat~ i32 = 0;
+    // From the `player_start` the level began at (ApplyPlayerStart): whether the player starts carrying the lantern, and which
+    // start it was ("" when the level used its `spawn`).
+    startsWithLantern~ bool = false;
+    hasPlayerStart~ bool = false;
+    startLabel~ string = "";
 
     // Returns the number of entities the file made.
     Load~: (path: string, gemMesh: i64, cubeMesh: i64) -> i32 {
@@ -212,6 +217,11 @@ public:
         // The file lists the stops in any order; the route follows their `order` property.
         companionStops = companionStops.sort((first, second) -> first.order < second.order);
         teamBeats = teamBeats.sort((first, second) -> first.order < second.order);
+        requestedStart := lantern:::engine:::Setting("LANTERN_START");
+        ApplyPlayerStart(requestedStart);
+        if requestedStart != "" {
+            hasPlayStart = true;
+        }
         for entity: i64 in lantern:::world:::FindByKind("play_start") {
             PlaceAtPlayStart(entity);
         }
@@ -227,6 +237,10 @@ public:
     // below (the camera is outside the level), the level starts where it normally does.
     PlaceAtPlayStart~: (entity: i64) -> void {
         hasPlayStart = true;
+        if lantern:::world:::HasProperty(entity, "start") {
+            ApplyPlayerStart(lantern:::world:::TextProperty(entity, "start"));
+            return;
+        }
         wanted: lantern:::math:::Vec3 = lantern:::world:::Position(entity);
         standing := GroundBelow(wanted);
         if standing == null {
@@ -244,6 +258,77 @@ public:
         }
         playStartCompanionStop = NearestCompanionStop(feet);
         playStartBeat = NearestTeamBeat(feet);
+    }
+
+    // Authored starts. A level can hold any number of `player_start` entities. Each says where the player begins (its
+    // position, and the way it faces: the entity's rotation about Y) and, in properties, what spawns there:
+    // - `label` (text): the name to pick it by, such as "gate" or "rooftop".
+    // - `order` (number): of the ordinary starts the lowest `order` is the level's start, 0 when missing.
+    // - `debug` (number, 1 for yes): a debug start is never the level's start; it is used only when asked for by label with
+    //   LANTERN_START=<label>, or by pressing Play in the editor with it selected.
+    // - `spawns` (text, comma separated, default "player,partner,companion"): who is made. Leaving "partner" or "companion" out
+    //   removes her from the level, which is how to test a section solo.
+    // - `give_lantern` (number, 1 for yes): the player starts carrying the lantern.
+    // - `beat` (number, default the beat nearest the start): the team beat the partner starts at.
+    // `requestedLabel` picks one by label; "" picks the level's ordinary start. A level with no matching start keeps its
+    // `spawn`. Nothing is dropped to the ground: an authored start is where the author put it.
+    ApplyPlayerStart~: (requestedLabel: string) -> void {
+        chosen~ i64 = 0;
+        isChosen~ bool = false;
+        chosenOrder~ f32 = 0.0f;
+        for entity: i64 in lantern:::world:::FindByKind("player_start") {
+            label := lantern:::world:::HasProperty(entity, "label") ? lantern:::world:::TextProperty(entity, "label") : "";
+            if requestedLabel != "" {
+                if label == requestedLabel && !isChosen {
+                    chosen = entity;
+                    isChosen = true;
+                }
+            } else if !(lantern:::world:::HasProperty(entity, "debug") && lantern:::world:::NumberProperty(entity, "debug") > 0.5f) {
+                order := lantern:::world:::HasProperty(entity, "order") ? lantern:::world:::NumberProperty(entity, "order") : 0.0f;
+                if !isChosen || order < chosenOrder {
+                    chosen = entity;
+                    isChosen = true;
+                    chosenOrder = order;
+                }
+            }
+        }
+        if !isChosen {
+            if requestedLabel != "" {
+                lantern:::engine:::Log(`no player_start labelled '${requestedLabel}': starting at the level's spawn`);
+            }
+            return;
+        }
+        feet: lantern:::math:::Vec3 = lantern:::world:::Position(chosen);
+        hasPlayerStart = true;
+        spawnPosition = feet;
+        playStartYaw = lantern:::world:::Yaw(chosen);
+        startLabel = lantern:::world:::HasProperty(chosen, "label") ? lantern:::world:::TextProperty(chosen, "label") : "";
+        spawns := lantern:::world:::HasProperty(chosen, "spawns") ? lantern:::world:::TextProperty(chosen, "spawns") : "player,partner,companion";
+        if !SpawnsInclude(spawns, "partner") {
+            hasPartner = false;
+        }
+        if !SpawnsInclude(spawns, "companion") {
+            companionStops = [];
+        }
+        startsWithLantern = lantern:::world:::HasProperty(chosen, "give_lantern") && lantern:::world:::NumberProperty(chosen, "give_lantern") > 0.5f;
+        if hasPartner {
+            beside: lantern:::math:::Vec3 = lantern:::math:::Vec3:::FromYaw(playStartYaw - PLAY_START_QUARTER_TURN);
+            partnerSpot: lantern:::math:::Vec3 = { x: feet.x + beside.x * PLAY_START_PARTNER_DISTANCE, y: feet.y, z: feet.z + beside.z * PLAY_START_PARTNER_DISTANCE };
+            partnerGround := GroundBelow(partnerSpot);
+            partnerStart = partnerGround ?? feet;
+        }
+        playStartCompanionStop = NearestCompanionStop(feet);
+        playStartBeat = lantern:::world:::HasProperty(chosen, "beat") ? i32(lantern:::world:::NumberProperty(chosen, "beat")) : NearestTeamBeat(feet);
+    }
+
+    // True when the comma separated list `spawns` names `who`.
+    SpawnsInclude :: (spawns: string, who: string) -> bool {
+        for part in spawns.split(",") {
+            if part.trim() == who {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The point on the ground straight below `above` (found by a ray from a little higher up, so a point resting on
@@ -308,6 +393,9 @@ public:
         playStartYaw = 0.0f;
         playStartCompanionStop = 0;
         playStartBeat = 0;
+        startsWithLantern = false;
+        hasPlayerStart = false;
+        startLabel = "";
         gems = [];
         platforms = [];
         checkpoints = [];

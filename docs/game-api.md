@@ -117,6 +117,7 @@ Defining an action twice is a script error (`the action 'jump' is defined twice`
 | `lantern:::world:::InterpolatedPosition(entity, alpha) -> Vec3` | for `OnRender` |
 | `lantern:::world:::SetPosition(entity, position)` | also moves the entity's collision body, carrying riders |
 | `lantern:::world:::Teleport(entity, position)` | moves without interpolating from the old place |
+| `lantern:::world:::Yaw(entity) -> f32` | the heading the entity faces, in radians, the same convention as `SetYaw` and `FromYaw` |
 | `lantern:::world:::SetYaw(entity, radians)`, `SetScale(entity, scale: Vec3)` | |
 
 World files are made by the editor (the format is `engine/src/world/WorldFile.nox`). The engine builds what's in them;
@@ -516,6 +517,7 @@ Every function the engine registers, as `games/platformer/engine-host-surface.js
 | `InterpolatedPosition` | `(entity: i64, alpha: f32) -> lantern:::math:::Vec3` |
 | `SetPosition` | `(entity: i64, position: lantern:::math:::Vec3) -> void` |
 | `Teleport` | `(entity: i64, position: lantern:::math:::Vec3) -> void` |
+| `Yaw` | `(entity: i64) -> f32` |
 | `SetYaw` | `(entity: i64, yaw: f32) -> void` |
 | `SetScale` | `(entity: i64, scale: lantern:::math:::Vec3) -> void` |
 | `IsVisible` | `(entity: i64) -> bool` |
