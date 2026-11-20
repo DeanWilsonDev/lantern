@@ -1883,3 +1883,19 @@ Provisional (2026-11-19): not reviewed by Dean. `engine/tools/check-wayland.sh` 
 ## D-223: The help line is a wrapped box in the bottom right corner, and the status line sits at the top right
 
 Provisional (2026-11-19): not reviewed by Dean. The station level showed the status line centred under the debug window, which takes the top left, and a 32 px hint that ran off the screen. The status line is now 16 px at the top right, and the hint (`HintText` in `main.nyx`) goes to its own `GameUiModel.hintRows` signal and draws as one 16 px row per wrapped line, at most 30 characters each, in a small bottom right box (`hud.chaos`, `hud.cosmos`). Rule messages such as "Level complete" keep the large centred message. Chaos UI has no text wrapping, so `HintWrap:::Lines` in `ui/hint-wrap.nyx` wraps in the game; wrapping to the box's width inside the engine is a later card. Checked with a lavapipe screenshot of the station at 1280 by 720, not on a Mac.
+
+## D-224: A level streams in rooms named by an entity property, and only engine-only scenery streams
+
+Provisional (2026-11-20): not reviewed by Dean. A world entity with a `room` text property belongs to that room, and a room's bounds are the box around its members. Only a `block`, `ramp`, `point_light` or `spot_light` with no parent, no children and a static or absent collider streams; every kind the game wraps in a class stays resident, because those carry state and the game's lists point at them. The alternatives were a separate rooms file (a second thing to keep in step with the world, and the editor would not know it), a `room` entity that draws a volume (membership by containment fails for a block that straddles two), and streaming the game's kinds as well (a plate or gem would need its state saved and restored). `room` needs no format change, so the editor and every existing level are untouched. See `docs/level-streaming.md`.
+
+## D-225: Rooms load by the flat distance to the nearest of the player, partner and companion, with an urgent ring that ignores the budget
+
+Provisional (2026-11-20): not reviewed by Dean. Load at 70 m, unload at 95 m, load at once inside 24 m, at most 12 entities a step otherwise (`streaming-settings.nyx`). Distance ignores height, so a level that stacks floors loads the stack. The partner and the companion are focus points as well as the player, so a floor is there before the partner steps onto it and stays while she is on it. The urgent ring is what makes teleports (respawn, restart, checkpoint) safe without the game saying so. The numbers were chosen by reasoning and lavapipe screenshots, not play on a Mac.
+
+## D-226: Static collision is removed by group with tombstones and compacted when the dead outnumber the live
+
+Provisional (2026-11-20): not reviewed by Dean. `BeginStaticGroup`, `EndStaticGroup` and `RemoveStaticGroup` on `CollisionWorld`; a removed group's triangles are marked dead and skipped by `NearTriangles`, and the arrays and grid are rebuilt once when dead triangles pass 4096 and outnumber the live. The alternative, rebuilding the grid on every unload, makes each unload cost the level; a free list reusing dead slots needs same-size groups. `StaticTriangleCount` now counts live triangles.
+
+## D-227: The partner's graph is still built once, from the whole level, before streaming starts
+
+Provisional (2026-11-20): not reviewed by Dean. `LevelScene.Load` calls `lantern:::world:::LoadAllRooms()` so the graph build sees every floor, then streaming starts and unloads what is far. The graph keeps its nodes for unloaded rooms, so routes cross the whole level and the partner plans long leads as before. This keeps the partner right across boundaries for free and leaves her code alone, at the price that load time still grows with the level. Building the graph per room as rooms load is the follow-up card.
