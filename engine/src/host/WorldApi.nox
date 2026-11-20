@@ -137,8 +137,12 @@ lantern:::host :: namespace {
      * its id remembered so `ClearWorld` can remove it, and a `sun` entity replaces the sun and ambient light (the last
      * one in the file wins). A light is placed by its own transform; a parent's transform is not applied.
      */
-    AddWorldLights :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> void {
-        for entity in worldFile->entities {
+    AddWorldLights :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*, streams: Array<bool>) -> void {
+        for lightIndex~ usize = 0; lightIndex < worldFile->entities.length(); lightIndex++ {
+            if streams[lightIndex] {
+                continue;
+            }
+            entity: lantern:::world:::WorldEntity* = worldFile->entities[lightIndex];
             placement: Mat4 = entity->transform.Matrix();
             unsafe {
                 if light := lantern:::world:::LocalLightFromEntity(entity, placement) {
@@ -152,11 +156,28 @@ lantern:::host :: namespace {
     }
 
     /**
+     * Forgets the last level's rooms and registers the new file's. Returns which entities of the file stream.
+     */
+    RegisterRoomsInState :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> Array<bool>! {
+        unsafe {
+            state->streaming->Reset();
+            return RegisterRooms(state->streaming, worldFile);
+        }
+    }
+
+    /**
      * Turns a loaded world file into live entities: spawns each piece, adds its collider and tags, links parents, settles
      * the transforms and adds the lights. Returns how many entities were made, or the first error.
      */
-    LoadWorldFile :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*) -> Result<usize, string!> {
-        pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(worldFile);
+    LoadWorldFile :: (state: raw EngineState~*, worldFile: lantern:::world:::WorldFile*!) -> Result<usize, string!> {
+        streams := RegisterRoomsInState(state, worldFile);
+        defer delete streams;
+        pieces~ Array<lantern:::world:::WorldPiece*!>! = [];
+        for fileIndex~ usize = 0; fileIndex < worldFile->entities.length(); fileIndex++ {
+            if !streams[fileIndex] {
+                pieces.push(lantern:::world:::BuildPiece(worldFile, fileIndex));
+            }
+        }
         keys~ Array<u64>! = [];
         spawned~ Array<lantern:::core:::Handle<lantern:::engine:::EntityTag>>! = [];
         for index~ usize = 0; index < pieces.length(); index++ {
@@ -176,18 +197,25 @@ lantern:::host :: namespace {
                     pieces.freeAll();
                     delete keys;
                     delete spawned;
+                    delete worldFile;
                     return Result<usize, string!>:::Err(message!);
                 }
             }
         }
         linkFailure: string!? = LinkPieceParents(state, worldFile, pieces, keys, spawned);
-        count: usize = pieces.length();
+        count~ usize = pieces.length();
+        for member in streams {
+            if member {
+                count++;
+            }
+        }
         pieces.freeAll();
         delete keys;
         delete spawned;
         if text := linkFailure {
             copied: string! = `${text}`;
             delete linkFailure;
+            delete worldFile;
             return Result<usize, string!>:::Err(copied!);
         }
         delete linkFailure;
@@ -195,7 +223,14 @@ lantern:::host :: namespace {
             state->entityWorld->UpdateWorldTransforms();
             state->entityWorld->StorePreviousTransforms();
         }
-        AddWorldLights(state, worldFile);
+        AddWorldLights(state, worldFile, streams);
+        unsafe {
+            if state->streaming->rooms.length() > 0 {
+                state->streaming->worldFile = worldFile!;
+            } else {
+                delete worldFile;
+            }
+        }
         return Result<usize, string!>:::Ok(count);
     }
 
@@ -636,6 +671,66 @@ lantern:::host :: namespace {
     }
 
     /**
+     * Adds the functions that stream a level's rooms (`LoadAllRooms`, `AddStreamFocus`, `StreamRooms` and the counts).
+     */
+    RegisterRoomStreaming :: (worldNamespace: HostNamespace~*, state: raw EngineState~*, math: MathTypes) -> void {
+        worldNamespace->Function("RoomCount", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI32(i32(state->streaming->rooms.length()));
+            }
+        });
+        worldNamespace->Function("LoadedRoomCount", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI32(state->streaming->CompleteCount());
+            }
+        });
+        worldNamespace->Function("RoomIsLoaded", "(name: string) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            name: string! = context->Text(0);
+            defer delete name;
+            if Stopped(context) {
+                return;
+            }
+            loaded~ bool = false;
+            unsafe {
+                if index := state->streaming->IndexOf(name) {
+                    loaded = state->streaming->rooms[index]->IsComplete();
+                }
+            }
+            context->ReturnBool(loaded);
+        });
+        worldNamespace->Function("LoadAllRooms", "() -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            LoadAllRoomsOf(state);
+        });
+        worldNamespace->Function("AddStreamFocus", "(point: lantern:::math:::Vec3) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
+            point: Vec3 = Vec3Argument(context, 0, math);
+            if Stopped(context) {
+                return;
+            }
+            AddStreamFocusTo(state, point);
+        });
+        worldNamespace->Function("StreamRooms", "(loadDistance: f32, unloadDistance: f32, urgentDistance: f32, budget: i32) -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            loadDistance: f32 = context->F32(0);
+            unloadDistance: f32 = context->F32(1);
+            urgentDistance: f32 = context->F32(2);
+            budget: i32 = context->I32(3);
+            if Stopped(context) {
+                return;
+            }
+            context->ReturnI32(StreamRoomsOf(state, loadDistance, unloadDistance, urgentDistance, budget));
+        });
+        worldNamespace->Function("LiveEntityCount", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI32(i32(state->entityWorld->Length()));
+            }
+        });
+        worldNamespace->Function("CollisionTriangleCount", "() -> i32", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            unsafe {
+                context->ReturnI32(i32(state->collision->StaticTriangleCount()));
+            }
+        });
+    }
+
+    /**
      * Registers `lantern:::world`: `Load` a level file, `Clear` it, `Spawn` and `Despawn` single entities, plus the groups
      * above. See game-api.md for each function's arguments.
      */
@@ -657,7 +752,7 @@ lantern:::host :: namespace {
                         delete warning;
                     }
                     problems.freeAll();
-                    spawned := LoadWorldFile(state, worldFile);
+                    spawned := LoadWorldFile(state, worldFile!);
                     when spawned! {
                         Result:::Ok(count) -> {
                             report: string! = `loaded ${path}: ${count} entities`;
@@ -670,7 +765,6 @@ lantern:::host :: namespace {
                             delete message;
                         }
                     }
-                    delete worldFile;
                 },
                 Result:::Err(message) -> {
                     NotFound(context, message);
@@ -683,6 +777,7 @@ lantern:::host :: namespace {
                 state->ClearWorld();
             }
         });
+        RegisterRoomStreaming(worldNamespace, state, math);
         worldNamespace->Function("Spawn", "(name: string, position: lantern:::math:::Vec3) -> i64", new (context: lantern:::nyx:::CallContext~*) -> void [state, math] {
             name: string! = context->Text(0);
             defer delete name;

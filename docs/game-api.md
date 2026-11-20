@@ -95,6 +95,12 @@ Defining an action twice is a script error (`the action 'jump' is defined twice`
 |---|---|
 | `lantern:::world:::Load(path) -> i32` | spawn a world file's entities, meshes and collision; returns the entity count |
 | `lantern:::world:::Clear() -> void` | remove every game entity, the world meshes and all collision |
+| `lantern:::world:::RoomCount() -> i32` | how many rooms the loaded level has (entities sharing a `room` property); 0 for a level without rooms. Rooms start unspawned, see [`level-streaming.md`](level-streaming.md) |
+| `lantern:::world:::LoadedRoomCount() -> i32`, `RoomIsLoaded(name) -> bool` | how many rooms are completely spawned, and whether one is |
+| `lantern:::world:::LoadAllRooms() -> void` | spawn every room (the partner's graph is built from the whole static level) |
+| `lantern:::world:::AddStreamFocus(point: Vec3) -> void` | add a point rooms are kept alive around, for the next `StreamRooms` |
+| `lantern:::world:::StreamRooms(loadDistance, unloadDistance, urgentDistance, budget: i32) -> i32` | unload rooms past `unloadDistance`, finish rooms within `urgentDistance` at once, load the rest within `loadDistance` nearest first with at most `budget` entities; clears the focus points; returns how many entities it spawned |
+| `lantern:::world:::LiveEntityCount() -> i32`, `CollisionTriangleCount() -> i32` | what is alive now: game entities, and live static collision triangles |
 | `lantern:::world:::Spawn(name, position: Vec3) -> i64` | an empty entity |
 | `lantern:::world:::Despawn(entity)` | |
 | `lantern:::world:::Find(name) -> i64` | the first entity with that name; throws `NotFound` |

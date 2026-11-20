@@ -1,0 +1,332 @@
+/**
+ * One room of a streamed level: the world file entities that live in it, how many of them are spawned, and what the
+ * spawned ones made in the engine, so unloading can take all of it away again.
+ */
+StreamedRoom :: class {
+public:
+    name~ string!;
+    boundsMin~ Vec3 = Vec3 { };
+    boundsMax~ Vec3 = Vec3 { };
+    members~ Array<usize>! = [];
+    nextMember~ usize = 0;
+    spawned~ Array<lantern:::core:::Handle<lantern:::engine:::EntityTag>>! = [];
+    meshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
+    groups~ Array<u32>! = [];
+    lightIds~ Array<u32>! = [];
+
+    StreamedRoom~: (roomName: string) {
+        name = `${roomName}`;
+    }
+
+    !StreamedRoom~: () {
+        delete name;
+        delete members;
+        delete spawned;
+        delete meshes;
+        delete groups;
+        delete lightIds;
+    }
+
+    IsComplete :: () -> bool {
+        return nextMember >= members.length();
+    }
+
+    IsPresent :: () -> bool {
+        return nextMember > 0;
+    }
+}
+
+/**
+ * The rooms of the loaded level, the world file they spawn from, and the points they are chosen by. Empty for a level
+ * with no rooms.
+ */
+RoomStreamer :: class {
+public:
+    worldFile~ lantern:::world:::WorldFile*!? = null;
+    rooms~ Array<StreamedRoom*!>! = [];
+    focus~ Array<Vec3>! = [];
+
+    RoomStreamer~: () { }
+
+    !RoomStreamer~: () {
+        Reset();
+        delete focus;
+        rooms.freeAll();
+    }
+
+    /**
+     * Forgets the level: the rooms and the world file. The engine entities, meshes, lights and collision are cleared by
+     * `ClearWorld`.
+     */
+    Reset~: () -> void {
+        rooms.freeAll();
+        rooms = [];
+        delete worldFile;
+        worldFile = null;
+        focus.clear();
+    }
+
+    /**
+     * The room with this name, or null.
+     */
+    IndexOf :: (name: string) -> usize? {
+        for index~ usize = 0; index < rooms.length(); index++ {
+            if rooms[index]->name == name {
+                return index;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * How many rooms are completely spawned.
+     */
+    CompleteCount :: () -> i32 {
+        count~ i32 = 0;
+        for room in rooms {
+            if room->IsComplete() {
+                count++;
+            }
+        }
+        return count;
+    }
+}
+
+lantern:::host :: namespace {
+    /**
+     * Groups the entities that stream into rooms and works out each room's bounds from its members' boxes. Returns which
+     * entities of the file stream (the others are spawned by the load itself).
+     */
+    RegisterRooms :: (streamer: RoomStreamer~*, worldFile: lantern:::world:::WorldFile*) -> Array<bool>! {
+        membership~ Array<string!>! = lantern:::world:::RoomMembership(worldFile);
+        defer membership.freeAll();
+        streams~ Array<bool>! = [];
+        for index~ usize = 0; index < membership.length(); index++ {
+            roomName: string = membership[index];
+            streams.push(roomName.length() > 0);
+            if roomName.length() == 0 {
+                continue;
+            }
+            found: usize? = streamer->IndexOf(roomName);
+            roomIndex~ usize = 0;
+            if existing := found {
+                roomIndex = existing;
+            } else {
+                room := new StreamedRoom(roomName);
+                room->boundsMin = Vec3 { x: 1000000000.0f, y: 1000000000.0f, z: 1000000000.0f };
+                room->boundsMax = Vec3 { x: -1000000000.0f, y: -1000000000.0f, z: -1000000000.0f };
+                roomIndex = streamer->rooms.length();
+                streamer->rooms.push(room!);
+            }
+            room: StreamedRoom~* = streamer->rooms[roomIndex];
+            room->members.push(index);
+            piece := lantern:::world:::BuildPiece(worldFile, index);
+            defer delete piece;
+            points~ Array<Vec3>! = [];
+            defer delete points;
+            if piece->HasMesh() {
+                triangles: Array<lantern:::physics:::Triangle>! = piece->WorldTriangles();
+                for triangle in triangles {
+                    points.push(triangle.a);
+                    points.push(triangle.b);
+                    points.push(triangle.c);
+                }
+                delete triangles;
+            } else {
+                points.push(lantern:::core:::TransformPoint3(piece->worldMatrix, Vec3 { }));
+            }
+            for corner in points {
+                room->boundsMin = Vec3 { x: Math:::min(room->boundsMin.x, corner.x), y: Math:::min(room->boundsMin.y, corner.y), z: Math:::min(room->boundsMin.z, corner.z) };
+                room->boundsMax = Vec3 { x: Math:::max(room->boundsMax.x, corner.x), y: Math:::max(room->boundsMax.y, corner.y), z: Math:::max(room->boundsMax.z, corner.z) };
+            }
+        }
+        return streams!;
+    }
+
+    /**
+     * Spawns a room's next member: its entity and mesh, its static collision as a group, its tags, and its light if it is
+     * one. Returns false when the room had nothing left to spawn.
+     */
+    SpawnNextRoomMember :: (state: raw EngineState~*, streamer: RoomStreamer~*, roomIndex: usize) -> bool {
+        room: StreamedRoom~* = streamer->rooms[roomIndex];
+        if room->IsComplete() {
+            return false;
+        }
+        entityIndex: usize = room->members[room->nextMember];
+        room->nextMember = room->nextMember + 1;
+        guard held := streamer->worldFile return false;
+        entity: lantern:::world:::WorldEntity* = held->entities[entityIndex];
+        piece := lantern:::world:::BuildPiece(held, entityIndex);
+        defer delete piece;
+        unsafe {
+            meshesBefore: usize = state->worldMeshes.length();
+            made := SpawnPiece(state, piece, entity);
+            when made! {
+                Result:::Ok(handle) -> {
+                    group: u32 = state->collision->BeginStaticGroup();
+                    AddPieceCollider(state, piece, handle);
+                    state->collision->EndStaticGroup();
+                    room->groups.push(group);
+                    state->SetTags(TagsFromWorldEntity(handle, entity));
+                    room->spawned.push(handle);
+                    if state->worldMeshes.length() > meshesBefore {
+                        room->meshes.push(state->worldMeshes[state->worldMeshes.length() - 1]);
+                    }
+                    if light := lantern:::world:::LocalLightFromEntity(entity, entity->transform.Matrix()) {
+                        lightId: u32 = state->renderWorld->AddLight(light);
+                        state->worldLightIds.push(lightId);
+                        room->lightIds.push(lightId);
+                    }
+                },
+                Result:::Err(message) -> {
+                    warning: string! = `room '${room->name}': ${message}`;
+                    lantern:::core:::LogWarn("world", warning);
+                    delete warning;
+                    delete message;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Makes new entities' transforms current so they don't draw for a frame at the origin or slide in from it.
+     */
+    SettleSpawned :: (state: raw EngineState~*) -> void {
+        unsafe {
+            state->entityWorld->UpdateWorldTransforms();
+            state->entityWorld->StorePreviousTransforms();
+        }
+    }
+
+    /**
+     * Takes a room out of the engine: its entities, tags, meshes, lights and collision. The room can be spawned again.
+     */
+    UnloadRoom :: (state: raw EngineState~*, streamer: RoomStreamer~*, roomIndex: usize) -> void {
+        room: StreamedRoom~* = streamer->rooms[roomIndex];
+        unsafe {
+            for handle in room->spawned {
+                state->entityWorld->Despawn(handle);
+                state->RemoveTags(handle);
+            }
+            for group in room->groups {
+                state->collision->RemoveStaticGroup(group);
+            }
+            for mesh in room->meshes {
+                state->renderBackend->RemoveMesh(mesh);
+                for position~ usize = 0; position < state->worldMeshes.length(); position++ {
+                    if state->worldMeshes[position] == mesh {
+                        state->worldMeshes.remove(position);
+                        break;
+                    }
+                }
+            }
+            for lightId in room->lightIds {
+                state->renderWorld->RemoveLight(lightId);
+                for position~ usize = 0; position < state->worldLightIds.length(); position++ {
+                    if state->worldLightIds[position] == lightId {
+                        state->worldLightIds.remove(position);
+                        break;
+                    }
+                }
+            }
+        }
+        room->spawned.clear();
+        room->groups.clear();
+        room->meshes.clear();
+        room->lightIds.clear();
+        room->nextMember = 0;
+    }
+
+    /**
+     * Spawns every room completely.
+     */
+    LoadAllRooms :: (state: raw EngineState~*, streamer: RoomStreamer~*) -> void {
+        for roomIndex~ usize = 0; roomIndex < streamer->rooms.length(); roomIndex++ {
+            while SpawnNextRoomMember(state, streamer, roomIndex) { }
+        }
+        SettleSpawned(state);
+    }
+
+    /**
+     * One step of streaming, from the focus points the game added: rooms farther than `unloadDistance` are unloaded, rooms
+     * within `urgentDistance` are finished at once, and the rest within `loadDistance` spawn nearest first, at most
+     * `budget` entities between them. Returns how many entities were spawned.
+     */
+    StreamRooms :: (state: raw EngineState~*, streamer: RoomStreamer~*, loadDistance: f32, unloadDistance: f32, urgentDistance: f32, budget: i32) -> i32 {
+        if streamer->rooms.length() == 0 {
+            streamer->focus.clear();
+            return 0;
+        }
+        keepAbove: f32 = Math:::max(unloadDistance, loadDistance + 1.0f);
+        distances~ Array<f32>! = [];
+        for room in streamer->rooms {
+            distances.push(lantern:::world:::NearestFocusDistance(streamer->focus, room->boundsMin, room->boundsMax));
+        }
+        present~ Array<bool>! = [];
+        for room in streamer->rooms {
+            present.push(room->IsPresent());
+        }
+        toUnload: Array<usize>! = lantern:::world:::RoomsToUnload(distances, present, keepAbove);
+        for roomIndex in toUnload {
+            UnloadRoom(state, streamer, roomIndex);
+        }
+        delete toUnload;
+        spawnedCount~ i32 = 0;
+        for roomIndex~ usize = 0; roomIndex < streamer->rooms.length(); roomIndex++ {
+            if distances[roomIndex] <= urgentDistance {
+                while SpawnNextRoomMember(state, streamer, roomIndex) {
+                    spawnedCount++;
+                }
+            }
+        }
+        complete~ Array<bool>! = [];
+        for room in streamer->rooms {
+            complete.push(room->IsComplete());
+        }
+        toLoad: Array<usize>! = lantern:::world:::RoomsToLoad(distances, complete, loadDistance);
+        remaining~ i32 = budget;
+        for roomIndex in toLoad {
+            while remaining > 0 && SpawnNextRoomMember(state, streamer, roomIndex) {
+                remaining--;
+                spawnedCount++;
+            }
+        }
+        if spawnedCount > 0 {
+            SettleSpawned(state);
+        }
+        delete toLoad;
+        delete distances;
+        delete present;
+        delete complete;
+        streamer->focus.clear();
+        return spawnedCount;
+    }
+
+    /**
+     * Spawns every room of the state's level completely.
+     */
+    LoadAllRoomsOf :: (state: raw EngineState~*) -> void {
+        unsafe {
+            LoadAllRooms(state, state->streaming);
+        }
+    }
+
+    /**
+     * Adds a point rooms are kept alive around for the next `StreamRoomsOf`.
+     */
+    AddStreamFocusTo :: (state: raw EngineState~*, point: Vec3) -> void {
+        unsafe {
+            state->streaming->focus.push(point);
+        }
+    }
+
+    /**
+     * One step of streaming for the state's level; see `StreamRooms`.
+     */
+    StreamRoomsOf :: (state: raw EngineState~*, loadDistance: f32, unloadDistance: f32, urgentDistance: f32, budget: i32) -> i32 {
+        unsafe {
+            return StreamRooms(state, state->streaming, loadDistance, unloadDistance, urgentDistance, budget);
+        }
+    }
+}

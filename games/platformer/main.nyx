@@ -39,6 +39,7 @@ Player :: import Player;
 Partner :: import Partner;
 NavigationDynamics :: import NavigationDynamics;
 PartnerTuning :: import PartnerTuning;
+StreamingSettings :: import StreamingSettings;
 PlayerTuning :: import PlayerTuning;
 StreetsAutopilot :: import StreetsAutopilot;
 SwitchSystem :: import SwitchSystem;
@@ -313,6 +314,7 @@ private:
         for watcher~ Watcher in level.watchers {
             watcher.TurnOn(assets.unitCubeMesh);
         }
+        UpdateStreaming();
         gemSystem.Clear();
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
@@ -454,6 +456,7 @@ private:
         }
         controller := player.controller;
         UpdatePuzzle(dt);
+        UpdateStreaming();
         UpdateCrumbles(dt);
         UpdateScripted();
         UpdateAdventure(stick, dt);
@@ -575,6 +578,20 @@ private:
             Dust:::Puff(player.FeetPosition(), 10, Math:::min(step.LandingSpeed() * 0.2f, 3.0f) + 0.8f, 0.3f);
             events.Push(GameEvent:::PlayerLanded(step.LandingSpeed()));
         }
+    }
+
+    // Streams the level's rooms: the player, the partner and the companion are the points rooms are kept alive around
+    // (settings/streaming-settings.nyx). Does nothing in a level with no rooms.
+    UpdateStreaming~: () -> void {
+        if lantern:::world:::RoomCount() == 0 {
+            return;
+        }
+        lantern:::world:::AddStreamFocus(player.FeetPosition());
+        lantern:::world:::AddStreamFocus(companion.position);
+        if partner.isPresent {
+            lantern:::world:::AddStreamFocus(partner.position);
+        }
+        lantern:::world:::StreamRooms(StreamingSettings:::LOAD_DISTANCE, StreamingSettings:::UNLOAD_DISTANCE, StreamingSettings:::URGENT_DISTANCE, StreamingSettings:::ENTITIES_PER_STEP);
     }
 
     // The prototype rooms' step: the player's own use key, the partner's beats and walking, then plates, levers,
@@ -882,6 +899,11 @@ private:
         lantern:::debug:::SetValue("Glow/Platforms shown", `${shownPlatforms:d}`);
         lantern:::debug:::SetValue("Glow/Carrying lantern", rules.isCarryingLantern ? "yes" : "no");
         lantern:::debug:::SetValue("Game/Time", `${simulationSeconds:.1f}`);
+        if lantern:::world:::RoomCount() > 0 {
+            lantern:::debug:::SetValue("Streaming/Rooms", `${lantern:::world:::LoadedRoomCount():d} of ${lantern:::world:::RoomCount():d} loaded`);
+            lantern:::debug:::SetValue("Streaming/Entities", `${lantern:::world:::LiveEntityCount():d}`);
+            lantern:::debug:::SetValue("Streaming/Collision triangles", `${lantern:::world:::CollisionTriangleCount():d}`);
+        }
         if partner.isPresent {
             lantern:::debug:::SetValue("Partner/Mode", partner.ModeName());
             lantern:::debug:::SetValue("Partner/Navigation", partner.NavigationSummary());
