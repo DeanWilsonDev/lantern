@@ -84,6 +84,48 @@ lantern:::world :: namespace {
     }
 
     /**
+     * The answer to "where would this dragged scene snap?": `found` is false when no socket of the scene is within reach of a
+     * socket in the world; otherwise `placement` is the position and yaw that lay the two sockets together, and the two
+     * indexes say which pair.
+     */
+    SceneSnap :: struct {
+        found~ bool = false;
+        placement~ TransformData = TransformData { };
+        ownIndex~ usize = 0;
+        worldIndex~ usize = 0;
+        distance~ f32 = 0.0f;
+    }
+
+    /**
+     * Snaps a scene that is being dragged. The scene is at `instancePosition` turned `instanceYaw`; its sockets are given in its
+     * own space (`ownPositions`, `ownYaws`) and the sockets already in the worldSocket in worldSocket space. The nearest pair within
+     * `reach` metres wins, and the result is `StitchTransform` for that pair, so the sockets lie on each other facing opposite ways.
+     */
+    NearestSocketSnap :: (instancePosition: Vec3, instanceYaw: f32, ownPositions: Array<Vec3>, ownYaws: Array<f32>, worldPositions: Array<Vec3>, worldYaws: Array<f32>, reach: f32) -> SceneSnap {
+        best~ SceneSnap = SceneSnap { };
+        for own~ usize = 0; own < ownPositions.length(); own++ {
+            placed: Vec3 = PlacedPoint(ownPositions[own], instancePosition, instanceYaw);
+            for worldSocket~ usize = 0; worldSocket < worldPositions.length(); worldSocket++ {
+                distance: f32 = (placed - worldPositions[worldSocket]).length();
+                if distance > reach {
+                    continue;
+                }
+                if best.found && distance >= best.distance {
+                    continue;
+                }
+                best.found = true;
+                best.ownIndex = own;
+                best.worldIndex = worldSocket;
+                best.distance = distance;
+            }
+        }
+        if best.found {
+            best.placement = StitchTransform(worldPositions[best.worldIndex], worldYaws[best.worldIndex], ownPositions[best.ownIndex], ownYaws[best.ownIndex]);
+        }
+        return best;
+    }
+
+    /**
      * Copies one scene's entities into `placingFile`, placed by the instance entity at `instanceIndex`. Ids become
      * (instance id << 32 | scene id) so two instances never collide, parents follow, and every entity that can stream joins the
      * instance's room.
