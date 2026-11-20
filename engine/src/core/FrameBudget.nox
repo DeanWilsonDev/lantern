@@ -1,0 +1,315 @@
+lantern:::core :: namespace {
+    /**
+     * The time one frame may take to hold 60 frames a second: 1000 / 60 milliseconds.
+     */
+    BUDGET_MILLISECONDS: f64 : 1000.0f / 60.0f;
+    /**
+     * How far past the budget a frame may run before it counts as over. A 60 Hz display measures frames of 16.6 or 16.7
+     * ms, so a frame is only over when it is a whole millisecond late.
+     */
+    BUDGET_TOLERANCE_MILLISECONDS: f64 : 1.0f;
+    /**
+     * How many frames `FrameBudget` remembers: two seconds at 60 fps, the same as `FrameStats`.
+     */
+    BUDGET_HISTORY_LENGTH: usize : 120;
+    /**
+     * How many phases a frame is split into; see the `BUDGET_PHASE_` constants.
+     */
+    BUDGET_PHASE_COUNT: usize : 7;
+    /**
+     * Engine work around the fixed steps and the frame update: step bookkeeping, world transforms, the input snapshot
+     * and the UI's input.
+     */
+    BUDGET_PHASE_UPDATE: usize : 0;
+    /**
+     * Time in the game's scripts: `OnFixedUpdate`, `OnUpdate`, `OnRender` and the Chaos UI's update. Physics queries a
+     * script makes are counted under physics instead.
+     */
+    BUDGET_PHASE_SCRIPTING: usize : 1;
+    /**
+     * Collision work a script asked for: controller steps, ledge searches, ray casts and shape casts.
+     */
+    BUDGET_PHASE_PHYSICS: usize : 2;
+    /**
+     * Animation, foot placement and building each entity's draw.
+     */
+    BUDGET_PHASE_ANIMATION: usize : 3;
+    /**
+     * Drawing the debug window and the game's UI into the overlay.
+     */
+    BUDGET_PHASE_OVERLAY: usize : 4;
+    /**
+     * The render backend's frame: recording passes, submitting them and waiting to present. With vsync on, the wait for the
+     * next swapchain image lands here, so this phase fills whatever time the others leave.
+     */
+    BUDGET_PHASE_RENDER: usize : 5;
+    /**
+     * Topping up the audio queue.
+     */
+    BUDGET_PHASE_AUDIO: usize : 6;
+
+    /**
+     * The name of a phase as the debug window shows it.
+     */
+    BudgetPhaseName :: (phase: usize) -> string {
+        if phase == BUDGET_PHASE_UPDATE {
+            return "Update";
+        }
+        if phase == BUDGET_PHASE_SCRIPTING {
+            return "Scripting";
+        }
+        if phase == BUDGET_PHASE_PHYSICS {
+            return "Physics";
+        }
+        if phase == BUDGET_PHASE_ANIMATION {
+            return "Animation";
+        }
+        if phase == BUDGET_PHASE_OVERLAY {
+            return "Overlay";
+        }
+        if phase == BUDGET_PHASE_RENDER {
+            return "Render";
+        }
+        return "Audio";
+    }
+
+    /**
+     * Where each frame's time went, for the debug window's Budget page.
+     *
+     * The engine brackets each phase of a frame with `Start` and `Stop`; a phase that runs more than once in a frame (the
+     * fixed update runs several times after a slow frame) adds up. `EndFrame` closes the frame: it measures the frame's
+     * whole length from one `EndFrame` to the next, files this frame's phases in a ring of the last 120 frames and counts
+     * the frame as over budget when it ran past 1000/60 ms by more than a millisecond.
+     *
+     * Nothing is measured while `recording` is false: `Start` doesn't read the clock and `Stop` and `EndFrame` return
+     * at once, so the debug window costs nothing hidden. The engine turns `recording` on while the window is showing.
+     */
+    FrameBudget :: class {
+    public:
+        /**
+         * Whether phases are being timed. Set by the engine from the debug window's visibility.
+         */
+        recording~ bool = false;
+        /**
+         * This frame's time so far in each phase, in milliseconds, until `EndFrame` files it.
+         */
+        currentMilliseconds~ f64[7] = filled<f64, 7>(0.0f);
+        /**
+         * The ring of phase times: slot `s` holds its phases at `s * BUDGET_PHASE_COUNT` onwards, in milliseconds.
+         */
+        phaseMilliseconds~ f64[840] = filled<f64, 840>(0.0f);
+        /**
+         * The ring of whole-frame lengths, in milliseconds, one per slot.
+         */
+        frameMilliseconds~ f64[120] = filled<f64, 120>(0.0f);
+        /**
+         * The slot the next frame goes in.
+         */
+        next~ usize = 0;
+        /**
+         * How many slots hold a real frame.
+         */
+        filledCount~ usize = 0;
+        /**
+         * Frames recorded while `recording` was on, which only grows.
+         */
+        recordedFrames~ u64 = 0;
+        /**
+         * Frames that ran over budget while `recording` was on, which only grows.
+         */
+        overBudgetTotal~ u64 = 0;
+        /**
+         * The clock when the previous frame ended, in nanoseconds; 0 when there was no previous frame to measure from.
+         */
+        previousEndNanoseconds~ u64 = 0;
+
+        FrameBudget~: () { }
+
+        /**
+         * The clock reading to give `Stop` later, or 0 without reading the clock when nothing is being recorded.
+         */
+        Start~: () -> u64 {
+            if !recording {
+                return 0;
+            }
+            return monotonicNanoseconds();
+        }
+
+        /**
+         * Adds the time since `startNanoseconds` (from `Start`) to `phase` in this frame.
+         */
+        Stop~: (phase: usize, startNanoseconds: u64) -> void {
+            if !recording || startNanoseconds == 0 {
+                return;
+            }
+            currentMilliseconds[phase] += f64(monotonicNanoseconds() - startNanoseconds) / 1000000.0f;
+        }
+
+        /**
+         * Adds milliseconds measured elsewhere to `phase` in this frame, which is how a test feeds in a frame.
+         */
+        Add~: (phase: usize, milliseconds: f64) -> void {
+            if recording {
+                currentMilliseconds[phase] += milliseconds;
+            }
+        }
+
+        /**
+         * Closes the frame at `nowNanoseconds`: files its phases and length and starts the next frame's totals from zero.
+         *
+         * Physics runs inside script calls, so the scripting phase is measured with it in; the physics time is taken out of
+         * scripting here. The frame's length is the time since the previous `EndFrame`; with no previous frame, or a gap of
+         * over a quarter of a second (the window was hidden, minimised or being dragged), it is the phases' sum.
+         */
+        EndFrame~: (nowNanoseconds: u64) -> void {
+            if !recording {
+                for phase~ usize = 0; phase < BUDGET_PHASE_COUNT; phase++ {
+                    currentMilliseconds[phase] = 0.0f;
+                }
+                previousEndNanoseconds = 0;
+                return;
+            }
+            scripting~ f64 = currentMilliseconds[BUDGET_PHASE_SCRIPTING] - currentMilliseconds[BUDGET_PHASE_PHYSICS];
+            if scripting < 0.0f {
+                scripting = 0.0f;
+            }
+            currentMilliseconds[BUDGET_PHASE_SCRIPTING] = scripting;
+
+            sum~ f64 = 0.0f;
+            for phase~ usize = 0; phase < BUDGET_PHASE_COUNT; phase++ {
+                phaseMilliseconds[next * BUDGET_PHASE_COUNT + phase] = currentMilliseconds[phase];
+                sum += currentMilliseconds[phase];
+                currentMilliseconds[phase] = 0.0f;
+            }
+            length~ f64 = sum;
+            if previousEndNanoseconds != 0 && nowNanoseconds > previousEndNanoseconds {
+                measured: f64 = f64(nowNanoseconds - previousEndNanoseconds) / 1000000.0f;
+                if measured <= 250.0f && measured > sum {
+                    length = measured;
+                }
+            }
+            previousEndNanoseconds = nowNanoseconds;
+            frameMilliseconds[next] = length;
+            next = (next + 1) % BUDGET_HISTORY_LENGTH;
+            if filledCount < BUDGET_HISTORY_LENGTH {
+                filledCount += 1;
+            }
+            recordedFrames += 1;
+            if IsOver(length) {
+                overBudgetTotal += 1;
+            }
+        }
+
+        /**
+         * True when a frame of `milliseconds` is over budget: more than a millisecond past 1000/60.
+         */
+        IsOver :: (milliseconds: f64) -> bool {
+            return milliseconds > BUDGET_MILLISECONDS + BUDGET_TOLERANCE_MILLISECONDS;
+        }
+
+        /**
+         * The ring slot of the frame `framesAgo` back, where 0 is the latest.
+         */
+        SlotAgo :: (framesAgo: usize) -> usize {
+            return (next + BUDGET_HISTORY_LENGTH - 1 - framesAgo) % BUDGET_HISTORY_LENGTH;
+        }
+
+        /**
+         * The length of the frame `framesAgo` back, in milliseconds; 0 beyond the history.
+         */
+        FrameMillisecondsAgo :: (framesAgo: usize) -> f64 {
+            if framesAgo >= filledCount {
+                return 0.0f;
+            }
+            return frameMilliseconds[SlotAgo(framesAgo)];
+        }
+
+        /**
+         * One phase of the frame `framesAgo` back, in milliseconds; 0 beyond the history.
+         */
+        PhaseMillisecondsAgo :: (phase: usize, framesAgo: usize) -> f64 {
+            if framesAgo >= filledCount {
+                return 0.0f;
+            }
+            return phaseMilliseconds[SlotAgo(framesAgo) * BUDGET_PHASE_COUNT + phase];
+        }
+
+        /**
+         * The part of the frame `framesAgo` back that no phase accounts for (events, the loop itself), in milliseconds.
+         */
+        OtherMillisecondsAgo :: (framesAgo: usize) -> f64 {
+            accounted~ f64 = 0.0f;
+            for phase~ usize = 0; phase < BUDGET_PHASE_COUNT; phase++ {
+                accounted += PhaseMillisecondsAgo(phase, framesAgo);
+            }
+            other: f64 = FrameMillisecondsAgo(framesAgo) - accounted;
+            if other < 0.0f {
+                return 0.0f;
+            }
+            return other;
+        }
+
+        /**
+         * The mean of one phase over the history, in milliseconds.
+         */
+        AveragePhaseMilliseconds :: (phase: usize) -> f64 {
+            if filledCount == 0 {
+                return 0.0f;
+            }
+            sum~ f64 = 0.0f;
+            for framesAgo~ usize = 0; framesAgo < filledCount; framesAgo++ {
+                sum += PhaseMillisecondsAgo(phase, framesAgo);
+            }
+            return sum / f64(filledCount);
+        }
+
+        /**
+         * The longest a phase took in any frame of the history, in milliseconds.
+         */
+        WorstPhaseMilliseconds :: (phase: usize) -> f64 {
+            worst~ f64 = 0.0f;
+            for framesAgo~ usize = 0; framesAgo < filledCount; framesAgo++ {
+                worst = Math:::max(worst, PhaseMillisecondsAgo(phase, framesAgo));
+            }
+            return worst;
+        }
+
+        /**
+         * The mean frame length over the history, in milliseconds.
+         */
+        AverageFrameMilliseconds :: () -> f64 {
+            if filledCount == 0 {
+                return 0.0f;
+            }
+            sum~ f64 = 0.0f;
+            for framesAgo~ usize = 0; framesAgo < filledCount; framesAgo++ {
+                sum += FrameMillisecondsAgo(framesAgo);
+            }
+            return sum / f64(filledCount);
+        }
+
+        /**
+         * The longest frame in the history, in milliseconds.
+         */
+        WorstFrameMilliseconds :: () -> f64 {
+            worst~ f64 = 0.0f;
+            for framesAgo~ usize = 0; framesAgo < filledCount; framesAgo++ {
+                worst = Math:::max(worst, FrameMillisecondsAgo(framesAgo));
+            }
+            return worst;
+        }
+
+        /**
+         * How many frames in the history ran over budget.
+         */
+        OverBudgetInHistory :: () -> usize {
+            count~ usize = 0;
+            for framesAgo~ usize = 0; framesAgo < filledCount; framesAgo++ {
+                if IsOver(FrameMillisecondsAgo(framesAgo)) {
+                    count += 1;
+                }
+            }
+            return count;
+        }
+    }
+}

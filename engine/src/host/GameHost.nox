@@ -135,7 +135,9 @@ lantern:::host :: namespace {
          */
         Call~: (hook: GameHook, arguments: Array<f32>) -> void {
             guard running ~= session return;
+            timer: u64 = state->debugWindow->budget->Start();
             failure: string!? = running->Call(hook, arguments);
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_SCRIPTING, timer);
             if text := failure {
                 ReportError(text);
             }
@@ -258,6 +260,7 @@ lantern:::host :: namespace {
          * draws and triangles, entity count and audio status. The "Errors/" group is removed when there is no error.
          */
         UpdateEngineDebugValues~: (frame: lantern:::engine:::FrameContext) -> void {
+            PublishBudgetValues();
             scriptMilliseconds~ f64 = 0.0f;
             sourceText~ string! = "";
             if running ~= session {
@@ -316,6 +319,37 @@ lantern:::host :: namespace {
                 values->SetText("Errors/Script", error);
             } else {
                 values->RemovePrefix("Errors/");
+            }
+        }
+
+        /**
+         * Publishes the frame budget as `Budget/` values while the budget is recording, which gives the debug window its
+         * Budget page, and removes them when it isn't: the latest frame, the average, the worst and the over-budget count,
+         * then each phase as `this frame  avg  worst` in milliseconds.
+         */
+        PublishBudgetValues~: () -> void {
+            values: lantern:::core:::DebugValues~* = state->debugValues;
+            if !state->debugWindow->budget->recording {
+                values->RemovePrefix("Budget/");
+                return;
+            }
+            values->SetNumber("Budget/Frame ms", state->debugWindow->budget->FrameMillisecondsAgo(0));
+            values->SetNumber("Budget/Average ms", state->debugWindow->budget->AverageFrameMilliseconds());
+            values->SetNumber("Budget/Worst ms", state->debugWindow->budget->WorstFrameMilliseconds());
+            values->SetInteger("Budget/Over in history", i64(state->debugWindow->budget->OverBudgetInHistory()));
+            values->SetInteger("Budget/Over in total", i64(state->debugWindow->budget->overBudgetTotal));
+            for phase~ usize = 0; phase < lantern:::core:::BUDGET_PHASE_COUNT; phase++ {
+                latest: string! = lantern:::core:::FixedDecimals(state->debugWindow->budget->PhaseMillisecondsAgo(phase, 0), 2, 5);
+                average: string! = lantern:::core:::FixedDecimals(state->debugWindow->budget->AveragePhaseMilliseconds(phase), 2, 5);
+                worst: string! = lantern:::core:::FixedDecimals(state->debugWindow->budget->WorstPhaseMilliseconds(phase), 2, 5);
+                phaseText: string! = `${latest} avg ${average} worst ${worst}`;
+                phasePath: string! = `Budget/${lantern:::core:::BudgetPhaseName(phase)}`;
+                values->SetText(phasePath, phaseText);
+                delete phasePath;
+                delete phaseText;
+                delete worst;
+                delete average;
+                delete latest;
             }
         }
 
@@ -461,6 +495,7 @@ lantern:::host :: namespace {
             if session == null {
                 return;
             }
+            beforeScript: u64 = state->debugWindow->budget->Start();
             state->entityWorld->StorePreviousTransforms();
             state->collision->BeginStep();
             if state->debugWindow->focused {
@@ -468,10 +503,13 @@ lantern:::host :: namespace {
             } else {
                 state->input->SetSnapshot(step.input->Copy());
             }
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_UPDATE, beforeScript);
             stepArguments: Array<f32>! = [step.stepSeconds];
             Call(GameHook:::OnFixedUpdate, stepArguments);
             delete stepArguments;
+            afterScript: u64 = state->debugWindow->budget->Start();
             state->entityWorld->UpdateWorldTransforms();
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_UPDATE, afterScript);
         }
 
         /**
@@ -479,6 +517,8 @@ lantern:::host :: namespace {
          * the UI and the script's `OnUpdate`, publishes debug values and tops up the audio queue.
          */
         FrameUpdate~: (frame: lantern:::engine:::FrameContext, platformBackend: lantern:::platform:::PlatformBackend~*) -> void {
+            state->debugWindow->budget->recording = state->debugWindow->visible;
+            beforeScript: u64 = state->debugWindow->budget->Start();
             frames += 1;
             state->screenSize = Vec2 { x: f32(frame.window.pixelWidth), y: f32(frame.window.pixelHeight) };
             state->uiScale = lantern:::renderer:::ScaleForDensity(2, frame.window.pixelDensity);
@@ -508,9 +548,11 @@ lantern:::host :: namespace {
             } else {
                 NavigateUi();
             }
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_UPDATE, beforeScript);
             frameArguments: Array<f32>! = [frame.frameSeconds];
             Call(GameHook:::OnUpdate, frameArguments);
             delete frameArguments;
+            afterScript: u64 = state->debugWindow->budget->Start();
             if captured := state->requests.mouseCaptured {
                 mouseCaptured = captured;
                 state->requests.mouseCaptured = null;
@@ -530,7 +572,10 @@ lantern:::host :: namespace {
                 }
             }
             UpdateEngineDebugValues(frame);
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_UPDATE, afterScript);
+            audioTimer: u64 = state->debugWindow->budget->Start();
             state->audioSystemInstance->Update();
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_AUDIO, audioTimer);
         }
 
         /**
@@ -549,14 +594,17 @@ lantern:::host :: namespace {
             renderArguments: Array<f32>! = [frame.alpha, frame.frameSeconds];
             Call(GameHook:::OnRender, renderArguments);
             delete renderArguments;
+            particleTimer: u64 = state->debugWindow->budget->Start();
             unsafe {
                 state->renderWorld->StepParticles(frame.frameSeconds);
             }
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_ANIMATION, particleTimer);
             if running ~= session {
                 running->UpdateUi();
             }
             ReportUiMessages();
             engineState: raw EngineState~* = StatePointer();
+            windowTimer: u64 = state->debugWindow->budget->Start();
             unsafe {
                 windowScale: f32 = Math:::max(Math:::round(engineState->uiScale * 0.5f), 1.0f);
                 if engineState->pendingCapturePath == null {
@@ -574,12 +622,15 @@ lantern:::host :: namespace {
                     }
                 }
             }
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_OVERLAY, windowTimer);
+            animationTimer: u64 = state->debugWindow->budget->Start();
             unsafe {
                 engineState->animationSystem->Update(engineState->entityWorld, frame.frameSeconds);
                 PlaceAnimatedFeet(engineState->animationSystem, engineState->entityWorld, engineState->collision, frame.frameSeconds);
                 lantern:::engine:::ExtractDraws(engineState->entityWorld, frame.alpha, engineState->renderWorld);
                 engineState->animationSystem->Extract(engineState->entityWorld, frame.alpha, engineState->renderWorld);
             }
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_ANIMATION, animationTimer);
             if error := scriptError {
                 if !state->debugWindow->visible {
                     shown: string! = `${error}`;
@@ -589,6 +640,7 @@ lantern:::host :: namespace {
             }
             scale: f32 = state->uiScale;
             reportFromRender~ lantern:::renderer:::RenderReport? = null;
+            renderTimer: u64 = state->debugWindow->budget->Start();
             unsafe {
                 rendered := engineState->renderBackend->Render(engineState->renderWorld);
                 when rendered! {
@@ -601,6 +653,7 @@ lantern:::host :: namespace {
                     }
                 }
             }
+            state->debugWindow->budget->Stop(lantern:::core:::BUDGET_PHASE_RENDER, renderTimer);
             if report := reportFromRender {
                 lastFrameReport = report;
             }
@@ -622,6 +675,7 @@ lantern:::host :: namespace {
                     delete target;
                 }
             }
+            state->debugWindow->budget->EndFrame(monotonicNanoseconds());
         }
 
         /**

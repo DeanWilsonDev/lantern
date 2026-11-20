@@ -5,6 +5,20 @@ lantern:::debug :: namespace {
     ERROR_GROUP: string : "Errors";
 
     /**
+     * The page that shows where the frame's time goes: a graph of the last frames against the 60 fps budget above the
+     * `Budget/` values the engine publishes while the window is showing.
+     */
+    BUDGET_PAGE: string : "Budget";
+    /**
+     * How many lines of the page the budget graph takes, including its heading.
+     */
+    BUDGET_GRAPH_ROWS: usize : 7;
+    /**
+     * The smallest number of lines a page needs to have room for the graph and a few values beneath it.
+     */
+    BUDGET_GRAPH_MINIMUM_ROWS: usize : 12;
+
+    /**
      * A rectangle in screen pixels that the window remembers from its last draw, so a click can be matched to what was
      * drawn there.
      */
@@ -111,13 +125,21 @@ lantern:::debug :: namespace {
         valueColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.95f, g: 0.95f, b: 0.97f, a: 1.0f };
         dimColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.5f, g: 0.52f, b: 0.62f, a: 1.0f };
         errorColor~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 0.4f, b: 0.35f, a: 1.0f };
+        overBudgetColor~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 0.25f, b: 0.2f, a: 1.0f };
+        withinBudgetColor~ lantern:::core:::Color = lantern:::core:::Color { r: 0.4f, g: 0.85f, b: 0.5f, a: 1.0f };
+        /**
+         * The frame times the Budget page draws. The engine records into it while the window is visible.
+         */
+        budget~ lantern:::core:::FrameBudget*!;
 
         DebugWindow~: () {
             page = `${ALL_PAGE}`;
             filter = ``;
+            budget = new lantern:::core:::FrameBudget();
         }
 
         !DebugWindow~: () {
+            delete budget;
             delete page;
             delete filter;
             delete tabBoxes;
@@ -350,7 +372,12 @@ lantern:::debug :: namespace {
             defer delete rows;
 
             bodyHeight: f32 = height - chrome;
-            visibleRows: usize = usize(Math:::max(bodyHeight / lineHeight, 1.0f));
+            totalRows: usize = usize(Math:::max(bodyHeight / lineHeight, 1.0f));
+            graphRows~ usize = 0;
+            if page == BUDGET_PAGE && totalRows >= BUDGET_GRAPH_MINIMUM_ROWS {
+                graphRows = BUDGET_GRAPH_ROWS;
+            }
+            visibleRows: usize = totalRows - graphRows;
             visibleRowCount = visibleRows;
             maxScroll~ usize = 0;
             if rows.length() > visibleRows {
@@ -406,6 +433,11 @@ lantern:::debug :: namespace {
 
             overlay->Rect(Vec2 { x: left, y: cursorY - glyph * 0.25f }, Vec2 { x: right, y: cursorY - glyph * 0.25f + 1.0f }, borderColor);
 
+            if graphRows > 0 {
+                DrawBudgetGraph(overlay, Vec2 { x: left, y: cursorY }, right - left, lineHeight * f32(graphRows) - glyph * 0.5f, scale, glyph, lineHeight);
+                cursorY += lineHeight * f32(graphRows);
+            }
+
             hasScrollbar: bool = rows.length() > visibleRows;
             valueRight~ f32 = right;
             if hasScrollbar {
@@ -435,6 +467,13 @@ lantern:::debug :: namespace {
                     color~ lantern:::core:::Color = valueColor;
                     if group == ERROR_GROUP {
                         color = errorColor;
+                    }
+                    if page == BUDGET_PAGE {
+                        swatchPhase := BudgetPhaseOf(lantern:::core:::DebugName(path));
+                        if swatchPhase < lantern:::core:::BUDGET_PHASE_COUNT {
+                            swatchMinimum: Vec2 = Vec2 { x: left + glyph * 0.1f, y: rowY + glyph * 0.15f };
+                            overlay->Rect(swatchMinimum, swatchMinimum + Vec2 { x: glyph * 0.6f, y: glyph * 0.6f }, BudgetPhaseColor(swatchPhase));
+                        }
                     }
                     overlay->Text(CutToCharacters(lantern:::core:::DebugName(path), nameCharacters - 1), Vec2 { x: left + glyph, y: rowY }, scale, nameColor);
                     shown: string! = values->DisplayAt(row.valueIndex);
@@ -538,6 +577,79 @@ lantern:::debug :: namespace {
         }
 
         /**
+         * The Budget page's graph in the box at `topLeft`, `width` by `height` pixels: a heading with the latest frame and the
+         * over-budget count, then one bar per recorded frame, oldest at the left, stacked by phase (the grey on top is time no
+         * phase accounts for). A line marks the 1000/60 ms budget and a red cap on a bar marks a frame that ran over.
+         */
+        DrawBudgetGraph~: (overlay: lantern:::renderer:::Overlay~*, topLeft: Vec2, width: f32, height: f32, scale: f32, glyph: f32, lineHeight: f32) -> void {
+            latest: f64 = budget->FrameMillisecondsAgo(0);
+            over: usize = budget->OverBudgetInHistory();
+            latestOver: bool = budget->IsOver(latest);
+            latestText: string! = lantern:::core:::FixedDecimals(latest, 1, 0);
+            budgetText: string! = lantern:::core:::FixedDecimals(lantern:::core:::BUDGET_MILLISECONDS, 1, 0);
+            heading~ string! = `${latestText} ms of ${budgetText}  ${over} over of ${budget->filledCount}`;
+            if budget->filledCount == 0 {
+                delete heading;
+                heading = "waiting for frames" + "";
+            } else if latestOver {
+                delete heading;
+                heading = `OVER BUDGET ${latestText} ms of ${budgetText}  ${over} over of ${budget->filledCount}`;
+            }
+            delete latestText;
+            delete budgetText;
+            headingColor~ lantern:::core:::Color = withinBudgetColor;
+            if latestOver || over > 0 {
+                headingColor = overBudgetColor;
+            }
+            if budget->filledCount == 0 {
+                headingColor = dimColor;
+            }
+            overlay->Text(CutToCharacters(heading, usize(width / glyph)), topLeft, scale, headingColor);
+            delete heading;
+
+            graphTop: f32 = topLeft.y + lineHeight;
+            graphHeight: f32 = height - lineHeight;
+            if graphHeight < glyph * 2.0f {
+                return;
+            }
+            overlay->Rect(Vec2 { x: topLeft.x, y: graphTop }, Vec2 { x: topLeft.x + width, y: graphTop + graphHeight }, tabColor);
+
+            ceiling~ f64 = lantern:::core:::BUDGET_MILLISECONDS * 2.0f;
+            if budget->WorstFrameMilliseconds() > ceiling {
+                ceiling = budget->WorstFrameMilliseconds();
+            }
+            pixelsPerMillisecond: f32 = graphHeight / f32(ceiling);
+            barWidth: f32 = width / f32(lantern:::core:::BUDGET_HISTORY_LENGTH);
+            floorY: f32 = graphTop + graphHeight;
+            for framesAgo~ usize = 0; framesAgo < budget->filledCount; framesAgo++ {
+                barLeft: f32 = topLeft.x + width - barWidth * f32(framesAgo + 1);
+                barRight: f32 = barLeft + Math:::max(barWidth - 1.0f, 1.0f);
+                stackedTop~ f32 = floorY;
+                for phase~ usize = 0; phase < lantern:::core:::BUDGET_PHASE_COUNT; phase++ {
+                    segment: f32 = f32(budget->PhaseMillisecondsAgo(phase, framesAgo)) * pixelsPerMillisecond;
+                    if segment > 0.0f {
+                        overlay->Rect(Vec2 { x: barLeft, y: Math:::max(stackedTop - segment, graphTop) }, Vec2 { x: barRight, y: stackedTop }, BudgetPhaseColor(phase));
+                        stackedTop -= segment;
+                    }
+                }
+                otherSegment: f32 = f32(budget->OtherMillisecondsAgo(framesAgo)) * pixelsPerMillisecond;
+                if otherSegment > 0.0f {
+                    overlay->Rect(Vec2 { x: barLeft, y: Math:::max(stackedTop - otherSegment, graphTop) }, Vec2 { x: barRight, y: stackedTop }, borderColor);
+                }
+                if budget->IsOver(budget->FrameMillisecondsAgo(framesAgo)) {
+                    capTop: f32 = Math:::max(floorY - f32(budget->FrameMillisecondsAgo(framesAgo)) * pixelsPerMillisecond, graphTop);
+                    overlay->Rect(Vec2 { x: barLeft, y: capTop }, Vec2 { x: barRight, y: capTop + Math:::max(glyph * 0.3f, 2.0f) }, overBudgetColor);
+                    overlay->Rect(Vec2 { x: barLeft, y: graphTop }, Vec2 { x: barRight, y: graphTop + Math:::max(glyph * 0.3f, 2.0f) }, overBudgetColor);
+                }
+            }
+            budgetY: f32 = floorY - f32(lantern:::core:::BUDGET_MILLISECONDS) * pixelsPerMillisecond;
+            overlay->Rect(Vec2 { x: topLeft.x, y: budgetY }, Vec2 { x: topLeft.x + width, y: budgetY + Math:::max(glyph * 0.15f, 1.0f) }, groupColor);
+            budgetLabel: string! = lantern:::core:::FixedDecimals(lantern:::core:::BUDGET_MILLISECONDS, 1, 0);
+            overlay->Text(budgetLabel, Vec2 { x: topLeft.x + glyph * 0.25f, y: budgetY - glyph * 1.1f }, scale, groupColor);
+            delete budgetLabel;
+        }
+
+        /**
          * The width of a tab: its name, its count and a little room.
          */
         TabWidth :: (summary: PageSummary*, index: usize, glyph: f32) -> f32 {
@@ -546,6 +658,43 @@ lantern:::debug :: namespace {
             delete countText;
             return f32(characters) * glyph + glyph * 2.0f;
         }
+    }
+
+    /**
+     * The colour a phase has in the Budget page's graph and beside its values.
+     */
+    BudgetPhaseColor :: (phase: usize) -> lantern:::core:::Color {
+        if phase == lantern:::core:::BUDGET_PHASE_UPDATE {
+            return lantern:::core:::Color { r: 0.45f, g: 0.62f, b: 1.0f, a: 1.0f };
+        }
+        if phase == lantern:::core:::BUDGET_PHASE_SCRIPTING {
+            return lantern:::core:::Color { r: 0.75f, g: 0.5f, b: 1.0f, a: 1.0f };
+        }
+        if phase == lantern:::core:::BUDGET_PHASE_PHYSICS {
+            return lantern:::core:::Color { r: 0.35f, g: 0.85f, b: 0.8f, a: 1.0f };
+        }
+        if phase == lantern:::core:::BUDGET_PHASE_ANIMATION {
+            return lantern:::core:::Color { r: 0.5f, g: 0.9f, b: 0.4f, a: 1.0f };
+        }
+        if phase == lantern:::core:::BUDGET_PHASE_OVERLAY {
+            return lantern:::core:::Color { r: 1.0f, g: 0.82f, b: 0.3f, a: 1.0f };
+        }
+        if phase == lantern:::core:::BUDGET_PHASE_RENDER {
+            return lantern:::core:::Color { r: 0.95f, g: 0.55f, b: 0.3f, a: 1.0f };
+        }
+        return lantern:::core:::Color { r: 0.9f, g: 0.5f, b: 0.7f, a: 1.0f };
+    }
+
+    /**
+     * The phase called `name`, or the number of phases when `name` is not one.
+     */
+    BudgetPhaseOf :: (name: string) -> usize {
+        for phase~ usize = 0; phase < lantern:::core:::BUDGET_PHASE_COUNT; phase++ {
+            if lantern:::core:::BudgetPhaseName(phase) == name {
+                return phase;
+            }
+        }
+        return lantern:::core:::BUDGET_PHASE_COUNT;
     }
 
     /**
