@@ -1,0 +1,70 @@
+FindingHerTuning :: import FindingHerTuning;
+Math :: import standard:::Math;
+
+// One person in the crowd: a faceless shadow figure that walks a lane over and over. A lane is a world-file entity of
+// kind "crowd_lane" (see SearchSite), and every figure on it shares its start and end. What makes a crowd out of
+// copies is three small differences per figure, worked out from its number so every run looks the same:
+// - where on the lane it starts (`along`),
+// - how fast it walks, and how wide of the lane's centre line,
+// - how tall it is.
+//
+// Two rules move it. It follows its lane at its own speed. And when someone it must not walk into (the player, her)
+// is within FIGURE_AVOID_RADIUS, it eases sideways away from them: that is the whole of the crowd's "AI", a step
+// aside, which is enough to make a crowd feel like it sees you.
+//
+// Prototype shortcut: every figure is its own entity with one shared capsule mesh. The engine has no mesh instancing
+// for game code yet, so a very large crowd is the first thing to cost frame time (a card on engine-follow-ups).
+CrowdFigure :: class {
+public:
+    entity: i64;
+    start: lantern:::math:::Vec3;
+    end: lantern:::math:::Vec3;
+    laneLength: f32;
+    heading: f32;
+    speed: f32;
+    lateral: f32;
+    height: f32;
+    along~ f32 = 0.0f;
+    sidestep~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    position~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+
+    CrowdFigure~: (laneStart: lantern:::math:::Vec3, laneEnd: lantern:::math:::Vec3, number: i32, laneSeed: i32, mesh: i64) : entity(lantern:::world:::Spawn("crowd_figure", laneStart)),
+        start(laneStart), end(laneEnd), laneLength(Math:::max((laneEnd - laneStart).Horizontal().Length(), 0.1f)),
+        heading((laneEnd - laneStart).Horizontal().Yaw()),
+        speed(FindingHerTuning:::FIGURE_BASE_SPEED * (1.0f + FindingHerTuning:::FIGURE_SPEED_VARIATION * FindingHerTuning:::Noise(number * 7 + laneSeed, 1))),
+        lateral(FindingHerTuning:::FIGURE_LATERAL_SPREAD * FindingHerTuning:::Noise(number * 13 + laneSeed, 2)),
+        height(1.0f + FindingHerTuning:::FIGURE_HEIGHT_VARIATION * FindingHerTuning:::Noise(number * 5 + laneSeed, 3)) {
+        along = 0.5f + 0.5f * FindingHerTuning:::Noise(number * 11 + laneSeed, 4);
+        lantern:::world:::SetMesh(entity, mesh, FindingHerTuning:::FIGURE_TINT);
+        lantern:::world:::SetCastsShadows(entity, false);
+        lantern:::world:::SetYaw(entity, heading);
+    }
+
+    // One fixed step. `avoid` are the places to give way to; `speedMultiplier` is 1 normally and more in a surge.
+    Update~: (avoid: Array<lantern:::math:::Vec3>, speedMultiplier: f32, time: f32, dt: f32) -> void {
+        along += speed * speedMultiplier * dt / laneLength;
+        if along >= 1.0f {
+            along -= 1.0f;
+        }
+        direction := (end - start).Horizontal().Normalized();
+        sideways: lantern:::math:::Vec3 = { x: direction.z, y: 0.0f, z: -direction.x };
+        centre := start.Lerp(end, along) + sideways * lateral;
+        wanted~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+        for place: lantern:::math:::Vec3 in avoid {
+            away := (centre + sidestep - place).Horizontal();
+            distance := away.Length();
+            if distance < FindingHerTuning:::FIGURE_AVOID_RADIUS && distance > 0.01f {
+                wanted = wanted + away.Normalized() * (FindingHerTuning:::FIGURE_AVOID_RADIUS - distance);
+            }
+        }
+        sidestep = sidestep.Lerp(wanted, FindingHerTuning:::FIGURE_AVOID_EASING);
+        bob := Math:::sin(time * 5.0f * speed + f32(entity) * 0.7f) * FindingHerTuning:::FIGURE_BOB;
+        position = centre + sidestep;
+        fadeIn := Math:::min(along * laneLength, (1.0f - along) * laneLength) / FindingHerTuning:::FIGURE_FADE_METRES;
+        fade := Math:::clamp(fadeIn, 0.0f, 1.0f);
+        standing := height;
+        lift: lantern:::math:::Vec3 = { x: 0.0f, y: 0.85f * standing * fade + bob, z: 0.0f };
+        lantern:::world:::SetPosition(entity, position + lift);
+        lantern:::world:::SetScale(entity, { x: FindingHerTuning:::FIGURE_WIDTH * fade + 0.001f, y: standing * fade + 0.001f, z: FindingHerTuning:::FIGURE_WIDTH * fade + 0.001f });
+    }
+}

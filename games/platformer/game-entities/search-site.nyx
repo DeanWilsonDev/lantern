@@ -1,0 +1,76 @@
+MemorySpot :: import MemorySpot;
+CrowdFigure :: import CrowdFigure;
+FindingHerTuning :: import FindingHerTuning;
+
+// Everything the search needs from a world file, read once at load: the crowd's lanes (`crowd_lane`, with `count`),
+// the places to stand to see over the crowd (`vantage_spot`), where she goes to hide (`her_spot`, in `order`), the
+// places she liked (`memory_spot`) and the one place the crowd surges between the two of them (`separation`).
+// A level with none of these has no search and the whole class sits empty.
+//
+// Properties:
+// - `crowd_lane`: `end` (vector, where the lane finishes; its position is where it starts) and `count` (how many figures).
+// - `vantage_spot`: only its position, the top of a crate or bench.
+// - `her_spot`: `order` (number, lowest first). She goes to the first when the crowd pulls you apart.
+SearchSite :: class {
+public:
+    figures~ Array<CrowdFigure> = [];
+    vantages~ Array<lantern:::math:::Vec3> = [];
+    herSpots~ Array<lantern:::math:::Vec3> = [];
+    memories~ Array<MemorySpot> = [];
+    separationPoint~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    hasSeparation~ bool = false;
+    hasSearch~ bool = false;
+
+    // Builds the figures and reads the markers. `figureMesh` is the capsule every figure shares.
+    Load~: (figureMesh: i64) -> void {
+        figures = [];
+        vantages = [];
+        herSpots = [];
+        memories = [];
+        hasSeparation = false;
+        laneNumber~ i32 = 0;
+        for entity: i64 in lantern:::world:::FindByKind("crowd_lane") {
+            laneStart := lantern:::world:::WorldPosition(entity);
+            laneEnd := lantern:::world:::VectorProperty(entity, "end");
+            count := lantern:::world:::HasProperty(entity, "count") ? i32(lantern:::world:::NumberProperty(entity, "count")) : 8;
+            for figureNumber~ i32 = 0; figureNumber < count; figureNumber++ {
+                figures.add(new CrowdFigure(laneStart, laneEnd, figureNumber, laneNumber * 101, figureMesh));
+            }
+            laneNumber++;
+        }
+        for entity: i64 in lantern:::world:::FindByKind("vantage_spot") {
+            vantages.add(lantern:::world:::WorldPosition(entity));
+        }
+        herSpotEntities := lantern:::world:::FindByKind("her_spot");
+        ordered~ Array<i64> = herSpotEntities;
+        ordered = ordered.sort((first, second) -> (lantern:::world:::HasProperty(first, "order") ? lantern:::world:::NumberProperty(first, "order") : 0.0f) < (lantern:::world:::HasProperty(second, "order") ? lantern:::world:::NumberProperty(second, "order") : 0.0f));
+        for entity: i64 in ordered {
+            herSpots.add(lantern:::world:::WorldPosition(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("memory_spot") {
+            memories.add(new MemorySpot(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("separation") {
+            separationPoint = lantern:::world:::WorldPosition(entity);
+            hasSeparation = true;
+        }
+        hasSearch = figures.length() > 0 || herSpots.length() > 0 || memories.length() > 0;
+    }
+
+    // One fixed step of the crowd.
+    MoveCrowd~: (avoid: Array<lantern:::math:::Vec3>, speedMultiplier: f32, time: f32, dt: f32) -> void {
+        for figure~ CrowdFigure in figures {
+            figure.Update(avoid, speedMultiplier, time, dt);
+        }
+    }
+
+    // True when `feet` is standing on a vantage spot.
+    IsOnVantage :: (feet: lantern:::math:::Vec3) -> bool {
+        for spot: lantern:::math:::Vec3 in vantages {
+            if (feet - spot).Horizontal().Length() < FindingHerTuning:::VANTAGE_RADIUS && feet.y > spot.y - 0.35f {
+                return true;
+            }
+        }
+        return false;
+    }
+}

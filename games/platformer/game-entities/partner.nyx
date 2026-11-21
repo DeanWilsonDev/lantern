@@ -182,7 +182,41 @@ public:
         ShowBody(playerFeet, dt);
     }
 
+    // Walks her toward `target` at `speedScale` times her usual pace, for as long as the caller says. This is how the search
+    // (game-systems/search-system.nyx) moves her: it, not her beats, decides where she goes, so she never works a beat while
+    // directed. `shouldMove` false stands her still. She still looks for ground ahead of every step, so she stops at an edge,
+    // and she looks at `lookTarget`.
+    Direct~: (target: lantern:::math:::Vec3, shouldMove: bool, speedScaleWanted: f32, lookTarget: lantern:::math:::Vec3, dt: f32) -> void {
+        guard isPresent;
+        direction~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+        if shouldMove {
+            toTarget := (target - position).Horizontal();
+            if toTarget.Length() > DIRECT_ARRIVE_DISTANCE {
+                direction = toTarget.Normalized();
+                facingYaw = direction.Yaw();
+                if !HasGroundAhead(direction) {
+                    direction = lantern:::math:::Vec3:::Zero();
+                }
+            }
+        }
+        controller.SetWalkSpeed(PartnerTuning:::WALK_SPEED * speedScaleWanted);
+        controller.Step(direction, false, false, dt);
+        position = controller.FeetPosition();
+        lantern:::world:::SetPosition(root, position);
+        lantern:::world:::SetYaw(root, facingYaw);
+        animation.LookAt(lookTarget, 1.0f);
+        animation.Observe(position, controller.IsGrounded(), dt);
+    }
+
+    // Turns her to face `yaw` where she stands.
+    FaceYaw~: (yaw: f32) -> void {
+        facingYaw = yaw;
+        lantern:::world:::SetYaw(root, facingYaw);
+    }
+
 private:
+    static DIRECT_ARRIVE_DISTANCE :: 0.12f;
+
     beats~ Array<TeamBeat> = [];
     animation~ CharacterAnimator = new CharacterAnimator();
     // The walk to the current beat: the places to pass first, and which of them is next.
