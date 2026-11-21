@@ -1935,3 +1935,47 @@ Provisional (2026-11-20): not reviewed by Dean. While a translate drag previews 
 ## D-236: A world file is placed as a scene instance from the asset browser, named relative to the saved level
 
 Provisional (2026-11-20): not reviewed by Dean. Choosing a world file card in the Assets tab and pressing Add scene places a `scene_instance` at the centre of the view (snapped to the grid like any new entity) as one undo step. Its `scene` property is the file's path written from the folder of the level being edited (`RelativePath`), because the loader reads a scene relative to the file that places it (D-233). So the level has to be saved first, and the world file has to sit under the same assets folder as the level; an unsaved level gets a status message and nothing is placed. Dropping a world card into the viewport is not built.
+
+## D-237: Finding Her is built beside the platformer as prototypes, and the genre line is not changed
+
+Provisional (2026-11-21): not reviewed by Dean. Dean's direction doc ([`finding-her.md`](finding-her.md)) leans away from a platformer toward searching as the core mechanic. The prototypes are rooms in the Prototypes menu (entry 13, "Finding her"), made of the game's existing parts, so nothing in the platformer, the crossing or the earlier rooms changes. The genre line in the Crimson and Thorn design and the game design document ("3D narrative puzzle platformer") is left alone, because the doc says that is not decided. Where `gameplay-prototypes.md` and `finding-her.md` disagree about direction, `finding-her.md` wins and the older page says so at the top.
+
+## D-238: A level opts in to the search with a `SearchSite`, and the search moves her instead of her beats
+
+Provisional (2026-11-21): not reviewed by Dean. A level has a search when it holds any of the kinds `crowd_lane`, `vantage_spot`, `her_spot`, `memory_spot` (`SearchSite`, `game-entities/search-site.nyx`). `SearchSystem` (`game-systems/search-system.nyx`) then owns the four beats (together, separated, searching, found) and drives her through the new `Partner.Direct`, which walks her to a target at a speed multiple with the same ground-ahead check and physics body as her beat walk. While a search is active `Partner.Update` does not run, so her beats never fight the search; `Partner` is otherwise unchanged. Her old always-on glow is not turned on in a search level: her light is the call's pulse (D-240). The alternative, a new beat action `search`, was rejected because the search decides where she goes from what the player does, which a list of beats cannot express.
+
+## D-239: The search adds three inputs, Q, E and G, and the hop stays
+
+Provisional (2026-11-21): not reviewed by Dean. Call is Q (gamepad East), look is held E (right trigger), hand-holding is held G (left trigger). F is still the one hold-to-do (the meal). The doc says no free jump; the grounded 0.8 m hop stays because mantling onto a crate or curb needs a jump that ends against the ledge. The festival has no gaps, so the hop is only a step. Removing it from search levels is one line in `Simulate` if Dean prefers.
+
+## D-240: Her answer is a delayed positioned sound and a pulse of light with no shadows
+
+Provisional (2026-11-21): not reviewed by Dean. A call plays `CALL_SOUND` flat; after the chapter's delay (0.35 s in chapter 2, 1.2 s in 3, 2.6 s in 4, never in 5) the answer plays at her position with `PlayAt`, and a point light at her rises to `PULSE_STRENGTH` and fades over 1.6 s. The light casts no shadows, so it shows through crowds and walls, which is how a call finds her behind scenery. Both sounds are the generated `pickup` at two pitches until Cinder. The blue-door ghost answer is not built: it is the chapter 2 answer on a fixed schedule and needs the blue door level first.
+
+## D-241: Look and vantage nudge the shown camera pose; look ducks the ambience bus
+
+Provisional (2026-11-21): not reviewed by Dean. `CameraDirector.SetSearchLens(fieldOfViewOffset, eyeLift)` is applied in `Present` after blending, so it works over any follow shot or authored volume and never feeds back into the blend. Look (held E) narrows the lens by up to 14 degrees, stops the player and ducks the `ambience` bus to 0.45. Standing on a `vantage_spot` raises the camera 1.6 m, widens the lens by 12 degrees and says the distance and side she is on every 5 seconds. A true look-at layer and a mix snapshot are not built; this is the cheap version.
+
+## D-242: The crowd is one entity per figure on lanes, with a step-aside rule
+
+Provisional (2026-11-21): not reviewed by Dean. `crowd_lane` entities have a start, an `end` and a `count`; each `CrowdFigure` walks its lane at a speed, lateral offset and height made from its number (the same every run), fades its scale in and out at the lane ends so none pops, and eases sideways from the player and from her inside 1.7 m. Figures are dark capsules with no collision, so you can walk through one, which is the cheap answer to "the crowd pulls you apart": the surge speeds them up and her hand is gone. They are faceless shadow figures, the doc's leaning for how literal they are. The game API has no mesh instancing, so 68 separate entities is the prototype; instancing is the first thing to add if a bigger crowd costs frame time.
+
+## D-243: The two chapter states are two world files built from one layout
+
+Provisional (2026-11-21): not reviewed by Dean. The doc asks for one world file in two states. The prototype uses `finding-her-festival-chapter-2.world.json` and `finding-her-festival-chapter-5.world.json`, which share the plaza, the lanes, the crates, the bench, the cat and the stall, and differ in four ways: the spawn's `chapter`, her (partner start and hiding place, chapter 2 only), the second stall's meal and the photo sight, and the exit marker (chapter 5). One file with a chapter chosen at start would need the menu to pass a state to the level, which is a bigger change than the prototype needs.
+
+## D-244: A chapter's mood is a walk scale, a body height slump and her answer, in one tuning file
+
+Provisional (2026-11-21): not reviewed by Dean. `FindingHerTuning` holds per chapter the walk scale (1.0, 0.92, 0.85, 0.72 for chapters 2 to 5), the slump (0 to 1) and the answer delay and volume. `Player.SetMood` applies the first two. Posture is the body entity's height scale (up to 5 percent lower) because there is no additive pose layer to bend the spine yet; that layer is the real fix and an engine card. Jogging while she is lost is not built as its own speed: the constant `JOG_SCALE` exists, nothing reads it yet.
+
+## D-245: The doc's four open questions are taken at its leanings and are single switches
+
+Provisional (2026-11-21): not reviewed by Dean. Each is on the board as a question on the Finding Her feature and is one constant in `FindingHerTuning`. (1) The call is a wordless low tone, `CALL_SOUND` and `CALL_PITCH`. (2) Chapter 5 ends when the player has called at least 3 times, visited a place she liked, and then stops calling and stands still for 6 seconds; `CHAPTER_FIVE_ENDS_ON_STILLNESS` false ends it at the exit marker instead, and a level can pick with its spawn's `ends_on`. (3) The crowd is abstract faceless figures with plain human proportions (`FIGURE_TINT`, `FIGURE_WIDTH`). (4) Chapter 2 keeps both the meal and the photo; deleting the `food_stall` or the `photo_sight` from the world file drops one.
+
+## D-246: The vignettes are world files plus spawn properties, not new systems
+
+Provisional (2026-11-21): not reviewed by Dean. The spawn entity's properties tune the search per level: `search_phase`, `her_answers`, `her_glow`, `ends_on`, `ending_line`, `ending_calls` (see `SearchSite`). The rose garden is chapter 4 with `her_answers` 0: she stands past a thorn patch and walks away after the first call, and the level ends when you stand still. The cable car is a rising platform with a `hand_slip` zone: after 9 seconds of held hand she lets go whatever you press, and the level ends at the top. The lantern walk is chapter 5 with a `player_start` that gives the lantern, street lights that fade along the road and an exit marker. The meal is the existing food stall with `shared` (she takes the last piece) or `finish_note`. The photo is the existing `together` photo sight in chapter 2 and a plain sight with no one in it in chapter 5. No seated animation clips were made, so the cable car has the two of you standing.
+
+## D-247: The Finding her rooms have a menu of their own inside the prototype list
+
+Provisional (2026-11-21): not reviewed by Dean. Seventeen buttons would run off a 720 pixel screen, so entry 13 of the prototype list opens a list of the five Finding her rooms (`ui/finding-her-menu-buttons.chaos`, `GameUiModel.isFindingHerOpen`).

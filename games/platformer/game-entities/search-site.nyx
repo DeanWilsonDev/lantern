@@ -1,0 +1,128 @@
+MemorySpot :: import MemorySpot;
+CrowdFigure :: import CrowdFigure;
+FindingHerTuning :: import FindingHerTuning;
+
+// Everything the search needs from a world file, read once at load: the crowd's lanes (`crowd_lane`, with `count`),
+// the places to stand to see over the crowd (`vantage_spot`), where she goes to hide (`her_spot`, in `order`), the
+// places she liked (`memory_spot`) and the one place the crowd surges between the two of them (`separation`).
+// A level with none of these has no search and the whole class sits empty.
+//
+// The spawn entity's own properties set how the search behaves in this level:
+// - `search_phase` (text): "searching" starts with her already lost, instead of together;
+// - `her_answers` (number, 1 or 0): 0 means she never answers a call (the rose garden);
+// - `her_glow` (number): a resting strength for her light, so she can be seen through thorns or a crowd;
+// - `ends_on` (text): "stillness" (stop calling and stand still) or "exit" (reach the exit marker) for the ending of a
+//   search with nobody to find; the default is FindingHerTuning's CHAPTER_FIVE_ENDS_ON_STILLNESS;
+// - `ending_line` (text): what shows when the search ends;
+// - `ending_calls` (number): how many calls the stillness ending needs.
+// A `hand_slip` entity (position, `radius`, `seconds`) is a zone where a hand held for `seconds` slips away.
+//
+// Properties:
+// - `crowd_lane`: `end` (vector, where the lane finishes; its position is where it starts) and `count` (how many figures).
+// - `vantage_spot`: only its position, the top of a crate or bench.
+// - `her_spot`: `order` (number, lowest first). She goes to the first when the crowd pulls you apart.
+SearchSite :: class {
+public:
+    figures~ Array<CrowdFigure> = [];
+    vantages~ Array<lantern:::math:::Vec3> = [];
+    herSpots~ Array<lantern:::math:::Vec3> = [];
+    memories~ Array<MemorySpot> = [];
+    separationPoint~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    hasSeparation~ bool = false;
+    hasSearch~ bool = false;
+    startsSearching~ bool = false;
+    herAnswers~ bool = true;
+    herGlowStrength~ f32 = 0.0f;
+    endsOnStillness~ bool = FindingHerTuning:::CHAPTER_FIVE_ENDS_ON_STILLNESS;
+    endingCalls~ i32 = FindingHerTuning:::ENDING_MINIMUM_CALLS;
+    requiredMemories~ i32 = 0;
+    endingLine~ string = "";
+    hasSlip~ bool = false;
+    slipPoint~ lantern:::math:::Vec3 = lantern:::math:::Vec3:::Zero();
+    slipRadius~ f32 = 0.0f;
+    slipSeconds~ f32 = 0.0f;
+
+    // Builds the figures and reads the markers. `figureMesh` is the capsule every figure shares.
+    Load~: (figureMesh: i64) -> void {
+        figures = [];
+        vantages = [];
+        herSpots = [];
+        memories = [];
+        hasSeparation = false;
+        hasSlip = false;
+        endingLine = "";
+        startsSearching = false;
+        herAnswers = true;
+        herGlowStrength = 0.0f;
+        endsOnStillness = FindingHerTuning:::CHAPTER_FIVE_ENDS_ON_STILLNESS;
+        endingCalls = FindingHerTuning:::ENDING_MINIMUM_CALLS;
+        for spawn: i64 in lantern:::world:::FindByKind("spawn") {
+            startsSearching = lantern:::world:::HasProperty(spawn, "search_phase") && lantern:::world:::TextProperty(spawn, "search_phase") == "searching";
+            herAnswers = !lantern:::world:::HasProperty(spawn, "her_answers") || lantern:::world:::NumberProperty(spawn, "her_answers") > 0.5f;
+            herGlowStrength = lantern:::world:::HasProperty(spawn, "her_glow") ? lantern:::world:::NumberProperty(spawn, "her_glow") : 0.0f;
+            if lantern:::world:::HasProperty(spawn, "ends_on") {
+                endsOnStillness = lantern:::world:::TextProperty(spawn, "ends_on") == "stillness";
+            }
+            endingLine = lantern:::world:::HasProperty(spawn, "ending_line") ? lantern:::world:::TextProperty(spawn, "ending_line") : "";
+            if lantern:::world:::HasProperty(spawn, "ending_calls") {
+                endingCalls = i32(lantern:::world:::NumberProperty(spawn, "ending_calls"));
+            }
+        }
+        for entity: i64 in lantern:::world:::FindByKind("hand_slip") {
+            slipPoint = lantern:::world:::WorldPosition(entity);
+            slipRadius = lantern:::world:::HasProperty(entity, "radius") ? lantern:::world:::NumberProperty(entity, "radius") : 12.0f;
+            slipSeconds = lantern:::world:::HasProperty(entity, "seconds") ? lantern:::world:::NumberProperty(entity, "seconds") : 8.0f;
+            hasSlip = true;
+        }
+        laneNumber~ i32 = 0;
+        for entity: i64 in lantern:::world:::FindByKind("crowd_lane") {
+            laneStart := lantern:::world:::WorldPosition(entity);
+            laneEnd := lantern:::world:::VectorProperty(entity, "end");
+            count := lantern:::world:::HasProperty(entity, "count") ? i32(lantern:::world:::NumberProperty(entity, "count")) : 8;
+            for figureNumber~ i32 = 0; figureNumber < count; figureNumber++ {
+                figures.add(new CrowdFigure(laneStart, laneEnd, figureNumber, laneNumber * 101, figureMesh));
+            }
+            laneNumber++;
+        }
+        for entity: i64 in lantern:::world:::FindByKind("vantage_spot") {
+            vantages.add(lantern:::world:::WorldPosition(entity));
+        }
+        herSpotEntities := lantern:::world:::FindByKind("her_spot");
+        ordered~ Array<i64> = herSpotEntities;
+        ordered = ordered.sort((first, second) -> (lantern:::world:::HasProperty(first, "order") ? lantern:::world:::NumberProperty(first, "order") : 0.0f) < (lantern:::world:::HasProperty(second, "order") ? lantern:::world:::NumberProperty(second, "order") : 0.0f));
+        for entity: i64 in ordered {
+            herSpots.add(lantern:::world:::WorldPosition(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("memory_spot") {
+            memories.add(new MemorySpot(entity));
+        }
+        for entity: i64 in lantern:::world:::FindByKind("separation") {
+            separationPoint = lantern:::world:::WorldPosition(entity);
+            hasSeparation = true;
+        }
+        requiredMemories = 0;
+        for memory: MemorySpot in memories {
+            if memory.noteAlone != "" {
+                requiredMemories = 1;
+            }
+        }
+        hasSearch = figures.length() > 0 || herSpots.length() > 0 || memories.length() > 0;
+    }
+
+    // One fixed step of the crowd.
+    MoveCrowd~: (avoid: Array<lantern:::math:::Vec3>, speedMultiplier: f32, time: f32, dt: f32) -> void {
+        for figure~ CrowdFigure in figures {
+            figure.Update(avoid, speedMultiplier, time, dt);
+        }
+    }
+
+    // True when `feet` is standing on a vantage spot.
+    IsOnVantage :: (feet: lantern:::math:::Vec3) -> bool {
+        for spot: lantern:::math:::Vec3 in vantages {
+            if (feet - spot).Horizontal().Length() < FindingHerTuning:::VANTAGE_RADIUS && feet.y > spot.y - 0.35f && feet.y < spot.y + 0.8f {
+                return true;
+            }
+        }
+        return false;
+    }
+}
