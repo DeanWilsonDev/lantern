@@ -33,7 +33,7 @@ my-game/
   README.md  .gitignore
 ```
 
-The folder is also a game folder as the engine reads it, so `lantern <folder>` and `mist run package <folder>` work on
+The folder is also a game folder as the engine reads it, so `lantern run <folder>` and `mist run package <folder>` work on
 any project. Everything a game is made of stays in it, Calamus files included: the engine folder holds none of a project's
 content, and a packaged game never contains a Calamus file (the build bakes the project's material Silhouettes and graphs into
 Nyx first).

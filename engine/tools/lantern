@@ -53,7 +53,7 @@ engine_for_project() {
     local manifest="$project/lantern.project.json"
     if [[ -f "$manifest" ]]; then
         local recorded
-        recorded="$(sed -n 's/^ *"engine": *"\(.*\)",\{0,1\}$/\1/p' "$manifest" | head -n 1)"
+        recorded="$(grep -o '"engine"[[:space:]]*:[[:space:]]*"[^"]*"' "$manifest" | head -n 1 | sed 's/^"engine"[[:space:]]*:[[:space:]]*"//; s/"$//')"
         if [[ -n "$recorded" ]]; then
             [[ "$recorded" == /* ]] || recorded="$project/$recorded"
             if [[ -d "$recorded" ]]; then
@@ -86,15 +86,30 @@ project)
     case "$subcommand" in
     info|check|rename|relink) [[ -d "${2:-.}" && "${2:-}" != "" ]] && project_argument="$2" ;;
     esac
-    if [[ -n "$project_argument" ]]; then
+    if [[ "$subcommand" == relink ]]; then
+        relink_project="${project_argument:-$(pwd)}"
+        if [[ -z "${LANTERN_ENGINE:-}" ]] && ! engine_directory="$(engine_for_project "$(absolute_directory "$relink_project")" 2>/dev/null)"; then
+            engine_directory="$own_checkout"
+        fi
+    elif [[ -n "$project_argument" ]]; then
         engine_directory="$(engine_for_project "$(absolute_directory "$project_argument")")"
     elif [[ "$subcommand" == info || "$subcommand" == check || "$subcommand" == rename || "$subcommand" == relink ]]; then
         engine_directory="$(engine_for_project "$(pwd)")"
     else
         engine_directory="${LANTERN_ENGINE:-$own_checkout}"
+        previous=""
+        for argument in "$@"; do
+            if [[ "$previous" == "--engine" ]]; then
+                engine_directory="$(cd "$argument" 2>/dev/null && pwd)" || { echo "lantern: $argument isn't a folder" >&2; exit 1; }
+            fi
+            previous="$argument"
+        done
     fi
     require_engine "$engine_directory"
     build_engine "$engine_directory"
+    if [[ "$subcommand" == relink && -z "${LANTERN_ENGINE:-}" && ! -f "$engine_directory/engine/nox.json" ]]; then
+        engine_directory="$own_checkout"
+    fi
     LANTERN_ENGINE="$engine_directory" exec "$engine_directory/engine/build/lantern" project "$@"
     ;;
 run|editor|package|engine)
@@ -109,6 +124,7 @@ run|editor|package|engine)
     editor) cd "$engine_directory" && exec mist run editor "$project" ;;
     package)
         output="${2:-$project/build/package}"
+        [[ "$output" == /* ]] || output="$PWD/$output"
         cd "$engine_directory" && exec mist run package "$project" "$output"
         ;;
     esac

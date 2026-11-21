@@ -11,8 +11,11 @@ lantern:::project :: namespace {
      * True for a file or folder that is never copied into a new project: editor scratch files, build output, Mist's
      * folders, version control and the old project file (a new one is written).
      */
-    IsLeftOut :: (name: string) -> bool {
-        if name.startsWith(".editor-play") || name == ".git" || name == ".DS_Store" || name == "build" {
+    IsLeftOut :: (name: string, atRoot: bool) -> bool {
+        if atRoot && name == "build" {
+            return true;
+        }
+        if name.startsWith(".editor-play") || name == ".git" || name == ".DS_Store" {
             return true;
         }
         return name == "mist_packages" || name == "mist.local.json" || name == "engine-host-surface.json" || name == MANIFEST_FILE;
@@ -23,6 +26,22 @@ lantern:::project :: namespace {
      * Returns a message when something can't be read or written.
      */
     CopyTree :: (from: string, to: string) -> string!? {
+        return CopyLevel(from, to, true);
+    }
+
+    /**
+     * True when `inner` is `outer` or a path below it, comparing whole path parts.
+     */
+    IsInside :: (inner: string, outer: string) -> bool {
+        if inner == outer {
+            return true;
+        }
+        prefix: string! = `${outer}/`;
+        defer delete prefix;
+        return inner.startsWith(prefix);
+    }
+
+    CopyLevel :: (from: string, to: string, atRoot: bool) -> string!? {
         when createDirectories(to) {
             Result:::Err(error) -> {
                 failure: string! = `${to}: ${error.message()}`;
@@ -42,7 +61,7 @@ lantern:::project :: namespace {
                 entries~ Array<string!>! = names!;
                 defer entries.freeAll();
                 for name in entries {
-                    if IsLeftOut(name) {
+                    if IsLeftOut(name, atRoot) {
                         continue;
                     }
                     source: string! = `${from}/${name}`;
@@ -50,7 +69,7 @@ lantern:::project :: namespace {
                     destination: string! = `${to}/${name}`;
                     defer delete destination;
                     if directoryExists(source) {
-                        problem: string!? = CopyTree(source, destination);
+                        problem: string!? = CopyLevel(source, destination, false);
                         if problem != null {
                             return problem!;
                         }
@@ -262,6 +281,9 @@ lantern:::project :: namespace {
                     return failure!;
                 }
             }
+        }
+        if IsInside(projectFolder, templateFolder) {
+            return "a project can't be made inside the template it copies".copy();
         }
         copyProblem: string!? = CopyTree(templateFolder, projectFolder);
         if copyProblem != null {
