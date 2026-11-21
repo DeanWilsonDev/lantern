@@ -1,0 +1,90 @@
+// The sun sits ahead of the camera over an empty sky and a cube hangs between them. Pixels below the cube walk up towards
+// the sun and meet it, so the shafts darken them; if every pixel walked the same evenly spaced steps, the cube's outline
+// would show as a stack of copies, each a whole step apart, and a row of pixels across them would hold long runs of one
+// colour. With each pixel starting its walk a different fraction of a step along, the runs break up into fine grain. The
+// test counts the share of neighbouring pixels in three rows below the cube that differ: about 0.15 without the start offset and
+// about 0.6 with it, so it wants more than 0.4.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+DifferingShare :: (pixels: Array<u8>, width: u32, row: u32, firstColumn: u32, lastColumn: u32) -> f32 {
+    differing~ u32 = 0;
+    for x~ u32 = firstColumn; x < lastColumn; x++ {
+        here: u8[4] = PixelAt(pixels, width, x, row);
+        next: u8[4] = PixelAt(pixels, width, x + 1, row);
+        if here[0] != next[0] || here[1] != next[1] || here[2] != next[2] {
+            differing++;
+        }
+    }
+    return f32(differing) / f32(lastColumn - firstColumn);
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            cubeData := lantern:::renderer:::Cube(2.0f);
+            defer delete cubeData;
+            cube~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(cubeData) {
+                Result:::Ok(handle) -> {
+                    cube = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            world := new lantern:::renderer:::RenderWorld();
+            defer delete world;
+            world->post.bloomEnabled = false;
+            world->post.ambientOcclusionEnabled = false;
+            world->post.antiAliasingEnabled = false;
+            world->atmosphere.heightFogEnabled = false;
+            world->atmosphere.lightShaftsEnabled = true;
+            world->light = lantern:::renderer:::DirectionalLight {
+                direction: lantern:::core:::Normalize3(Vec3 { x: 0.0f, y: -0.3f, z: 1.0f }),
+                color: lantern:::core:::Color:::White(),
+                ambient: lantern:::core:::Color:::Rgb(0.3f, 0.3f, 0.3f),
+                groundAmbient: lantern:::core:::Color:::Rgb(0.3f, 0.3f, 0.3f)
+            };
+            world->sky.sunDiscStrength = 0.0f;
+            world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 0.0f, z: 0.0f }, Vec3 { x: 0.0f, y: 0.0f, z: -10.0f });
+            placement: Mat4 = lantern:::core:::MatrixFromScaleRotationTranslation(Vec3 { x: 1.0f, y: 1.0f, z: 1.0f }, lantern:::core:::QuaternionFromAxisAngle(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }, 0.0f), Vec3 { x: 0.0f, y: 1.0f, z: -10.0f });
+            world->Draw(cube, null, placement, lantern:::core:::Color:::White());
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 256;
+            when renderer->RenderOffscreen(world, size, size, pixels) {
+                Result:::Ok(report) -> {
+                    total~ f32 = 0.0f;
+                    for row~ u32 = 180; row <= 200; row += 10 {
+                        total += DifferingShare(pixels, size, row, 20, 236);
+                    }
+                    share: f32 = total / 3.0f;
+                    if !(share > 0.4f) {
+                        print(`neighbouring pixels that differ below the cube: ${share}`);
+                    }
+                    assert(share > 0.4f, "below the cube the shafts are grain, not runs of one colour");
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("light shafts leave no stepped copies of a blocker");
+    return 0;
+}

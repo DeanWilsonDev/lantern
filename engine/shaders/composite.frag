@@ -143,6 +143,10 @@ vec3 ApplyHeightFog(vec3 scene, vec3 ray, float ray_length) {
 // sky, the more sun light is scattered towards the camera along this line of sight. Each step counts a little less than the
 // one before, so the shaft fades with distance from the sun, and the result is scaled by how directly the pixel looks at
 // the sun.
+//
+// Every pixel starts its walk a different fraction of a step along (interleaved gradient noise from the pixel's screen
+// position). Without that, all pixels sample at the same spacing, a blocker is seen at whole steps only, and its outline
+// is repeated as a stack of ghost copies a step apart; with it the copies become fine grain the eye averages out.
 vec3 LightShafts(vec2 uv, vec3 ray) {
     vec3 sun = settings.sun_direction_and_scattering.xyz;
     float facing = dot(sun, settings.camera_forward.xyz);
@@ -157,7 +161,8 @@ vec3 LightShafts(vec2 uv, vec3 ray) {
     float weight = 1.0;
     float total = 0.0;
     float total_weight = 0.0;
-    vec2 position = uv;
+    float start_offset = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    vec2 position = uv + step_vector * start_offset;
     for (int step_index = 0; step_index < STEPS; step_index++) {
         position += step_vector;
         float sky = IsBackground(texture(depth_image, clamp(position, vec2(0.0), vec2(1.0))).r) ? 1.0 : 0.0;

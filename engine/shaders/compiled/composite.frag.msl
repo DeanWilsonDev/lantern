@@ -95,7 +95,7 @@ float3 ApplyHeightFog(thread const float3& scene, thread const float3& ray, thre
 }
 
 static inline __attribute__((always_inline))
-float3 LightShafts(thread const float2& uv, thread const float3& ray, constant CompositeUniforms& settings, texture2d<float> depth_image, sampler depth_imageSmplr)
+float3 LightShafts(thread const float2& uv, thread const float3& ray, constant CompositeUniforms& settings, thread float4& gl_FragCoord, texture2d<float> depth_image, sampler depth_imageSmplr)
 {
     float3 sun = settings.sun_direction_and_scattering.xyz;
     float facing = dot(sun, settings.camera_forward.xyz);
@@ -110,7 +110,8 @@ float3 LightShafts(thread const float2& uv, thread const float3& ray, constant C
     float weight = 1.0;
     float total = 0.0;
     float total_weight = 0.0;
-    float2 position = uv;
+    float start_offset = fract(52.98291778564453125 * fract(dot(gl_FragCoord.xy, float2(0.067110560834407806396484375, 0.005837149918079376220703125))));
+    float2 position = uv + (step_vector * start_offset);
     for (int step_index = 0; step_index < 24; step_index++)
     {
         position += step_vector;
@@ -198,7 +199,7 @@ float3 EncodeSrgb(thread const float3& linear_color)
     return select(high, low, linear_color <= float3(0.003130800090730190277099609375));
 }
 
-fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& settings [[buffer(0)]], texture2d<float> scene_image [[texture(0)]], texture2d<float> bloom_image [[texture(1)]], texture2d<float> occlusion_image [[texture(2)]], texture2d<float> depth_image [[texture(3)]], sampler scene_imageSmplr [[sampler(0)]], sampler bloom_imageSmplr [[sampler(1)]], sampler occlusion_imageSmplr [[sampler(2)]], sampler depth_imageSmplr [[sampler(3)]])
+fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& settings [[buffer(0)]], texture2d<float> scene_image [[texture(0)]], texture2d<float> bloom_image [[texture(1)]], texture2d<float> occlusion_image [[texture(2)]], texture2d<float> depth_image [[texture(3)]], sampler scene_imageSmplr [[sampler(0)]], sampler bloom_imageSmplr [[sampler(1)]], sampler occlusion_imageSmplr [[sampler(2)]], sampler depth_imageSmplr [[sampler(3)]], float4 gl_FragCoord [[position]])
 {
     main0_out out = {};
     float3 scene = scene_image.sample(scene_imageSmplr, in.source_uv).xyz;
@@ -206,61 +207,61 @@ fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& s
     {
         scene *= occlusion_image.sample(occlusion_imageSmplr, in.source_uv).x;
     }
-    bool _646 = settings.flags.y > 0.5;
-    bool _653;
-    if (!_646)
+    bool _663 = settings.flags.y > 0.5;
+    bool _670;
+    if (!_663)
     {
-        _653 = settings.flags.z > 0.5;
+        _670 = settings.flags.z > 0.5;
     }
     else
     {
-        _653 = _646;
+        _670 = _663;
     }
-    bool _660;
-    if (!_653)
+    bool _677;
+    if (!_670)
     {
-        _660 = settings.flags.w > 0.5;
+        _677 = settings.flags.w > 0.5;
     }
     else
     {
-        _660 = _653;
+        _677 = _670;
     }
-    if (_660)
+    if (_677)
     {
         float depth = depth_image.sample(depth_imageSmplr, in.source_uv).x;
         float2 ndc = float2((in.source_uv.x * 2.0) - 1.0, 1.0 - (in.source_uv.y * 2.0));
         float3 unnormalized = (settings.camera_forward.xyz + (settings.camera_right.xyz * (ndc.x * settings.projection_terms.x))) + (settings.camera_up.xyz * (ndc.y * settings.projection_terms.y));
         float3 ray = fast::normalize(unnormalized);
-        bool _708 = settings.flags.w > 0.5;
-        bool _715;
-        if (_708)
+        bool _725 = settings.flags.w > 0.5;
+        bool _732;
+        if (_725)
         {
             float param = depth;
-            _715 = !IsBackground(param);
+            _732 = !IsBackground(param);
         }
         else
         {
-            _715 = _708;
+            _732 = _725;
         }
-        if (_715)
+        if (_732)
         {
             float param_1 = depth;
             float3 param_2 = scene;
             float3 param_3 = settings.camera_position_and_falloff.xyz + (unnormalized * LinearDistance(param_1, settings));
             scene = ApplyBlobShadows(param_2, param_3, settings);
         }
-        bool _733 = settings.flags.y > 0.5;
-        bool _740;
-        if (_733)
+        bool _750 = settings.flags.y > 0.5;
+        bool _757;
+        if (_750)
         {
             float param_4 = depth;
-            _740 = !IsBackground(param_4);
+            _757 = !IsBackground(param_4);
         }
         else
         {
-            _740 = _733;
+            _757 = _750;
         }
-        if (_740)
+        if (_757)
         {
             float param_5 = depth;
             float3 param_6 = scene;
@@ -272,7 +273,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& s
         {
             float2 param_9 = in.source_uv;
             float3 param_10 = ray;
-            scene += LightShafts(param_9, param_10, settings, depth_image, depth_imageSmplr);
+            scene += LightShafts(param_9, param_10, settings, gl_FragCoord, depth_image, depth_imageSmplr);
         }
     }
     float bloom_strength = settings.exposure_bloom_tonemap_encode.y;
@@ -286,8 +287,8 @@ fragment main0_out main0(main0_in in [[stage_in]], constant CompositeUniforms& s
     float3 display = ToneMap(param_11, param_12);
     float3 param_13 = display;
     float2 param_14 = in.source_uv;
-    float3 _799 = ColorGrade(param_13, param_14, settings);
-    display = _799;
+    float3 _816 = ColorGrade(param_13, param_14, settings);
+    display = _816;
     if (settings.exposure_bloom_tonemap_encode.w > 0.5)
     {
         float3 param_15 = display;

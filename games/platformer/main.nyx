@@ -42,6 +42,8 @@ PartnerTuning :: import PartnerTuning;
 StreamingSettings :: import StreamingSettings;
 PlayerTuning :: import PlayerTuning;
 StreetsAutopilot :: import StreetsAutopilot;
+SearchSystem :: import SearchSystem;
+FindingHerTuning :: import FindingHerTuning;
 SwitchSystem :: import SwitchSystem;
 ThornSystem :: import ThornSystem;
 Watcher :: import Watcher;
@@ -160,6 +162,7 @@ public:
         } else {
             // The director places the follow camera, or the authored shot a camera volume asks for, and blends between them.
             // Behind the title screen there are no volumes: the camera only orbits.
+            director.SetSearchLens(search.FieldOfViewOffset(), search.EyeLift());
             director.Frame(lantern:::world:::InterpolatedPosition(player.root, alpha), frameSeconds, camera, state != GameState:::MainMenu);
         }
         UpdateAudio(frameSeconds);
@@ -209,6 +212,11 @@ private:
     static STATION_PATH :: "worlds/the-station.world.json";
     static PROTOTYPE_CAMERA_ROOM_PATH :: "worlds/prototypes/the-camera-room.world.json";
     static PROTOTYPE_LIFT_PATH :: "worlds/prototypes/the-lift.world.json";
+    static FESTIVAL_CHAPTER_TWO_PATH :: "worlds/prototypes/finding-her-festival-chapter-2.world.json";
+    static ROSE_GARDEN_PATH :: "worlds/prototypes/finding-her-rose-garden.world.json";
+    static CABLE_CAR_PATH :: "worlds/prototypes/finding-her-cable-car.world.json";
+    static LANTERN_WALK_PATH :: "worlds/prototypes/finding-her-lantern-walk.world.json";
+    static FESTIVAL_CHAPTER_FIVE_PATH :: "worlds/prototypes/finding-her-festival-chapter-5.world.json";
     static PROTOTYPE_FLOW_PATH :: "worlds/prototypes/flow-and-fragile.world.json";
     static ROOFTOPS_PATH :: "worlds/rooftops.world.json";
     static STREETS_LATER_PATH :: "worlds/streets-later.world.json";
@@ -239,6 +247,8 @@ private:
     goalSystem~ GoalSystem = new GoalSystem();
     // How long the level has been complete, in simulation seconds (see Simulate).
     completeSeconds~ f32 = 0.0f;
+    seenSearchRestartCount~ i32 = 0;
+    completeHoldSeconds~ f32 = COMPLETE_SECONDS;
     glowSystem~ GlowSystem = new GlowSystem();
     lanternSystem~ LanternSystem = new LanternSystem();
     thornSystem~ ThornSystem = new ThornSystem();
@@ -265,6 +275,8 @@ private:
     climbSystem~ ClimbSystem = new ClimbSystem();
     mantleSystem~ MantleSystem = new MantleSystem();
     minigames~ MinigameSystem = new MinigameSystem();
+    // The search for her (docs/finding-her.md): call, look, vantage, holding hands and the crowd. Idle in a level with no crowd.
+    search~ SearchSystem = new SearchSystem();
     trainSystem~ TrainSystem = new TrainSystem();
     seenClimbRestartCount~ i32 = 0;
     // The rules' restart count the last time the partner was put back, so a restart (R) can bring her too.
@@ -294,6 +306,7 @@ private:
         levelLighting.Apply(LevelPath());
         loaded := level.Load(LevelPath(), assets.gemMesh, assets.unitCubeMesh);
         guard loaded throw;
+        level.site.Load(assets.playerMesh);
         // The level says which chapter it is, and the chapter sets the sky, fog and sun.
         ChapterLooks:::Apply(level.chapter);
         footsteps.Start(level.surface, level.chapter);
@@ -319,11 +332,13 @@ private:
         for watcher~ Watcher in level.watchers {
             watcher.TurnOn(assets.unitCubeMesh);
         }
+        search.Start(level.site, level.chapter, level.hasPartner, player, assets.unitCubeMesh);
         UpdateStreaming();
         gemSystem.Clear();
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
         completeSeconds = 0.0f;
+        completeHoldSeconds = COMPLETE_SECONDS;
         camera.ResetBehind(level.playStartYaw);
         rules.Start(level);
         if level.hasPlayStart || level.hasPlayerStart {
@@ -336,6 +351,7 @@ private:
         }
         seenRestartCount = rules.restartCount;
         seenClimbRestartCount = rules.restartCount;
+        seenSearchRestartCount = rules.restartCount;
         // Lights live in the engine until removed, so the last level's glows are turned off
         // here and this level's companion glow starts at her first stop.
         anchorSystem.Cancel();
@@ -343,7 +359,7 @@ private:
         lanternGlow.TurnOff();
         if level.glowPlatforms.length() > 0 {
             companionGlow.TurnOn(companion.position + GlowHeight(), COMPANION_GLOW_COLOR, GLOW_RANGE, COMPANION_GLOW_REVEAL);
-        } else if level.hasPartner {
+        } else if level.hasPartner && !level.site.hasSearch {
             companionGlow.TurnOn(partner.position + GlowHeight(), COMPANION_GLOW_COLOR, GLOW_RANGE, COMPANION_GLOW_REVEAL);
             companionGlow.EnableShadows();
         }
@@ -431,7 +447,7 @@ private:
         }
         // With the camera raised the player stands still: photo mode leaves the world running, but the
         // keys that move and jump mean nothing until it is lowered.
-        if photoMode.isActive {
+        if photoMode.isActive || search.IsStopped() {
             stick = lantern:::math:::Vec2:::Zero();
             jumpPressed = false;
             jumpHeld = false;
@@ -469,6 +485,7 @@ private:
         }
         controller := player.controller;
         UpdatePuzzle(dt);
+        UpdateSearch(stick, dt);
         UpdateStreaming();
         UpdateCrumbles(dt);
         UpdateScripted();
@@ -501,13 +518,32 @@ private:
         // A completed level waits a few seconds so the message can be read, then moves on.
         if rules.isLevelComplete {
             completeSeconds += dt;
-            if completeSeconds >= COMPLETE_SECONDS {
+            if completeSeconds >= completeHoldSeconds {
                 AdvanceLevel();
             }
         }
         gemSystem.Animate(level.gems, simulationSeconds);
         for word in level.wordTokens {
             word.Animate(simulationSeconds);
+        }
+    }
+
+    // The search (game-systems/search-system.nyx): one step of her, the crowd, the call and the look, then what they have to
+    // say. The line it ends on becomes the level's completion, like reaching a goal does.
+    UpdateSearch~: (stick: lantern:::math:::Vec2, dt: f32) -> void {
+        guard search.isActive;
+        search.Update(level.site, player, partner, !photoMode.isActive && !isAutoplay, stick.Length() < 0.1f, director.Forward(), dt);
+        noted := search.TakeNote();
+        if noted != "" {
+            rules.Announce(noted, FindingHerTuning:::NOTE_SECONDS);
+        }
+        ending := search.TakeEnding();
+        if ending != "" && !rules.isLevelComplete {
+            rules.isLevelComplete = true;
+            rules.nextLevel = "";
+            completeHoldSeconds = 6.0f;
+            rules.AnnounceCard(ending, 6.0f);
+            lantern:::audio:::Play("pickup", 1.0f);
         }
     }
 
@@ -617,7 +653,9 @@ private:
         if partner.isPresent {
             navigationDynamics.Update();
             partner.RememberTrail(player.FeetPosition(), player.controller.IsGrounded());
-            partner.Update(player.FeetPosition(), player.controller.IsGrounded(), activeChannels, dt);
+            if !search.isActive {
+                partner.Update(player.FeetPosition(), player.controller.IsGrounded(), activeChannels, dt);
+            }
             if partner.TakePullRequest() {
                 switchSystem.TryPull(level.switches, partner.position, PartnerTuning:::PARTNER_LEVER_REACH);
             }
@@ -628,8 +666,14 @@ private:
             if rules.restartCount != seenRestartCount {
                 seenRestartCount = rules.restartCount;
                 partner.Reset(level.partnerStart);
-                companionGlow.MoveTo(partner.position + GlowHeight());
+                if companionGlow.isOn {
+                    companionGlow.MoveTo(partner.position + GlowHeight());
+                }
             }
+        }
+        if rules.restartCount != seenSearchRestartCount {
+            seenSearchRestartCount = rules.restartCount;
+            search.Restart(level.site, player);
         }
         carriers~ Array<lantern:::math:::Vec3> = [player.FeetPosition()];
         if partner.isPresent {
@@ -853,6 +897,19 @@ private:
             PlayTheStation -> { PlayLevel(STATION_PATH); },
             PlayTheCameraRoom -> { PlayLevel(PROTOTYPE_CAMERA_ROOM_PATH); },
             PlayTheLift -> { PlayLevel(PROTOTYPE_LIFT_PATH); },
+            PlayFestivalChapterTwo -> { PlayLevel(FESTIVAL_CHAPTER_TWO_PATH); },
+            OpenFindingHer -> {
+                ui.SetFindingHerOpen(true);
+                RemountUi();
+            },
+            CloseFindingHer -> {
+                ui.SetFindingHerOpen(false);
+                RemountUi();
+            },
+            PlayRoseGarden -> { PlayLevel(ROSE_GARDEN_PATH); },
+            PlayCableCar -> { PlayLevel(CABLE_CAR_PATH); },
+            PlayLanternWalk -> { PlayLevel(LANTERN_WALK_PATH); },
+            PlayFestivalChapterFive -> { PlayLevel(FESTIVAL_CHAPTER_FIVE_PATH); },
             PlayStreetsLater -> { PlayLevel(STREETS_LATER_PATH); },
             Resume -> { SetState(GameState:::Playing); },
             Restart -> {
@@ -862,6 +919,7 @@ private:
             ToggleDebugHud -> { lantern:::debug:::SetHudVisible(!lantern:::debug:::IsHudVisible()); },
             MainMenu -> {
                 ui.SetPrototypesOpen(false);
+                ui.SetFindingHerOpen(false);
                 StartLevel();
                 SetState(GameState:::MainMenu);
             },
@@ -968,6 +1026,17 @@ private:
         lantern:::debug:::SetValue("Minigames/Words", `${minigames.wordsFound:d} / ${level.wordTokens.length():d}`);
         lantern:::debug:::SetValue("Minigames/Meals", `${minigames.mealsFinished:d} / ${level.foodStalls.length():d}`);
         lantern:::debug:::SetValue("Player/Feel", level.isGroundedFeel ? "grounded" : "platformer");
+        if search.isActive {
+            lantern:::debug:::SetValue("Search/Phase", search.PhaseName());
+            lantern:::debug:::SetValue("Search/Slipped", search.HasSlipped() ? "yes" : "no");
+            lantern:::debug:::SetValue("Search/Calls", `${search.callsMade:d}`);
+            lantern:::debug:::SetValue("Search/Answers", `${search.answersHeard:d}`);
+            lantern:::debug:::SetValue("Search/Holding hands", search.isHoldingHands ? "yes" : "no");
+            lantern:::debug:::SetValue("Search/Look", `${search.lookAmount:.2f}`);
+            lantern:::debug:::SetValue("Search/Vantage", `${search.vantageAmount:.2f}`);
+            lantern:::debug:::SetValue("Search/Memories", `${search.memoriesVisited:d}`);
+            lantern:::debug:::SetValue("Search/Figures", `${level.site.figures.length():d}`);
+        }
         lantern:::debug:::SetValue("Photo/Camera raised", photoMode.isActive ? "yes" : "no");
         lantern:::debug:::SetValue("Photo/Verdict", photoMode.VerdictName());
         lantern:::debug:::SetValue("Photo/Photos", `${photoMode.takenCount:d} / ${photoMode.sights.length():d}`);

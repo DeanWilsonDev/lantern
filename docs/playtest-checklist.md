@@ -63,6 +63,18 @@ her point on the path.
 - Did anything take over a minute without you knowing what to do?
 - Was there a point where you stopped caring? Say where.
 
+## Finding her
+
+Menu entry "13 Finding her", five rooms. Controls: Q calls, hold E to look, hold G to hold her hand. See `finding-her-prototypes.md`.
+
+| Room | What to try | What to note |
+| --- | --- | --- |
+| 1 The festival, chapter 2 | Call from the start. Hold E and look for the glow. Climb the crate vantage. Hold hands through the crowd. Find her | Does her answer tell you where she is? Does the crowd read as people, and is it too dark to find the two of you? |
+| 2 The festival, chapter 5 | Call three times, then stand still. Try walking to the exit instead | Does the silence land? Is six seconds of standing still right? |
+| 3 The rose garden | Call in each bed | Does no answer feel like her absence, or like a bug? |
+| 4 The cable car | Hold hands on the platform, then let the crowd move | Is the slip readable? Is losing her hand upsetting or merely annoying? |
+| 5 The lantern walk | Walk the street, calling now and then, then stop | Does the ending line arrive at the right moment? |
+
 ## Known gaps
 
 The team model, its edge and recovery checks, and the reworked rooms were written without a compiler or a game run in the
