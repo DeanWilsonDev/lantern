@@ -153,6 +153,14 @@ public:
         return activeSettings;
     }
 
+    // The search's look and vantage (game-systems/search-system.nyx) nudge whatever shot is showing: the lens narrows by
+    // `fieldOfViewOffset` degrees (negative narrows) and the camera rises `eyeLift` metres. Set it before Frame each frame;
+    // 0 and 0 leave the shot as it is.
+    SetSearchLens~: (fieldOfViewOffset: f32, eyeLift: f32) -> void {
+        searchFieldOfViewOffset = fieldOfViewOffset;
+        searchEyeLift = eyeLift;
+    }
+
     // The pose on screen this frame.
     Shown :: () -> CameraPose {
         return displayed;
@@ -167,6 +175,8 @@ private:
     static STICK_DEAD_ZONE :: 0.1f;
     static PLAYER_CHEST :: 0.9f;         // metres above the feet: the point a volume must contain
 
+    searchFieldOfViewOffset~ f32 = 0.0f;
+    searchEyeLift~ f32 = 0.0f;
     volumes~ Array<CameraVolume> = [];
     shots~ Array<CameraShot> = [];
     defaultSettings: CameraRigSettings = { };
@@ -246,7 +256,10 @@ private:
         }
         displayed = shown;
         hasDisplayed = true;
-        lantern:::camera:::SetFieldOfView(shown.fieldOfViewDegrees);
-        lantern:::camera:::LookAt(shown.eye, shown.target);
+        eyeLift := modeId == MODE_PHOTO ? 0.0f : searchEyeLift;
+        fieldOfViewOffset := modeId == MODE_PHOTO ? 0.0f : searchFieldOfViewOffset;
+        liftedEye: lantern:::math:::Vec3 = { x: shown.eye.x, y: shown.eye.y + eyeLift, z: shown.eye.z };
+        lantern:::camera:::SetFieldOfView(shown.fieldOfViewDegrees + fieldOfViewOffset);
+        lantern:::camera:::LookAt(liftedEye, shown.target);
     }
 }

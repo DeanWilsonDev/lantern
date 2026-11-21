@@ -1,0 +1,479 @@
+FindingHerTuning :: import FindingHerTuning;
+InputSettings :: import InputSettings;
+MemorySpot :: import MemorySpot;
+Partner :: import Partner;
+PartnerTuning :: import PartnerTuning;
+Player :: import Player;
+SearchSite :: import SearchSite;
+Smoothing :: import Smoothing;
+Math :: import standard:::Math;
+
+// Where the level is in the four beats of docs/finding-her.md.
+// - Together: she walks beside you, or holds your hand.
+// - Separated: the crowd surges between you and carries her off.
+// - Searching: she is somewhere in the space, or (chapter 5) there is nobody to find.
+// - Found: you are close; she runs to you.
+// - Ended: the level is done.
+SearchPhase :: enum {
+    Together,
+    Separated,
+    Searching,
+    Found,
+    Ended
+}
+
+// The search: the one loop the Finding Her prototypes are built around. A level opts in by having a SearchSite (a crowd,
+// vantage spots, places she hides, places she liked). Per fixed step this class:
+// - reads the three inputs the search adds: tap CALL, hold FOCUS (look), hold HOLD_HANDS;
+// - moves her (Partner.Direct) by the phase: beside you, off with the crowd, to her hiding place, running to you;
+// - answers a call after the chapter's delay with a sound placed at her and a pulse of light that shows through crowds;
+// - eases the look and vantage amounts the camera and the mix follow;
+// - moves the crowd, which steps aside from you and from her;
+// - says what happened as a line of text (TakeNote) and when the level has ended (TakeEnding).
+//
+// What a chapter changes is all in settings/finding-her-tuning.nyx: her answer's delay and volume, your walking pace and
+// posture, whether there are petals. The class never asks which chapter it is except to read those numbers.
+SearchSystem :: class {
+public:
+    isActive~ bool = false;
+    phase~ SearchPhase = SearchPhase:::Together;
+    hasHer~ bool = false;
+    isHoldingHands~ bool = false;
+    isLooking~ bool = false;
+    lookAmount~ f32 = 0.0f;
+    vantageAmount~ f32 = 0.0f;
+    callsMade~ i32 = 0;
+    answersHeard~ i32 = 0;
+    memoriesVisited~ i32 = 0;
+    pulseAmount~ f32 = 0.0f;
+
+    // The start of a level (or a restart): back to Together if she is there, else straight to searching for someone who
+    // is not. `levelChapter` picks the mood. Does nothing, and leaves the player as the platformer feel made them, in a
+    // level with no search.
+    Start~: (site: SearchSite, levelChapter: i32, herPresent: bool, player~ Player, cubeMesh: i64) -> void {
+        RemoveLights();
+        lantern:::audio:::SetBusVolume("ambience", 1.0f);
+        isActive = site.hasSearch;
+        ResetState(levelChapter, herPresent && !site.startsSearching);
+        hasHer = herPresent;
+        if herPresent && site.startsSearching {
+            pendingNote = site.herAnswers ? "She is somewhere in the crowd. Call (Q)." : "She is just there, past the thorns. Call her (Q).";
+        }
+        guard isActive;
+        answersAllowed = site.herAnswers;
+        restingGlow = Math:::max(FindingHerTuning:::PULSE_RESTING_STRENGTH, site.herGlowStrength);
+        player.SetMood(FindingHerTuning:::WalkScale(chapter), FindingHerTuning:::Slump(chapter));
+        pulseLight = lantern:::lights:::AddPoint(lantern:::math:::Vec3:::Zero(), FindingHerTuning:::PULSE_COLOR, 0.0f, FindingHerTuning:::PULSE_RANGE);
+        lantern:::lights:::SetShadows(pulseLight, false);
+        linkEntity = lantern:::world:::Spawn("hand_link", lantern:::math:::Vec3:::Zero());
+        lantern:::world:::SetMesh(linkEntity, cubeMesh, FindingHerTuning:::HAND_LINK_TINT);
+        lantern:::world:::SetGlow(linkEntity, FindingHerTuning:::HAND_LINK_TINT, 1.5f);
+        lantern:::world:::SetCastsShadows(linkEntity, false);
+        lantern:::world:::SetVisible(linkEntity, false);
+    }
+
+    // The player pressed R: she and the crowd start over and the places she liked are new again.
+    Restart~: (site~ SearchSite, player~ Player) -> void {
+        guard isActive;
+        for memory~ MemorySpot in site.memories {
+            memory.wasVisited = false;
+        }
+        herWasPresent := hasHer;
+        ResetState(chapter, herWasPresent && !site.startsSearching);
+        hasHer = herWasPresent;
+    }
+
+    // Gives back what Start made when the game leaves the level for another.
+    Stop~: () -> void {
+        RemoveLights();
+        lantern:::audio:::SetBusVolume("ambience", 1.0f);
+        isActive = false;
+    }
+
+    // True while the player is looking: the game holds the stick still, because looking is stopping.
+    IsStopped :: () -> bool {
+        return isActive && isLooking;
+    }
+
+    // Degrees to add to the camera's lens: negative while looking, positive on a vantage spot.
+    FieldOfViewOffset :: () -> f32 {
+        return vantageAmount * FindingHerTuning:::VANTAGE_FIELD_OF_VIEW_WIDENING - lookAmount * FindingHerTuning:::LOOK_FIELD_OF_VIEW_NARROWING;
+    }
+
+    // Metres to raise the camera: on a vantage spot only.
+    EyeLift :: () -> f32 {
+        return vantageAmount * FindingHerTuning:::VANTAGE_EYE_LIFT;
+    }
+
+    // The line to show now, once, or "".
+    TakeNote~: () -> string {
+        said := pendingNote;
+        pendingNote = "";
+        return said;
+    }
+
+    // The closing line once the level has ended, once, or "". The game turns it into "level complete".
+    TakeEnding~: () -> string {
+        said := pendingEnding;
+        pendingEnding = "";
+        return said;
+    }
+
+    // True once a held hand has slipped away (the cable car).
+    HasSlipped :: () -> bool {
+        return isSlipped;
+    }
+
+    // For the debug HUD.
+    PhaseName :: () -> string {
+        return when phase <SearchPhase> {
+            Together -> "together",
+            Separated -> "separated",
+            Searching -> "searching",
+            Found -> "found",
+            Ended -> "ended"
+        };
+    }
+
+    // One fixed step. `isInputEnabled` is false while the photo camera is raised; `isStill` whether the stick is at rest;
+    // `viewForward` the way the camera looks, for saying which side she is on.
+    Update~: (site~ SearchSite, player~ Player, partner~ Partner, isInputEnabled: bool, isStill: bool, viewForward: lantern:::math:::Vec3, dt: f32) -> void {
+        guard isActive;
+        time += dt;
+        feet := player.FeetPosition();
+        if callCooldownSeconds > 0.0f {
+            callCooldownSeconds -= dt;
+        }
+        secondsSinceCall += dt;
+        ReadInputs(isInputEnabled, feet, partner, dt);
+        UpdateCall(partner, isInputEnabled, dt);
+        easing := Smoothing:::Amount(dt, FindingHerTuning:::LOOK_HALF_LIFE_SECONDS);
+        lookAmount = Smoothing:::Toward(lookAmount, isLooking ? 1.0f : 0.0f, easing);
+        vantageEasing := Smoothing:::Amount(dt, FindingHerTuning:::VANTAGE_HALF_LIFE_SECONDS);
+        isOnVantage := site.IsOnVantage(feet);
+        vantageAmount = Smoothing:::Toward(vantageAmount, isOnVantage ? 1.0f : 0.0f, vantageEasing);
+        lantern:::audio:::SetBusVolume("ambience", 1.0f - lookAmount * (1.0f - FindingHerTuning:::LOOK_AMBIENCE_DUCK));
+        avoid~ Array<lantern:::math:::Vec3> = [feet];
+        if hasHer {
+            avoid.add(partner.position);
+        }
+        site.MoveCrowd(avoid, phase == SearchPhase:::Separated ? FindingHerTuning:::SURGE_SPEED_MULTIPLIER : 1.0f, time, dt);
+        VisitMemories(site, feet);
+        when phase <SearchPhase> {
+            Together -> { StepTogether(site, player, partner, feet, isStill, dt); },
+            Separated -> { StepSeparated(site, partner, feet, dt); },
+            Searching -> { StepSearching(site, partner, feet, isStill, dt); },
+            Found -> { StepFound(partner, feet, dt); },
+            Ended -> { StandHer(partner, feet, dt); }
+        }
+        if isOnVantage && phase != SearchPhase:::Ended {
+            SayWhereSheIs(partner, feet, viewForward, dt);
+        } else {
+            readoutSecondsLeft = 0.0f;
+        }
+        ShowPulse(partner, dt);
+    }
+
+private:
+    ResetState~: (levelChapter: i32, herPresent: bool) -> void {
+        chapter = levelChapter;
+        hasHer = herPresent;
+        phase = herPresent ? SearchPhase:::Together : SearchPhase:::Searching;
+        isSlipped = false;
+        slipHeldSeconds = 0.0f;
+        isHoldingHands = false;
+        isLooking = false;
+        lookAmount = 0.0f;
+        vantageAmount = 0.0f;
+        callsMade = 0;
+        answersHeard = 0;
+        memoriesVisited = 0;
+        pulseAmount = 0.0f;
+        answerSecondsLeft = -1.0f;
+        callCooldownSeconds = 0.0f;
+        secondsSinceCall = 0.0f;
+        quietSeconds = 0.0f;
+        surgeSecondsLeft = 0.0f;
+        readoutSecondsLeft = 0.0f;
+        petalSeconds = 0.0f;
+        time = 0.0f;
+        hasArrived = false;
+        hasEnded = false;
+        pendingEnding = "";
+        handSide = { x: 1.0f, y: 0.0f, z: 0.0f };
+        pendingNote = herPresent ? "Stay close in the crowd. Hold G to take her hand." : "Nobody answers. Call (Q), and go where she would be.";
+    }
+
+    chapter~ i32 = 0;
+    restingGlow~ f32 = 0.0f;
+    answersAllowed~ bool = true;
+    isSlipped~ bool = false;
+    slipHeldSeconds~ f32 = 0.0f;
+    answerSecondsLeft~ f32 = -1.0f;
+    callCooldownSeconds~ f32 = 0.0f;
+    secondsSinceCall~ f32 = 0.0f;
+    quietSeconds~ f32 = 0.0f;
+    surgeSecondsLeft~ f32 = 0.0f;
+    readoutSecondsLeft~ f32 = 0.0f;
+    petalSeconds~ f32 = 0.0f;
+    time~ f32 = 0.0f;
+    hasArrived~ bool = false;
+    hasEnded~ bool = false;
+    pendingNote~ string = "";
+    pendingEnding~ string = "";
+    handSide~ lantern:::math:::Vec3 = { x: 1.0f, y: 0.0f, z: 0.0f };
+    pulseLight~ i64 = 0;
+    linkEntity~ i64 = 0;
+
+    RemoveLights~: () -> void {
+        guard pulseLight != 0;
+        lantern:::lights:::Remove(pulseLight);
+        pulseLight = 0;
+    }
+
+    ReadInputs~: (isInputEnabled: bool, feet: lantern:::math:::Vec3, partner: Partner, dt: f32) -> void {
+        isLooking = isInputEnabled && phase != SearchPhase:::Ended && lantern:::input:::IsHeld(InputSettings:::FOCUS);
+        wantsHold := isInputEnabled && hasHer && !isSlipped && phase == SearchPhase:::Together && lantern:::input:::IsHeld(InputSettings:::HOLD_HANDS);
+        distance := hasHer ? (partner.position - feet).Horizontal().Length() : 1000.0f;
+        if wantsHold && (isHoldingHands || distance < FindingHerTuning:::HAND_REACH_DISTANCE) && distance < FindingHerTuning:::HAND_BREAK_DISTANCE {
+            isHoldingHands = true;
+        } else {
+            isHoldingHands = false;
+        }
+    }
+
+    // A tap of CALL: the call sound at once, and her answer after the chapter's delay if she is there to give one.
+    UpdateCall~: (partner: Partner, isInputEnabled: bool, dt: f32) -> void {
+        if isInputEnabled && phase != SearchPhase:::Ended && callCooldownSeconds <= 0.0f && lantern:::input:::IsPressed(InputSettings:::CALL) {
+            lantern:::audio:::PlayOn(FindingHerTuning:::CALL_SOUND, "sfx", FindingHerTuning:::CALL_VOLUME, FindingHerTuning:::CALL_PITCH);
+            callCooldownSeconds = FindingHerTuning:::CALL_COOLDOWN_SECONDS;
+            callsMade++;
+            secondsSinceCall = 0.0f;
+            quietSeconds = 0.0f;
+            delay := FindingHerTuning:::AnswerDelaySeconds(chapter);
+            if hasHer && answersAllowed && delay >= 0.0f && answerSecondsLeft < 0.0f {
+                answerSecondsLeft = delay;
+            }
+        }
+        if answerSecondsLeft >= 0.0f {
+            answerSecondsLeft -= dt;
+            if answerSecondsLeft < 0.0f {
+                answerSecondsLeft = -1.0f;
+                lift: lantern:::math:::Vec3 = { x: 0.0f, y: 1.4f, z: 0.0f };
+                lantern:::audio:::PlayAt(FindingHerTuning:::ANSWER_SOUND, "sfx", partner.position + lift, FindingHerTuning:::AnswerVolume(chapter), FindingHerTuning:::ANSWER_PITCH, FindingHerTuning:::ANSWER_MIN_DISTANCE, FindingHerTuning:::ANSWER_MAX_DISTANCE);
+                pulseAmount = FindingHerTuning:::AnswerVolume(chapter);
+                answersHeard++;
+            }
+        }
+    }
+
+    // Her light: nearly dark at rest, a little brighter while the player looks, and a bright pulse for an answer.
+    ShowPulse~: (partner: Partner, dt: f32) -> void {
+        guard pulseLight != 0;
+        pulseAmount = Math:::max(pulseAmount - dt / FindingHerTuning:::PULSE_FADE_SECONDS, 0.0f);
+        if !hasHer {
+            lantern:::lights:::SetColor(pulseLight, FindingHerTuning:::PULSE_COLOR, 0.0f);
+            return;
+        }
+        strength := restingGlow + lookAmount * (FindingHerTuning:::PULSE_LOOKING_STRENGTH - restingGlow) + pulseAmount * FindingHerTuning:::PULSE_STRENGTH;
+        lift: lantern:::math:::Vec3 = { x: 0.0f, y: 1.4f, z: 0.0f };
+        lantern:::lights:::Move(pulseLight, partner.position + lift);
+        lantern:::lights:::SetColor(pulseLight, FindingHerTuning:::PULSE_COLOR, strength);
+    }
+
+    // A note the first time the player comes to a place she liked: while she is with them it teaches the place, after she is
+    // gone it is the place she was.
+    VisitMemories~: (site~ SearchSite, feet: lantern:::math:::Vec3) -> void {
+        for memory~ MemorySpot in site.memories {
+            guard !memory.wasVisited continue;
+            guard (memory.position - feet).Horizontal().Length() < FindingHerTuning:::MEMORY_REACH_DISTANCE continue;
+            if hasHer && phase == SearchPhase:::Together && memory.noteTogether != "" {
+                memory.wasVisited = true;
+                pendingNote = memory.noteTogether;
+            } else if !hasHer && memory.noteAlone != "" {
+                memory.wasVisited = true;
+                memoriesVisited++;
+                pendingNote = memory.noteAlone;
+            }
+        }
+    }
+
+    // Where she is, said on a vantage spot: how far, and which way against the camera.
+    SayWhereSheIs~: (partner: Partner, feet: lantern:::math:::Vec3, viewForward: lantern:::math:::Vec3, dt: f32) -> void {
+        readoutSecondsLeft -= dt;
+        guard readoutSecondsLeft <= 0.0f;
+        readoutSecondsLeft = FindingHerTuning:::VANTAGE_READOUT_SECONDS;
+        if !hasHer {
+            pendingNote = "From up here: a crowd, and nobody you know.";
+            return;
+        }
+        guard phase != SearchPhase:::Together;
+        toHer := (partner.position - feet).Horizontal();
+        forward := viewForward.Horizontal().Normalized();
+        facing := forward.Dot(toHer.Normalized());
+        side := forward.Cross(toHer).y > 0.0f ? "to your left" : "to your right";
+        where := facing > 0.7f ? "ahead" : (facing < -0.7f ? "behind you" : side);
+        pendingNote = `From up here: she is ${toHer.Length():.0f} m away, ${where}.`;
+    }
+
+    // Together: she is beside you. Loose, she keeps FREE_OFFSET away and only follows when you pull ahead; holding hands, she
+    // keeps HAND_OFFSET and your pace exactly. Entering the separation marker's radius starts the surge.
+    StepTogether~: (site~ SearchSite, player~ Player, partner~ Partner, feet: lantern:::math:::Vec3, isStill: bool, dt: f32) -> void {
+        velocity := player.controller.Velocity().Horizontal();
+        if velocity.Length() > 0.3f {
+            direction := velocity.Normalized();
+            handSide = { x: direction.z, y: 0.0f, z: -direction.x };
+        }
+        offset := isHoldingHands ? FindingHerTuning:::HAND_OFFSET : FindingHerTuning:::FREE_OFFSET;
+        spot := feet + handSide * offset;
+        gap := (spot - partner.position).Horizontal().Length();
+        shouldMove := isHoldingHands ? gap > 0.08f : gap > FindingHerTuning:::FREE_DEAD_ZONE;
+        pace := (velocity.Length() + gap * 2.5f) / PartnerTuning:::WALK_SPEED;
+        head: lantern:::math:::Vec3 = { x: feet.x, y: feet.y + 1.6f, z: feet.z };
+        partner.Direct(spot, shouldMove, Math:::clamp(pace, 0.2f, 3.0f), head, dt);
+        ShowLink(partner, feet);
+        if site.hasSlip && !isSlipped {
+            if isHoldingHands && (site.slipPoint - feet).Horizontal().Length() < site.slipRadius {
+                slipHeldSeconds += dt;
+                if slipHeldSeconds >= site.slipSeconds {
+                    isSlipped = true;
+                    isHoldingHands = false;
+                    pendingNote = "Her hand slips out of yours. However hard you hold.";
+                }
+            }
+        }
+        if isSlipped {
+            StandHer(partner, feet, dt);
+            EndByRule(site, feet, isStill, dt);
+            return;
+        }
+        if site.hasSeparation && (site.separationPoint - feet).Horizontal().Length() < FindingHerTuning:::SEPARATION_RADIUS {
+            phase = SearchPhase:::Separated;
+            isHoldingHands = false;
+            ShowLink(partner, feet);
+            surgeSecondsLeft = FindingHerTuning:::SURGE_SECONDS;
+            pendingNote = "The crowd closes between you. She is gone, laughing, somewhere ahead.";
+        }
+    }
+
+    // Separated: the crowd runs faster, her hand is gone, and she is carried to her first hiding place.
+    StepSeparated~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, dt: f32) -> void {
+        WalkHerToHiding(site, partner, feet, 0, FindingHerTuning:::SURGE_HER_SPEED, dt);
+        surgeSecondsLeft -= dt;
+        if surgeSecondsLeft <= 0.0f {
+            phase = SearchPhase:::Searching;
+            pendingNote = "Where did she go? Call (Q), look (hold E), climb the crate to see over the crowd.";
+        }
+    }
+
+    // Searching. With her: she waits at her hiding place until found. Without her (chapter 5): nothing answers, and the
+    // level ends by the chapter's rule.
+    StepSearching~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, isStill: bool, dt: f32) -> void {
+        if !hasHer {
+            EndByRule(site, feet, isStill, dt);
+            return;
+        }
+        if !site.herAnswers {
+            LeaveHer(site, partner, feet, dt);
+            EndByRule(site, feet, isStill, dt);
+            return;
+        }
+        WalkHerToHiding(site, partner, feet, 0, 0.55f, dt);
+        if (partner.position - feet).Horizontal().Length() < FindingHerTuning:::FOUND_DISTANCE {
+            phase = SearchPhase:::Found;
+            pendingNote = "There you are!";
+        }
+    }
+
+    // She does not answer: she stands where she is, and once a call has gone unanswered she walks away, slowly, to her second
+    // place if the level has one.
+    LeaveHer~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, dt: f32) -> void {
+        if callsMade > 0 && site.herSpots.length() > 1 {
+            WalkHerToHiding(site, partner, feet, 1, 0.45f, dt);
+        } else {
+            StandHer(partner, feet, dt);
+        }
+    }
+
+    StepFound~: (partner~ Partner, feet: lantern:::math:::Vec3, dt: f32) -> void {
+        head: lantern:::math:::Vec3 = { x: feet.x, y: feet.y + 1.6f, z: feet.z };
+        partner.Direct(feet, true, FindingHerTuning:::REUNION_SPEED_MULTIPLIER * FindingHerTuning:::HER_BASE_SPEED / PartnerTuning:::WALK_SPEED, head, dt);
+        if (partner.position - feet).Horizontal().Length() < FindingHerTuning:::REUNION_DISTANCE {
+            phase = SearchPhase:::Ended;
+            hasEnded = true;
+            pendingEnding = "You found her.";
+        }
+    }
+
+    StandHer~: (partner~ Partner, feet: lantern:::math:::Vec3, dt: f32) -> void {
+        guard hasHer;
+        head: lantern:::math:::Vec3 = { x: feet.x, y: feet.y + 1.6f, z: feet.z };
+        partner.Direct(partner.position, false, 1.0f, head, dt);
+    }
+
+    // Walks her to the first hiding place and stands her there. A level with no hiding place keeps her where she is.
+    WalkHerToHiding~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, spotIndex: i32, speedMultiple: f32, dt: f32) -> void {
+        if site.herSpots.length() == 0 {
+            head: lantern:::math:::Vec3 = { x: feet.x, y: feet.y + 1.6f, z: feet.z };
+            partner.Direct(partner.position, false, 1.0f, head, dt);
+            return;
+        }
+        spot := site.herSpots[Math:::min(spotIndex, site.herSpots.length() - 1)];
+        arriveGap := (spot - partner.position).Horizontal().Length();
+        hasArrived = arriveGap < FindingHerTuning:::HIDING_ARRIVE_DISTANCE;
+        away: lantern:::math:::Vec3 = { x: spot.x + (spot.x - feet.x), y: spot.y + 1.2f, z: spot.z + (spot.z - feet.z) };
+        pace := speedMultiple * FindingHerTuning:::HER_BASE_SPEED / PartnerTuning:::WALK_SPEED;
+        before := partner.position;
+        partner.Direct(spot, !hasArrived, pace, away, dt);
+        if FindingHerTuning:::HasPetals(chapter) && !hasArrived && partner.position.DistanceTo(before) > 0.001f {
+            petalSeconds += dt;
+            if petalSeconds >= FindingHerTuning:::PETAL_INTERVAL_SECONDS {
+                petalSeconds = 0.0f;
+                petalDrift: lantern:::math:::Vec3 = { x: 0.0f, y: 0.3f, z: 0.0f };
+                lantern:::particles:::Emit(partner.position + petalDrift, { x: 0.0f, y: 0.1f, z: 0.0f }, FindingHerTuning:::PETAL_COLOR, FindingHerTuning:::PETAL_LIFE_SECONDS, 0.12f, 0.15f);
+            }
+        }
+    }
+
+    // A search with nobody to find, or nobody who answers. Either stand still after calling (the doc's stronger ending) or
+    // reach the exit marker; which one is the level's `ends_on`.
+    EndByRule~: (site~ SearchSite, feet: lantern:::math:::Vec3, isStill: bool, dt: f32) -> void {
+        if site.endsOnStillness {
+            if isStill && !isLooking {
+                quietSeconds += dt;
+            } else {
+                quietSeconds = 0.0f;
+            }
+            if callsMade >= site.endingCalls && memoriesVisited >= site.requiredMemories && quietSeconds >= FindingHerTuning:::ENDING_STILL_SECONDS {
+                End(site.endingLine != "" ? site.endingLine : "You stop calling. The crowd goes past.");
+            }
+        } else {
+            for memory: MemorySpot in site.memories {
+                if memory.isExit && (memory.position - feet).Horizontal().Length() < FindingHerTuning:::EXIT_REACH_DISTANCE {
+                    End(site.endingLine != "" ? site.endingLine : "You reach the end of it. Nobody was waiting.");
+                }
+            }
+        }
+    }
+
+    End~: (line: string) -> void {
+        guard !hasEnded;
+        hasEnded = true;
+        phase = SearchPhase:::Ended;
+        pendingEnding = line;
+    }
+
+    // The thread of light between two held hands: a thin glowing bar from her to the player, only while holding.
+    ShowLink~: (partner: Partner, feet: lantern:::math:::Vec3) -> void {
+        guard linkEntity != 0;
+        lantern:::world:::SetVisible(linkEntity, isHoldingHands);
+        guard isHoldingHands;
+        low: lantern:::math:::Vec3 = { x: 0.0f, y: 0.9f, z: 0.0f };
+        from := partner.position + low;
+        to := feet + low;
+        between := to - from;
+        lantern:::world:::SetPosition(linkEntity, from.Lerp(to, 0.5f));
+        lantern:::world:::SetYaw(linkEntity, between.Horizontal().Yaw());
+        lantern:::world:::SetScale(linkEntity, { x: FindingHerTuning:::HAND_LINK_THICKNESS, y: FindingHerTuning:::HAND_LINK_THICKNESS, z: Math:::max(between.Length(), 0.05f) });
+    }
+}

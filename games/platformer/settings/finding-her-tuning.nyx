@@ -1,0 +1,155 @@
+Math :: import standard:::Math;
+
+// The numbers of the Finding Her prototypes (docs/finding-her.md): how the call and the look work, how a crowd
+// moves, how she holds hands, and what each chapter changes. Every one is a constant, so a play-test note such as
+// "her answer comes too fast" is a one-line change here.
+//
+// The four open questions in docs/finding-her.md are switches in this file, so Dean can flip them without touching
+// the systems:
+// - CALL_SOUND and CALL_PITCH say what the call sounds like (a wordless two-note tone for now);
+// - CHAPTER_FIVE_ENDS_ON_STILLNESS picks how chapter 5 ends (stand still after calling, or reach the exit);
+// - FIGURE_TINT and FIGURE_WIDTH say how literal the crowd is (abstract shadow figures for now);
+// - the chapter 2 meal and photo are both in the festival world file; deleting the `food_stall` or the `photo_sight`
+//   entity there drops one of them.
+FindingHerTuning :: namespace {
+    // The call. One input, one short sound. "pickup" is a generated placeholder (docs/audio.md); a recording named
+    // `call.wav` loaded under another name replaces it here.
+    CALL_SOUND :: "pickup";
+    CALL_PITCH :: 0.7f;
+    CALL_VOLUME :: 0.5f;
+    CALL_COOLDOWN_SECONDS :: 0.9f;
+
+    // Her answer, positioned in the world (PlayAt): heard from `ANSWER_MIN_DISTANCE` metres at full volume and fading
+    // to nothing at `ANSWER_MAX_DISTANCE`. The glow pulse is a point light at her that rises at once and fades over
+    // `PULSE_FADE_SECONDS`. It casts no shadows, so it shows through scenery, which is how a call finds her behind a
+    // crowd.
+    ANSWER_SOUND :: "pickup";
+    ANSWER_PITCH :: 1.5f;
+    ANSWER_MIN_DISTANCE :: 4.0f;
+    ANSWER_MAX_DISTANCE :: 60.0f;
+    PULSE_COLOR :: "FFC9A8";
+    PULSE_STRENGTH :: 6.0f;
+    PULSE_RANGE :: 16.0f;
+    PULSE_FADE_SECONDS :: 1.6f;
+    PULSE_RESTING_STRENGTH :: 0.0f;
+    PULSE_LOOKING_STRENGTH :: 1.5f;
+
+    // Look. Holding the look button stops the player, narrows the lens and ducks the crowd. `LOOK_HALF_LIFE` is how
+    // fast the look eases in and out.
+    LOOK_HALF_LIFE_SECONDS :: 0.25f;
+    LOOK_FIELD_OF_VIEW_NARROWING :: 14.0f;   // degrees taken off the lens at full look
+    LOOK_AMBIENCE_DUCK :: 0.45f;             // the ambience bus at full look, 1 being no duck
+
+    // Vantage spots. Standing on one lifts the camera and widens the lens, so the crowd is below the view.
+    VANTAGE_RADIUS :: 1.3f;                  // how near a spot's centre counts as standing on it
+    VANTAGE_HALF_LIFE_SECONDS :: 0.5f;
+    VANTAGE_EYE_LIFT :: 1.6f;                // metres the camera rises at full vantage
+    VANTAGE_FIELD_OF_VIEW_WIDENING :: 12.0f;
+    VANTAGE_READOUT_SECONDS :: 5.0f;         // how often the distance and bearing are said while on a spot
+
+    // Holding hands. The pair walks at a fixed offset to the player's right; letting go (or a crowd surge) ends it.
+    HAND_OFFSET :: 0.9f;
+    FREE_OFFSET :: 2.0f;                     // how near she stays when no one holds her hand
+    FREE_DEAD_ZONE :: 0.9f;                  // she only moves again once the player is this much past FREE_OFFSET
+    HAND_BREAK_DISTANCE :: 2.6f;             // pulled further apart than this, the hold lets go
+    HAND_REACH_DISTANCE :: 1.8f;             // the hold only starts from this close
+    HAND_LINK_TINT :: "FFD9A0";
+    HAND_LINK_THICKNESS :: 0.05f;
+
+    // The separation: entering this radius around the `separation` marker while together starts the surge.
+    SEPARATION_RADIUS :: 4.0f;
+    SURGE_SECONDS :: 3.0f;
+    SURGE_SPEED_MULTIPLIER :: 2.2f;          // the crowd's speed during the surge
+    SURGE_HER_SPEED :: 2.4f;                 // her speed, as a multiple of a walking pace, as she is carried off
+
+    // Finding her. She is found when the player gets this close while she waits at her hiding place; she then runs to
+    // them (as a chapter 2 reunion does) and the level ends once she is beside them.
+    FOUND_DISTANCE :: 3.2f;
+    REUNION_SPEED_MULTIPLIER :: 1.6f;
+    REUNION_DISTANCE :: 1.3f;
+    HIDING_ARRIVE_DISTANCE :: 0.4f;
+    HER_BASE_SPEED :: 4.4f;                  // metres per second of a walking pace the pair keeps (the grounded walk)
+
+    // Traces: a fresh petal every `PETAL_INTERVAL_SECONDS` where she walks, in chapters that have them.
+    PETAL_INTERVAL_SECONDS :: 0.35f;
+    PETAL_COLOR :: "FF8FB1";
+    PETAL_LIFE_SECONDS :: 6.0f;
+
+    // How chapter 5 ends. True is the doc's stronger leaning: after calling at least `ENDING_MINIMUM_CALLS` times, the
+    // player stops calling and stands still for `ENDING_STILL_SECONDS` while the crowd passes. False ends the level on
+    // reaching the `exit` marker instead.
+    CHAPTER_FIVE_ENDS_ON_STILLNESS :: true;
+    ENDING_MINIMUM_CALLS :: 3;
+    ENDING_STILL_SECONDS :: 6.0f;
+    EXIT_REACH_DISTANCE :: 2.5f;
+
+    // Memory spots: the places she liked. A note shows once when the player comes this near.
+    MEMORY_REACH_DISTANCE :: 3.5f;
+    NOTE_SECONDS :: 4.0f;
+
+    // The crowd. Faceless shadow figures: the same capsule as the characters, dark and plain, so the two who have
+    // colour are always findable. They walk along lanes, step aside from the player and from her, and fade in and out
+    // at a lane's ends so none pops.
+    FIGURE_TINT :: "10121C";
+    FIGURE_WIDTH :: 0.8f;
+    FIGURE_HEIGHT_VARIATION :: 0.12f;
+    FIGURE_SPEED_VARIATION :: 0.35f;
+    FIGURE_AVOID_RADIUS :: 1.7f;
+    FIGURE_AVOID_EASING :: 0.12f;
+    FIGURE_FADE_METRES :: 3.0f;
+    FIGURE_LATERAL_SPREAD :: 1.4f;
+    FIGURE_BOB :: 0.025f;
+    FIGURE_BASE_SPEED :: 1.2f;
+
+    // What each chapter changes. A chapter that has no entry here uses chapter 2's.
+    // Walk scale multiplies the player's walking pace; slump bends the player's body (0 upright and light, 1 slow with
+    // shoulders down); the answer delay is how long she takes to answer a call, negative meaning she never does.
+    WalkScale :: (chapter: i32) -> f32 {
+        return when chapter <i32> {
+            3 -> 0.92f,
+            4 -> 0.85f,
+            5 -> 0.72f,
+            default -> 1.0f
+        };
+    }
+
+    Slump :: (chapter: i32) -> f32 {
+        return when chapter <i32> {
+            3 -> 0.35f,
+            4 -> 0.65f,
+            5 -> 1.0f,
+            default -> 0.0f
+        };
+    }
+
+    AnswerDelaySeconds :: (chapter: i32) -> f32 {
+        return when chapter <i32> {
+            3 -> 1.2f,
+            4 -> 2.6f,
+            5 -> -1.0f,
+            default -> 0.35f
+        };
+    }
+
+    AnswerVolume :: (chapter: i32) -> f32 {
+        return when chapter <i32> {
+            3 -> 0.7f,
+            4 -> 0.4f,
+            default -> 1.0f
+        };
+    }
+
+    HasPetals :: (chapter: i32) -> bool {
+        return chapter == 2;
+    }
+
+    // The jog while she is lost: one more speed, only in the chapters where she can be found.
+    JOG_SCALE :: 1.3f;
+
+    // A number between -1 and 1 worked out from `number` and `channel` alone, so a crowd is the same on every run. The sine of
+    // a large number jumps about like noise, and its fractional part is the noise.
+    Noise :: (number: i32, channel: i32) -> f32 {
+        raw := Math:::sin(f32(number * 97 + channel * 31) * 12.9898f) * 43758.547f;
+        return raw - f32(i32(raw));
+    }
+}
