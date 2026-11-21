@@ -246,6 +246,8 @@ private:
     goalSystem~ GoalSystem = new GoalSystem();
     // How long the level has been complete, in simulation seconds (see Simulate).
     completeSeconds~ f32 = 0.0f;
+    seenSearchRestartCount~ i32 = 0;
+    completeHoldSeconds~ f32 = COMPLETE_SECONDS;
     glowSystem~ GlowSystem = new GlowSystem();
     lanternSystem~ LanternSystem = new LanternSystem();
     thornSystem~ ThornSystem = new ThornSystem();
@@ -335,6 +337,7 @@ private:
         events.Drain();                       // throw away anything queued by the old level
         simulationSeconds = 0.0f;
         completeSeconds = 0.0f;
+        completeHoldSeconds = COMPLETE_SECONDS;
         camera.ResetBehind(level.playStartYaw);
         rules.Start(level);
         if level.hasPlayStart || level.hasPlayerStart {
@@ -347,6 +350,7 @@ private:
         }
         seenRestartCount = rules.restartCount;
         seenClimbRestartCount = rules.restartCount;
+        seenSearchRestartCount = rules.restartCount;
         // Lights live in the engine until removed, so the last level's glows are turned off
         // here and this level's companion glow starts at her first stop.
         anchorSystem.Cancel();
@@ -513,7 +517,7 @@ private:
         // A completed level waits a few seconds so the message can be read, then moves on.
         if rules.isLevelComplete {
             completeSeconds += dt;
-            if completeSeconds >= COMPLETE_SECONDS {
+            if completeSeconds >= completeHoldSeconds {
                 AdvanceLevel();
             }
         }
@@ -536,6 +540,7 @@ private:
         if ending != "" && !rules.isLevelComplete {
             rules.isLevelComplete = true;
             rules.nextLevel = "";
+            completeHoldSeconds = 6.0f;
             rules.Announce(ending, 6.0f);
             lantern:::audio:::Play("pickup", 1.0f);
         }
@@ -660,11 +665,14 @@ private:
             if rules.restartCount != seenRestartCount {
                 seenRestartCount = rules.restartCount;
                 partner.Reset(level.partnerStart);
-                search.Restart(level.site, player);
                 if companionGlow.isOn {
                     companionGlow.MoveTo(partner.position + GlowHeight());
                 }
             }
+        }
+        if rules.restartCount != seenSearchRestartCount {
+            seenSearchRestartCount = rules.restartCount;
+            search.Restart(level.site, player);
         }
         carriers~ Array<lantern:::math:::Vec3> = [player.FeetPosition()];
         if partner.isPresent {
