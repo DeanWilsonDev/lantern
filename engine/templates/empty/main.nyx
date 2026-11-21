@@ -1,0 +1,75 @@
+// The starter game: a lit floor with a few blocks on it and a camera you fly around with the keyboard. It is small on
+// purpose. Every line is here so you can see how a Lantern game is put together, then change it into yours.
+//
+// How a game meets the engine:
+// - game.json names this file as `entry` and `MyGame` as `application_class`. The engine makes one MyGame and calls the
+//   hooks below (OnStart, OnFixedUpdate, OnUpdate, OnRender, OnExit). Skip any you don't need.
+// - Every name with `:::` that isn't one of this file's own (lantern:::world, lantern:::input, lantern:::camera, ...) is a
+//   host function or type the engine registers. docs/game-api.md in the engine folder lists them all with their signatures.
+// - Paths such as "worlds/start.world.json" are relative to the assets folder named in game.json.
+//
+// To grow this game: put more Nyx files beside this one and import each class by name at the top of the file that uses it
+// (`Player :: import Player;`). The platformer sample (lantern project new --template platformer) shows a whole game split
+// that way.
+MyGame :: class : Application {
+public:
+    // Where the camera is, and which way it faces. `yaw` turns left and right in radians; `pitch` looks up and down.
+    eye~ lantern:::math:::Vec3 = { x: 0.0f, y: 2.5f, z: 12.0f };
+    yaw~ f32 = 0.0f;
+    pitch~ f32 = -0.15f;
+
+    // Called once, after the engine has loaded the game. Define the inputs, set the look of the scene, load the world.
+    OnStart~: () -> void {
+        // An input is declared by name, then bound to devices. The game asks about the name, never about a key, so a
+        // player (or you) can rebind it later without touching the game.
+        lantern:::input:::DefineVector("move");
+        lantern:::input:::BindKeys("move", "W", "S", "A", "D");
+        lantern:::input:::BindStick("move", "Left", 1.0f);
+        lantern:::input:::DefineAxis("turn");
+        lantern:::input:::BindKeyAxis("turn", "Q", "E");
+        lantern:::input:::DefineAxis("rise");
+        lantern:::input:::BindKeyAxis("rise", "LeftShift", "Space");
+        lantern:::input:::DefineButton("quit");
+        lantern:::input:::BindKey("quit", "Escape");
+
+        // Materials: a world file's blocks name a material ("ground", "block"), and the engine looks up its texture when it
+        // builds them. Here each is one flat colour made on the spot, so the game needs no image files yet. Put a PNG in
+        // assets/textures and use lantern:::textures:::Load("textures/yours.png") instead when you have one.
+        lantern:::world:::SetMaterial("ground", lantern:::textures:::Checker(64, 8, "5E7F52", "4E6B43"));
+        lantern:::world:::SetMaterial("block", lantern:::textures:::Solid("C98B45"));
+
+        // The sky and the light. The sun is a direction, a colour, and the colours of the ambient light from above and below.
+        lantern:::renderer:::SetClearColor("87B5E0");
+        lantern:::renderer:::SetFog(60.0f, 200.0f);
+        sunDirection: lantern:::math:::Vec3 = { x: -0.4f, y: -1.0f, z: 0.3f };
+        lantern:::lights:::SetSun(sunDirection.Normalized(), "FFF1D6", "8FA9C9", "4A4538");
+
+        // The world: the entities in worlds/start.world.json. Open this file in the world editor (`lantern editor .`) to move
+        // them around, add more, and save.
+        lantern:::world:::Load("worlds/start.world.json");
+    }
+
+    // Called on every display frame, before drawing. `frameSeconds` is the real time since the last frame, so a speed in
+    // metres per second times it is the distance to move this frame.
+    OnUpdate~: (frameSeconds: f32) -> void {
+        if lantern:::input:::IsPressed("quit") {
+            lantern:::engine:::Quit();
+        }
+        yaw += lantern:::input:::Axis("turn") * 1.6f * frameSeconds;
+        forward: lantern:::math:::Vec3 = lantern:::math:::Vec3:::FromYaw(yaw);
+        right: lantern:::math:::Vec3 = { x: forward.z, y: 0.0f, z: -forward.x };
+        steer: lantern:::math:::Vec2 = lantern:::input:::Vector("move");
+        speed: f32 = 6.0f * frameSeconds;
+        eye = eye + forward * (steer.y * speed) + right * (steer.x * speed);
+        eye.y = eye.y + lantern:::input:::Axis("rise") * speed;
+    }
+
+    // Called once per drawn frame. This is the one place the camera is set, so nothing else can fight over it.
+    OnRender~: (alpha: f32, frameSeconds: f32) -> void {
+        forward: lantern:::math:::Vec3 = lantern:::math:::Vec3:::FromYaw(yaw);
+        target~ lantern:::math:::Vec3 = eye + forward * 4.0f;
+        target.y = target.y + pitch * 4.0f;
+        lantern:::camera:::LookAt(eye, target);
+        lantern:::overlay:::Text("WASD move   Q E turn   Shift Space down up   Esc quit", 16.0f, 16.0f, 2.0f, "FFFFFF");
+    }
+}

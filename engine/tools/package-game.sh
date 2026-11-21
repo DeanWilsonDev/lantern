@@ -13,12 +13,13 @@ game_directory="$(cd "$game_directory" && pwd)"
 built_program="$engine_directory/build/lantern"
 [[ -x "$built_program" ]] || { echo "the build left no program at $built_program" >&2; exit 1; }
 
-(cd "$engine_directory" && nox run --release --project tools/build-graphs >/dev/null && nox run --release --project tools/build-materials >/dev/null)
+(cd "$engine_directory" && nox run --release --project tools/build-graphs -- "$game_directory" >/dev/null && nox run --release --project tools/build-materials -- "$game_directory" >/dev/null)
 
 staging_directory="$(mktemp -d)"
 trap 'rm -rf "$staging_directory"' EXIT
 cp -R "$game_directory/." "$staging_directory/"
-rm -rf "$staging_directory/assets/silhouettes" "$staging_directory/assets/editor"
+rm -rf "$staging_directory/assets/silhouettes" "$staging_directory/assets/editor" "$staging_directory/build" "$staging_directory/mist_packages"
+rm -f "$staging_directory/lantern.project.json" "$staging_directory/mist.json" "$staging_directory/mist.local.json" "$staging_directory/README.md"
 find "$staging_directory" \( -name '*.calamus' -o -name '*.graph.json' -o -name '.editor-play*' \) -delete
 if find "$staging_directory" -name '*.calamus' | grep -q .; then
     echo "a Calamus file reached the package" >&2

@@ -1,0 +1,147 @@
+// Path text helpers for projects: making a path absolute, tidying `.` and `..`, and writing one path relative to another so
+// a project's manifest can say "../lantern" and keep working when both folders move together. Paths here are plain text with
+// `/` separators; Windows drive letters are not handled.
+lantern:::project :: namespace {
+    /**
+     * `path` with `.` and empty parts dropped and each `..` removing the part before it. An absolute path stays absolute.
+     */
+    NormalizedPath :: (path: string) -> string! {
+        isAbsolute: bool = path.startsWith("/");
+        parts: Array<string>! = path.split("/");
+        defer delete parts;
+        kept~ Array<string>! = [];
+        defer delete kept;
+        for part in parts {
+            if part.length() == 0 || part == "." {
+                continue;
+            }
+            if part == ".." {
+                if kept.length() > 0 && kept[kept.length() - 1] != ".." {
+                    kept.pop();
+                    continue;
+                }
+                if isAbsolute {
+                    continue;
+                }
+            }
+            kept.push(part);
+        }
+        joined: string! = "/".join(kept);
+        defer delete joined;
+        if isAbsolute {
+            return `/${joined}`;
+        }
+        if joined.length() == 0 {
+            return ".".copy();
+        }
+        return joined.copy();
+    }
+
+    /**
+     * The absolute, normalised form of `path`, taken relative to the current folder when it isn't absolute. Null when the
+     * current folder can't be read.
+     */
+    AbsolutePath :: (path: string) -> string!? {
+        if path.startsWith("/") {
+            return NormalizedPath(path);
+        }
+        when currentDirectory() {
+            Result:::Ok(folder) -> {
+                defer delete folder;
+                combined: string! = `${folder}/${path}`;
+                defer delete combined;
+                return NormalizedPath(combined);
+            },
+            Result:::Err(error) -> {
+                delete error;
+                return null;
+            }
+        }
+    }
+
+    /**
+     * `path` as seen from the folder `base`, both absolute and normalised: `../lantern`, or `.` when they're the same.
+     */
+    RelativePath :: (base: string, path: string) -> string! {
+        baseParts: Array<string>! = base.split("/");
+        defer delete baseParts;
+        pathParts: Array<string>! = path.split("/");
+        defer delete pathParts;
+        shared~ usize = 0;
+        while shared < baseParts.length() && shared < pathParts.length() && baseParts[shared] == pathParts[shared] {
+            shared++;
+        }
+        result~ Array<string>! = [];
+        defer delete result;
+        for index~ usize = shared; index < baseParts.length(); index++ {
+            if baseParts[index].length() > 0 {
+                result.push("..");
+            }
+        }
+        for index~ usize = shared; index < pathParts.length(); index++ {
+            if pathParts[index].length() > 0 {
+                result.push(pathParts[index]);
+            }
+        }
+        if result.length() == 0 {
+            return ".".copy();
+        }
+        return "/".join(result);
+    }
+
+    /**
+     * `relative` resolved against the folder `base`, or `relative` itself when it is already absolute.
+     */
+    ResolvedPath :: (base: string, relative: string) -> string! {
+        if relative.startsWith("/") {
+            return NormalizedPath(relative);
+        }
+        combined: string! = `${base}/${relative}`;
+        defer delete combined;
+        return NormalizedPath(combined);
+    }
+
+    /**
+     * The last part of a path: `/games/my-game` gives `my-game`.
+     */
+    LastPart :: (path: string) -> string! {
+        trimmed~ string = path;
+        while trimmed.length() > 1 && trimmed.endsWith("/") {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        if slash := trimmed.lastIndexOf("/") {
+            return `${trimmed.substring(slash + 1, trimmed.length() - slash - 1)}`;
+        }
+        return trimmed.copy();
+    }
+
+    /**
+     * A name written the way Mist wants a package name: lower case letters, digits and `-`, with other runs of characters
+     * collapsed to one `-`. A name with none gives `game`.
+     */
+    Slug :: (name: string) -> string! {
+        lowered: string! = name.toLower();
+        defer delete lowered;
+        slug~ string! = "";
+        pendingDash~ bool = false;
+        for index~ usize = 0; index < lowered.length(); index++ {
+            byte: u8 = lowered.byteAt(index);
+            isLetter: bool = byte >= 97 && byte <= 122;
+            isDigit: bool = byte >= 48 && byte <= 57;
+            if isLetter || isDigit {
+                if pendingDash && slug.length() > 0 {
+                    slug += "-";
+                }
+                pendingDash = false;
+                slug += `${lowered.substring(index, 1)}`;
+            } else {
+                pendingDash = true;
+            }
+        }
+        if slug.length() == 0 {
+            delete slug;
+            return "game".copy();
+        }
+        return slug!;
+    }
+}

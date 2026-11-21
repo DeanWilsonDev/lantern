@@ -1,0 +1,236 @@
+// `lantern project ...`: the command line over the project functions. Each command prints what it did, or the problem on
+// standard error, and returns the exit status (0 worked, 1 failed, 2 the command was used wrongly).
+lantern:::project :: namespace {
+    USAGE: string : "usage:\n  lantern project new DIRECTORY [--name NAME] [--template empty|platformer] [--engine PATH]\n  lantern project info [DIRECTORY]\n  lantern project check [DIRECTORY]\n  lantern project templates [--engine PATH]\n  lantern project rename [DIRECTORY] NAME\n  lantern project relink [DIRECTORY] ENGINE_PATH\n  lantern project duplicate SOURCE DESTINATION [--name NAME]\n  lantern project recent";
+
+    /**
+     * The value after a flag such as `--name`, or null when the flag isn't there or has no value. `from` is the first
+     * argument to look at.
+     */
+    FlagValue :: (arguments: Array<string>, from: usize, flag: string) -> string? {
+        for index~ usize = from; index + 1 < arguments.length(); index++ {
+            if arguments[index] == flag {
+                return arguments[index + 1];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The arguments that are neither a flag nor a flag's value, in order.
+     */
+    Positionals :: (arguments: Array<string>, from: usize) -> Array<string!>! {
+        found~ Array<string!>! = [];
+        index~ usize = from;
+        while index < arguments.length() {
+            if arguments[index].startsWith("--") {
+                index += 2;
+                continue;
+            }
+            found.push(arguments[index].copy());
+            index++;
+        }
+        return found!;
+    }
+
+    Fail :: (message: string) -> i32 {
+        printError(message);
+        return 1;
+    }
+
+    Misuse :: () -> i32 {
+        printError(USAGE);
+        return 2;
+    }
+
+    /**
+     * Runs `lantern project ...`. `arguments` is the whole command line, so `arguments[1]` is `project` and the command is
+     * `arguments[2]`.
+     */
+    RunProjectCommand :: (arguments: Array<string>) -> i32 {
+        if arguments.length() < 3 {
+            return Misuse();
+        }
+        command: string = arguments[2];
+        positionals~ Array<string!>! = Positionals(arguments, 3);
+        defer positionals.freeAll();
+        if command == "new" {
+            return NewCommand(arguments, positionals);
+        }
+        if command == "info" {
+            return InfoCommand(positionals);
+        }
+        if command == "check" {
+            return CheckCommand(positionals);
+        }
+        if command == "templates" {
+            return TemplatesCommand(arguments);
+        }
+        if command == "rename" {
+            return RenameCommand(positionals);
+        }
+        if command == "relink" {
+            return RelinkCommand(positionals);
+        }
+        if command == "duplicate" {
+            return DuplicateCommand(arguments, positionals);
+        }
+        if command == "recent" {
+            return RecentCommand();
+        }
+        return Misuse();
+    }
+
+    /**
+     * The engine folder a command should use: `LANTERN_ENGINE`, else `--engine`. Null when neither is given.
+     */
+    EngineForCommand :: (arguments: Array<string>) -> string!? {
+        flag: string = FlagValue(arguments, 3, "--engine") ?? "";
+        return EngineFromEnvironment(flag);
+    }
+
+    NewCommand :: (arguments: Array<string>, positionals: Array<string!>) -> i32 {
+        if positionals.length() != 1 {
+            return Misuse();
+        }
+        directory: string = positionals[0];
+        engineFound: string!? = EngineForCommand(arguments);
+        defer delete engineFound;
+        guard engineFolder := engineFound return Fail("no engine: set LANTERN_ENGINE or pass --engine PATH (the 'lantern' command does this for you)");
+        absoluteDirectory: string!? = AbsolutePath(directory);
+        defer delete absoluteDirectory;
+        if absoluteDirectory == null {
+            return Fail("can't find the current folder");
+        }
+        guard projectFolder := absoluteDirectory return 1;
+        lastPart: string! = LastPart(projectFolder);
+        defer delete lastPart;
+        name: string = FlagValue(arguments, 3, "--name") ?? lastPart;
+        templateName: string = FlagValue(arguments, 3, "--template") ?? "empty";
+        problem: string!? = CreateProject(projectFolder, name, templateName, engineFolder);
+        defer delete problem;
+        if message := problem {
+            return Fail(message);
+        }
+        RememberProject(projectFolder, name);
+        print(`created ${name} in ${projectFolder} from the ${templateName} template`);
+        print(`next:  cd ${projectFolder} && lantern run .`);
+        return 0;
+    }
+
+    /**
+     * The folder a command works on: its first positional, else the current folder, made absolute.
+     */
+    ProjectFolderArgument :: (positionals: Array<string!>, valueCount: usize) -> string!? {
+        if positionals.length() > valueCount {
+            return AbsolutePath(positionals[0]);
+        }
+        return AbsolutePath(".");
+    }
+
+    InfoCommand :: (positionals: Array<string!>) -> i32 {
+        folderFound: string!? = ProjectFolderArgument(positionals, 0);
+        defer delete folderFound;
+        guard folder := folderFound return Fail("can't find the current folder");
+        loaded := ProjectManifest:::Load(folder);
+        when loaded! {
+            Result:::Err(message) -> {
+                defer delete message;
+                return Fail(message);
+            },
+            Result:::Ok(manifest) -> {
+                defer delete manifest;
+                engineFolder: string! = ResolvedPath(folder, manifest->enginePath);
+                defer delete engineFolder;
+                print(`name:      ${manifest->name}`);
+                print(`folder:    ${folder}`);
+                print(`template:  ${manifest->template}`);
+                print(`created:   ${manifest->created}`);
+                print(`engine:    ${engineFolder}${IsEngineFolder(engineFolder) ? "" : " (not a Lantern checkout)"}`);
+                return 0;
+            }
+        }
+    }
+
+    CheckCommand :: (positionals: Array<string!>) -> i32 {
+        folderFound: string!? = ProjectFolderArgument(positionals, 0);
+        defer delete folderFound;
+        guard folder := folderFound return Fail("can't find the current folder");
+        problems~ Array<string!>! = CheckProject(folder);
+        defer problems.freeAll();
+        if problems.length() == 0 {
+            print(`${folder} is a sound project`);
+            return 0;
+        }
+        for problem in problems {
+            printError(problem);
+        }
+        return 1;
+    }
+
+    TemplatesCommand :: (arguments: Array<string>) -> i32 {
+        engineFound: string!? = EngineForCommand(arguments);
+        defer delete engineFound;
+        guard engineFolder := engineFound return Fail("no engine: set LANTERN_ENGINE or pass --engine PATH");
+        names~ Array<string!>! = TemplateNames(engineFolder);
+        defer names.freeAll();
+        for name in names {
+            print(name);
+        }
+        return 0;
+    }
+
+    RenameCommand :: (positionals: Array<string!>) -> i32 {
+        if positionals.length() < 1 || positionals.length() > 2 {
+            return Misuse();
+        }
+        folderFound: string!? = ProjectFolderArgument(positionals, 1);
+        defer delete folderFound;
+        guard folder := folderFound return Fail("can't find the current folder");
+        newName: string = positionals[positionals.length() - 1];
+        problem: string!? = RenameProject(folder, newName);
+        defer delete problem;
+        if message := problem {
+            return Fail(message);
+        }
+        print(`renamed to ${newName}`);
+        return 0;
+    }
+
+    RelinkCommand :: (positionals: Array<string!>) -> i32 {
+        if positionals.length() < 1 || positionals.length() > 2 {
+            return Misuse();
+        }
+        folderFound: string!? = ProjectFolderArgument(positionals, 1);
+        defer delete folderFound;
+        guard folder := folderFound return Fail("can't find the current folder");
+        problem: string!? = RelinkProject(folder, positionals[positionals.length() - 1]);
+        defer delete problem;
+        if message := problem {
+            return Fail(message);
+        }
+        print("relinked");
+        return 0;
+    }
+
+    DuplicateCommand :: (arguments: Array<string>, positionals: Array<string!>) -> i32 {
+        if positionals.length() != 2 {
+            return Misuse();
+        }
+        lastPart: string! = LastPart(positionals[1]);
+        defer delete lastPart;
+        name: string = FlagValue(arguments, 3, "--name") ?? lastPart;
+        problem: string!? = DuplicateProject(positionals[0], positionals[1], name);
+        defer delete problem;
+        if message := problem {
+            return Fail(message);
+        }
+        destinationFound: string!? = AbsolutePath(positionals[1]);
+        defer delete destinationFound;
+        if destination := destinationFound {
+            RememberProject(destination, name);
+        }
+        print(`copied ${positionals[0]} to ${positionals[1]} as ${name}`);
+        return 0;
+    }
+}
