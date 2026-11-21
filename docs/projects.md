@@ -95,6 +95,19 @@ editor scratch files (`.editor-play*`), `build/`, `mist_packages/`, `.git`, and 
 `RecentProjects.nox`, `ProjectPaths.nox` and `ProjectCommands.nox` (`lantern project ...`). Tests are in
 `engine/tests/project/`. The decisions are D-250 to D-256 in `decisions.md`.
 
+## In the editor
+
+The world editor works on one project at a time. `lantern editor FOLDER` (or `mist run editor FOLDER` inside a project)
+opens it on that project's assets. The File menu has:
+
+- **New Project…**: asks for a name, a parent folder (Browse… opens a folder picker) and a template, then makes the folder
+  and switches the editor to it.
+- **Open Project…**: a folder picker; the folder must hold a `game.json`.
+- **Recent: NAME**: the five projects opened last. A folder that has gone is dropped from the list.
+- **Project Settings…**: rename, relink the engine, check and duplicate the project.
+
+Switching asks about unsaved changes first, then closes the window and opens a new one on the other project.
+
 ## Not done yet
 
 - Pinning an engine version, and an installed engine for people who don't keep a checkout (both open questions on the

@@ -2012,6 +2012,10 @@ Provisional (2026-11-21): not reviewed by Dean. `empty` (`engine/templates/empty
 
 Provisional (2026-11-21): not reviewed by Dean. `recent-projects.json` in `~/Library/Application Support/lantern` on macOS, `$XDG_CONFIG_HOME/lantern` or `~/.config/lantern` on Linux and `%APPDATA%\lantern` on Windows (`LANTERN_CONFIG_DIRECTORY` overrides it). It keeps the last ten project folders, newest first, each with the name it had when it was opened, and drops entries whose folder is gone when the list is read. It is shared by the CLI and the editor.
 
-## D-256: The editor switches project by rebuilding its editor object in the same process
+## D-256: The editor switches project by ending its window loop and starting the editor again
 
-Provisional (2026-11-21): not reviewed by Dean. The editor's `Editor` object is made from an assets folder (and the engine folder, for its interface files, font and shaders), so opening another project means making a new one. The host loop treats "open this project" as a request, closes the interface, makes the editor again and goes round once more, so the window stays and the person never has to restart. Unsaved changes get the usual confirmation first.
+Provisional (2026-11-21): not reviewed by Dean. The editor's `Editor` object is made from an assets folder (and the engine folder, for its interface files, font and shaders), so opening another project means making a new one. The host loop treats "open this project" as a request, ends the window loop, makes the editor again and opens a new window on the new project, so the person never has to restart the program. Unsaved changes get the usual confirmation first.
+
+## D-257: Folder pickers use the file dialog request with the filter name "folder"
+
+Provisional (2026-11-21): not reviewed by Dean. The bridge's window requests carry a file dialog with a filter name but no folder flag. The editor's `FileDialogs.nox` treats the filter name `folder` as a request for SDL's open-folder dialog, so the project dialogs call `penumbra:::showOpenFileDialog("folder", "", start)` and need no bridge change. A real folder field in the bridge is the cleaner end state and would be its own cross-repo card.

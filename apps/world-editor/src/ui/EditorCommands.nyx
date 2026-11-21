@@ -47,6 +47,10 @@ public:
             "play" -> { editorPlay(); },
             "stop" -> { editorStopPlay(); },
             "settings" -> this.overlays.OpenSettings(),
+            "newProject" -> this.overlays.OpenProject("new"),
+            "projectSettings" -> this.overlays.OpenProject("settings"),
+            "duplicateProject" -> this.overlays.OpenProject("duplicate"),
+            "openProject" -> this.WhenSaved(command, () -> { this.ShowDialog("openProject"); }),
             "commandPalette" -> this.overlays.OpenPalette(),
             "undo" -> { editorUndo(); },
             "redo" -> { editorRedo(); },
@@ -119,6 +123,7 @@ public:
             "help" -> this.overlays.ShowHelp(argument),
             "tool" -> { editorSetTool(argument); },
             "openRecent" -> this.OpenRecent(EditorModel:::HexDigit(argument, 0)),
+            "openProjectRecent" -> this.OpenRecentProject(EditorModel:::HexDigit(argument, 0)),
             "bookmarkSet" -> { editorSetBookmark(EditorModel:::HexDigit(argument, 0)); },
             "bookmarkGo" -> { editorGoToBookmark(EditorModel:::HexDigit(argument, 0)); },
             (other) -> {}
@@ -146,6 +151,7 @@ public:
         when command {
             "new" -> { editorNewWorld("untitled"); },
             "open" -> this.ShowDialog("open"),
+            "openProject" -> this.ShowDialog("openProject"),
             "quit" -> this.Quit(),
             default -> this.RunPrefixedCommand(command)
         }
@@ -169,6 +175,8 @@ public:
         guard path != "" return;
         when kind {
             "open" -> { editorOpen(path); },
+            "openProject" -> { this.OpenProjectFolder(path); },
+            "projectParent" -> { this.overlays.projectParent = path; },
             "saveAs" -> { editorSaveAs(path); },
             default -> {
                 if kind.startsWith(SAVE_AS_THEN) && editorSaveAs(path) {
@@ -197,10 +205,15 @@ public:
     }
 
     // Opens the open or save dialog, starting at the level's file or the worlds folder. Only one dialog
-    // at a time.
+    // at a time. The two project kinds ask for a folder instead of a file: "openProject" to switch to it, and
+    // "projectParent" to choose where a new or copied project goes (the answer lands on the overlays).
     ShowDialog~: (kind: string) -> void {
         guard this.pendingDialog == "" return;
         this.pendingDialog = kind;
+        if kind == "openProject" || kind == "projectParent" {
+            penumbra:::showOpenFileDialog("folder", "", kind == "projectParent" ? this.overlays.projectParent : projectDefaultParent());
+            return;
+        }
         start := editorDocumentPath() == "" ? WorldsDirectory() : editorDocumentPath();
         if kind == "open" {
             penumbra:::showOpenFileDialog("World files", "json", start);
@@ -215,6 +228,26 @@ public:
         guard index < recentFiles.length() return;
         path := recentFiles[index];
         this.WhenSaved(`openRecent:${index}`, () -> { editorOpen(path); });
+    }
+
+    // Opens the numbered entry of the recent projects list, after the save question if needed.
+    OpenRecentProject~: (index: i32) -> void {
+        guard i64(index) < projectRecentCount() return;
+        path := projectRecentPath(i64(index));
+        this.WhenSaved(`openProjectRecent:${index}`, () -> { this.OpenProjectFolder(path); });
+    }
+
+    // Switches the editor to the project in a folder. A folder that isn't a game project is reported on the status line
+    // and forgotten from the recent list; otherwise the window closes and an editor starts on the project.
+    OpenProjectFolder~: (path: string) -> void {
+        problem := projectOpen(path);
+        guard problem != "" return;
+        projectShowProblem(problem);
+    }
+
+    // Opens the project dialog's folder picker, for the folder a new or copied project goes in.
+    PickProjectParent~: () -> void {
+        this.ShowDialog("projectParent");
     }
 
     // Saves the preferences and asks the application to quit.

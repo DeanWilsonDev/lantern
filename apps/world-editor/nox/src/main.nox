@@ -41,6 +41,8 @@ PreviewRenderer :: import lantern:::worldeditor:::viewports:::PreviewRenderer;
 EntityRenderer :: import lantern:::worldeditor:::viewports:::EntityRenderer;
 GraphRenderer :: import lantern:::worldeditor:::viewports:::GraphRenderer;
 GraphFunctions :: import lantern:::worldeditor:::graphfunctions;
+ProjectFunctions :: import lantern:::worldeditor:::projectfunctions;
+ProjectSession :: import lantern:::project:::ProjectSession;
 ThumbnailRenderer :: import lantern:::worldeditor:::viewports:::ThumbnailRenderer;
 
 // The C library's setenv, to set an environment variable before the renderer starts.
@@ -169,7 +171,7 @@ lantern:::worldeditor :: namespace {
     // Registers every function the editor's Nyx code can call: the editor's own (EditorFunctions), the
     // preview ones and the frame time ones (FrameTimeFunctions). Prints the reason and returns false if any
     // registration fails.
-    RegisterHostFunctions :: (runtime: Runtime~*, editorInstance: raw Editor~*, renderers: EditorRenderers~*, frameTimes: raw FrameTimes~*) -> bool {
+    RegisterHostFunctions :: (runtime: Runtime~*, editorInstance: raw Editor~*, renderers: EditorRenderers~*, frameTimes: raw FrameTimes~*, projectState: raw ProjectSession~*) -> bool {
         failure~ NyxError*!? = EditorFunctions:::RegisterEditorFunctions(runtime, editorInstance);
         unsafe {
             previewPointer: raw PreviewRenderer~* = renderers->preview;
@@ -179,6 +181,7 @@ lantern:::worldeditor :: namespace {
         }
         failure = HostFunctions:::FirstFailure(failure!, GraphFunctions:::RegisterGraphFunctions(runtime, editorInstance));
         failure = HostFunctions:::FirstFailure(failure!, FrameTimeFunctions:::RegisterFrameTimeFunctions(runtime, frameTimes));
+        failure = HostFunctions:::FirstFailure(failure!, ProjectFunctions:::RegisterProjectFunctions(runtime, projectState, editorInstance));
         if failure != null {
             print("registering the editor's host functions failed:");
             PrintFailure(failure!);
@@ -201,13 +204,17 @@ lantern:::worldeditor :: namespace {
     // interface's code against the real names.
     WriteHostSurface :: (outputPath: string) -> i32 {
         UseBuiltShaderDirectory();
-        editorInstance~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, "");
+        projectSession := ProjectSession:::ForSample();
+        defer delete projectSession;
+        editorInstance~ Editor*! = Api:::Create(projectSession->assets, "");
         defer delete editorInstance;
         runtime := new Runtime();
         defer delete runtime;
         editorPointer~ raw Editor~* = null;
+        projectPointer~ raw ProjectSession~* = null;
         unsafe {
             editorPointer = editorInstance;
+            projectPointer = projectSession;
         }
         renderers := new EditorRenderers(editorPointer);
         defer delete renderers;
@@ -217,7 +224,7 @@ lantern:::worldeditor :: namespace {
         unsafe {
             frameTimesPointer = frameTimes;
         }
-        guard RegisterHostFunctions(runtime, editorPointer, renderers, frameTimesPointer) == true return 1;
+        guard RegisterHostFunctions(runtime, editorPointer, renderers, frameTimesPointer, projectPointer) == true return 1;
         fonts := new SdlFonts(Paths:::FONT_PATH);
         defer delete fonts;
         host := new BridgeHost(runtime->handle, Paths:::UI_DIRECTORY, fonts);
@@ -290,17 +297,21 @@ lantern:::worldeditor :: namespace {
     }
 
     // Creates the editor, the script runtime and the renderers, registers the host functions and runs the
-    // window. Everything is released when it returns. The argument is the level to open (empty for the
-    // default).
-    RunEditor :: (worldPath: string) -> i32 {
+    // window. Everything is released when it returns. The project says which assets to edit and which level
+    // to open first (`worldPath` overrides that when it isn't empty). It returns when the window closes or when
+    // the person asks to open another project, which is left in `projectSession->openRequest`.
+    RunEditor :: (projectSession: ProjectSession~*, worldPath: string) -> i32 {
         UseBuiltShaderDirectory();
-        editorInstance~ Editor*! = Api:::Create(Paths:::ASSETS_DIRECTORY, worldPath);
+        firstWorld: string = worldPath.length() > 0 ? worldPath : projectSession->startingWorld;
+        editorInstance~ Editor*! = Api:::Create(projectSession->assets, firstWorld);
         defer delete editorInstance;
         runtime := new Runtime();
         defer delete runtime;
         editorPointer~ raw Editor~* = null;
+        projectPointer~ raw ProjectSession~* = null;
         unsafe {
             editorPointer = editorInstance;
+            projectPointer = projectSession;
         }
         status~ i32 = 0;
         {
@@ -312,8 +323,8 @@ lantern:::worldeditor :: namespace {
             unsafe {
                 frameTimesPointer = frameTimes;
             }
-            guard RegisterHostFunctions(runtime, editorPointer, renderers, frameTimesPointer) == true return 1;
-            status = RunWindow(runtime, renderers, frameTimes);
+            guard RegisterHostFunctions(runtime, editorPointer, renderers, frameTimesPointer, projectPointer) == true return 1;
+            status = RunWindow(runtime, renderers, frameTimes, projectSession);
         }
         return status;
     }
@@ -326,10 +337,12 @@ lantern:::worldeditor :: namespace {
     // redraws every frame, never only on a change, so the frame time is the cost of a whole redraw. Each
     // frame it also times itself from the start of the last frame (see FrameTimes) and makes the window's
     // vertical sync match what the interface asked for, which starts as LANTERN_VSYNC says.
-    RunWindow :: (runtime: Runtime~*, renderers: EditorRenderers~*, frameTimes: FrameTimes~*) -> i32 {
+    RunWindow :: (runtime: Runtime~*, renderers: EditorRenderers~*, frameTimes: FrameTimes~*, projectSession: ProjectSession*) -> i32 {
         window := new SdlWindow();
         defer delete window;
-        guard window->Open("Lantern World Editor", WINDOW_LOGICAL_WIDTH, WINDOW_LOGICAL_HEIGHT) == true return 1;
+        windowTitle: string! = WindowTitle(projectSession);
+        defer delete windowTitle;
+        guard window->Open(windowTitle, WINDOW_LOGICAL_WIDTH, WINDOW_LOGICAL_HEIGHT) == true return 1;
         ApplyVerticalSync(window, frameTimes);
         fonts := new SdlFonts(Paths:::FONT_PATH);
         defer delete fonts;
@@ -393,7 +406,7 @@ lantern:::worldeditor :: namespace {
         frameCount~ u64 = 0;
         rootConsumedInput~ bool = false;
         frameStartNanoseconds~ u64 = NowNanoseconds();
-        while !host->quitRequested {
+        while !host->quitRequested && projectSession->openRequest == null {
             nowNanoseconds: u64 = NowNanoseconds();
             frameTimes->RecordFrame(f64(nowNanoseconds - frameStartNanoseconds) / 1000000000.0f);
             frameStartNanoseconds = nowNanoseconds;
@@ -446,6 +459,81 @@ lantern:::worldeditor :: namespace {
         return 0;
     }
 
+    // Gives back the project in `folder` in place of `current`, which it deletes. When the folder can't be opened it
+    // prints why and gives `current` back with `openFailed` set, so the caller can stop.
+    SwitchProject :: (current: ProjectSession*!, folder: string) -> ProjectSession*! {
+        loaded := ProjectSession:::ForFolder(folder);
+        when loaded! {
+            Result:::Ok(opened) -> {
+                delete current;
+                return opened!;
+            },
+            Result:::Err(message) -> {
+                print(message);
+                delete message;
+                current->openFailed = true;
+                return current!;
+            }
+        }
+    }
+
+    // The window's title: the project's name and the editor's, so several windows can be told apart.
+    WindowTitle :: (projectSession: ProjectSession*) -> string! {
+        return `${projectSession->name} - Lantern World Editor`;
+    }
+
+    // Starts the editor on what the command line names, then on each project the person opens from inside it.
+    // Returns the exit status of the last window.
+    RunEditorProjects :: (arguments: Array<string>) -> i32 {
+        worldPath~ string = "";
+        projectSession~ ProjectSession*! = ProjectSession:::ForSample();
+        if arguments.length() > 1 {
+            if directoryExists(arguments[1]) {
+                firstLoad := ProjectSession:::ForFolder(arguments[1]);
+                when firstLoad! {
+                    Result:::Ok(opened) -> {
+                        delete projectSession;
+                        projectSession = opened!;
+                        lantern:::project:::RememberProject(projectSession->folder, projectSession->name);
+                    },
+                    Result:::Err(message) -> {
+                        print(message);
+                        delete message;
+                        delete projectSession;
+                        return 1;
+                    }
+                }
+            } else {
+                worldPath = arguments[1];
+            }
+        }
+        status~ i32 = 0;
+        while true {
+            status = RunEditor(projectSession, worldPath);
+            worldPath = "";
+            if status != 0 {
+                break;
+            }
+            nextFolder~ string!? = null;
+            if pending := projectSession->openRequest {
+                nextFolder = pending.copy();
+            }
+            if nextFolder == null {
+                break;
+            }
+            if folder := nextFolder {
+                projectSession = SwitchProject(projectSession!, folder);
+            }
+            delete nextFolder;
+            if projectSession->openFailed {
+                status = 1;
+                break;
+            }
+        }
+        delete projectSession;
+        return status;
+    }
+
     // The current time from SDL, in nanoseconds.
     NowNanoseconds :: () -> u64 {
         now~ u64 = 0;
@@ -477,14 +565,12 @@ lantern:::worldeditor :: namespace {
     }
 }
 
-// `--host-surface FILE` writes the host function manifest; any other argument is a level to open; with
-// no argument the editor opens its default level.
+// `--host-surface FILE` writes the host function manifest. A folder with a game.json is a game project to edit. Any other
+// argument is a level to open in the platformer sample; with no argument the editor opens the sample's default level. When
+// the person opens or makes a project in the editor, the window closes and the loop here starts an editor on the new one.
 main :: (arguments: Array<string>) -> i32 {
     if arguments.length() == 3 && arguments[1] == "--host-surface" {
         return lantern:::worldeditor:::WriteHostSurface(arguments[2]);
     }
-    if arguments.length() > 1 {
-        return lantern:::worldeditor:::RunEditor(arguments[1]);
-    }
-    return lantern:::worldeditor:::RunEditor("");
+    return lantern:::worldeditor:::RunEditorProjects(arguments);
 }
