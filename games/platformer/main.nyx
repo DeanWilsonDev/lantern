@@ -140,8 +140,9 @@ public:
         ui.SetStatus(state == GameState:::MainMenu ? "" : `${rules.statusText}${minigames.StatusSuffix(level.wordTokens.length(), level.foodStalls.length())}${photoMode.StatusSuffix()}`);
         ui.SetAlbum(rules.isLevelComplete ? photoMode.AlbumText() : "");
         photoMode.Publish(ui);
-        ui.SetMessage(rules.IsShowingMessage() ? rules.message : "");
-        ui.SetHint(rules.IsShowingMessage() ? "" : HintText());
+        isCardUp := rules.IsShowingMessage() && rules.isMessageCard;
+        ui.SetCard(isCardUp ? rules.message : "");
+        ui.SetHint(CornerBoxText());
         ui.SetDebugHudOn(lantern:::debug:::IsHudVisible());
         PublishDebugValues();
     }
@@ -695,6 +696,16 @@ private:
     }
 
     // The line under the status: the nearest sign, else what F would do right now, else what is missing at the goal.
+    // The one line the bottom right box shows: a message from the rules or the partner, else the
+    // viewfinder's line in photo mode, else the hint for what the player is standing near. A card
+    // (level complete) is centred instead, so the box is empty then.
+    CornerBoxText :: () -> string {
+        if rules.IsShowingMessage() {
+            return rules.isMessageCard ? "" : rules.message;
+        }
+        return photoMode.isActive ? ui.photoHint : HintText();
+    }
+
     HintText :: () -> string {
         guard state == GameState:::Playing return "";
         feet := player.FeetPosition();
@@ -926,6 +937,8 @@ private:
         }
         lantern:::debug:::SetValue("Glow/Companion light", companionGlow.isOn ? `${companionGlow.position.x:.1f}, ${companionGlow.position.y:.1f}, ${companionGlow.position.z:.1f}` : "off");
         lantern:::debug:::SetValue("Game/Message", rules.IsShowingMessage() ? rules.message : "");
+        lantern:::debug:::SetValue("Game/Card", ui.card);
+        lantern:::debug:::SetValue("Game/Corner box", CornerBoxText());
         watcherNumber~ i32 = 0;
         for watcher in level.watchers {
             lantern:::debug:::SetValue(`Watcher/${watcherNumber:d}`, watcher.isLured ? "lured" : "sweeping");
