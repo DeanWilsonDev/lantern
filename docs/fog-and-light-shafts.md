@@ -39,11 +39,16 @@ When the sun is low behind trees, buildings or hills, the haze lights up in stre
 this on the screen:
 
 1. Find where the sun is on the screen (not drawn if it is behind the camera, with a smooth fade).
-2. For each pixel, walk 24 steps towards that point.
+2. For each pixel, walk 24 steps towards that point, starting a different fraction of a step along for each pixel.
 3. At each step, read the depth buffer. If it is the far plane, the step saw open sky, which means sunlight reaches the
    camera along this line. Each step counts a little less than the last (`lightShaftDecay`).
 4. The share of steps that saw sky, times the strength, times how directly the pixel looks at the sun, is sunlight added to
    the pixel.
+
+Each pixel starts its walk a different fraction of a step along, from a hash of its screen position (interleaved gradient
+noise). If every pixel started at the same place, they would all sample at the same spacing, an object would be seen
+only at whole steps, and its outline would repeat as a stack of ghost copies one step apart across the sky. The start
+offset turns those copies into fine grain, which the eye averages into a smooth fade.
 
 A pixel whose line to the sun is blocked by a pillar sees no sky on the way and gets nothing, which is the dark gap between
 shafts. Only the depth buffer is read, so it needs no extra shadow work, and the sun's disc doesn't have to be on screen.
