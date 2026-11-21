@@ -8,6 +8,10 @@ Playing and judging each room is the point; [`playtest-checklist.md`](playtest-c
 Everything here is Nyx game code over the API in [`game-api.md`](game-api.md). Where the engine can't do something,
 the workaround is named in the code and the gap is a card on `engine-follow-ups`.
 
+> **Direction update (2026-11-21):** Dean's Finding Her doc, [`finding-her.md`](finding-her.md), leans away from a platformer and toward
+> searching as the core mechanic. Where this page's direction and that one disagree, that one wins; this page stays as the
+> record of the rooms and ideas that were built. The new prototypes are in [`finding-her-prototypes.md`](finding-her-prototypes.md).
+
 > After the first play-test the direction moved toward an action adventure with grounded movement; the newer prototypes
 > (the climb, the word market and the station) are in [`grounded-adventure.md`](grounded-adventure.md).
 

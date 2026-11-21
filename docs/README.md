@@ -26,6 +26,8 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`gameplay-prototypes.md`](gameplay-prototypes.md) | Twelve gameplay ideas, the companion's command model, the six prototype rooms, the crossing level and every tunable. |
 | [`grounded-adventure.md`](grounded-adventure.md) | The grounded feel, player-only climbing, the word and food minigames, the station and its trains, and every tunable. |
 | [`grounded-adventure-ideas.md`](grounded-adventure-ideas.md) | Five more ideas to test for the action-adventure direction, with how each would be fun and what it costs. |
+| [`finding-her.md`](finding-her.md) | Dean's gameplay direction: searching as the core mechanic, the chapters, and the four open questions. |
+| [`finding-her-prototypes.md`](finding-her-prototypes.md) | The five Finding Her rooms, the search system, the call, look and vantage, the swap constants and every tunable. |
 | [`playtest-checklist.md`](playtest-checklist.md) | What to try in each prototype room, with and without her, and what to note. |
 | [`screenshot-tests.md`](screenshot-tests.md) | Comparing fixed scenes with reference screenshots on the software renderer: the command, updating references, tolerance, adding a scene. |
 | [`night-look.md`](night-look.md) | Why the platformer is played at night, the moon, sky and lamps that make it readable, and the day look. |

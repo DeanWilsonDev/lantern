@@ -54,8 +54,14 @@ public:
         RemoveLights();
         lantern:::audio:::SetBusVolume("ambience", 1.0f);
         isActive = site.hasSearch;
-        ResetState(levelChapter, herPresent);
+        ResetState(levelChapter, herPresent && !site.startsSearching);
+        hasHer = herPresent;
+        if herPresent && site.startsSearching {
+            pendingNote = site.herAnswers ? "She is somewhere in the crowd. Call (Q)." : "She is just there, past the thorns. Call her (Q).";
+        }
         guard isActive;
+        answersAllowed = site.herAnswers;
+        restingGlow = Math:::max(FindingHerTuning:::PULSE_RESTING_STRENGTH, site.herGlowStrength);
         player.SetMood(FindingHerTuning:::WalkScale(chapter), FindingHerTuning:::Slump(chapter));
         pulseLight = lantern:::lights:::AddPoint(lantern:::math:::Vec3:::Zero(), FindingHerTuning:::PULSE_COLOR, 0.0f, FindingHerTuning:::PULSE_RANGE);
         lantern:::lights:::SetShadows(pulseLight, false);
@@ -72,7 +78,7 @@ public:
         for memory~ MemorySpot in site.memories {
             memory.wasVisited = false;
         }
-        ResetState(chapter, hasHer);
+        ResetState(chapter, hasHer && !site.startsSearching);
     }
 
     // Gives back what Start made when the game leaves the level for another.
@@ -111,6 +117,11 @@ public:
         return said;
     }
 
+    // True once a held hand has slipped away (the cable car).
+    HasSlipped :: () -> bool {
+        return isSlipped;
+    }
+
     // For the debug HUD.
     PhaseName :: () -> string {
         return when phase <SearchPhase> {
@@ -147,7 +158,7 @@ public:
         site.MoveCrowd(avoid, phase == SearchPhase:::Separated ? FindingHerTuning:::SURGE_SPEED_MULTIPLIER : 1.0f, time, dt);
         VisitMemories(site, feet);
         when phase <SearchPhase> {
-            Together -> { StepTogether(site, player, partner, feet, dt); },
+            Together -> { StepTogether(site, player, partner, feet, isStill, dt); },
             Separated -> { StepSeparated(site, partner, feet, dt); },
             Searching -> { StepSearching(site, partner, feet, isStill, dt); },
             Found -> { StepFound(partner, feet, dt); },
@@ -166,6 +177,8 @@ private:
         chapter = levelChapter;
         hasHer = herPresent;
         phase = herPresent ? SearchPhase:::Together : SearchPhase:::Searching;
+        isSlipped = false;
+        slipHeldSeconds = 0.0f;
         isHoldingHands = false;
         isLooking = false;
         lookAmount = 0.0f;
@@ -190,6 +203,10 @@ private:
     }
 
     chapter~ i32 = 0;
+    restingGlow~ f32 = 0.0f;
+    answersAllowed~ bool = true;
+    isSlipped~ bool = false;
+    slipHeldSeconds~ f32 = 0.0f;
     answerSecondsLeft~ f32 = -1.0f;
     callCooldownSeconds~ f32 = 0.0f;
     secondsSinceCall~ f32 = 0.0f;
@@ -214,7 +231,7 @@ private:
 
     ReadInputs~: (isInputEnabled: bool, feet: lantern:::math:::Vec3, partner: Partner, dt: f32) -> void {
         isLooking = isInputEnabled && phase != SearchPhase:::Ended && lantern:::input:::IsHeld(InputSettings:::FOCUS);
-        wantsHold := isInputEnabled && hasHer && phase == SearchPhase:::Together && lantern:::input:::IsHeld(InputSettings:::HOLD_HANDS);
+        wantsHold := isInputEnabled && hasHer && !isSlipped && phase == SearchPhase:::Together && lantern:::input:::IsHeld(InputSettings:::HOLD_HANDS);
         distance := hasHer ? (partner.position - feet).Horizontal().Length() : 1000.0f;
         if wantsHold && (isHoldingHands || distance < FindingHerTuning:::HAND_REACH_DISTANCE) && distance < FindingHerTuning:::HAND_BREAK_DISTANCE {
             isHoldingHands = true;
@@ -232,7 +249,7 @@ private:
             secondsSinceCall = 0.0f;
             quietSeconds = 0.0f;
             delay := FindingHerTuning:::AnswerDelaySeconds(chapter);
-            if hasHer && delay >= 0.0f && answerSecondsLeft < 0.0f {
+            if hasHer && answersAllowed && delay >= 0.0f && answerSecondsLeft < 0.0f {
                 answerSecondsLeft = delay;
             }
         }
@@ -256,7 +273,7 @@ private:
             lantern:::lights:::SetColor(pulseLight, FindingHerTuning:::PULSE_COLOR, 0.0f);
             return;
         }
-        strength := FindingHerTuning:::PULSE_RESTING_STRENGTH + lookAmount * (FindingHerTuning:::PULSE_LOOKING_STRENGTH - FindingHerTuning:::PULSE_RESTING_STRENGTH) + pulseAmount * FindingHerTuning:::PULSE_STRENGTH;
+        strength := restingGlow + lookAmount * (FindingHerTuning:::PULSE_LOOKING_STRENGTH - restingGlow) + pulseAmount * FindingHerTuning:::PULSE_STRENGTH;
         lift: lantern:::math:::Vec3 = { x: 0.0f, y: 1.4f, z: 0.0f };
         lantern:::lights:::Move(pulseLight, partner.position + lift);
         lantern:::lights:::SetColor(pulseLight, FindingHerTuning:::PULSE_COLOR, strength);
@@ -299,7 +316,7 @@ private:
 
     // Together: she is beside you. Loose, she keeps FREE_OFFSET away and only follows when you pull ahead; holding hands, she
     // keeps HAND_OFFSET and your pace exactly. Entering the separation marker's radius starts the surge.
-    StepTogether~: (site~ SearchSite, player~ Player, partner~ Partner, feet: lantern:::math:::Vec3, dt: f32) -> void {
+    StepTogether~: (site~ SearchSite, player~ Player, partner~ Partner, feet: lantern:::math:::Vec3, isStill: bool, dt: f32) -> void {
         velocity := player.controller.Velocity().Horizontal();
         if velocity.Length() > 0.3f {
             direction := velocity.Normalized();
@@ -313,6 +330,21 @@ private:
         head: lantern:::math:::Vec3 = { x: feet.x, y: feet.y + 1.6f, z: feet.z };
         partner.Direct(spot, shouldMove, Math:::clamp(pace, 0.2f, 3.0f), head, dt);
         ShowLink(partner, feet);
+        if site.hasSlip && !isSlipped {
+            if isHoldingHands && (site.slipPoint - feet).Horizontal().Length() < site.slipRadius {
+                slipHeldSeconds += dt;
+                if slipHeldSeconds >= site.slipSeconds {
+                    isSlipped = true;
+                    isHoldingHands = false;
+                    pendingNote = "Her hand slips out of yours. However hard you hold.";
+                }
+            }
+        }
+        if isSlipped {
+            StandHer(partner, feet, dt);
+            EndByRule(site, feet, isStill, dt);
+            return;
+        }
         if site.hasSeparation && (site.separationPoint - feet).Horizontal().Length() < FindingHerTuning:::SEPARATION_RADIUS {
             phase = SearchPhase:::Separated;
             isHoldingHands = false;
@@ -324,7 +356,7 @@ private:
 
     // Separated: the crowd runs faster, her hand is gone, and she is carried to her first hiding place.
     StepSeparated~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, dt: f32) -> void {
-        WalkHerToHiding(site, partner, feet, FindingHerTuning:::SURGE_HER_SPEED, dt);
+        WalkHerToHiding(site, partner, feet, 0, FindingHerTuning:::SURGE_HER_SPEED, dt);
         surgeSecondsLeft -= dt;
         if surgeSecondsLeft <= 0.0f {
             phase = SearchPhase:::Searching;
@@ -336,13 +368,28 @@ private:
     // level ends by the chapter's rule.
     StepSearching~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, isStill: bool, dt: f32) -> void {
         if !hasHer {
-            StepAlone(site, feet, isStill, dt);
+            EndByRule(site, feet, isStill, dt);
             return;
         }
-        WalkHerToHiding(site, partner, feet, 0.55f, dt);
+        if !site.herAnswers {
+            LeaveHer(site, partner, feet, dt);
+            EndByRule(site, feet, isStill, dt);
+            return;
+        }
+        WalkHerToHiding(site, partner, feet, 0, 0.55f, dt);
         if (partner.position - feet).Horizontal().Length() < FindingHerTuning:::FOUND_DISTANCE {
             phase = SearchPhase:::Found;
             pendingNote = "There you are!";
+        }
+    }
+
+    // She does not answer: she stands where she is, and once a call has gone unanswered she walks away, slowly, to her second
+    // place if the level has one.
+    LeaveHer~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, dt: f32) -> void {
+        if callsMade > 0 && site.herSpots.length() > 1 {
+            WalkHerToHiding(site, partner, feet, 1, 0.45f, dt);
+        } else {
+            StandHer(partner, feet, dt);
         }
     }
 
@@ -363,13 +410,13 @@ private:
     }
 
     // Walks her to the first hiding place and stands her there. A level with no hiding place keeps her where she is.
-    WalkHerToHiding~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, speedMultiple: f32, dt: f32) -> void {
+    WalkHerToHiding~: (site~ SearchSite, partner~ Partner, feet: lantern:::math:::Vec3, spotIndex: i32, speedMultiple: f32, dt: f32) -> void {
         if site.herSpots.length() == 0 {
             head: lantern:::math:::Vec3 = { x: feet.x, y: feet.y + 1.6f, z: feet.z };
             partner.Direct(partner.position, false, 1.0f, head, dt);
             return;
         }
-        spot := site.herSpots[0];
+        spot := site.herSpots[Math:::min(spotIndex, site.herSpots.length() - 1)];
         arriveGap := (spot - partner.position).Horizontal().Length();
         hasArrived = arriveGap < FindingHerTuning:::HIDING_ARRIVE_DISTANCE;
         away: lantern:::math:::Vec3 = { x: spot.x + (spot.x - feet.x), y: spot.y + 1.2f, z: spot.z + (spot.z - feet.z) };
@@ -386,21 +433,22 @@ private:
         }
     }
 
-    // Chapter 5: nobody to find. Either stand still after calling (the doc's stronger ending) or reach the exit.
-    StepAlone~: (site~ SearchSite, feet: lantern:::math:::Vec3, isStill: bool, dt: f32) -> void {
-        if FindingHerTuning:::CHAPTER_FIVE_ENDS_ON_STILLNESS {
+    // A search with nobody to find, or nobody who answers. Either stand still after calling (the doc's stronger ending) or
+    // reach the exit marker; which one is the level's `ends_on`.
+    EndByRule~: (site~ SearchSite, feet: lantern:::math:::Vec3, isStill: bool, dt: f32) -> void {
+        if site.endsOnStillness {
             if isStill && !isLooking {
                 quietSeconds += dt;
             } else {
                 quietSeconds = 0.0f;
             }
-            if callsMade >= FindingHerTuning:::ENDING_MINIMUM_CALLS && memoriesVisited > 0 && quietSeconds >= FindingHerTuning:::ENDING_STILL_SECONDS {
-                End("You stop calling. The crowd goes past.");
+            if callsMade >= site.endingCalls && memoriesVisited >= site.requiredMemories && quietSeconds >= FindingHerTuning:::ENDING_STILL_SECONDS {
+                End(site.endingLine != "" ? site.endingLine : "You stop calling. The crowd goes past.");
             }
         } else {
             for memory: MemorySpot in site.memories {
                 if memory.isExit && (memory.position - feet).Horizontal().Length() < FindingHerTuning:::EXIT_REACH_DISTANCE {
-                    End("You leave. The crowd goes on.");
+                    End(site.endingLine != "" ? site.endingLine : "You reach the end of it. Nobody was waiting.");
                 }
             }
         }
