@@ -1,0 +1,125 @@
+lantern :: import lantern;
+
+lantern:::testcalls :: foreign "c" {
+    unsetenv :: (name: string) -> i32;
+}
+
+Succeeded :: (problem: string!?) -> bool {
+    defer delete problem;
+    if message := problem {
+        print(message);
+        return false;
+    }
+    return true;
+}
+
+Refused :: (problem: string!?) -> bool {
+    defer delete problem;
+    return problem != null;
+}
+
+ProblemCount :: (folder: string) -> usize {
+    problems~ Array<string!>! = lantern:::project:::CheckProject(folder);
+    count: usize = problems.length();
+    problems.freeAll();
+    return count;
+}
+
+FileText :: (path: string) -> string! {
+    found: string!? = lantern:::project:::ReadText(path);
+    guard text := found return "".copy();
+    return text.copy();
+}
+
+main :: () -> i32 {
+    engineFound: string!? = lantern:::project:::AbsolutePath("..");
+    defer delete engineFound;
+    guard engineFolder := engineFound return 1;
+    assert(lantern:::project:::IsEngineFolder(engineFolder), "the test runs inside a Lantern checkout");
+
+    root: string! = `/tmp/lantern-project-test-${monotonicNanoseconds()}`;
+    defer delete root;
+    createDirectories(root);
+
+    names~ Array<string!>! = lantern:::project:::TemplateNames(engineFolder);
+    assert(names.length() >= 2, "the checkout offers the empty and platformer templates");
+    assert(names[0] == "empty" || names[1] == "empty", "empty is offered");
+    names.freeAll();
+
+    emptyFolder: string! = `${root}/alpha`;
+    defer delete emptyFolder;
+    assert(Succeeded(lantern:::project:::CreateProject(emptyFolder, "Alpha Game", "empty", engineFolder)), "the empty template makes a project");
+    assert(ProblemCount(emptyFolder) == 0, "a new empty project is sound");
+    manifestPath: string! = `${emptyFolder}/lantern.project.json`;
+    defer delete manifestPath;
+    manifestText: string! = FileText(manifestPath);
+    defer delete manifestText;
+    assert(manifestText.contains("\"name\": \"Alpha Game\""), "the manifest records the name");
+    assert(manifestText.contains("\"template\": \"empty\""), "the manifest records the template");
+    assert(manifestText.contains("\"engine\": \"../../"), "the manifest records the engine relative to the project");
+    gamePath: string! = `${emptyFolder}/game.json`;
+    defer delete gamePath;
+    gameText: string! = FileText(gamePath);
+    defer delete gameText;
+    assert(gameText.contains("\"title\": \"Alpha Game\""), "the game's window title is the project's name");
+    assert(gameText.contains("\"application_class\": \"MyGame\""), "the template's class is kept");
+
+    unsafe {
+        lantern:::testcalls:::unsetenv("LANTERN_ENGINE");
+    }
+    resolved: string!? = lantern:::project:::ResolveEngine(emptyFolder);
+    defer delete resolved;
+    guard resolvedEngine := resolved return 1;
+    assert(resolvedEngine == engineFolder, "the project resolves back to the engine it was made with");
+
+    assert(Refused(lantern:::project:::CreateProject(emptyFolder, "Other", "empty", engineFolder)), "a folder that already holds a project is refused");
+    betaFolder: string! = `${root}/beta`;
+    defer delete betaFolder;
+    assert(Refused(lantern:::project:::CreateProject(betaFolder, "Beta", "no-such-template", engineFolder)), "an unknown template is refused");
+    gammaFolder: string! = `${root}/gamma`;
+    defer delete gammaFolder;
+    assert(Refused(lantern:::project:::CreateProject(gammaFolder, "   ", "empty", engineFolder)), "a blank name is refused");
+
+    assert(Succeeded(lantern:::project:::RenameProject(emptyFolder, "Renamed")), "renaming works");
+    renamedManifest: string! = FileText(manifestPath);
+    defer delete renamedManifest;
+    assert(renamedManifest.contains("\"name\": \"Renamed\""), "the manifest has the new name");
+    renamedGame: string! = FileText(gamePath);
+    defer delete renamedGame;
+    assert(renamedGame.contains("\"title\": \"Renamed\""), "the window title has the new name");
+
+    copyFolder: string! = `${root}/copy`;
+    defer delete copyFolder;
+    assert(Succeeded(lantern:::project:::DuplicateProject(emptyFolder, copyFolder, "The Copy")), "duplicating works");
+    assert(ProblemCount(copyFolder) == 0, "the copy is sound");
+    copyManifestPath: string! = `${copyFolder}/lantern.project.json`;
+    defer delete copyManifestPath;
+    copyManifest: string! = FileText(copyManifestPath);
+    defer delete copyManifest;
+    assert(copyManifest.contains("\"name\": \"The Copy\""), "the copy has its own name");
+    innerFolder: string! = `${emptyFolder}/inner`;
+    defer delete innerFolder;
+    assert(Refused(lantern:::project:::DuplicateProject(emptyFolder, innerFolder, "Inner")), "a project can't be copied into itself");
+
+    assert(Refused(lantern:::project:::RelinkProject(emptyFolder, root)), "relinking to a folder that isn't a checkout is refused");
+    assert(Succeeded(lantern:::project:::RelinkProject(emptyFolder, engineFolder)), "relinking to a checkout works");
+
+    platformerFolder: string! = `${root}/platformer`;
+    defer delete platformerFolder;
+    assert(Succeeded(lantern:::project:::CreateProject(platformerFolder, "Platformer Copy", "platformer", engineFolder)), "the platformer template makes a project");
+    assert(ProblemCount(platformerFolder) == 0, "a platformer project is sound");
+    scratchPath: string! = `${platformerFolder}/engine-host-surface.json`;
+    defer delete scratchPath;
+    assert(!pathExists(scratchPath), "tool files tied to the engine checkout are left out");
+    worldPath: string! = `${platformerFolder}/assets/worlds/course.world.json`;
+    defer delete worldPath;
+    assert(pathExists(worldPath), "the sample's assets come along");
+
+    breakingFile: string! = `${emptyFolder}/main.nyx`;
+    defer delete breakingFile;
+    removeFile(breakingFile);
+    assert(ProblemCount(emptyFolder) == 1, "a missing entry file is the one problem found");
+
+    print("a project is made, checked, renamed, relinked and copied");
+    return 0;
+}

@@ -1,0 +1,223 @@
+// The list of projects opened lately, kept in the person's own config folder so the command line and the editor share it.
+// It lives outside every project: a project never knows it is on the list.
+lantern:::project :: namespace {
+    RECENT_FILE: string : "recent-projects.json";
+    RECENT_LIMIT: usize : 10;
+
+    /**
+     * The folder the list is kept in: `LANTERN_CONFIG_DIRECTORY` when set, else the platform's own place for per-user
+     * settings: `~/Library/Application Support/lantern` on macOS, `$XDG_CONFIG_HOME/lantern` or `~/.config/lantern` elsewhere.
+     * Null when no home folder is known.
+     */
+    ConfigDirectory :: () -> string!? {
+        explicit: string!? = environmentVariable("LANTERN_CONFIG_DIRECTORY");
+        defer delete explicit;
+        if text := explicit {
+            if text.length() > 0 {
+                return text.copy();
+            }
+        }
+        home: string!? = environmentVariable("HOME");
+        defer delete home;
+        guard homeFolder := home return null;
+        onMac: bool = when const TARGET_PLATFORM <Platform> {
+            MacOS -> true,
+            default -> false
+        };
+        if onMac {
+            return `${homeFolder}/Library/Application Support/lantern`;
+        }
+        configHome: string!? = environmentVariable("XDG_CONFIG_HOME");
+        defer delete configHome;
+        if text := configHome {
+            if text.startsWith("/") {
+                return `${text}/lantern`;
+            }
+        }
+        return `${homeFolder}/.config/lantern`;
+    }
+
+    /**
+     * The projects opened lately, newest first: each one's folder and the name it had when it was opened.
+     */
+    RecentList :: class {
+    public:
+        paths~ Array<string!>! = [];
+        names~ Array<string!>! = [];
+
+        !RecentList~: () {
+            paths.freeAll();
+            names.freeAll();
+        }
+
+        /**
+         * Puts a project at the front, replacing an earlier entry for the same folder, and drops the oldest past the limit.
+         */
+        Add~: (path: string, name: string) -> void {
+            Remove(path);
+            paths.insert(0, path.copy());
+            names.insert(0, name.copy());
+            while paths.length() > RECENT_LIMIT {
+                oldestPath: string!? = paths.pop();
+                delete oldestPath;
+                oldestName: string!? = names.pop();
+                delete oldestName;
+            }
+        }
+
+        /**
+         * Takes a folder off the list, if it is there.
+         */
+        Remove~: (path: string) -> void {
+            for index~ usize = 0; index < paths.length(); index++ {
+                if paths[index] == path {
+                    removedPath: string! = paths.remove(index);
+                    delete removedPath;
+                    removedName: string! = names.remove(index);
+                    delete removedName;
+                    return;
+                }
+            }
+        }
+
+        ToJson :: () -> string! {
+            text~ string! = "{\n  \"projects\": [".copy();
+            for index~ usize = 0; index < paths.length(); index++ {
+                quotedPath: string! = lantern:::json:::QuotedText(paths[index]);
+                quotedName: string! = lantern:::json:::QuotedText(names[index]);
+                separator: string = index == 0 ? "" : ",";
+                text += `${separator}${NEWLINE}    {"path": ${quotedPath}, "name": ${quotedName}}`;
+                delete quotedPath;
+                delete quotedName;
+            }
+            text += "\n  ]\n}\n";
+            return text!;
+        }
+
+        /**
+         * Reads the list from its file, leaving out every project whose folder is gone. A missing or damaged file is an
+         * empty list.
+         */
+        static Load :: () -> RecentList*! {
+            list := new RecentList();
+            configFound: string!? = ConfigDirectory();
+            defer delete configFound;
+            guard folder := configFound return list!;
+            path: string! = `${folder}/${RECENT_FILE}`;
+            defer delete path;
+            text: string!? = ReadText(path);
+            defer delete text;
+            guard content := text return list!;
+            when lantern:::json:::Parse(content) {
+                Result:::Err(message) -> {
+                    delete message;
+                },
+                Result:::Ok(document) -> {
+                    root: u32 = document->root;
+                    if listIndex := document->Member(root, "projects") {
+                        child~ u32 = document->FirstChild(listIndex);
+                        count: u32 = document->ChildCount(listIndex);
+                        for step~ u32 = 0; step < count; step++ {
+                            entryPath~ string = "";
+                            entryName~ string = "";
+                            if member := document->Member(child, "path") {
+                                entryPath = document->Text(member);
+                            }
+                            if member := document->Member(child, "name") {
+                                entryName = document->Text(member);
+                            }
+                            if entryPath.length() > 0 && directoryExists(entryPath) {
+                                list->paths.push(entryPath.copy());
+                                list->names.push(entryName.copy());
+                            }
+                            child = document->NextSibling(child);
+                        }
+                    }
+                    delete document;
+                }
+            }
+            return list!;
+        }
+
+        /**
+         * Writes the list to its file, making the config folder if needed. Returns a message when it can't.
+         */
+        Save :: () -> string!? {
+            configFound: string!? = ConfigDirectory();
+            defer delete configFound;
+            guard folder := configFound return "no home folder to keep the recent projects in".copy();
+            when createDirectories(folder) {
+                Result:::Err(error) -> {
+                    failure: string! = `${folder}: ${error.message()}`;
+                    delete error;
+                    return failure!;
+                },
+                Result:::Ok(created) -> {
+                }
+            }
+            path: string! = `${folder}/${RECENT_FILE}`;
+            defer delete path;
+            text: string! = ToJson();
+            defer delete text;
+            return WriteText(path, text);
+        }
+    }
+
+    /**
+     * Puts a project at the top of the recent list. A list that can't be saved is not an error worth stopping for.
+     */
+    RememberProject :: (path: string, name: string) -> void {
+        list := RecentList:::Load();
+        defer delete list;
+        list->Add(path, name);
+        problem: string!? = list->Save();
+        delete problem;
+    }
+
+    /**
+     * Takes a project off the recent list.
+     */
+    ForgetProject :: (path: string) -> void {
+        list := RecentList:::Load();
+        defer delete list;
+        list->Remove(path);
+        problem: string!? = list->Save();
+        delete problem;
+    }
+
+    RecentCommand :: () -> i32 {
+        list := RecentList:::Load();
+        defer delete list;
+        if list->paths.length() == 0 {
+            print("no recent projects");
+            return 0;
+        }
+        for index~ usize = 0; index < list->paths.length(); index++ {
+            print(`${list->names[index]}  ${list->paths[index]}`);
+        }
+        return 0;
+    }
+
+    /**
+     * Where a new project goes by default: the folder holding the project opened last, else `lantern-projects` in the home
+     * folder, else the current folder.
+     */
+    DefaultProjectsFolder :: () -> string! {
+        list := RecentList:::Load();
+        defer delete list;
+        if list->paths.length() > 0 {
+            newest: string = list->paths[0];
+            if slash := newest.lastIndexOf("/") {
+                if slash > 0 {
+                    return `${newest.substring(0, slash)}`;
+                }
+            }
+        }
+        home: string!? = environmentVariable("HOME");
+        defer delete home;
+        if homeFolder := home {
+            return `${homeFolder}/lantern-projects`;
+        }
+        return ".".copy();
+    }
+}

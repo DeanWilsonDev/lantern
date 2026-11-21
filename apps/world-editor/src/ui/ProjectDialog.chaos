@@ -1,0 +1,193 @@
+ChoiceRow :: import ChoiceRow;
+Editor :: import Editor;
+
+// What the project dialog needs beyond its own state: where it sits, its title and button for each mode, the templates
+// to choose from, the name of a project's folder made from its name, and the text the Check button shows.
+ProjectDialogUi :: namespace {
+    WIDTH: f32 : 580.0f;
+    HEIGHT: f32 : 330.0f;
+
+    X :: () -> f32 {
+        return (penumbra:::windowWidth() - WIDTH) * 0.5f;
+    }
+
+    Y :: () -> f32 {
+        return (penumbra:::windowHeight() - HEIGHT) * 0.3f;
+    }
+
+    Title :: (mode: string) -> string {
+        return when mode {
+            "new" -> "New project",
+            "duplicate" -> "Duplicate project",
+            default -> "Project settings"
+        };
+    }
+
+    ActionLabel :: (mode: string) -> string {
+        return mode == "duplicate" ? "Duplicate" : "Create";
+    }
+
+    InitialName :: (mode: string) -> string {
+        return when mode {
+            "new" -> "My Game",
+            "duplicate" -> `${projectName()} copy`,
+            default -> projectName()
+        };
+    }
+
+    Templates :: () -> Array<string> {
+        names~ Array<string> = [];
+        for index~ i64 = 0; index < projectTemplateCount(); index++ {
+            names.add(projectTemplateName(index));
+        }
+        return names;
+    }
+
+    // A project's folder is named after it, with spaces made dashes.
+    FolderName :: (name: string) -> string {
+        return name.trim().replace(" ", "-");
+    }
+
+    // Where the project will go, shown under the fields.
+    Destination :: (parent: string, name: string) -> string {
+        return `${parent}/${FolderName(name)}`;
+    }
+
+    // What the Check button reports: the problems, or that the project is sound.
+    CheckText :: () -> string {
+        problems := projectCheck();
+        return problems == "" ? "Sound: the project file, game.json, the entry file, the assets and the engine are all there." : problems;
+    }
+}
+
+// The dialog behind File > New Project, Duplicate Project and Project Settings, chosen by editor.overlays.projectDialog:
+// "new" asks for a name, a folder and a template and makes the project; "duplicate" asks for a name and a folder and copies
+// this one; "settings" renames this project, points it at another engine checkout and checks it. A project that is made
+// or copied opens in a new editor window at once, so a world with unsaved changes has to be saved first. `message`
+// shows what went wrong, or the result of Check.
+ProjectDialog :: () -> Penumbra:::Component {
+    @context editor~ Editor;
+    @signal name~ string = ProjectDialogUi:::InitialName(editor.overlays.projectDialog);
+    @signal template~ string = "empty";
+    @signal enginePath~ string = projectEngine();
+    @signal message~ string = "";
+    Create := () -> void {
+        if editorIsDirty() {
+            message = "Save the world first (File > Save): the editor switches to the new project.";
+            return;
+        }
+        folder := ProjectDialogUi:::Destination(editor.overlays.projectParent, name);
+        mode := editor.overlays.projectDialog;
+        problem := mode == "duplicate" ? projectDuplicate(folder, name.trim()) : projectCreate(folder, name.trim(), template);
+        if problem != "" {
+            message = problem;
+            return;
+        }
+        if mode == "duplicate" {
+            problem2 := projectOpen(folder);
+            if problem2 != "" {
+                message = problem2;
+                return;
+            }
+        }
+        editor.overlays.CloseProject();
+    };
+    return (
+        <portal ref="project-dialog" x={ProjectDialogUi:::X()} y={ProjectDialogUi:::Y()} width={ProjectDialogUi:::WIDTH}
+                height={ProjectDialogUi:::HEIGHT} dismissOnOutsideClick={false}>
+            <frame class="dialog">
+                <frame class="dialog-title-row">
+                    <icon class="dialog-icon" icon="info" size={16.0f} />
+                    <text class="dialog-title">{ProjectDialogUi:::Title(editor.overlays.projectDialog)}</text>
+                    <frame class="toolbar-spacer" />
+                    <frame class="icon-button" onRelease={() -> editor.overlays.CloseProject()}>
+                        <icon class="icon-button-glyph" icon="close" size={14.0f} />
+                    </frame>
+                </frame>
+                <slot>
+                    !{editor.overlays.projectDialog == "settings"
+                        ? <frame class="settings-page">
+                              <frame class="setting-row">
+                                  <text class="setting-label-wide">Name</text>
+                                  <input ref="project-name" class="field-input" text={name} preferredWidth={260.0f}
+                                         onTextChange={(text: string) -> { name = text; }} />
+                                  <frame ref="project-rename" class="small-button"
+                                         onRelease={() -> {
+                                             problem := projectRename(name);
+                                             message = problem == "" ? "Renamed." : problem;
+                                         }}>
+                                      <text class="small-button-label">Rename</text>
+                                  </frame>
+                              </frame>
+                              <frame class="setting-row">
+                                  <text class="setting-label-wide">Folder</text>
+                                  <text class="field-readonly">{projectFolder()}</text>
+                              </frame>
+                              <frame class="setting-row">
+                                  <text class="setting-label-wide">Engine</text>
+                                  <input ref="project-engine" class="field-input" text={enginePath} preferredWidth={260.0f}
+                                         onTextChange={(text: string) -> { enginePath = text; }} />
+                                  <frame ref="project-relink" class="small-button"
+                                         onRelease={() -> {
+                                             problem := projectRelink(enginePath);
+                                             message = problem == "" ? "Relinked." : problem;
+                                         }}>
+                                      <text class="small-button-label">Relink</text>
+                                  </frame>
+                              </frame>
+                              <text class="dialog-hint">{projectIsProject() ? "The engine is the Lantern checkout this project runs and edits with." : "This is the engine's own sample game. Make a project from File > New Project to change these."}</text>
+                          </frame>
+                        : <frame class="settings-page">
+                              <frame class="setting-row">
+                                  <text class="setting-label-wide">Name</text>
+                                  <input ref="project-name" class="field-input" text={name} preferredWidth={300.0f}
+                                         onTextChange={(text: string) -> { name = text; }} />
+                              </frame>
+                              <frame class="setting-row">
+                                  <text class="setting-label-wide">In folder</text>
+                                  <input ref="project-parent" class="field-input" text={editor.overlays.projectParent} preferredWidth={300.0f}
+                                         onTextChange={(text: string) -> { editor.overlays.projectParent = text; }} />
+                                  <frame ref="project-browse" class="small-button" onRelease={() -> editor.commands.PickProjectParent()}>
+                                      <text class="small-button-label">Browse…</text>
+                                  </frame>
+                              </frame>
+                              <slot>
+                                  !{editor.overlays.projectDialog == "new"
+                                      ? <ChoiceRow label="Template" options={ProjectDialogUi:::Templates()} selected={template}
+                                                   onSelect={(choice: string) -> { template = choice; }} />
+                                      : <frame class="nothing" />}
+                              </slot>
+                              <text class="dialog-hint">{`Makes ${ProjectDialogUi:::Destination(editor.overlays.projectParent, name)}`}</text>
+                          </frame>}
+                </slot>
+                <text class="dialog-body">{message}</text>
+                <frame class="dialog-actions">
+                    <slot>
+                        !{editor.overlays.projectDialog == "settings"
+                            ? <frame class="dialog-actions">
+                                  <frame ref="project-check" class="small-button"
+                                         onRelease={() -> { message = ProjectDialogUi:::CheckText(); }}>
+                                      <text class="small-button-label">Check</text>
+                                  </frame>
+                                  <frame ref="project-duplicate" class="small-button"
+                                         onRelease={() -> editor.overlays.OpenProject("duplicate")}>
+                                      <text class="small-button-label">Duplicate…</text>
+                                  </frame>
+                                  <frame class="small-button-accent" onRelease={() -> editor.overlays.CloseProject()}>
+                                      <text class="small-button-label-accent">Done</text>
+                                  </frame>
+                              </frame>
+                            : <frame class="dialog-actions">
+                                  <frame class="small-button" onRelease={() -> editor.overlays.CloseProject()}>
+                                      <text class="small-button-label">Cancel</text>
+                                  </frame>
+                                  <frame ref="project-create" class="small-button-accent" onRelease={() -> Create()}>
+                                      <text class="small-button-label-accent">{ProjectDialogUi:::ActionLabel(editor.overlays.projectDialog)}</text>
+                                  </frame>
+                              </frame>}
+                    </slot>
+                </frame>
+            </frame>
+        </portal>
+    );
+}

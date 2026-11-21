@@ -1,0 +1,372 @@
+// Making and changing game projects. A project is a folder that is also a game folder (`game.json`, an entry Nyx file,
+// `assets/`) with a `lantern.project.json` beside it and a `mist.json` whose scripts run it. Every function here returns a
+// problem as text (or null when it worked) instead of stopping, so the command line and the editor can show the message.
+lantern:::project :: namespace {
+    GAME_FILE: string : "game.json";
+    TEMPLATES_FOLDER: string : "engine/templates";
+    PLATFORMER_SAMPLE_FOLDER: string : "games/platformer";
+    ENGINE_ENVIRONMENT_VARIABLE: string : "LANTERN_ENGINE";
+
+    /**
+     * True for a file or folder that is never copied into a new project: editor scratch files, build output, Mist's
+     * folders, version control and the old project file (a new one is written).
+     */
+    IsLeftOut :: (name: string, atRoot: bool) -> bool {
+        if atRoot && name == "build" {
+            return true;
+        }
+        if name.startsWith(".editor-play") || name == ".git" || name == ".DS_Store" {
+            return true;
+        }
+        return name == "mist_packages" || name == "mist.local.json" || name == "engine-host-surface.json" || name == MANIFEST_FILE;
+    }
+
+    /**
+     * Copies a folder and everything in it to another, creating folders as needed and skipping what `IsLeftOut` names.
+     * Returns a message when something can't be read or written.
+     */
+    CopyTree :: (from: string, to: string) -> string!? {
+        return CopyLevel(from, to, true);
+    }
+
+    /**
+     * True when `inner` is `outer` or a path below it, comparing whole path parts.
+     */
+    IsInside :: (inner: string, outer: string) -> bool {
+        if inner == outer {
+            return true;
+        }
+        prefix: string! = `${outer}/`;
+        defer delete prefix;
+        return inner.startsWith(prefix);
+    }
+
+    CopyLevel :: (from: string, to: string, atRoot: bool) -> string!? {
+        when createDirectories(to) {
+            Result:::Err(error) -> {
+                failure: string! = `${to}: ${error.message()}`;
+                delete error;
+                return failure!;
+            },
+            Result:::Ok(created) -> {
+            }
+        }
+        when listDirectory(from) {
+            Result:::Err(error) -> {
+                failure: string! = `${from}: ${error.message()}`;
+                delete error;
+                return failure!;
+            },
+            Result:::Ok(names) -> {
+                entries~ Array<string!>! = names!;
+                defer entries.freeAll();
+                for name in entries {
+                    if IsLeftOut(name, atRoot) {
+                        continue;
+                    }
+                    source: string! = `${from}/${name}`;
+                    defer delete source;
+                    destination: string! = `${to}/${name}`;
+                    defer delete destination;
+                    if directoryExists(source) {
+                        problem: string!? = CopyLevel(source, destination, false);
+                        if problem != null {
+                            return problem!;
+                        }
+                    } else {
+                        when copyFile(source, destination) {
+                            Result:::Err(error) -> {
+                                failure: string! = `${source}: ${error.message()}`;
+                                delete error;
+                                return failure!;
+                            },
+                            Result:::Ok(copied) -> {
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Writes a text file, returning a message when it can't.
+     */
+    WriteText :: (path: string, text: string) -> string!? {
+        when writeTextFile(path, text) {
+            Result:::Err(error) -> {
+                failure: string! = `${path}: ${error.message()}`;
+                delete error;
+                return failure!;
+            },
+            Result:::Ok(written) -> {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * The text of a file, or null when it can't be read.
+     */
+    ReadText :: (path: string) -> string!? {
+        when readTextFile(path) {
+            Result:::Err(error) -> {
+                delete error;
+                return null;
+            },
+            Result:::Ok(text) -> {
+                return text!;
+            }
+        }
+    }
+
+    /**
+     * The engine checkout a command should use, as an absolute path: `LANTERN_ENGINE` when set, else `fromFlag` when it isn't
+     * empty. Null when neither names one.
+     */
+    EngineFromEnvironment :: (fromFlag: string) -> string!? {
+        explicit: string!? = environmentVariable(ENGINE_ENVIRONMENT_VARIABLE);
+        defer delete explicit;
+        if text := explicit {
+            if text.length() > 0 {
+                return AbsolutePath(text);
+            }
+        }
+        if fromFlag.length() > 0 {
+            return AbsolutePath(fromFlag);
+        }
+        return null;
+    }
+
+    /**
+     * True when a folder looks like a Lantern checkout: it has the engine's project file and the sample game.
+     */
+    IsEngineFolder :: (engineFolder: string) -> bool {
+        projectFile: string! = `${engineFolder}/engine/nox.json`;
+        defer delete projectFile;
+        return pathExists(projectFile);
+    }
+
+    /**
+     * The names of the templates a checkout offers: every folder in `engine/templates`, plus `platformer`, the sample game.
+     */
+    TemplateNames :: (engineFolder: string) -> Array<string!>! {
+        names~ Array<string!>! = [];
+        templatesFolder: string! = `${engineFolder}/${TEMPLATES_FOLDER}`;
+        defer delete templatesFolder;
+        when listDirectory(templatesFolder) {
+            Result:::Ok(found) -> {
+                entries~ Array<string!>! = found!;
+                for entry in entries {
+                    entryPath: string! = `${templatesFolder}/${entry}`;
+                    defer delete entryPath;
+                    if directoryExists(entryPath) {
+                        names.push(entry.copy());
+                    }
+                }
+                entries.freeAll();
+            },
+            Result:::Err(error) -> {
+                delete error;
+            }
+        }
+        names.push("platformer".copy());
+        return names!;
+    }
+
+    /**
+     * The folder a template is copied from, or null when the checkout has no such template.
+     */
+    TemplateFolder :: (engineFolder: string, templateName: string) -> string!? {
+        candidate~ string! = "";
+        if templateName == "platformer" {
+            candidate += `${engineFolder}/${PLATFORMER_SAMPLE_FOLDER}`;
+        } else {
+            candidate += `${engineFolder}/${TEMPLATES_FOLDER}/${templateName}`;
+        }
+        if directoryExists(candidate) && templateName.length() > 0 && !templateName.contains("/") && !templateName.contains("..") {
+            return candidate!;
+        }
+        delete candidate;
+        return null;
+    }
+
+    /**
+     * The `mist.json` a new project gets: scripts that run the project through the `lantern` command.
+     */
+    MistJson :: (name: string) -> string! {
+        slug: string! = Slug(name);
+        defer delete slug;
+        return `{${NEWLINE}  "name": "${slug}",${NEWLINE}  "version": "0.1.0",${NEWLINE}  "scripts": {${NEWLINE}    "game": "lantern run .",${NEWLINE}    "editor": "lantern editor .",${NEWLINE}    "package": "lantern package .",${NEWLINE}    "info": "lantern project info ."${NEWLINE}  }${NEWLINE}}${NEWLINE}`;
+    }
+
+    /**
+     * The `README.md` a new project gets.
+     */
+    ReadmeText :: (name: string, templateName: string) -> string! {
+        return `# ${name}${NEWLINE}${NEWLINE}A Lantern game project, made from the '${templateName}' template.${NEWLINE}${NEWLINE}    lantern run .        # play it${NEWLINE}    lantern editor .     # open the world editor on it${NEWLINE}    lantern package .    # build one file you can give to a player${NEWLINE}    lantern project info .${NEWLINE}${NEWLINE}The game is the Nyx in this folder, started from game.json. Your textures, models, sounds, worlds and Silhouettes live${NEWLINE}in assets/. lantern.project.json says which engine checkout the project uses; 'lantern project relink PATH' changes it.${NEWLINE}`;
+    }
+
+    /**
+     * Rewrites `game.json` with a new window title, keeping its `entry`, `application_class` and `assets`. Returns a message
+     * when the file can't be read, isn't a game manifest or can't be written.
+     */
+    SetGameTitle :: (projectFolder: string, title: string) -> string!? {
+        path: string! = `${projectFolder}/${GAME_FILE}`;
+        defer delete path;
+        text: string!? = ReadText(path);
+        defer delete text;
+        guard gameText := text return `${path}: can't read it`;
+        when lantern:::json:::Parse(gameText) {
+            Result:::Err(message) -> {
+                failure: string! = `${path}: ${message}`;
+                delete message;
+                return failure!;
+            },
+            Result:::Ok(document) -> {
+                defer delete document;
+                root: u32 = document->root;
+                entryMember := document->Member(root, "entry");
+                classMember := document->Member(root, "application_class");
+                guard entryIndex := entryMember return `${path}: missing text field 'entry'`;
+                guard classIndex := classMember return `${path}: missing text field 'application_class'`;
+                assetsFolder~ string = "assets";
+                if assetsIndex := document->Member(root, "assets") {
+                    if document->Kind(assetsIndex) == lantern:::json:::JsonKind:::Text {
+                        assetsFolder = document->Text(assetsIndex);
+                    }
+                }
+                quotedTitle: string! = lantern:::json:::QuotedText(title);
+                defer delete quotedTitle;
+                quotedEntry: string! = lantern:::json:::QuotedText(document->Text(entryIndex));
+                defer delete quotedEntry;
+                quotedClass: string! = lantern:::json:::QuotedText(document->Text(classIndex));
+                defer delete quotedClass;
+                quotedAssets: string! = lantern:::json:::QuotedText(assetsFolder);
+                defer delete quotedAssets;
+                rewritten: string! = `{${NEWLINE}  "title": ${quotedTitle},${NEWLINE}  "entry": ${quotedEntry},${NEWLINE}  "application_class": ${quotedClass},${NEWLINE}  "assets": ${quotedAssets}${NEWLINE}}${NEWLINE}`;
+                defer delete rewritten;
+                return WriteText(path, rewritten);
+            }
+        }
+    }
+
+    /**
+     * The engine path to record in a project's manifest: relative to the project's folder when both are absolute.
+     */
+    RecordedEngine :: (projectFolder: string, engineFolder: string) -> string! {
+        return RelativePath(projectFolder, engineFolder);
+    }
+
+    /**
+     * Makes a project in `projectFolder` from a template folder: copies it, sets the game's title to `name`, and writes
+     * `lantern.project.json`, `mist.json`, `.gitignore` and (when the template has none) `README.md`. `templateName` is only
+     * recorded. `projectFolder` must not exist or must be empty, and both folders are absolute.
+     */
+    Instantiate :: (projectFolder: string, name: string, templateName: string, templateFolder: string, engineFolder: string) -> string!? {
+        if directoryExists(projectFolder) {
+            when listDirectory(projectFolder) {
+                Result:::Ok(found) -> {
+                    existing~ Array<string!>! = found!;
+                    count: usize = existing.length();
+                    existing.freeAll();
+                    if count > 0 {
+                        return `${projectFolder} isn't empty; choose a new or empty folder`.copy();
+                    }
+                },
+                Result:::Err(error) -> {
+                    failure: string! = `${projectFolder}: ${error.message()}`;
+                    delete error;
+                    return failure!;
+                }
+            }
+        }
+        if IsInside(projectFolder, templateFolder) {
+            return "a project can't be made inside the template it copies".copy();
+        }
+        copyProblem: string!? = CopyTree(templateFolder, projectFolder);
+        if copyProblem != null {
+            return copyProblem!;
+        }
+        delete copyProblem;
+        titleProblem: string!? = SetGameTitle(projectFolder, name);
+        if titleProblem != null {
+            return titleProblem!;
+        }
+        delete titleProblem;
+        return WriteProjectFiles(projectFolder, name, templateName, engineFolder);
+    }
+
+    /**
+     * Writes the files that make a folder a project: `lantern.project.json`, then `mist.json`, `.gitignore` and `README.md` unless the folder already has them.
+     */
+    WriteProjectFiles :: (projectFolder: string, name: string, templateName: string, engineFolder: string) -> string!? {
+        engineRecord: string! = RecordedEngine(projectFolder, engineFolder);
+        defer delete engineRecord;
+        created: string! = today();
+        defer delete created;
+        manifest := new ProjectManifest(name, templateName, engineRecord, created);
+        defer delete manifest;
+        manifestText: string! = manifest->ToJson();
+        defer delete manifestText;
+        manifestPath: string! = `${projectFolder}/${MANIFEST_FILE}`;
+        defer delete manifestPath;
+        problem: string!? = WriteText(manifestPath, manifestText);
+        if problem != null {
+            return problem!;
+        }
+        delete problem;
+        mistPath: string! = `${projectFolder}/mist.json`;
+        defer delete mistPath;
+        if !pathExists(mistPath) {
+            mistText: string! = MistJson(name);
+            defer delete mistText;
+            mistProblem: string!? = WriteText(mistPath, mistText);
+            if mistProblem != null {
+                return mistProblem!;
+            }
+            delete mistProblem;
+        }
+        ignorePath: string! = `${projectFolder}/.gitignore`;
+        defer delete ignorePath;
+        if !pathExists(ignorePath) {
+            ignoreProblem: string!? = WriteText(ignorePath, "mist_packages/\nmist.local.json\nbuild/\n.editor-play*\n");
+            if ignoreProblem != null {
+                return ignoreProblem!;
+            }
+            delete ignoreProblem;
+        }
+        readmePath: string! = `${projectFolder}/README.md`;
+        defer delete readmePath;
+        if !pathExists(readmePath) {
+            readmeText: string! = ReadmeText(name, templateName);
+            defer delete readmeText;
+            return WriteText(readmePath, readmeText);
+        }
+        return null;
+    }
+
+    /**
+     * Creates a project: `name` in `projectFolder` (made absolute), from the named template of the engine checkout at
+     * `engineFolder`. Returns a message when it can't.
+     */
+    CreateProject :: (projectFolder: string, name: string, templateName: string, engineFolder: string) -> string!? {
+        projectResolved: string!? = AbsolutePath(projectFolder);
+        defer delete projectResolved;
+        guard absoluteProject := projectResolved return `can't find the current folder to resolve ${projectFolder}`.copy();
+        engineResolved: string!? = AbsolutePath(engineFolder);
+        defer delete engineResolved;
+        guard absoluteEngine := engineResolved return `can't find the current folder to resolve ${engineFolder}`.copy();
+        if !IsEngineFolder(absoluteEngine) {
+            return `${absoluteEngine} isn't a Lantern checkout (no engine/nox.json)`.copy();
+        }
+        if name.trim().length() == 0 {
+            return "the project needs a name".copy();
+        }
+        templateFound: string!? = TemplateFolder(absoluteEngine, templateName);
+        defer delete templateFound;
+        guard templateFolder := templateFound return `no template called '${templateName}' in ${absoluteEngine}`.copy();
+        return Instantiate(absoluteProject, name.trim(), templateName, templateFolder, absoluteEngine);
+    }
+}

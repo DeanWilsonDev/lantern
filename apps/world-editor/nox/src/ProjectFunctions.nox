@@ -1,0 +1,230 @@
+Runtime :: import lantern:::nyx:::Runtime;
+CallContext :: import lantern:::nyx:::CallContext;
+NyxError :: import lantern:::nyx:::NyxError;
+Editor :: import lantern:::editorapi:::Editor;
+ProjectSession :: import lantern:::project:::ProjectSession;
+HostFunctions :: import lantern:::worldeditor:::hostfunctions;
+
+lantern:::worldeditor:::projectfunctions :: namespace {
+    // The text a function returns when it worked: the interface shows any other text as the problem.
+    NO_PROBLEM: string : "";
+
+    // Turns a problem message (or null for none) into the text the interface gets, and frees it.
+    ProblemText :: (problem: string!?) -> string! {
+        defer delete problem;
+        if message := problem {
+            return message.copy();
+        }
+        return NO_PROBLEM.copy();
+    }
+
+    // Registers the host functions the project parts of the interface call: what project is open, the templates and the
+    // recent list, and making, opening, renaming, relinking and copying projects. They work on the ProjectSession and
+    // the project library (engine/src/project), the same code `lantern project ...` runs. Opening or making a project
+    // does not switch at once: it leaves a request on the session, and the window loop ends so a new editor can start.
+    RegisterProjectFunctions :: (runtime: Runtime~*, state: raw ProjectSession~*, editorState: raw Editor~*) -> NyxError*!? {
+        failure~ NyxError*!? = null;
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectShowProblem", "(problem: string) -> void", new (context: CallContext~*) -> void [editorState] {
+            unsafe {
+                editorInstance: Editor~* = editorState;
+                problem: string! = context->Text(0);
+                editorInstance->ShowError(problem!);
+            }
+            context->ReturnNull();
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectName", "() -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                context->ReturnText(session->name);
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectFolder", "() -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                context->ReturnText(session->folder);
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectIsProject", "() -> bool", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                context->ReturnBool(session->isProject);
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectEngine", "() -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                resolved: string!? = lantern:::project:::ResolveEngine(session->folder);
+                defer delete resolved;
+                if path := resolved {
+                    context->ReturnText(path);
+                } else {
+                    context->ReturnText(session->engineFolder);
+                }
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectDefaultParent", "() -> string", new (context: CallContext~*) -> void [state] {
+            folder: string! = lantern:::project:::DefaultProjectsFolder();
+            context->ReturnText(folder);
+            delete folder;
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectTemplateCount", "() -> i64", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                names~ Array<string!>! = lantern:::project:::TemplateNames(session->engineFolder);
+                context->ReturnI64(i64(names.length()));
+                names.freeAll();
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectTemplateName", "(index: i64) -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                index: i64 = context->I64(0);
+                names~ Array<string!>! = lantern:::project:::TemplateNames(session->engineFolder);
+                if index >= 0 && usize(index) < names.length() {
+                    context->ReturnText(names[usize(index)]);
+                } else {
+                    context->ReturnText("");
+                }
+                names.freeAll();
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectRecentCount", "() -> i64", new (context: CallContext~*) -> void [state] {
+            list := lantern:::project:::RecentList:::Load();
+            context->ReturnI64(i64(list->paths.length()));
+            delete list;
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectRecentPath", "(index: i64) -> string", new (context: CallContext~*) -> void [state] {
+            index: i64 = context->I64(0);
+            list := lantern:::project:::RecentList:::Load();
+            if index >= 0 && usize(index) < list->paths.length() {
+                context->ReturnText(list->paths[usize(index)]);
+            } else {
+                context->ReturnText("");
+            }
+            delete list;
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectRecentName", "(index: i64) -> string", new (context: CallContext~*) -> void [state] {
+            index: i64 = context->I64(0);
+            list := lantern:::project:::RecentList:::Load();
+            if index >= 0 && usize(index) < list->names.length() {
+                context->ReturnText(list->names[usize(index)]);
+            } else {
+                context->ReturnText("");
+            }
+            delete list;
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectForget", "(folder: string) -> void", new (context: CallContext~*) -> void [state] {
+            folder: string! = context->Text(0);
+            lantern:::project:::ForgetProject(folder);
+            delete folder;
+            context->ReturnNull();
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectCreate", "(folder: string, name: string, template: string) -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                folder: string! = context->Text(0);
+                name: string! = context->Text(1);
+                templateName: string! = context->Text(2);
+                problem: string!? = lantern:::project:::CreateProject(folder, name, templateName, session->engineFolder);
+                if problem == null {
+                    resolved: string!? = lantern:::project:::AbsolutePath(folder);
+                    if path := resolved {
+                        lantern:::project:::RememberProject(path, name.trim());
+                        session->RequestOpen(path);
+                    }
+                    delete resolved;
+                }
+                text: string! = ProblemText(problem!);
+                context->ReturnText(text);
+                delete text;
+                delete folder;
+                delete name;
+                delete templateName;
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectOpen", "(folder: string) -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                folder: string! = context->Text(0);
+                checked := ProjectSession:::ForFolder(folder);
+                when checked! {
+                    Result:::Ok(opened) -> {
+                        lantern:::project:::RememberProject(opened->folder, opened->name);
+                        session->RequestOpen(opened->folder);
+                        delete opened;
+                        context->ReturnText(NO_PROBLEM);
+                    },
+                    Result:::Err(message) -> {
+                        lantern:::project:::ForgetProject(folder);
+                        context->ReturnText(message);
+                        delete message;
+                    }
+                }
+                delete folder;
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectRename", "(name: string) -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                name: string! = context->Text(0);
+                problem: string!? = lantern:::project:::RenameProject(session->folder, name);
+                if problem == null {
+                    delete session->name;
+                    session->name = name.trim().copy();
+                    lantern:::project:::RememberProject(session->folder, session->name);
+                }
+                text: string! = ProblemText(problem!);
+                context->ReturnText(text);
+                delete text;
+                delete name;
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectRelink", "(engine: string) -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                enginePath: string! = context->Text(0);
+                text: string! = ProblemText(lantern:::project:::RelinkProject(session->folder, enginePath));
+                context->ReturnText(text);
+                delete text;
+                delete enginePath;
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectDuplicate", "(folder: string, name: string) -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                folder: string! = context->Text(0);
+                name: string! = context->Text(1);
+                problem: string!? = lantern:::project:::DuplicateProject(session->folder, folder, name);
+                if problem == null {
+                    resolved: string!? = lantern:::project:::AbsolutePath(folder);
+                    if path := resolved {
+                        lantern:::project:::RememberProject(path, name.trim());
+                    }
+                    delete resolved;
+                }
+                text: string! = ProblemText(problem!);
+                context->ReturnText(text);
+                delete text;
+                delete folder;
+                delete name;
+            }
+        }));
+        failure = HostFunctions:::FirstFailure(failure!, runtime->RegisterFunction("projectCheck", "() -> string", new (context: CallContext~*) -> void [state] {
+            unsafe {
+                session: ProjectSession~* = state;
+                problems~ Array<string!>! = lantern:::project:::CheckProject(session->folder);
+                joined~ string! = "".copy();
+                for index~ usize = 0; index < problems.length(); index++ {
+                    if index > 0 {
+                        joined += "\n";
+                    }
+                    joined += problems[index];
+                }
+                context->ReturnText(joined);
+                delete joined;
+                problems.freeAll();
+            }
+        }));
+        return failure!;
+    }
+}

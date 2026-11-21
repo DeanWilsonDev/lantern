@@ -1,0 +1,105 @@
+// A project's `lantern.project.json`: what the tools need to know about a game project that the engine itself doesn't. The
+// engine only reads `game.json`; this file is for `lantern project`, the editor and the recent projects list, and it is never
+// packaged into a built game.
+lantern:::project :: namespace {
+    MANIFEST_FILE: string : "lantern.project.json";
+    NEWLINE: string : "\n";
+    MANIFEST_FORMAT_VERSION: i32 : 1;
+
+    /**
+     * The project file's four fields: the `name` people see, the `template` the project was made from, the `engine` folder it
+     * links to (absolute, or relative to the project's own folder) and the `created` date.
+     */
+    ProjectManifest :: class {
+    public:
+        name~ string!;
+        template~ string!;
+        enginePath~ string!;
+        created~ string!;
+
+        ProjectManifest~: (projectName: string, templateName: string, enginePath: string, createdDate: string) {
+            name = `${projectName}`;
+            template = `${templateName}`;
+            this->enginePath = `${enginePath}`;
+            created = `${createdDate}`;
+        }
+
+        !ProjectManifest~: () {
+            delete name;
+            delete template;
+            delete this->enginePath;
+            delete created;
+        }
+
+        /**
+         * The file's text, one key per line so a person or a script can read the engine path with a plain search.
+         */
+        ToJson :: () -> string! {
+            quotedName: string! = lantern:::json:::QuotedText(name);
+            defer delete quotedName;
+            quotedTemplate: string! = lantern:::json:::QuotedText(template);
+            defer delete quotedTemplate;
+            quotedEngine: string! = lantern:::json:::QuotedText(this->enginePath);
+            defer delete quotedEngine;
+            quotedCreated: string! = lantern:::json:::QuotedText(created);
+            defer delete quotedCreated;
+            return `{${NEWLINE}  "format_version": ${MANIFEST_FORMAT_VERSION},${NEWLINE}  "name": ${quotedName},${NEWLINE}  "template": ${quotedTemplate},${NEWLINE}  "engine": ${quotedEngine},${NEWLINE}  "created": ${quotedCreated}${NEWLINE}}${NEWLINE}`;
+        }
+
+        /**
+         * Reads `lantern.project.json` from a project's folder. The error says which file and what is wrong.
+         */
+        static Load :: (projectDirectory: string) -> Result<ProjectManifest*!, string!> {
+            path: string! = `${projectDirectory}/${MANIFEST_FILE}`;
+            defer delete path;
+            when readTextFile(path) {
+                Result:::Ok(text) -> {
+                    defer delete text;
+                    return FromJson(text, path);
+                },
+                Result:::Err(error) -> {
+                    failure: string! = `${path}: ${error.message()}`;
+                    delete error;
+                    return Result<ProjectManifest*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        /**
+         * Reads a manifest from JSON text. `name` and `engine` are required; `template` and `created` may be missing.
+         */
+        static FromJson :: (text: string, path: string) -> Result<ProjectManifest*!, string!> {
+            when lantern:::json:::Parse(text) {
+                Result:::Ok(document) -> {
+                    defer delete document;
+                    root: u32 = document->root;
+                    if document->Kind(root) != lantern:::json:::JsonKind:::Object {
+                        return Result<ProjectManifest*!, string!>:::Err(`${path}: the project file isn't a JSON object`);
+                    }
+                    guard projectName := ManifestText(document, root, "name") return MissingField(path, "name");
+                    guard enginePath := ManifestText(document, root, "engine") return MissingField(path, "engine");
+                    templateName: string = ManifestText(document, root, "template") ?? "empty";
+                    createdDate: string = ManifestText(document, root, "created") ?? "";
+                    return Result<ProjectManifest*!, string!>:::Ok(new ProjectManifest(projectName, templateName, enginePath, createdDate));
+                },
+                Result:::Err(message) -> {
+                    failure: string! = `${path}: ${message}`;
+                    delete message;
+                    return Result<ProjectManifest*!, string!>:::Err(failure!);
+                }
+            }
+        }
+
+        static ManifestText :: (document: lantern:::json:::JsonDocument*, root: u32, key: string) -> string? {
+            guard member := document->Member(root, key) return null;
+            if document->Kind(member) != lantern:::json:::JsonKind:::Text {
+                return null;
+            }
+            return document->Text(member);
+        }
+
+        static MissingField :: (path: string, field: string) -> Result<ProjectManifest*!, string!> {
+            return Result<ProjectManifest*!, string!>:::Err(`${path}: missing text field '${field}'`);
+        }
+    }
+}

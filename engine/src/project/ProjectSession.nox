@@ -1,0 +1,163 @@
+// The project the world editor is working on: its folder, name and assets folder, and a request to switch to another. The
+// editor makes one at start-up from its command line, its host functions read it for the interface, and when the person
+// opens or creates a project the interface asks through it and the window loop ends so a new editor can start on the new one.
+lantern:::project :: namespace {
+    SAMPLE_PROJECT_FOLDER: string : "games/platformer";
+
+    /**
+     * The assets folder `game.json` names (default `assets`), as a path inside the project, or null when the folder has no
+     * readable `game.json`.
+     */
+    GameAssetsFolder :: (projectFolder: string) -> string!? {
+        gamePath: string! = `${projectFolder}/${GAME_FILE}`;
+        defer delete gamePath;
+        gameText: string!? = ReadText(gamePath);
+        defer delete gameText;
+        guard text := gameText return null;
+        when lantern:::json:::Parse(text) {
+            Result:::Err(message) -> {
+                delete message;
+                return null;
+            },
+            Result:::Ok(document) -> {
+                defer delete document;
+                if member := document->Member(document->root, "assets") {
+                    if document->Kind(member) == lantern:::json:::JsonKind:::Text {
+                        return `${projectFolder}/${document->Text(member)}`;
+                    }
+                }
+                return `${projectFolder}/assets`;
+            }
+        }
+    }
+
+    /**
+     * The world a project's editor opens first: `worlds/start.world.json` or `worlds/course.world.json` when there is one,
+     * else the first `.world.json` file in `worlds/`, else empty (the editor then starts a blank world).
+     */
+    StartingWorld :: (assetsFolder: string) -> string! {
+        startPath: string! = `${assetsFolder}/worlds/start.world.json`;
+        if pathExists(startPath) {
+            return startPath!;
+        }
+        delete startPath;
+        coursePath: string! = `${assetsFolder}/worlds/course.world.json`;
+        if pathExists(coursePath) {
+            return coursePath!;
+        }
+        delete coursePath;
+        worldsFolder: string! = `${assetsFolder}/worlds`;
+        defer delete worldsFolder;
+        when listDirectory(worldsFolder) {
+            Result:::Ok(found) -> {
+                names~ Array<string!>! = found!;
+                defer names.freeAll();
+                for name in names {
+                    if name.endsWith(".world.json") {
+                        return `${worldsFolder}/${name}`;
+                    }
+                }
+            },
+            Result:::Err(error) -> {
+                delete error;
+            }
+        }
+        return "".copy();
+    }
+
+    /**
+     * What the editor knows about the project it was started on. `isProject` is false for the engine's own sample game
+     * (opened with no argument), which can't be renamed or relinked.
+     */
+    ProjectSession :: class {
+    public:
+        folder~ string!;
+        name~ string!;
+        assets~ string!;
+        startingWorld~ string!;
+        engineFolder~ string!;
+        isProject~ bool;
+        openRequest~ string!? = null;
+        openFailed~ bool = false;
+
+        ProjectSession~: (projectFolder: string, projectName: string, assetsFolder: string, firstWorld: string, engineCheckout: string, opensAsProject: bool) {
+            folder = `${projectFolder}`;
+            name = `${projectName}`;
+            assets = `${assetsFolder}`;
+            startingWorld = `${firstWorld}`;
+            engineFolder = `${engineCheckout}`;
+            isProject = opensAsProject;
+        }
+
+        !ProjectSession~: () {
+            delete folder;
+            delete name;
+            delete assets;
+            delete startingWorld;
+            delete engineFolder;
+            delete openRequest;
+        }
+
+        /**
+         * Asks the editor to switch to the project in `projectFolder` once the current window closes.
+         */
+        RequestOpen~: (projectFolder: string) -> void {
+            delete openRequest;
+            openRequest = projectFolder.copy();
+        }
+
+        /**
+         * The engine checkout the editor runs from, as an absolute path: `LANTERN_ENGINE`, else the current folder (the
+         * editor is always started from the checkout's root).
+         */
+        static CurrentEngine :: () -> string! {
+            found: string!? = EngineFromEnvironment(".");
+            defer delete found;
+            if path := found {
+                return path.copy();
+            }
+            return ".".copy();
+        }
+
+        /**
+         * The sample game in the engine checkout: the editor's start when no project is named.
+         */
+        static ForSample :: () -> ProjectSession*! {
+            currentEngine: string! = CurrentEngine();
+            defer delete currentEngine;
+            assets: string! = `${SAMPLE_PROJECT_FOLDER}/assets`;
+            defer delete assets;
+            return new ProjectSession(SAMPLE_PROJECT_FOLDER, "Platformer sample", assets, "", currentEngine, false);
+        }
+
+        /**
+         * A game folder as a project. It needs a readable `game.json`; the name comes from `lantern.project.json` when
+         * there is one, else from the folder's own name. The error says what's missing.
+         */
+        static ForFolder :: (projectFolder: string) -> Result<ProjectSession*!, string!> {
+            resolved: string!? = AbsolutePath(projectFolder);
+            defer delete resolved;
+            guard folder := resolved return Result<ProjectSession*!, string!>:::Err(`can't resolve ${projectFolder}`);
+            assetsFound: string!? = GameAssetsFolder(folder);
+            defer delete assetsFound;
+            guard assets := assetsFound return Result<ProjectSession*!, string!>:::Err(`${folder} has no readable game.json, so it isn't a game project`);
+            currentEngine: string! = CurrentEngine();
+            defer delete currentEngine;
+            firstWorld: string! = StartingWorld(assets);
+            defer delete firstWorld;
+            loaded := ProjectManifest:::Load(folder);
+            when loaded! {
+                Result:::Ok(manifest) -> {
+                    defer delete manifest;
+                    return Result<ProjectSession*!, string!>:::Ok(new ProjectSession(folder, manifest->name, assets, firstWorld, currentEngine, true));
+                },
+                Result:::Err(message) -> {
+                    delete message;
+                    folderName: string! = LastPart(folder);
+                    defer delete folderName;
+                    return Result<ProjectSession*!, string!>:::Ok(new ProjectSession(folder, folderName, assets, firstWorld, currentEngine, true));
+                }
+            }
+        }
+    }
+}

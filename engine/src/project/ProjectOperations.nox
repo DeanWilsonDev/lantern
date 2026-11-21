@@ -1,0 +1,176 @@
+// What you can do to an existing project: find its engine, check it, rename it, point it at another engine and copy it.
+lantern:::project :: namespace {
+    /**
+     * The engine checkout a project uses, as an absolute path: `LANTERN_ENGINE` when set, else the manifest's `engine`
+     * resolved against the project's folder. Null when the project has no readable manifest.
+     */
+    ResolveEngine :: (projectFolder: string) -> string!? {
+        fromEnvironment: string!? = EngineFromEnvironment("");
+        if fromEnvironment != null {
+            return fromEnvironment!;
+        }
+        delete fromEnvironment;
+        loaded := ProjectManifest:::Load(projectFolder);
+        when loaded! {
+            Result:::Ok(manifest) -> {
+                defer delete manifest;
+                return ResolvedPath(projectFolder, manifest->enginePath);
+            },
+            Result:::Err(message) -> {
+                delete message;
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Everything wrong with a project, one message each; an empty list means it is sound. It checks the project file, that
+     * `game.json` names an entry file that exists, that the assets folder exists, and that the engine folder is a checkout.
+     */
+    CheckProject :: (projectFolder: string) -> Array<string!>! {
+        problems~ Array<string!>! = [];
+        loaded := ProjectManifest:::Load(projectFolder);
+        when loaded! {
+            Result:::Err(message) -> {
+                problems.push(message!);
+            },
+            Result:::Ok(manifest) -> {
+                engineFolder: string! = ResolvedPath(projectFolder, manifest->enginePath);
+                if !IsEngineFolder(engineFolder) {
+                    problems.push(`the engine folder ${engineFolder} isn't a Lantern checkout; run 'lantern project relink PATH'`);
+                }
+                delete engineFolder;
+                delete manifest;
+            }
+        }
+        gamePath: string! = `${projectFolder}/${GAME_FILE}`;
+        defer delete gamePath;
+        gameText: string!? = ReadText(gamePath);
+        defer delete gameText;
+        if gameText == null {
+            problems.push(`${gamePath}: can't read it, so this folder isn't a game`);
+            return problems!;
+        }
+        guard text := gameText return problems!;
+        when lantern:::json:::Parse(text) {
+            Result:::Err(message) -> {
+                problems.push(`${gamePath}: ${message}`);
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                root: u32 = document->root;
+                entryName~ string = "";
+                if member := document->Member(root, "entry") {
+                    entryName = document->Text(member);
+                }
+                assetsName~ string = "assets";
+                if member := document->Member(root, "assets") {
+                    assetsName = document->Text(member);
+                }
+                entryPath: string! = `${projectFolder}/${entryName}`;
+                if entryName.length() == 0 || !pathExists(entryPath) || directoryExists(entryPath) {
+                    problems.push(`${entryPath}: the entry file named in game.json is missing`);
+                }
+                delete entryPath;
+                assetsPath: string! = `${projectFolder}/${assetsName}`;
+                if !directoryExists(assetsPath) {
+                    problems.push(`${assetsPath}: the assets folder named in game.json is missing`);
+                }
+                delete assetsPath;
+                delete document;
+            }
+        }
+        return problems!;
+    }
+
+    /**
+     * Changes a project's name: the manifest's `name` and the game's window title. Returns a message when it can't.
+     */
+    RenameProject :: (projectFolder: string, newName: string) -> string!? {
+        trimmed: string = newName.trim();
+        if trimmed.length() == 0 {
+            return "the project needs a name".copy();
+        }
+        loaded := ProjectManifest:::Load(projectFolder);
+        when loaded! {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(manifest) -> {
+                defer delete manifest;
+                renamed := new ProjectManifest(trimmed, manifest->template, manifest->enginePath, manifest->created);
+                defer delete renamed;
+                text: string! = renamed->ToJson();
+                defer delete text;
+                path: string! = `${projectFolder}/${MANIFEST_FILE}`;
+                defer delete path;
+                problem: string!? = WriteText(path, text);
+                if problem != null {
+                    return problem!;
+                }
+                delete problem;
+                return SetGameTitle(projectFolder, trimmed);
+            }
+        }
+    }
+
+    /**
+     * Points a project at another engine checkout. The path is checked, then recorded relative to the project's folder.
+     */
+    RelinkProject :: (projectFolder: string, enginePath: string) -> string!? {
+        enginePathResolved: string!? = AbsolutePath(enginePath);
+        defer delete enginePathResolved;
+        guard engineFolder := enginePathResolved return `can't resolve ${enginePath}`.copy();
+        if !IsEngineFolder(engineFolder) {
+            return `${engineFolder} isn't a Lantern checkout (no engine/nox.json)`.copy();
+        }
+        projectResolved: string!? = AbsolutePath(projectFolder);
+        defer delete projectResolved;
+        guard absoluteProject := projectResolved return `can't resolve ${projectFolder}`.copy();
+        loaded := ProjectManifest:::Load(absoluteProject);
+        when loaded! {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(manifest) -> {
+                defer delete manifest;
+                record: string! = RecordedEngine(absoluteProject, engineFolder);
+                defer delete record;
+                relinked := new ProjectManifest(manifest->name, manifest->template, record, manifest->created);
+                defer delete relinked;
+                text: string! = relinked->ToJson();
+                defer delete text;
+                path: string! = `${absoluteProject}/${MANIFEST_FILE}`;
+                defer delete path;
+                return WriteText(path, text);
+            }
+        }
+    }
+
+    /**
+     * Copies a project to a new folder under a new name. The copy links to the same engine as the original.
+     */
+    DuplicateProject :: (sourceFolder: string, destinationFolder: string, newName: string) -> string!? {
+        sourceResolved: string!? = AbsolutePath(sourceFolder);
+        defer delete sourceResolved;
+        guard absoluteSource := sourceResolved return `can't resolve ${sourceFolder}`.copy();
+        destinationResolved: string!? = AbsolutePath(destinationFolder);
+        defer delete destinationResolved;
+        guard absoluteDestination := destinationResolved return `can't resolve ${destinationFolder}`.copy();
+        if IsInside(absoluteDestination, absoluteSource) {
+            return "a project can't be copied into itself".copy();
+        }
+        loaded := ProjectManifest:::Load(absoluteSource);
+        when loaded! {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(manifest) -> {
+                defer delete manifest;
+                engineFolder: string! = ResolvedPath(absoluteSource, manifest->enginePath);
+                defer delete engineFolder;
+                return Instantiate(absoluteDestination, newName.trim(), manifest->template, absoluteSource, engineFolder);
+            }
+        }
+    }
+}

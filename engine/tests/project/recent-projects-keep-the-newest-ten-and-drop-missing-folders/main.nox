@@ -1,0 +1,57 @@
+lantern :: import lantern;
+
+main :: () -> i32 {
+    root: string! = `/tmp/lantern-recent-test-${monotonicNanoseconds()}`;
+    defer delete root;
+    createDirectories(root);
+    unsafe {
+        lantern:::archivecalls:::setenv("LANTERN_CONFIG_DIRECTORY", root, 1);
+    }
+
+    first: string! = `${root}/first`;
+    defer delete first;
+    createDirectories(first);
+    lantern:::project:::RememberProject(first, "First");
+    second: string! = `${root}/second`;
+    defer delete second;
+    createDirectories(second);
+    lantern:::project:::RememberProject(second, "Second");
+    lantern:::project:::RememberProject(first, "First again");
+
+    list := lantern:::project:::RecentList:::Load();
+    assert(list->paths.length() == 2, "two projects are listed");
+    assert(list->paths[0] == first && list->names[0] == "First again", "the project opened last is first, under its latest name");
+    assert(list->paths[1] == second, "the other follows");
+    delete list;
+
+    for index~ usize = 0; index < 12; index++ {
+        folder: string! = `${root}/many-${index}`;
+        createDirectories(folder);
+        label: string! = `Many ${index}`;
+        lantern:::project:::RememberProject(folder, label);
+        delete label;
+        delete folder;
+    }
+    full := lantern:::project:::RecentList:::Load();
+    assert(full->paths.length() == 10, "only the newest ten are kept");
+    assert(full->names[0] == "Many 11", "the newest is first");
+    delete full;
+
+    lastFolder: string! = `${root}/many-11`;
+    defer delete lastFolder;
+    removeDirectory(lastFolder);
+    pruned := lantern:::project:::RecentList:::Load();
+    assert(pruned->paths.length() == 9, "a project whose folder is gone is dropped");
+    assert(pruned->names[0] == "Many 10", "the next newest leads");
+    delete pruned;
+
+    tenthFolder: string! = `${root}/many-10`;
+    defer delete tenthFolder;
+    lantern:::project:::ForgetProject(tenthFolder);
+    forgotten := lantern:::project:::RecentList:::Load();
+    assert(forgotten->paths.length() == 8, "forgetting takes one off");
+    delete forgotten;
+
+    print("recent projects keep the newest ten and drop missing folders");
+    return 0;
+}

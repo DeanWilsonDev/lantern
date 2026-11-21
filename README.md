@@ -26,7 +26,7 @@ mist run test           # run the engine's tests
 mist run build-shaders  # recompile the shaders after editing engine/shaders (needs glslangValidator and spirv-cross)
 ```
 
-The scripts are defined in [`mist.json`](mist.json). The compiled shaders are committed, so building the game needs
+`mist run install-cli` puts a `lantern` command on your `PATH` that makes game projects in their own folders (`lantern project new ~/games/my-game`), then runs, edits and packages them; see [`docs/projects.md`](docs/projects.md). The scripts are defined in [`mist.json`](mist.json). The compiled shaders are committed, so building the game needs
 neither shader tool.
 
 ## What's where

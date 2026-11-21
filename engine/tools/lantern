@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# The `lantern` command: makes and manages game projects, and runs, edits and packages them from their own folders.
+# It finds the engine checkout it works with, in this order: $LANTERN_ENGINE, the `engine` path in the project's
+# lantern.project.json, then the checkout this script lives in. Put it on your PATH with `mist run install-cli`.
+set -euo pipefail
+
+resolve_link() {
+    local path="$1"
+    while [[ -L "$path" ]]; do
+        local target
+        target="$(readlink "$path")"
+        if [[ "$target" == /* ]]; then
+            path="$target"
+        else
+            path="$(cd -P "$(dirname "$path")" && pwd)/$target"
+        fi
+    done
+    echo "$(cd -P "$(dirname "$path")" && pwd)/$(basename "$path")"
+}
+
+own_checkout="$(cd -P "$(dirname "$(resolve_link "${BASH_SOURCE[0]}")")/../.." && pwd)"
+
+usage() {
+    cat >&2 <<'USAGE'
+usage:
+  lantern project new DIRECTORY [--name NAME] [--template empty|platformer]
+  lantern project info|check [DIRECTORY]
+  lantern project templates
+  lantern project rename [DIRECTORY] NAME
+  lantern project relink [DIRECTORY] ENGINE_PATH
+  lantern project duplicate SOURCE DESTINATION [--name NAME]
+  lantern project recent
+  lantern run [DIRECTORY]        play the project (default: the current folder)
+  lantern editor [DIRECTORY]     open the world editor on the project
+  lantern package [DIRECTORY]    build one file to give to players: DIRECTORY/build/package/lantern
+  lantern engine [DIRECTORY]     print the engine checkout the project uses
+USAGE
+    exit 2
+}
+
+absolute_directory() {
+    local path="${1:-.}"
+    [[ -d "$path" ]] || { echo "lantern: $path isn't a folder" >&2; exit 1; }
+    (cd "$path" && pwd)
+}
+
+engine_for_project() {
+    local project="$1"
+    if [[ -n "${LANTERN_ENGINE:-}" ]]; then
+        (cd "$LANTERN_ENGINE" && pwd)
+        return
+    fi
+    local manifest="$project/lantern.project.json"
+    if [[ -f "$manifest" ]]; then
+        local recorded
+        recorded="$(grep -o '"engine"[[:space:]]*:[[:space:]]*"[^"]*"' "$manifest" | head -n 1 | sed 's/^"engine"[[:space:]]*:[[:space:]]*"//; s/"$//')"
+        if [[ -n "$recorded" ]]; then
+            [[ "$recorded" == /* ]] || recorded="$project/$recorded"
+            if [[ -d "$recorded" ]]; then
+                (cd "$recorded" && pwd)
+                return
+            fi
+            echo "lantern: the engine folder $recorded is gone; run 'lantern project relink PATH'" >&2
+            exit 1
+        fi
+    fi
+    echo "$own_checkout"
+}
+
+require_engine() {
+    [[ -f "$1/engine/nox.json" ]] || { echo "lantern: $1 isn't a Lantern checkout" >&2; exit 1; }
+}
+
+build_engine() {
+    (cd "$1/engine" && nox build --release --project . >/dev/null)
+}
+
+command_name="${1:-}"
+[[ -n "$command_name" ]] || usage
+shift
+
+case "$command_name" in
+project)
+    subcommand="${1:-}"
+    project_argument=""
+    case "$subcommand" in
+    info|check|rename|relink) [[ -d "${2:-.}" && "${2:-}" != "" ]] && project_argument="$2" ;;
+    esac
+    if [[ "$subcommand" == relink ]]; then
+        relink_project="${project_argument:-$(pwd)}"
+        if [[ -z "${LANTERN_ENGINE:-}" ]] && ! engine_directory="$(engine_for_project "$(absolute_directory "$relink_project")" 2>/dev/null)"; then
+            engine_directory="$own_checkout"
+        fi
+    elif [[ -n "$project_argument" ]]; then
+        engine_directory="$(engine_for_project "$(absolute_directory "$project_argument")")"
+    elif [[ "$subcommand" == info || "$subcommand" == check || "$subcommand" == rename || "$subcommand" == relink ]]; then
+        engine_directory="$(engine_for_project "$(pwd)")"
+    else
+        engine_directory="${LANTERN_ENGINE:-$own_checkout}"
+        previous=""
+        for argument in "$@"; do
+            if [[ "$previous" == "--engine" ]]; then
+                engine_directory="$(cd "$argument" 2>/dev/null && pwd)" || { echo "lantern: $argument isn't a folder" >&2; exit 1; }
+            fi
+            previous="$argument"
+        done
+    fi
+    require_engine "$engine_directory"
+    build_engine "$engine_directory"
+    if [[ "$subcommand" == relink && -z "${LANTERN_ENGINE:-}" && ! -f "$engine_directory/engine/nox.json" ]]; then
+        engine_directory="$own_checkout"
+    fi
+    LANTERN_ENGINE="$engine_directory" exec "$engine_directory/engine/build/lantern" project "$@"
+    ;;
+run|editor|package|engine)
+    project="$(absolute_directory "${1:-.}")"
+    engine_directory="$(engine_for_project "$project")"
+    require_engine "$engine_directory"
+    [[ -f "$project/game.json" ]] || { echo "lantern: $project has no game.json, so it isn't a game project" >&2; exit 1; }
+    export LANTERN_ENGINE="$engine_directory"
+    case "$command_name" in
+    engine) echo "$engine_directory" ;;
+    run) cd "$engine_directory" && exec mist run game "$project" ;;
+    editor) cd "$engine_directory" && exec mist run editor "$project" ;;
+    package)
+        output="${2:-$project/build/package}"
+        [[ "$output" == /* ]] || output="$PWD/$output"
+        cd "$engine_directory" && exec mist run package "$project" "$output"
+        ;;
+    esac
+    ;;
+*)
+    usage
+    ;;
+esac
