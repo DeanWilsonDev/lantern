@@ -54,17 +54,16 @@ drawer's page) are kept as before.
 
 ### Toolbar
 
-| Group | Modes |
-| --- | --- |
-| New, Open, Save | All |
-| Undo, Redo | All |
-| Mode switcher | All |
-| Snap, Local Space, Pivot | Select |
-| Frame, Duplicate, Group, Delete | Select |
-| Play | All |
-| Command palette, Settings | All |
+The toolbar keeps only what is used all the time: the mode switcher (Select and Terrain, each named) on the left, Play
+in the middle, and the command palette and settings on the right. It is the same in every mode.
 
-The tools themselves are in the tool palette (below), not on the toolbar.
+Play is white while nothing runs and green while the game runs, when it reads Stop. Beside it while the game runs is
+Pause, which turns orange while the game is paused and resumes it when pressed again. A paused game keeps its window
+and keeps drawing, but its world holds still.
+
+Everything else lives where it belongs: New, Open and Save in the File menu; Undo, Redo, Duplicate and Delete in Edit;
+Frame in View; Group in Entity. The tools are in the tool palette (below), and Snap, World or Local space and the pivot
+are named toggles in the viewport's header in Select mode.
 
 ### Tool palette
 
@@ -86,6 +85,7 @@ The Silhouette and graph tabs have no palette.
 | Outliner | Select |
 | Details | Select |
 | Viewport header (Camera and Show menus) | Select, Terrain (it belongs to the Level tab) |
+| Snap, World or Local, Pivot toggles in the viewport header | Select |
 | Right-click menu of an entity | Select (it opens from the outliner) |
 | Document tabs | All |
 | Status bar | All |

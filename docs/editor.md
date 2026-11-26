@@ -139,9 +139,9 @@ to the next one, and deleting an entity closes its tab.
   align camera and selection), Entity (one entry per template, snap to ground, revert to and
   apply to template), Window (each panel with a tick and its shortcut, hide all panels, settings) and Help
   (controls, keyboard shortcuts, about).
-- **Toolbar**: file buttons, undo and redo, the move, rotate and scale tools, snap, world or
-  local space, pivot, frame, duplicate, group, delete, play and stop, the camera preset
-  dropdown, the view toggles, the command palette and settings. Every button has a tooltip.
+- **Toolbar**: the mode switcher, Play (white, or green with Stop while the game runs) and Pause in
+  the middle, and the command palette and settings. Everything else is in the menus, the tool
+  palette and the viewport header (Snap, World or Local, Pivot). Every button has a tooltip.
 - **Outliner**: the entity tree with a search box, kind icons, expand and collapse, eye and
   lock toggles per row, click and Shift-click selection, and drag-and-drop: drop on a row to
   parent under it, on the line between two rows to move just before the lower one (taking its
@@ -245,6 +245,10 @@ Play saves the level to `.editor-play.world.json` beside the game's worlds and r
 `LANTERN_ASSETS` names that directory, so the game finds the level whether the editor was given a
 relative or an absolute assets directory.
 Stop ends the game. The game's own window opens; the editor stays usable.
+Pause, beside Play while the game runs, holds the game still and turns orange; press it again to carry on. The editor
+pauses by creating `.editor-play.paused` beside the scratch level, whose path it passes as `LANTERN_PAUSE_FILE`; the
+game's loop looks for that file a few times a second and, while it is there, runs no simulation steps and gives the game
+no elapsed time, but keeps drawing and reading events.
 
 Play starts where you are looking, not at the start of the level. If something is selected the player starts at that
 entity; otherwise at the editor camera (the point the camera is centred on in an orthographic view such as top or front),
@@ -288,7 +292,7 @@ The Assets panel shows a folder list on the left and the open folder as cards. S
 
 ## Terrain tab
 
-Beside Silhouettes in the bottom panel (Alt+6, Window > Terrain or Terrain > Terrain Settings): the brush, generator and size settings. The Terrain menu and the brush button on the toolbar (B) run the commands. See [terrain.md](terrain.md).
+Beside Silhouettes in the bottom panel (Alt+6, Window > Terrain or Terrain > Terrain Settings): the brush, generator and size settings. The Terrain menu and the brushes in the tool palette (B turns the brush on and off) run the commands. See [terrain.md](terrain.md).
 
 ## Silhouettes tab
 

@@ -13,6 +13,9 @@ lantern:::editorbackend :: namespace {
     // in the repository.
     SCRATCH_LEVEL_FILE: string : ".editor-play.world.json";
     ERROR_FILE: string : ".editor-play.error.txt";
+    // The editor's Pause button: while this file exists the game holds its simulation still (GameLoop reads it
+    // through LANTERN_PAUSE_FILE), and removing it lets the game carry on.
+    PAUSE_FILE: string : ".editor-play.paused";
     GAME_DIRECTORY: string : "games/platformer";
 
     // The argument list of the game process as SDL wants it: a C array of C strings ending in a null
@@ -127,11 +130,13 @@ lantern:::editorbackend :: namespace {
     public:
         process~ raw Sdl:::SDL_Process~* = null;
         levelPath~ string!;
+        pauseFilePath~ string!;
         startedTicks~ u64 = 0;
 
-        PlaySession~: (runningProcess: raw Sdl:::SDL_Process~*, scratchLevel: string) {
+        PlaySession~: (runningProcess: raw Sdl:::SDL_Process~*, scratchLevel: string, pauseFile: string) {
             process = runningProcess;
             levelPath = `${scratchLevel}`;
+            pauseFilePath = `${pauseFile}`;
             unsafe {
                 startedTicks = Sdl:::SDL_GetTicks();
             }
@@ -144,6 +149,33 @@ lantern:::editorbackend :: namespace {
                 }
             }
             delete levelPath;
+            delete pauseFilePath;
+        }
+
+        // Whether the editor has paused the game.
+        IsPaused :: () -> bool {
+            return pathExists(pauseFilePath);
+        }
+
+        // Pauses or resumes the game by making or removing the pause file. False if the file couldn't be written.
+        SetPaused~: (paused: bool) -> bool {
+            if paused {
+                when writeTextFile(pauseFilePath, "paused") {
+                    Result:::Ok(written) -> { },
+                    Result:::Err(error) -> {
+                        delete error;
+                        return false;
+                    }
+                }
+                return true;
+            }
+            when removeFile(pauseFilePath) {
+                Result:::Ok(removed) -> { },
+                Result:::Err(error) -> {
+                    delete error;
+                }
+            }
+            return true;
         }
 
         // How long the game has been running, in seconds.
@@ -187,7 +219,7 @@ lantern:::editorbackend :: namespace {
     // the editor's own is left alone. The game has no input (stdin is null) and writes to the editor's
     // console. Returns null if the process could not start. The strings given to SDL are freed once the
     // process has been created.
-    SpawnRunner :: (runner: string, gameDirectory: string, levelAssetPath: string, assetsDirectory: string, errorFilePath: string) -> raw Sdl:::SDL_Process~* {
+    SpawnRunner :: (runner: string, gameDirectory: string, levelAssetPath: string, assetsDirectory: string, errorFilePath: string, pauseFilePath: string) -> raw Sdl:::SDL_Process~* {
         arguments~ ProcessArguments = ProcessArguments { };
         process~ raw Sdl:::SDL_Process~* = null;
         unsafe {
@@ -195,6 +227,7 @@ lantern:::editorbackend :: namespace {
             Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_LEVEL", levelAssetPath, true);
             Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_ASSETS", assetsDirectory, true);
             Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_ERROR_FILE", errorFilePath, true);
+            Sdl:::SDL_SetEnvironmentVariable(environment, "LANTERN_PAUSE_FILE", pauseFilePath, true);
             arguments.program = Sdl:::SDL_strdup(runner);
             arguments.gameDirectory = Sdl:::SDL_strdup(gameDirectory);
             properties: Sdl:::SDL_PropertiesID = Sdl:::SDL_CreateProperties();

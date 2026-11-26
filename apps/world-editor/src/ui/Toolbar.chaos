@@ -2,15 +2,43 @@ Editor :: import Editor;
 EditorModes :: import EditorModes;
 IconButton :: import IconButton;
 ToolbarState :: import ToolbarState;
+TooltipArea :: import TooltipArea;
 
-// The row of tool buttons under the menu bar, in groups split by separators. On the left, in every mode: file, undo and
-// redo, and the mode switcher (Select and Terrain; see editor-modes.nyx). Then, in Select mode, snapping and space and
-// the actions on the selection. The tools themselves (Add, move, rotate, scale, the terrain brushes) are in the tool
-// palette (ToolPalette.chaos), which floats or docks beside the viewport. Play, the command
-// palette and the settings close the row in every mode. Each button runs a command by name (RunCommand), so the
-// toolbar, the menus and the keyboard shortcuts all go the same way. The whole row is rebuilt inside one <slot> from
-// editor.document.toolbar and the mode, so a change to the tool, the selection or the mode redraws just this row. A
-// button is greyed out (enabled=false) when it needs something selected or something to undo.
+// What the toolbar shows for the mode switcher and Play, worked out from the toolbar state.
+ToolbarUi :: namespace {
+    ModeClass :: (active: bool) -> string {
+        return active ? "mode-choice-active" : "mode-choice";
+    }
+
+    ModeTooltip :: (name: string) -> string {
+        return `${EditorModes:::Label(name)} mode (${EditorModes:::Shortcut(name)})`;
+    }
+
+    // Play is white while nothing runs and green while the game is running; pressing it then stops the game.
+    PlayClass :: (state: ToolbarState) -> string {
+        return state.playing ? "play-button-playing" : "play-button";
+    }
+
+    PlayLabel :: (state: ToolbarState) -> string {
+        return state.playing ? "Stop" : "Play";
+    }
+
+    PlayTooltip :: (state: ToolbarState) -> string {
+        return state.playing ? "Stop playing (Ctrl+P)" : "Play the level (Ctrl+P)";
+    }
+
+    // Pause sits beside Play only while the game runs, and turns orange while the game is paused.
+    PauseClass :: (state: ToolbarState) -> string {
+        return state.paused ? "pause-button-active" : "pause-button";
+    }
+}
+
+// The row under the menu bar, kept to what is used all the time: the mode switcher on the left, Play (and Pause while
+// the game runs) in the middle, and the command palette and settings on the right. Everything else the toolbar used to
+// hold is in the menus (New, Open and Save under File; Undo, Redo, Duplicate and Delete under Edit), the tools are in
+// the tool palette, and snap, space and pivot are toggles in the viewport's header. The left and right groups are the
+// same width so Play sits in the middle of the window. The row is rebuilt inside one <slot> from editor.document.toolbar
+// and the mode, so a change to either redraws just this row.
 Toolbar :: () -> Penumbra:::Component {
     @context editor~ Editor;
     return (
@@ -21,60 +49,48 @@ Toolbar :: () -> Penumbra:::Component {
                     mode := editor.Mode();
                     return (
                         <frame class="toolbar-row">
-                            <IconButton icon="document" tooltip="New world (Ctrl+N)"
-                                        onPress={() -> editor.commands.RunCommand("new")} />
-                            <IconButton icon="folder-open" tooltip="Open… (Ctrl+O)"
-                                        onPress={() -> editor.commands.RunCommand("open")} />
-                            <IconButton icon="save" tooltip="Save (Ctrl+S)"
-                                        onPress={() -> editor.commands.RunCommand("save")} />
-                            <frame class="toolbar-separator" />
-                            <IconButton icon="undo" tooltip="Undo (Ctrl+Z)" enabled={state.canUndo}
-                                        onPress={() -> editor.commands.RunCommand("undo")} />
-                            <IconButton icon="redo" tooltip="Redo (Ctrl+Shift+Z)" enabled={state.canRedo}
-                                        onPress={() -> editor.commands.RunCommand("redo")} />
-                            <frame class="toolbar-separator" />
-                            <slot>
-                                !{EditorModes:::Names().map((name: string) ->
-                                    <IconButton key={`mode-${name}`} icon={EditorModes:::Icon(name)}
-                                                tooltip={`${EditorModes:::Label(name)} mode (${EditorModes:::Shortcut(name)})`}
-                                                active={mode == name}
-                                                onPress={() -> editor.commands.RunCommand(`mode:${name}`)} />)}
-                            </slot>
-                            <frame class="toolbar-separator" />
-                            <slot>
-                                !{mode == EditorModes:::SELECT
-                                    ? <frame class="toolbar-row">
-                                          <IconButton icon="magnet" tooltip="Snap to grid" active={state.snap}
-                                                      onPress={() -> editor.commands.RunCommand("toggleSnap")} />
-                                          <IconButton icon={state.space == "local" ? "local-space" : "world-space"}
-                                                      tooltip={state.space == "local" ? "Local space (X)" : "World space (X)"}
-                                                      active={state.space == "local"}
-                                                      onPress={() -> editor.commands.RunCommand("toggleSpace")} />
-                                          <IconButton icon="pivot" tooltip={state.pivot == "center" ? "Pivot at center (Z)" : "Pivot at primary (Z)"}
-                                                      active={state.pivot == "center"}
-                                                      onPress={() -> editor.commands.RunCommand("togglePivot")} />
-                                          <frame class="toolbar-separator" />
-                                          <IconButton icon="crosshair" tooltip="Frame selection (F)" enabled={state.hasSelection}
-                                                      onPress={() -> editor.commands.RunCommand("frameSelection")} />
-                                          <IconButton icon="copy" tooltip="Duplicate (Ctrl+D)" enabled={state.hasSelection}
-                                                      onPress={() -> editor.commands.RunCommand("duplicate")} />
-                                          <IconButton icon="layers" tooltip="Group (Ctrl+G)" enabled={state.hasSelection}
-                                                      onPress={() -> editor.commands.RunCommand("group")} />
-                                          <IconButton icon="trash" tooltip="Delete (Delete)" enabled={state.hasSelection}
-                                                      onPress={() -> editor.commands.RunCommand("delete")} />
-                                          <frame class="toolbar-separator" />
-                                      </frame>
-                                    : <frame class="nothing" />}
-                            </slot>
-                            <IconButton icon={state.playing ? "stop" : "play"}
-                                        tooltip={state.playing ? "Stop playing (Ctrl+P)" : "Play level (Ctrl+P)"}
-                                        active={state.playing}
-                                        onPress={() -> editor.commands.RunCommand(state.playing ? "stop" : "play")} />
+                            <frame class="toolbar-side">
+                                <frame class="mode-switch">
+                                    <slot>
+                                        !{EditorModes:::Names().map((name: string) ->
+                                            <TooltipArea key={`mode-${name}`} text={ToolbarUi:::ModeTooltip(name)}>
+                                                <frame ref={`mode-${name}`} class={ToolbarUi:::ModeClass(mode == name)}
+                                                       onRelease={() -> editor.commands.RunCommand(`mode:${name}`)}>
+                                                    <icon class={mode == name ? "mode-choice-icon-active" : "mode-choice-icon"}
+                                                          icon={EditorModes:::Icon(name)} size={13.0f} />
+                                                    <text class={mode == name ? "mode-choice-label-active" : "mode-choice-label"}>{EditorModes:::Label(name)}</text>
+                                                </frame>
+                                            </TooltipArea>)}
+                                    </slot>
+                                </frame>
+                            </frame>
                             <frame class="toolbar-spacer" />
-                            <IconButton tooltipPlacement="end" icon="command" tooltip="Command palette (Ctrl+Shift+P)"
-                                        onPress={() -> editor.commands.RunCommand("commandPalette")} />
-                            <IconButton tooltipPlacement="end" icon="gear" tooltip="Settings (Ctrl+,)"
-                                        onPress={() -> editor.commands.RunCommand("settings")} />
+                            <frame class="play-controls">
+                                <TooltipArea text={ToolbarUi:::PlayTooltip(state)}>
+                                    <frame ref="play-button" class={ToolbarUi:::PlayClass(state)}
+                                           onRelease={() -> editor.commands.RunCommand(state.playing ? "stop" : "play")}>
+                                        <icon class="play-button-icon" icon={state.playing ? "stop" : "play"} size={13.0f} />
+                                        <text class="play-button-label">{ToolbarUi:::PlayLabel(state)}</text>
+                                    </frame>
+                                </TooltipArea>
+                                <slot>
+                                    !{state.playing
+                                        ? <TooltipArea text={state.paused ? "Resume the game" : "Pause the game"}>
+                                              <frame ref="pause-button" class={ToolbarUi:::PauseClass(state)}
+                                                     onRelease={() -> editor.commands.RunCommand(state.paused ? "resume" : "pause")}>
+                                                  <icon class={state.paused ? "pause-button-icon-active" : "pause-button-icon"} icon="pause" size={13.0f} />
+                                              </frame>
+                                          </TooltipArea>
+                                        : <frame class="nothing" />}
+                                </slot>
+                            </frame>
+                            <frame class="toolbar-spacer" />
+                            <frame class="toolbar-side-end">
+                                <IconButton tooltipPlacement="end" icon="command" tooltip="Command palette (Ctrl+Shift+P)"
+                                            onPress={() -> editor.commands.RunCommand("commandPalette")} />
+                                <IconButton tooltipPlacement="end" icon="gear" tooltip="Settings (Ctrl+,)"
+                                            onPress={() -> editor.commands.RunCommand("settings")} />
+                            </frame>
                         </frame>
                     );
                 })()}

@@ -1,13 +1,24 @@
 Editor :: import Editor;
+EditorModes :: import EditorModes;
+TooltipArea :: import TooltipArea;
 
 // The hint on the right of the viewport's header, shown when no gizmo handle is being dragged.
 ViewportPaneUi :: namespace {
     ControlsHint :: () -> string {
         return "Right-drag orbit · wheel zoom · Help > Viewport Controls for more";
     }
+
+    ToggleClass :: (on: bool) -> string {
+        return on ? "viewport-toggle-active" : "viewport-toggle";
+    }
+
+    ToggleIconClass :: (on: bool) -> string {
+        return on ? "viewport-toggle-icon-active" : "viewport-toggle-icon";
+    }
 }
 
-// The 3D viewport and its header. The header holds two menu buttons (the camera mode and Show), the camera's
+// The 3D viewport and its header. The header holds two menu buttons (the camera mode and Show), then in Select mode the
+// transform toggles, each named so it reads at a glance (Snap, World or Local space, and the pivot), then the camera's
 // position, and a hint that turns into the name of the gizmo handle while one is dragged. The <viewport> element is
 // where the engine draws the level; dropping an asset on it places that asset in the world.
 ViewportPane :: () -> Penumbra:::Component {
@@ -25,6 +36,40 @@ ViewportPane :: () -> Penumbra:::Component {
                     <text class="viewport-menu-label">Show</text>
                     <icon class="viewport-menu-arrow" icon="chevron-down" size={10.0f} />
                 </frame>
+                <slot>
+                    !{(() -> Penumbra:::Component {
+                        state := editor.document.toolbar;
+                        guard editor.Mode() == EditorModes:::SELECT return <frame class="nothing" />;
+                        return (
+                            <frame class="viewport-header-group">
+                                <frame class="viewport-header-separator" />
+                                <TooltipArea text="Snap moves, turns and scales to the grid">
+                                    <frame ref="toggle-snap" class={ViewportPaneUi:::ToggleClass(state.snap)}
+                                           onRelease={() -> editor.commands.RunCommand("toggleSnap")}>
+                                        <icon class={ViewportPaneUi:::ToggleIconClass(state.snap)} icon="magnet" size={11.0f} />
+                                        <text class="viewport-menu-label">Snap</text>
+                                    </frame>
+                                </TooltipArea>
+                                <TooltipArea text="Move along the world's axes or the entity's own (X)">
+                                    <frame ref="toggle-space" class={ViewportPaneUi:::ToggleClass(state.space == "local")}
+                                           onRelease={() -> editor.commands.RunCommand("toggleSpace")}>
+                                        <icon class={ViewportPaneUi:::ToggleIconClass(state.space == "local")}
+                                              icon={state.space == "local" ? "local-space" : "world-space"} size={11.0f} />
+                                        <text class="viewport-menu-label">{state.space == "local" ? "Local" : "World"}</text>
+                                    </frame>
+                                </TooltipArea>
+                                <TooltipArea text="Turn and scale a selection about its centre or its first entity (Z)">
+                                    <frame ref="toggle-pivot" class={ViewportPaneUi:::ToggleClass(state.pivot == "center")}
+                                           onRelease={() -> editor.commands.RunCommand("togglePivot")}>
+                                        <icon class={ViewportPaneUi:::ToggleIconClass(state.pivot == "center")} icon="pivot" size={11.0f} />
+                                        <text class="viewport-menu-label">{state.pivot == "center" ? "Pivot: Centre" : "Pivot: First"}</text>
+                                    </frame>
+                                </TooltipArea>
+                                <frame class="viewport-header-separator" />
+                            </frame>
+                        );
+                    })()}
+                </slot>
                 <slot>
                     !{<text class="viewport-camera">{editor.document.status.camera}</text>}
                 </slot>

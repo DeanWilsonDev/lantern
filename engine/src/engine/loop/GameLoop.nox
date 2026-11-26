@@ -13,6 +13,9 @@ lantern:::engine :: namespace {
         Finished
     }
 
+    /** How often, in frames, the loop looks for the editor's pause file: about four times a second at 60 fps. */
+    PAUSE_CHECK_FRAMES: u32 : 15;
+
     /**
      * The engine's heartbeat: owns time and input, and calls a `Game`'s hooks in a fixed order every frame.
      *
@@ -71,15 +74,44 @@ lantern:::engine :: namespace {
          * at the end of the frame.
          */
         quitRequested~ bool = false;
+        /**
+         * Whether the world editor has paused the game it started (its Pause button). While paused the loop runs no
+         * fixed steps and hands `FrameUpdate` zero elapsed time, so the world holds still, but it keeps rendering and
+         * reading events so the window stays alive. The editor pauses by creating the file named in LANTERN_PAUSE_FILE
+         * and resumes by removing it; see `FollowEditorPause`.
+         */
+        paused~ bool = false;
+        /** The file the editor creates to pause the game, from LANTERN_PAUSE_FILE. Null when the editor didn't start us. */
+        pauseFilePath~ string!? = null;
+        /** Frames since the pause file was last looked for. It is checked a few times a second, not every frame, and on the first frame. */
+        framesSincePauseCheck~ u32 = PAUSE_CHECK_FRAMES;
 
         /** Takes ownership of the input router the loop feeds events into. */
         GameLoop~: (router: InputRouter*!) {
             input = router!;
+            pauseFilePath = environmentVariable("LANTERN_PAUSE_FILE");
         }
 
         /** Deletes the input router the loop owns. */
         !GameLoop~: () {
             delete input;
+            delete pauseFilePath;
+        }
+
+        /**
+         * Looks for the editor's pause file every `PAUSE_CHECK_FRAMES` frames and pauses or resumes to match. A game the
+         * editor didn't start has no pause file and is never paused this way.
+         */
+        FollowEditorPause~: () -> void {
+            guard path := pauseFilePath return;
+            framesSincePauseCheck = framesSincePauseCheck + 1;
+            guard framesSincePauseCheck >= PAUSE_CHECK_FRAMES return;
+            framesSincePauseCheck = 0;
+            nowPaused: bool = pathExists(path);
+            if nowPaused != paused {
+                paused = nowPaused;
+                lantern:::core:::LogInfo("engine", paused ? "paused by the editor" : "resumed by the editor");
+            }
         }
 
         /** A copy of the frame statistics so far: frame times, frames run, steps in the last frame, time dropped. */
@@ -143,8 +175,12 @@ lantern:::engine :: namespace {
             }
             previousTime = now;
             wasMinimized = window.minimized;
+            FollowEditorPause();
+            if paused {
+                frameSeconds = 0.0f;
+            }
             plan~ lantern:::core:::FixedStepPlan = lantern:::core:::FixedStepPlan { };
-            if !window.minimized {
+            if !window.minimized && !paused {
                 plan = clock.Advance(frameSeconds);
             }
             stats.Record(frameSeconds, plan);
