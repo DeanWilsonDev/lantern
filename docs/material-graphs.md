@@ -119,6 +119,10 @@ opacity, test depth without writing it, and leave the second colour target (the 
 Its draws are sorted after every opaque draw, farthest first, and drawn after the sky, so each one blends over what is
 behind it. A see-through piece casts no shadow.
 
+Test: `engine/tests/gpu/masked-and-see-through-materials-draw-and-shadow` (a cube whose mask cuts it all away casts no
+shadow with its mask shader and its whole shadow without; half see-through glass shows the red wall behind it, solid
+glass hides it, and a draw with its own opacity of 0 shows only the wall).
+
 `MaterialShaderSource.parameters` holds the values the parameters start at, and
 `RenderBackend.SetMaterialShaderParameter(shader, slot, value)` changes one for every draw from then on. A `DrawItem`
 with `overridesParameters` set carries its own eight values in `parameters` instead, in the lit pass and the shadow pass.
@@ -201,7 +205,7 @@ saying which node stops it.
 **Save and compile** writes `material.graph.json` beside the Silhouette and runs the bake, so the game's compiled shader
 is current at once. The preview panel shows the material as last saved on a turning sphere in a studio: a dark backdrop,
 a warm key light, a cool rim light and a bright band of sky light around the horizon that metals reflect, so metallic,
-roughness and normal maps all read at a glance. The level viewport and the content browser draw every graph material
+roughness and normal maps all read at a glance. A see-through material gets a checkered wall behind the sphere, so what shows through it reads too. The level viewport and the content browser draw every graph material
 with its own shader too. **Hide shader** folds the generated GLSL away to give the canvas more room, and the panels only
 script graphs use (functions and variables) are hidden while a material is open.
 
