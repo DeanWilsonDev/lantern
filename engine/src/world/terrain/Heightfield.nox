@@ -1,0 +1,261 @@
+lantern:::terrain :: namespace {
+    /**
+     * The fewest vertices along one side of a terrain: a single cell.
+     */
+    MIN_COLUMNS: u32 : 2;
+
+    /**
+     * The most vertices along one side of a terrain. 257 by 257 is 131072 triangles.
+     */
+    MAX_COLUMNS: u32 : 257;
+
+    /**
+     * A height is stored as a whole number of centimetres in 16 bits, so a saved terrain spans -327 to +327 metres.
+     */
+    CENTIMETRES_PER_METRE: f32 : 100.0f;
+
+    /**
+     * The tallest stored height, in centimetres.
+     */
+    MAX_STORED_CENTIMETRES: i32 : 32767;
+
+    /**
+     * A square grid of heights, the shape of a terrain. `columns` vertices run along each side, `cellSize` metres apart,
+     * and `heights` holds one height per vertex, row by row (the row is the z axis, the column the x axis).
+     *
+     * The terrain is centred on its own origin: the first vertex is at (-half, -half) and the last at (half, half),
+     * where half is `HalfSpan()`. Moving, turning or scaling the entity moves the whole terrain.
+     */
+    Heightfield :: class {
+    public:
+        columns~ u32 = 2;
+        cellSize~ f32 = 1.0f;
+        heights~ Array<f32>! = [];
+
+        Heightfield~: (newColumns: u32, newCellSize: f32) {
+            columns = newColumns;
+            cellSize = newCellSize;
+            total: usize = usize(newColumns) * usize(newColumns);
+            for index~ usize = 0; index < total; index++ {
+                heights.push(0.0f);
+            }
+        }
+
+        !Heightfield~: () {
+            delete heights;
+        }
+
+        /**
+         * True when the size is one the editor and the game accept.
+         */
+        static IsValidSize :: (columns: u32, cellSize: f32) -> bool {
+            return columns >= MIN_COLUMNS && columns <= MAX_COLUMNS && cellSize > 0.0f &&
+                lantern:::core:::IsFinite(cellSize);
+        }
+
+        /**
+         * Where a vertex is in the `heights` array.
+         */
+        IndexOf :: (column: u32, row: u32) -> usize {
+            return usize(row) * usize(columns) + usize(column);
+        }
+
+        /**
+         * The height of one vertex.
+         */
+        HeightAtVertex :: (column: u32, row: u32) -> f32 {
+            return heights[IndexOf(column, row)];
+        }
+
+        /**
+         * Sets the height of one vertex.
+         */
+        SetHeight~: (column: u32, row: u32, height: f32) -> void {
+            heights[IndexOf(column, row)] = height;
+        }
+
+        /**
+         * Half the width of the terrain in metres.
+         */
+        HalfSpan :: () -> f32 {
+            return f32(columns - 1) * cellSize * 0.5f;
+        }
+
+        /**
+         * The x or z position of a column or row in the terrain's own space.
+         */
+        LocalCoordinate :: (index: u32) -> f32 {
+            return f32(index) * cellSize - HalfSpan();
+        }
+
+        /**
+         * The position of a vertex in the terrain's own space.
+         */
+        VertexPosition :: (column: u32, row: u32) -> Vec3 {
+            return Vec3 {
+                x: LocalCoordinate(column),
+                y: HeightAtVertex(column, row),
+                z: LocalCoordinate(row)
+            };
+        }
+
+        /**
+         * The height at any point in the terrain's own space, interpolated between the four vertices around it. A point
+         * outside the terrain gets the height of the nearest edge.
+         */
+        HeightAtLocal :: (x: f32, z: f32) -> f32 {
+            lastIndex: f32 = f32(columns - 1);
+            columnPosition: f32 = Math:::clamp((x + HalfSpan()) / cellSize, 0.0f, lastIndex);
+            rowPosition: f32 = Math:::clamp((z + HalfSpan()) / cellSize, 0.0f, lastIndex);
+            baseColumn~ u32 = u32(Math:::floor(columnPosition));
+            baseRow~ u32 = u32(Math:::floor(rowPosition));
+            if baseColumn >= columns - 1 {
+                baseColumn = columns - 2;
+            }
+            if baseRow >= columns - 1 {
+                baseRow = columns - 2;
+            }
+            columnFraction: f32 = columnPosition - f32(baseColumn);
+            rowFraction: f32 = rowPosition - f32(baseRow);
+            near: f32 = Math:::lerp(
+                HeightAtVertex(baseColumn, baseRow),
+                HeightAtVertex(baseColumn + 1, baseRow),
+                columnFraction
+            );
+            far: f32 = Math:::lerp(
+                HeightAtVertex(baseColumn, baseRow + 1),
+                HeightAtVertex(baseColumn + 1, baseRow + 1),
+                columnFraction
+            );
+            return Math:::lerp(near, far, rowFraction);
+        }
+
+        /**
+         * The unit direction the surface faces at a vertex, from the heights of its four neighbours.
+         */
+        NormalAtVertex :: (column: u32, row: u32) -> Vec3 {
+            left: u32 = column > 0 ? column - 1 : column;
+            right: u32 = column < columns - 1 ? column + 1 : column;
+            back: u32 = row > 0 ? row - 1 : row;
+            front: u32 = row < columns - 1 ? row + 1 : row;
+            slopeX: f32 = (HeightAtVertex(
+                right,
+                row
+            ) - HeightAtVertex(left, row)) / (f32(right - left) * cellSize);
+            slopeZ: f32 = (HeightAtVertex(
+                column,
+                front
+            ) - HeightAtVertex(column, back)) / (f32(front - back) * cellSize);
+            return lantern:::core:::Normalize3(Vec3 { x: -slopeX, y: 1.0f, z: -slopeZ });
+        }
+
+        /**
+         * The lowest and the highest vertex.
+         */
+        LowestHeight :: () -> f32 {
+            lowest~ f32 = heights[0];
+            for height in heights {
+                lowest = Math:::min(lowest, height);
+            }
+            return lowest;
+        }
+
+        HighestHeight :: () -> f32 {
+            highest~ f32 = heights[0];
+            for height in heights {
+                highest = Math:::max(highest, height);
+            }
+            return highest;
+        }
+
+        /**
+         * A new terrain equal to this one.
+         */
+        Copy :: () -> Heightfield*! {
+            copied := new Heightfield(columns, cellSize);
+            for index~ usize = 0; index < heights.length(); index++ {
+                copied->heights[index] = heights[index];
+            }
+            return copied!;
+        }
+
+        /**
+         * The heights as text: four lowercase hex digits per vertex, each a whole number of centimetres plus 32768. The
+         * text is what a world file keeps.
+         */
+        Encode :: () -> string! {
+            text~ string! = "";
+            for height in heights {
+                stored: i32 = EncodeCentimetres(height);
+                value: u32 = u32(stored + 32768);
+                text.appendByte(HexDigitByte((value / 4096) % 16));
+                text.appendByte(HexDigitByte((value / 256) % 16));
+                text.appendByte(HexDigitByte((value / 16) % 16));
+                text.appendByte(HexDigitByte(value % 16));
+            }
+            return text!;
+        }
+
+        /**
+         * Reads the heights back from `Encode`'s text. Fails when the size is not allowed, the text is the wrong length or
+         * it holds a character that is not a hex digit.
+         */
+        static Decode :: (
+            text: string,
+            newColumns: u32,
+            newCellSize: f32
+        ) -> Result<Heightfield*!, string!> {
+            if !IsValidSize(newColumns, newCellSize) {
+                return Result<Heightfield*!, string!>:::Err(`a terrain of ${newColumns} columns with ${newCellSize} metre cells is not allowed`);
+            }
+            expected: usize = usize(newColumns) * usize(newColumns) * 4;
+            if text.length() != expected {
+                return Result<Heightfield*!, string!>:::Err(`the heights are ${text.length()} characters, expected ${expected}`);
+            }
+            field := new Heightfield(newColumns, newCellSize);
+            for index~ usize = 0; index < field->heights.length(); index++ {
+                value~ u32 = 0;
+                for digit~ usize = 0; digit < 4; digit++ {
+                    parsed: u32? = lantern:::json:::HexDigitValue(text.byteAt(index * 4 + digit));
+                    if found := parsed {
+                        value = value * 16 + found;
+                    } else {
+                        delete field;
+                        return Result<Heightfield*!, string!>:::Err(`the heights hold a character that is not a hex digit at ${index * 4 + digit}`);
+                    }
+                }
+                field->heights[index] = f32(i32(value) - 32768) / CENTIMETRES_PER_METRE;
+            }
+            return Result<Heightfield*!, string!>:::Ok(field!);
+        }
+    }
+
+    /**
+     * A height in metres as the whole centimetres the saved form keeps, limited to what 16 bits hold.
+     */
+    EncodeCentimetres :: (height: f32) -> i32 {
+        scaled: f32 = Math:::round(Math:::clamp(
+            height * CENTIMETRES_PER_METRE,
+            -f32(MAX_STORED_CENTIMETRES),
+            f32(MAX_STORED_CENTIMETRES)
+        ));
+        return i32(scaled);
+    }
+
+    /**
+     * The character code of a hex digit, 0 to 15.
+     */
+    HexDigitByte :: (digit: u32) -> u8 {
+        if digit < 10 {
+            return u8(48 + digit);
+        }
+        return u8(87 + digit);
+    }
+
+    /**
+     * The smaller of two counts. `Math:::min` has no form for unsigned numbers.
+     */
+    SmallerCount :: (first: u32, second: u32) -> u32 {
+        return first < second ? first : second;
+    }
+}

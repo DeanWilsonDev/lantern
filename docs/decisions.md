@@ -2019,3 +2019,20 @@ Provisional (2026-11-21): not reviewed by Dean. The editor's `Editor` object is 
 ## D-257: Folder pickers use the file dialog request with the filter name "folder"
 
 Provisional (2026-11-21): not reviewed by Dean. The bridge's window requests carry a file dialog with a filter name but no folder flag. The editor's `FileDialogs.nox` treats the filter name `folder` as a request for SDL's open-folder dialog, so the project dialogs call `penumbra:::showOpenFileDialog("folder", "", start)` and need no bridge change. A real folder field in the bridge is the cleaner end state and would be its own cross-repo card.
+
+## D-266: A terrain is a world entity of kind `terrain`, kept in properties
+
+Provisional (2026-11-26): not reviewed by Dean. A terrain is an ordinary entity, so the world file format, the validator, undo and the outliner need no change. `terrain_columns` and `terrain_cell_size` give its size and `terrain_heights` its heights; the other `terrain_*` numbers remember the generator settings so the editor can show them again. A dedicated field on `WorldEntity` was the other way; it would have needed a format version, reader, writer, copy and compare changes for no gain while a terrain is one entity.
+
+## D-267: Heights are 16-bit centimetres written as hex text
+
+Provisional (2026-11-26): not reviewed by Dean. Each vertex is four lowercase hex digits, centimetres plus 32768, so a terrain holds -327 to +327 metres at 1 cm steps and a 97 by 97 terrain is 38 KB in the file. Text keeps the file plain and diffable, and a stroke's undo step copies one string. Sculpting snaps to the centimetre. A binary side file was the other way; it would need its own saving, copying and baking.
+
+## D-268: Noise is integer-hashed gradient noise sampled at world metres
+
+Provisional (2026-11-26): not reviewed by Dean. The same seed gives the same ground on every machine because the lattice hash uses integer arithmetic only. Noise is read at each vertex's position in metres plus an offset, so two terrains beside each other with offsets that differ by their width join along the shared edge. Erosion is thermal only (material slides down slopes steeper than a talus slope); hydraulic erosion costs a lot and is left for later.
+
+## D-269: One mesh per terrain for now, chunk builders ready
+
+Provisional (2026-11-26): not reviewed by Dean. `BuildPiece` makes one mesh for the whole terrain, up to 257 by 257 vertices (131072 triangles); the sample is 97 by 97. A piece is one entity and one mesh, so chunking needs the piece builder to return several meshes. `BuildChunkMesh` already makes 32 by 32 cell chunks with seamless normals, and the chunked-meshes card uses them for dirty rebuilds and culling.
+

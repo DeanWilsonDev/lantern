@@ -1,0 +1,126 @@
+lantern:::terrain :: namespace {
+    /**
+     * The `kind` of a world entity that is a terrain.
+     */
+    TerrainKind :: () -> string {
+        return "terrain";
+    }
+
+    /**
+     * True when the entity is a terrain.
+     */
+    IsTerrain :: (entity: lantern:::world:::WorldEntity*) -> bool {
+        return entity->kind == TerrainKind();
+    }
+
+    /**
+     * The terrain is stored in the entity's properties, so the world file format does not change: `terrain_columns` and
+     * `terrain_cell_size` give its size and `terrain_heights` the encoded heights. The other `terrain_` properties
+     * remember the settings it was generated with, so the editor can show them again.
+     */
+    ColumnsKey :: () -> string {
+        return "terrain_columns";
+    }
+
+    CellSizeKey :: () -> string {
+        return "terrain_cell_size";
+    }
+
+    HeightsKey :: () -> string {
+        return "terrain_heights";
+    }
+
+    /**
+     * The terrain an entity holds, or why it can't be read.
+     */
+    HeightfieldFromEntity :: (entity: lantern:::world:::WorldEntity*) -> Result<Heightfield*!, string!> {
+        guard columns := entity->NumberProperty(ColumnsKey()) return Result<Heightfield*!, string!>:::Err(`${entity->Label()} has no ${ColumnsKey()}`);
+        guard cellSize := entity->NumberProperty(CellSizeKey()) return Result<Heightfield*!, string!>:::Err(`${entity->Label()} has no ${CellSizeKey()}`);
+        heightsText: string!? = entity->TextProperty(HeightsKey());
+        guard heights := heightsText return Result<Heightfield*!, string!>:::Err(`${entity->Label()} has no ${HeightsKey()}`);
+        decoded := Heightfield:::Decode(heights, u32(columns), cellSize);
+        delete heightsText;
+        return decoded!;
+    }
+
+    /**
+     * Writes a terrain into an entity's properties.
+     */
+    StoreHeightfield :: (entity: lantern:::world:::WorldEntity~*, field: Heightfield*) -> void {
+        entity->SetNumberProperty(ColumnsKey(), f32(field->columns));
+        entity->SetNumberProperty(CellSizeKey(), field->cellSize);
+        encoded: string! = field->Encode();
+        entity->SetTextProperty(HeightsKey(), encoded);
+        delete encoded;
+    }
+
+    /**
+     * Writes the settings a terrain was generated with into an entity's properties.
+     */
+    StoreSettings :: (entity: lantern:::world:::WorldEntity~*, settings: TerrainSettings) -> void {
+        entity->SetNumberProperty("terrain_seed", f32(settings.seed));
+        entity->SetNumberProperty("terrain_feature_size", settings.featureSize);
+        entity->SetNumberProperty("terrain_octaves", f32(settings.octaves));
+        entity->SetNumberProperty("terrain_persistence", settings.persistence);
+        entity->SetNumberProperty("terrain_lacunarity", settings.lacunarity);
+        entity->SetNumberProperty("terrain_amplitude", settings.amplitude);
+        entity->SetNumberProperty("terrain_base_height", settings.baseHeight);
+    }
+
+    /**
+     * The settings an entity remembers, with the defaults for any that are missing.
+     */
+    SettingsFromEntity :: (entity: lantern:::world:::WorldEntity*) -> TerrainSettings {
+        settings~ TerrainSettings = TerrainSettings { };
+        settings.seed = u32(entity->NumberProperty("terrain_seed") ?? 1.0f);
+        settings.featureSize = entity->NumberProperty("terrain_feature_size") ?? settings.featureSize;
+        settings.octaves = u32(entity->NumberProperty("terrain_octaves") ?? 4.0f);
+        settings.persistence = entity->NumberProperty("terrain_persistence") ?? settings.persistence;
+        settings.lacunarity = entity->NumberProperty("terrain_lacunarity") ?? settings.lacunarity;
+        settings.amplitude = entity->NumberProperty("terrain_amplitude") ?? settings.amplitude;
+        settings.baseHeight = entity->NumberProperty("terrain_base_height") ?? settings.baseHeight;
+        return settings;
+    }
+
+    /**
+     * A new terrain entity, filled with noise from `settings`. It blocks the player (a static collider) and starts at the
+     * origin. The size must pass `Heightfield:::IsValidSize`.
+     */
+    NewTerrainEntity :: (
+        id: u64,
+        name: string,
+        columns: u32,
+        cellSize: f32,
+        settings: TerrainSettings
+    ) -> lantern:::world:::WorldEntity*! {
+        field := new Heightfield(columns, cellSize);
+        defer delete field;
+        GenerateTerrain(field, settings, 0.0f, 0.0f);
+        entity := new lantern:::world:::WorldEntity(id, name, TerrainKind());
+        entity->collider = lantern:::world:::ColliderKind:::Static;
+        StoreHeightfield(entity, field);
+        StoreSettings(entity, settings);
+        return entity!;
+    }
+
+    /**
+     * The mesh of an entity that is a terrain, or null when it is not one or its data can't be read.
+     */
+    TerrainMeshForEntity :: (entity: lantern:::world:::WorldEntity*) -> lantern:::renderer:::MeshData*!? {
+        if !IsTerrain(entity) {
+            return null;
+        }
+        decoded := HeightfieldFromEntity(entity);
+        when decoded! {
+            Result:::Ok(field) -> {
+                mesh: lantern:::renderer:::MeshData*! = BuildTerrainMesh(field);
+                delete field;
+                return mesh!;
+            },
+            Result:::Err(message) -> {
+                delete message;
+                return null;
+            }
+        }
+    }
+}

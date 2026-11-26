@@ -1,0 +1,145 @@
+lantern:::terrain :: namespace {
+    /**
+     * What a sculpting brush does to the ground under it.
+     */
+    BrushKind :: enum {
+        Raise,
+        Lower,
+        Smooth,
+        Flatten
+    }
+
+    /**
+     * A brush's weight at a distance from its centre: 1 in the middle, 0 at `radius` and beyond, easing between so the
+     * edge of a stroke has no step.
+     */
+    BrushWeight :: (distance: f32, radius: f32) -> f32 {
+        if radius <= 0.0f || distance >= radius {
+            return 0.0f;
+        }
+        remaining: f32 = 1.0f - distance / radius;
+        return remaining * remaining * (3.0f - 2.0f * remaining);
+    }
+
+    /**
+     * The text for a brush, as the editor and files spell it.
+     */
+    BrushName :: (kind: BrushKind) -> string {
+        when kind {
+            BrushKind:::Raise -> { return "raise"; },
+            BrushKind:::Lower -> { return "lower"; },
+            BrushKind:::Smooth -> { return "smooth"; },
+            BrushKind:::Flatten -> { return "flatten"; }
+        }
+    }
+
+    /**
+     * The brush a name stands for, or null.
+     */
+    BrushFromName :: (name: string) -> BrushKind? {
+        if name == "raise" {
+            return BrushKind:::Raise;
+        }
+        if name == "lower" {
+            return BrushKind:::Lower;
+        }
+        if name == "smooth" {
+            return BrushKind:::Smooth;
+        }
+        if name == "flatten" {
+            return BrushKind:::Flatten;
+        }
+        return null;
+    }
+
+    /**
+     * Applies one dab of a brush centred at `centerX`, `centerZ` in the terrain's own space, `radius` metres wide.
+     *
+     * `strength` is between 0 and 1 for smooth and flatten (how much of the way each vertex goes toward the result) and
+     * is the metres moved at the centre for raise and lower. `flattenHeight` is the level flatten pulls toward. Returns
+     * how many vertices changed.
+     */
+    ApplyBrush :: (
+        field: Heightfield~*,
+        kind: BrushKind,
+        centerX: f32,
+        centerZ: f32,
+        radius: f32,
+        strength: f32,
+        flattenHeight: f32
+    ) -> usize {
+        half: f32 = field->HalfSpan();
+        lastIndex: i32 = i32(field->columns) - 1;
+        firstColumn: i32 = Math:::max(
+            0,
+            i32(Math:::floor((centerX - radius + half) / field->cellSize))
+        );
+        lastColumn: i32 = Math:::min(
+            lastIndex,
+            i32(Math:::ceil((centerX + radius + half) / field->cellSize))
+        );
+        firstRow: i32 = Math:::max(
+            0,
+            i32(Math:::floor((centerZ - radius + half) / field->cellSize))
+        );
+        lastRow: i32 = Math:::min(
+            lastIndex,
+            i32(Math:::ceil((centerZ + radius + half) / field->cellSize))
+        );
+        before: Heightfield*! = field->Copy();
+        defer delete before;
+        changed~ usize = 0;
+        for row~ i32 = firstRow; row <= lastRow; row++ {
+            for column~ i32 = firstColumn; column <= lastColumn; column++ {
+                offsetX: f32 = field->LocalCoordinate(u32(column)) - centerX;
+                offsetZ: f32 = field->LocalCoordinate(u32(row)) - centerZ;
+                weight: f32 = BrushWeight(
+                    Math:::sqrt(offsetX * offsetX + offsetZ * offsetZ),
+                    radius
+                );
+                if weight <= 0.0f {
+                    continue;
+                }
+                current: f32 = before->HeightAtVertex(u32(column), u32(row));
+                result~ f32 = current;
+                when kind {
+                    BrushKind:::Raise -> { result = current + strength * weight; },
+                    BrushKind:::Lower -> { result = current - strength * weight; },
+                    BrushKind:::Smooth -> {
+                        left: u32 = column > 0 ? u32(column - 1) : u32(column);
+                        right: u32 = column < lastIndex ? u32(column + 1) : u32(column);
+                        back: u32 = row > 0 ? u32(row - 1) : u32(row);
+                        front: u32 = row < lastIndex ? u32(row + 1) : u32(row);
+                        average: f32 = (before->HeightAtVertex(
+                            left,
+                            u32(row)
+                        ) + before->HeightAtVertex(
+                            right,
+                            u32(row)
+                        ) + before->HeightAtVertex(
+                            u32(column),
+                            back
+                        ) + before->HeightAtVertex(u32(column), front) + current * 4.0f) / 8.0f;
+                        result = Math:::lerp(
+                            current,
+                            average,
+                            Math:::clamp(strength * weight, 0.0f, 1.0f)
+                        );
+                    },
+                    BrushKind:::Flatten -> {
+                        result = Math:::lerp(
+                            current,
+                            flattenHeight,
+                            Math:::clamp(strength * weight, 0.0f, 1.0f)
+                        );
+                    }
+                }
+                if result != current {
+                    field->SetHeight(u32(column), u32(row), result);
+                    changed += 1;
+                }
+            }
+        }
+        return changed;
+    }
+}

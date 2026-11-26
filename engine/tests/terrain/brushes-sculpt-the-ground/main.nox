@@ -1,0 +1,92 @@
+// Each brush does what its name says inside its radius and leaves the ground outside it alone.
+lantern :: import lantern;
+
+main :: () -> i32 {
+    field := new lantern:::terrain:::Heightfield(21, 1.0f);
+    defer delete field;
+    raised := lantern:::terrain:::ApplyBrush(
+        field,
+        lantern:::terrain:::BrushKind:::Raise,
+        0.0f,
+        0.0f,
+        3.0f,
+        2.0f,
+        0.0f
+    );
+    assert(raised > 0, "raising changes vertices");
+    assert(
+        Math:::abs(field->HeightAtVertex(10, 10) - 2.0f) < 0.0001f,
+        "the centre rises by the strength"
+    );
+    assert(
+        field->HeightAtVertex(10, 10) > field->HeightAtVertex(11, 10),
+        "the hill falls away from the centre"
+    );
+    assert(
+        field->HeightAtVertex(0, 0) == 0.0f && field->HeightAtVertex(14, 10) == 0.0f,
+        "outside the radius nothing moves"
+    );
+    lantern:::terrain:::ApplyBrush(
+        field,
+        lantern:::terrain:::BrushKind:::Lower,
+        0.0f,
+        0.0f,
+        3.0f,
+        2.0f,
+        0.0f
+    );
+    assert(Math:::abs(field->HeightAtVertex(10, 10)) < 0.0001f, "lowering undoes a raise");
+
+    lantern:::terrain:::ApplyBrush(
+        field,
+        lantern:::terrain:::BrushKind:::Raise,
+        0.0f,
+        0.0f,
+        3.0f,
+        4.0f,
+        0.0f
+    );
+    peak: f32 = field->HeightAtVertex(10, 10);
+    lantern:::terrain:::ApplyBrush(
+        field,
+        lantern:::terrain:::BrushKind:::Smooth,
+        0.0f,
+        0.0f,
+        3.0f,
+        1.0f,
+        0.0f
+    );
+    assert(field->HeightAtVertex(10, 10) < peak, "smoothing wears the peak down");
+    assert(field->HeightAtVertex(11, 10) > 0.0f, "and spreads it to the sides");
+
+    lantern:::terrain:::ApplyBrush(
+        field,
+        lantern:::terrain:::BrushKind:::Flatten,
+        0.0f,
+        0.0f,
+        4.0f,
+        1.0f,
+        1.0f
+    );
+    assert(
+        Math:::abs(field->HeightAtVertex(10, 10) - 1.0f) < 0.0001f,
+        "flattening at full strength reaches the level at the centre"
+    );
+    edge := lantern:::terrain:::ApplyBrush(
+        field,
+        lantern:::terrain:::BrushKind:::Raise,
+        100.0f,
+        100.0f,
+        3.0f,
+        2.0f,
+        0.0f
+    );
+    assert(edge == 0, "a brush far off the terrain changes nothing");
+    assert(
+        lantern:::terrain:::BrushFromName("smooth") == lantern:::terrain:::BrushKind:::Smooth,
+        "brushes are found by name"
+    );
+    assert(lantern:::terrain:::BrushFromName("paint") == null, "an unknown name is not a brush");
+    print("brushes sculpt the ground");
+    return 0;
+}
