@@ -94,19 +94,21 @@ The Silhouette and graph tabs have no palette.
 | Document tabs | All |
 | Status bar | All |
 
-The outliner, the details panel and the content drawer can each be moved, like the tool palette. A grip shows along a
+The outliner, the details panel, the Silhouettes panel, the asset preview and the content drawer can each be moved,
+like the tool palette. A grip shows along a
 panel's top edge while the mouse is over it; drag the grip and let go near the window's left or right edge to dock the
 panel in a column on that side, near the bottom to dock it under the viewport, or anywhere else to float it there. While
 dragging, a blue rectangle shows where the panel will go. Panels in the same place share it, with handles between them
 to resize, and a side with no panel takes no room. A floating panel moves with its grip. Where each panel is, and where
-a floating one sits, is remembered.
+a floating one sits, is remembered. Each panel fills the room it is given: its rows, fields and grids stretch when it is
+made wider. A card can be dragged out of any panel, floating or docked, and dropped on the viewport.
 
 ### Drawer pages
 
 | Page | Modes |
 | --- | --- |
 | Assets | Select |
-| Silhouettes | Silhouette (on the level it is the side rail's panel) |
+| Silhouettes | Silhouette (on the level it is a panel of its own) |
 | Terrain | Terrain |
 | Console | All |
 | History | All |
@@ -122,15 +124,21 @@ can't be found there either.
 
 ## The Silhouettes panel
 
-The Silhouettes panel places something on the level. Its button sits on the side rail at the viewport's right edge in
-Select mode; pressing it pops the panel out beside the rail, over the viewport, and pressing it again puts the panel
-away. Shift+A opens it at the mouse, Alt+5 and Window > Silhouettes open it too, and Escape or its close button put it
-away. It stays out while things are placed, so several can go down in a row.
+The Silhouettes panel places something on the level. It is one of the movable panels: it starts docked on the left,
+hidden, and its grip docks it on either side or under the viewport, or floats it. Its button on the side rail at the
+viewport's right edge in Select mode shows and hides it, as do Shift+A, Alt+5 and Window > Silhouettes; a floating one
+comes out at the mouse. It stays out while things are placed, so several can go down in a row.
 
-The panel is like a small file browser: a search box over a column of categories and a scrolling grid of cards, each with
-a live thumbnail. A click on a category shows its cards, and the search keeps the cards whose name or label holds the
-text. Pressing a card places it in front of the camera and selects it; dragging a card into the viewport places it where
-the mouse lets go.
+The panel is like a small file browser: a search box over a column of categories and a grid of cards, each with a live
+thumbnail. The cards wrap into as many columns as the panel's width holds and scroll up and down. A click on a category
+shows its cards, and the search keeps the cards whose name or label holds the text. Pressing a card shows it in the asset
+preview; dragging a card into the viewport places it where the mouse lets go.
+
+## The asset preview
+
+The template picked last, in the asset browser, the Silhouettes panel or the Silhouettes drawer page, turns in the asset
+preview, with its name and an Edit button that opens its Silhouette tab. The preview is a movable panel of its own and
+starts beside the drawer; Window > Asset Preview shows and hides it.
 
 | Category | What is in it |
 | --- | --- |

@@ -1,5 +1,5 @@
-// Where the editor's panels go. Each of the three panels (the outliner, the details panel and the content drawer) has a
-// place: docked in the column on the left or the right of the viewport, docked in the row under it, or floating over
+// Where the editor's panels go. Each of the five panels (the outliner, the details panel, the Silhouettes panel, the
+// asset preview and the content drawer) has a place: docked in the column on the left or the right of the viewport, docked in the row under it, or floating over
 // the window at a point of its own. Dragging a panel by the grip in its top edge and letting go decides its new place
 // from where the mouse is: near the window's left or right edge docks it on that side, near the bottom docks it under
 // the viewport, and anywhere else floats it there. The tool palette works the same way (EditorLayout).
@@ -33,23 +33,83 @@ PanelDocking :: namespace {
     SIDE_PREVIEW_WIDTH: f32 : 320.0f;
     BOTTOM_PREVIEW_HEIGHT: f32 : 240.0f;
 
+    // The most panels a dock holds: every panel there is.
+    MOST_IN_A_DOCK: i32 : 5;
+
     // The panels, in the order a dock stacks them.
     Panels :: () -> Array<string> {
-        return ["outliner", "details", "drawer"];
+        return ["outliner", "details", "silhouettes", "drawer", "preview"];
     }
 
-    // Where a panel starts: the outliner and details on the right, the drawer under the viewport.
+    // Where a panel starts: the outliner and details on the right, the Silhouettes panel on the left, and the drawer
+    // under the viewport with the asset preview beside it.
     DefaultPlace :: (panel: string) -> string {
-        return panel == "drawer" ? BOTTOM : RIGHT;
+        return when panel {
+            "silhouettes" -> LEFT,
+            "drawer" -> BOTTOM,
+            "preview" -> BOTTOM,
+            default -> RIGHT
+        };
     }
 
-    // A floating panel's size. The drawer is wide and short, like the row it comes from; the others are tall columns.
+    // True for a panel that starts switched on. The Silhouettes panel waits for its button, Shift+A or Alt+5.
+    ShownAtFirst :: (panel: string) -> bool {
+        return panel != "silhouettes";
+    }
+
+    // A floating panel's size. The drawer is wide and short, like the row it comes from; the Silhouettes panel is wide
+    // enough for its categories beside three cards; the preview is a small square; the others are tall columns.
     FloatWidth :: (panel: string) -> f32 {
-        return panel == "drawer" ? 900.0f : 320.0f;
+        return when panel {
+            "drawer" -> 900.0f,
+            "silhouettes" -> 540.0f,
+            "preview" -> 300.0f,
+            default -> 320.0f
+        };
     }
 
     FloatHeight :: (panel: string) -> f32 {
-        return panel == "drawer" ? 300.0f : 460.0f;
+        return when panel {
+            "drawer" -> 300.0f,
+            "silhouettes" -> 480.0f,
+            "preview" -> 320.0f,
+            default -> 460.0f
+        };
+    }
+
+    // Where a floating panel starts the first time.
+    DefaultFloatX :: (panel: string) -> f32 {
+        return when panel {
+            "outliner" -> 900.0f,
+            "details" -> 940.0f,
+            "silhouettes" -> 300.0f,
+            "preview" -> 1100.0f,
+            default -> 200.0f
+        };
+    }
+
+    DefaultFloatY :: (panel: string) -> f32 {
+        return when panel {
+            "outliner" -> 140.0f,
+            "details" -> 180.0f,
+            "silhouettes" -> 140.0f,
+            "preview" -> 420.0f,
+            default -> 500.0f
+        };
+    }
+
+    // The share of a dock the first of its panels takes, with the rest split between the others the same way. Two in a
+    // column share it 42/58 (the outliner is usually shorter than the details); two in the row under the viewport give
+    // the first (the drawer, with the preview beside it) three quarters. More than two share evenly.
+    FirstShare :: (place: string, panels: i32) -> f32 {
+        guard panels > 1 return 1.0f;
+        guard panels == 2 return 1.0f / f32(panels);
+        return place == BOTTOM ? 0.75f : 0.42f;
+    }
+
+    // The split direction of a dock: a column for a side, a row under the viewport.
+    Axis :: (place: string) -> string {
+        return place == BOTTOM ? "horizontal" : "vertical";
     }
 
     // True for a saved place that is one of the four.
@@ -66,10 +126,10 @@ PanelDocking :: namespace {
         return FLOAT;
     }
 
-    // True when a panel belongs on screen in a mode: the outliner and the details panel are for picking and changing
-    // entities, so only Select mode has them; the drawer is in every mode.
+    // True when a panel belongs on screen in a mode: the outliner, the details panel and the Silhouettes panel are for
+    // picking, changing and placing entities, so only Select mode has them; the drawer and the preview are in every mode.
     BelongsToMode :: (panel: string, selectsEntities: bool) -> bool {
-        return panel == "drawer" || selectsEntities;
+        return panel == "drawer" || panel == "preview" || selectsEntities;
     }
 
     // A floating panel's corner for a mouse point and the grab's offset, kept inside the window with its grip reachable.

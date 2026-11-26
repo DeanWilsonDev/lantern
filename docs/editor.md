@@ -113,17 +113,18 @@ The editor works in one of two modes, Select and Terrain. There are no mode butt
 to the tool palette, and picking one enters Terrain mode, which Done or Escape leaves. Shift+1 and Shift+2, the Window
 menu and B switch too. Each mode shows only its own menus, panels and drawer pages, and a Silhouette or graph tab hides
 the level's. The mode's tools are in the tool palette, which docks at the viewport's left or floats where its grip (shown
-on hover) drags it. Everything is placed on the level from the Silhouettes panel, which pops out from the button on the
-viewport's right-hand rail (or Shift+A): categories, a search box and a grid of thumbnails.
+on hover) drags it. Everything is placed on the level by dragging it from the Silhouettes panel, which the button on the
+viewport's right-hand rail (or Shift+A) shows: categories, a search box and a grid of thumbnails.
 [editor-modes.md](editor-modes.md) lists what each mode shows.
 
 ## The panels
 
-The outliner and the details panel start docked on the right, the viewport fills the middle and the content
-drawer (assets, console, history) sits under it. Each can be moved by the grip that shows along its top edge on hover:
-let go near the left or right edge to dock it in that side's column, near the bottom to dock it under the viewport, or
-anywhere else to float it. Each can be shown or hidden from the Window menu or with Alt + 1, 2 and 3, and the choices
-are remembered. F11 hides all of them for a clean viewport.
+The outliner and the details panel start docked on the right, the viewport fills the middle, the content drawer
+(assets, console, history) sits under it with the asset preview beside it, and the Silhouettes panel docks on the left
+when it is shown. Each can be moved by the grip that shows along its top edge on hover: let go near the left or right
+edge to dock it in that side's column, near the bottom to dock it under the viewport, or anywhere else to float it.
+Each can be shown or hidden from the Window menu (Alt + 1, 2 and 3 for the outliner, details and drawer, Shift+A for
+the Silhouettes panel), and the choices are remembered. F11 hides all of them for a clean viewport.
 
 The viewport's own settings are in its header: `Perspective` opens the Camera menu (presets, orthographic, frame
 and align) and `Show` opens the Show menu (grid, wireframe, colliders, markers, level bounds, hidden entities,
@@ -157,9 +158,9 @@ to the next one, and deleting an entity closes its tab.
   side, choices are dropdowns, flags are checkboxes, tints show a swatch. With several entities
   selected, a field shows "mixed" where they differ and an edit applies to all of them. The
   properties group adds, renames and removes free-form properties.
-- **Assets**: a card per template with a rendered thumbnail; selecting one shows it spinning in
-  the preview, "Add to world" adds it at the camera's focus, and dragging it into the viewport
-  adds it where it lands.
+- **Assets**: a card per template with a rendered thumbnail, in a grid that wraps to the drawer's
+  width and scrolls down; selecting one shows it spinning in the asset preview panel, and dragging
+  it into the viewport adds it where it lands. Add scene places a chosen world file.
 - **Console**: the status line's history with info, warning and error filters.
 - **History**: every undo step by label; click one to jump to it.
 - **Settings** (Ctrl/Cmd + ,): Viewport (view options, grid spacing), Graphics (quality level, bloom, ambient
@@ -300,7 +301,7 @@ Beside Silhouettes in the bottom panel (Alt+6, Window > Terrain or Terrain > Ter
 
 ## Silhouettes tab
 
-Beside Assets in the bottom panel (Alt+5, or Window > Silhouettes), this tab lists every Silhouette. The search box filters them by name; drag a card into the level, or select it and press Add to world, or Edit to open its editor.
+Beside Assets in the bottom panel (Alt+5, or Window > Silhouettes), this tab lists every Silhouette. The search box filters them by name; drag a card into the level, or select it and press Edit in the asset preview to open its editor.
 
 The Silhouette editor has three columns: the component tree with Add a child and Arrange on the left, a large preview with the selected component's values in the middle, and the actions on the right grouped as Component, Edit a value, Behaviour graph and This Silhouette.
 
