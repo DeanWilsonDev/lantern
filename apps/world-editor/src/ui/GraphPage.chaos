@@ -62,6 +62,7 @@ GraphPageUi :: namespace {
             "not" -> ["a"],
             "reroute" -> ["a"],
             "entry" -> [],
+            "" -> [],
             "mat_scalar" -> ["a"],
             "mat_color" -> ["text"],
             "mat_param" -> ["name", "a"],
@@ -207,6 +208,37 @@ GraphPageUi :: namespace {
         return parts[1] == "yes" ? parts[0] : `${parts[0]} (new graph)`;
     }
 
+    // The words above a selected node's fields: what a material node is, or a script node's kind and id.
+    NodeHeading :: (kind: string, nodeId: string) -> string {
+        if nodeId == "" {
+            return "No node selected";
+        }
+        return when kind {
+            "mat_output" -> "Material output",
+            "mat_texture" -> "Texture sample",
+            "mat_normal_map" -> "Normal map",
+            "mat_color" -> "Colour",
+            "mat_scalar" -> "Number",
+            "mat_param" -> "Parameter",
+            "mat_uv" -> "Texture coordinate",
+            "mat_add" -> "Add",
+            "mat_sub" -> "Subtract",
+            "mat_mul" -> "Multiply",
+            "mat_lerp" -> "Blend (lerp)",
+            "mat_one_minus" -> "One minus",
+            "mat_clamp" -> "Clamp",
+            default -> `${kind}: ${nodeId}`
+        };
+    }
+
+    // How to use the canvas, for the kind of graph that is open, a short line at a time.
+    CanvasHelp :: () -> Array<string> {
+        if IsMaterialGraph() {
+            return ["Right-click the canvas to add a node.", "Drag from a pin to wire it.", "Save and compile builds the shader,", "then the preview and level update."];
+        }
+        return ["Right-click the canvas to add a node or comment.", "Drag a pin to empty canvas for likely nodes.", "Delete removes the selection.", "The wheel zooms."];
+    }
+
     DirtyMark :: () -> string {
         return editorGraphIsDirty() ? " (unsaved)" : "";
     }
@@ -231,6 +263,7 @@ GraphPage :: () -> Penumbra:::Component {
     @signal chosenField~ string = "";
     @signal chosenNode~ string = "";
     @signal fieldText~ string = "";
+    @signal codeHidden~ bool = false;
     return (
         <frame ref="graph-page" class="entity-page">
             <slot>
@@ -239,6 +272,7 @@ GraphPage :: () -> Penumbra:::Component {
                     isOpen := editorGraphIsOpen();
                     selectedId := editorGraphSelected();
                     kind := selectedId == "" ? "" : editorGraphField("kind");
+                    isMaterial := isOpen && GraphPageUi:::IsMaterialGraph();
                     return (
                         <frame class="entity-page-body">
                             <frame class="entity-page-header">
@@ -246,6 +280,10 @@ GraphPage :: () -> Penumbra:::Component {
                                 <text class="entity-page-title">Graph</text>
                                 <text class="entity-page-kind">{isOpen ? `${editorGraphStatus()}${GraphPageUi:::DirtyMark()}` : "Open a graph, or make a new one."}</text>
                                 <frame class="toolbar-spacer" />
+                                <frame ref="graph-code-button" class="small-button"
+                                       onRelease={() -> { codeHidden = !codeHidden; }}>
+                                    <text class="small-button-label">{codeHidden ? (isMaterial ? "Show shader" : "Show Nyx") : (isMaterial ? "Hide shader" : "Hide Nyx")}</text>
+                                </frame>
                                 <frame ref="graph-format-button" class="small-button"
                                        onRelease={() -> {
                                            editorGraphFormat();
@@ -258,7 +296,7 @@ GraphPage :: () -> Penumbra:::Component {
                                            pageStatus = editorGraphSave();
                                            revision = revision + 1;
                                        }}>
-                                    <text class="small-button-label-accent">Save</text>
+                                    <text class="small-button-label-accent">{isMaterial ? "Save and compile" : "Save"}</text>
                                 </frame>
                             </frame>
                             <frame class="entity-page-columns">
@@ -302,131 +340,144 @@ GraphPage :: () -> Penumbra:::Component {
                                                 <text class="entity-page-component-name">{GraphPageUi:::MaterialRowLabel(row)}</text>
                                             </frame>)}
                                     </slot>
-                                    <text class="entity-page-heading">Functions</text>
                                     <slot>
-                                        !{GraphPageUi:::Lines(editorGraphFunctions()).map((name: string) ->
-                                            <frame key={`graph-function-${name}`} ref={`graph-function-${name}`}
-                                                   class={GraphPageUi:::FieldClass(editorGraphSelectedFunction() == GraphPageUi:::FunctionNumber(name))}
-                                                   onRelease={() -> {
-                                                       editorGraphSelectFunction(GraphPageUi:::FunctionNumber(name));
-                                                       revision = revision + 1;
-                                                   }}>
-                                                <text class="entity-page-component-name">{name}</text>
-                                            </frame>)}
-                                    </slot>
-                                    <frame class="field-row">
-                                        <input ref="graph-new-function" class="field-input" text={newFunctionName}
-                                               preferredWidth={110.0f}
-                                               onTextChange={(text: string) -> { newFunctionName = text; }} />
-                                        <frame ref="graph-add-function-button" class="small-button"
-                                               onRelease={() -> {
-                                                   pageStatus = editorGraphAddFunction(newFunctionName, "");
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
-                                            <text class="small-button-label">Add</text>
-                                        </frame>
-                                    </frame>
-                                    <text class="entity-page-heading">Variables</text>
-                                    <slot>
-                                        !{GraphPageUi:::VariableRows(editorGraphVariables()).map((row: string) ->
-                                            <frame key={`graph-variable-${GraphPageUi:::VariableName(row)}`} class="field-row">
-                                                <frame class={GraphPageUi:::SwatchClass(GraphPageUi:::VariableType(row))} />
-                                                <text class="entity-page-component-name">{GraphPageUi:::VariableLabel(row)}</text>
-                                                <frame ref={`graph-variable-get-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                        !{isMaterial
+                                            ? <frame key="graph-script-panels-hidden" />
+                                            : <frame key="graph-script-panels" class="graph-script-panels">
+                                            <text class="entity-page-heading">Functions</text>
+                                            <slot>
+                                                !{GraphPageUi:::Lines(editorGraphFunctions()).map((name: string) ->
+                                                    <frame key={`graph-function-${name}`} ref={`graph-function-${name}`}
+                                                           class={GraphPageUi:::FieldClass(editorGraphSelectedFunction() == GraphPageUi:::FunctionNumber(name))}
+                                                           onRelease={() -> {
+                                                               editorGraphSelectFunction(GraphPageUi:::FunctionNumber(name));
+                                                               revision = revision + 1;
+                                                           }}>
+                                                        <text class="entity-page-component-name">{name}</text>
+                                                    </frame>)}
+                                            </slot>
+                                            <frame class="field-row">
+                                                <input ref="graph-new-function" class="field-input" text={newFunctionName}
+                                                       preferredWidth={110.0f}
+                                                       onTextChange={(text: string) -> { newFunctionName = text; }} />
+                                                <frame ref="graph-add-function-button" class="small-button"
                                                        onRelease={() -> {
-                                                           editorGraphAddVariableNode("get", GraphPageUi:::VariableName(row));
+                                                           pageStatus = editorGraphAddFunction(newFunctionName, "");
                                                            revision = revision + 1;
                                                        }}>
-                                                    <text class="small-button-label">Get</text>
+                                                    <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                                    <text class="small-button-label">Add</text>
                                                 </frame>
-                                                <frame ref={`graph-variable-set-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                            </frame>
+                                            <text class="entity-page-heading">Variables</text>
+                                            <slot>
+                                                !{GraphPageUi:::VariableRows(editorGraphVariables()).map((row: string) ->
+                                                    <frame key={`graph-variable-${GraphPageUi:::VariableName(row)}`} class="field-row">
+                                                        <frame class={GraphPageUi:::SwatchClass(GraphPageUi:::VariableType(row))} />
+                                                        <text class="entity-page-component-name">{GraphPageUi:::VariableLabel(row)}</text>
+                                                        <frame ref={`graph-variable-get-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                                               onRelease={() -> {
+                                                                   editorGraphAddVariableNode("get", GraphPageUi:::VariableName(row));
+                                                                   revision = revision + 1;
+                                                               }}>
+                                                            <text class="small-button-label">Get</text>
+                                                        </frame>
+                                                        <frame ref={`graph-variable-set-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                                               onRelease={() -> {
+                                                                   editorGraphAddVariableNode("set", GraphPageUi:::VariableName(row));
+                                                                   revision = revision + 1;
+                                                               }}>
+                                                            <text class="small-button-label">Set</text>
+                                                        </frame>
+                                                        <frame ref={`graph-variable-remove-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                                               onRelease={() -> {
+                                                                   editorGraphRemoveVariable(GraphPageUi:::VariableName(row));
+                                                                   revision = revision + 1;
+                                                               }}>
+                                                            <icon class="small-button-icon" icon="trash" size={12.0f} />
+                                                        </frame>
+                                                    </frame>)}
+                                            </slot>
+                                            <frame class="field-row">
+                                                <input ref="graph-variable-name" class="field-input" text={newVariableName}
+                                                       preferredWidth={70.0f}
+                                                       onTextChange={(text: string) -> { newVariableName = text; }} />
+                                                <frame ref="graph-variable-type" class="type-picker"
+                                                       onRelease={() -> { typePickerOpen = !typePickerOpen; }}>
+                                                    <frame class={GraphPageUi:::SwatchClass(newVariableType)} />
+                                                    <text class="small-button-label">{newVariableType}</text>
+                                                    <icon class="small-button-icon" icon="chevron-down" size={10.0f} />
+                                                </frame>
+                                                <input ref="graph-variable-default" class="field-input" text={newVariableDefault}
+                                                       preferredWidth={44.0f}
+                                                       onTextChange={(text: string) -> { newVariableDefault = text; }} />
+                                            </frame>
+                                            <slot>
+                                                !{typePickerOpen
+                                                    ? <frame key="type-list" class="type-list">
+                                                          <slot>
+                                                          !{GraphPageUi:::VariableTypes().map((typeName: string) ->
+                                                              <frame key={`type-${typeName}`} ref={`graph-type-${typeName}`} class="type-option"
+                                                                     onRelease={() -> {
+                                                                         newVariableType = typeName;
+                                                                         typePickerOpen = false;
+                                                                     }}>
+                                                                  <frame class={GraphPageUi:::SwatchClass(typeName)} />
+                                                                  <text class="entity-page-component-name">{typeName}</text>
+                                                              </frame>)}
+                                                          </slot>
+                                                      </frame>
+                                                    : <frame key="type-list-closed" />}
+                                            </slot>
+                                            <frame class="field-row">
+                                                <frame ref="graph-add-variable-button" class="small-button"
                                                        onRelease={() -> {
-                                                           editorGraphAddVariableNode("set", GraphPageUi:::VariableName(row));
+                                                           pageStatus = editorGraphAddVariable(newVariableName, newVariableType, newVariableDefault == "" ? "" : GraphPageUi:::VariableDefaultText(newVariableType, newVariableDefault));
                                                            revision = revision + 1;
                                                        }}>
-                                                    <text class="small-button-label">Set</text>
+                                                    <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                                    <text class="small-button-label">Add variable (name, type, start)</text>
                                                 </frame>
-                                                <frame ref={`graph-variable-remove-${GraphPageUi:::VariableName(row)}`} class="small-button"
-                                                       onRelease={() -> {
-                                                           editorGraphRemoveVariable(GraphPageUi:::VariableName(row));
-                                                           revision = revision + 1;
-                                                       }}>
-                                                    <icon class="small-button-icon" icon="trash" size={12.0f} />
-                                                </frame>
-                                            </frame>)}
+                                            </frame>
+                                              </frame>}
                                     </slot>
-                                    <frame class="field-row">
-                                        <input ref="graph-variable-name" class="field-input" text={newVariableName}
-                                               preferredWidth={70.0f}
-                                               onTextChange={(text: string) -> { newVariableName = text; }} />
-                                        <frame ref="graph-variable-type" class="type-picker"
-                                               onRelease={() -> { typePickerOpen = !typePickerOpen; }}>
-                                            <frame class={GraphPageUi:::SwatchClass(newVariableType)} />
-                                            <text class="small-button-label">{newVariableType}</text>
-                                            <icon class="small-button-icon" icon="chevron-down" size={10.0f} />
-                                        </frame>
-                                        <input ref="graph-variable-default" class="field-input" text={newVariableDefault}
-                                               preferredWidth={44.0f}
-                                               onTextChange={(text: string) -> { newVariableDefault = text; }} />
-                                    </frame>
-                                    <slot>
-                                        !{typePickerOpen
-                                            ? <frame key="type-list" class="type-list">
-                                                  <slot>
-                                                  !{GraphPageUi:::VariableTypes().map((typeName: string) ->
-                                                      <frame key={`type-${typeName}`} ref={`graph-type-${typeName}`} class="type-option"
-                                                             onRelease={() -> {
-                                                                 newVariableType = typeName;
-                                                                 typePickerOpen = false;
-                                                             }}>
-                                                          <frame class={GraphPageUi:::SwatchClass(typeName)} />
-                                                          <text class="entity-page-component-name">{typeName}</text>
-                                                      </frame>)}
-                                                  </slot>
-                                              </frame>
-                                            : <frame key="type-list-closed" />}
-                                    </slot>
-                                    <frame class="field-row">
-                                        <frame ref="graph-add-variable-button" class="small-button"
-                                               onRelease={() -> {
-                                                   pageStatus = editorGraphAddVariable(newVariableName, newVariableType, newVariableDefault == "" ? "" : GraphPageUi:::VariableDefaultText(newVariableType, newVariableDefault));
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
-                                            <text class="small-button-label">Add variable (name, type, start)</text>
-                                        </frame>
-                                    </frame>
                                 </frame>
                                 <frame class="graph-centre">
                                     <viewport ref="graph-canvas" class="graph-canvas" renderer="graph" />
                                     <text ref="graph-page-status" class="entity-page-kind">{pageStatus}</text>
-                                    <scroll ref="graph-nyx-scroll" class="graph-nyx" wheelStep={40.0f}>
-                                        <frame class="entity-page-fields">
-                                            <slot>
-                                                !{GraphPageUi:::LineNumbers(isOpen ? editorGraphNyx() : "").map((lineNumber: i32) ->
-                                                    <frame key={`graph-nyx-line-${lineNumber}`} class="graph-nyx-line" ref={`graph-nyx-line-${lineNumber}`}
-                                                           onRelease={() -> {
-                                                               guard editorGraphIsOpen() return;
-                                                               editorGraphSelectLine(lineNumber);
-                                                               revision = revision + 1;
-                                                           }}>
-                                                        <text class="entity-page-kind">{GraphPageUi:::LineLabel(editorGraphNyx(), lineNumber)}</text>
-                                                    </frame>)}
-                                            </slot>
-                                        </frame>
-                                    </scroll>
+                                    <slot>
+                                        !{codeHidden
+                                            ? <frame key="graph-code-hidden" />
+                                            : <frame key="graph-code-panel" class="graph-code-panel">
+                                            <scroll ref="graph-nyx-scroll" class="graph-nyx" wheelStep={40.0f}>
+                                                <frame class="entity-page-fields">
+                                                    <slot>
+                                                        !{GraphPageUi:::LineNumbers(isOpen ? editorGraphNyx() : "").map((lineNumber: i32) ->
+                                                            <frame key={`graph-nyx-line-${lineNumber}`} class="graph-nyx-line" ref={`graph-nyx-line-${lineNumber}`}
+                                                                   onRelease={() -> {
+                                                                       guard editorGraphIsOpen() return;
+                                                                       editorGraphSelectLine(lineNumber);
+                                                                       revision = revision + 1;
+                                                                   }}>
+                                                                <text class="entity-page-kind">{GraphPageUi:::LineLabel(editorGraphNyx(), lineNumber)}</text>
+                                                            </frame>)}
+                                                    </slot>
+                                                </frame>
+                                            </scroll>
+                                              </frame>}
+                                    </slot>
                                 </frame>
                                 <frame class="graph-side">
                                     <slot>
                                         !{isOpen && GraphPageUi:::IsMaterialGraph()
                                             ? <frame key="material-preview-panel" class="material-preview-panel">
-                                                  <text class="entity-page-heading">Preview (as last saved)</text>
+                                                  <text class="entity-page-heading">Preview</text>
                                                   <viewport ref="material-preview" class="material-preview" renderer="material" />
+                                                  <text class="entity-page-kind">Shows the material as last saved.</text>
                                               </frame>
                                             : <frame key="material-preview-none" />}
                                     </slot>
-                                    <text class="entity-page-heading">{selectedId == "" ? "No node selected" : `${kind}: ${selectedId}`}</text>
+                                    <text class="entity-page-heading">{GraphPageUi:::NodeHeading(kind, selectedId)}</text>
                                     <slot>
                                         !{GraphPageUi:::FieldsOf(kind).map((field: string) ->
                                             <frame key={`graph-field-${field}`} ref={`graph-field-${field}`}
@@ -462,7 +513,10 @@ GraphPage :: () -> Penumbra:::Component {
                                                        onTextChange={(text: string) -> { editorGraphSetCommentText(text); }} />
                                             </frame>)}
                                     </slot>
-                                    <text class="entity-page-kind">Right-click the canvas to add a node or comment. Drag a pin to empty canvas for likely nodes. Delete removes the selection. The wheel zooms.</text>
+                                    <slot>
+                                        !{GraphPageUi:::CanvasHelp().map((line: string) ->
+                                            <text key={`graph-help-${line}`} class="entity-page-kind">{line}</text>)}
+                                    </slot>
                                 </frame>
                             </frame>
                         </frame>

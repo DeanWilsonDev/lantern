@@ -2066,3 +2066,13 @@ reading and writing `material.graph.json` beside the Silhouette. Saving runs the
 ready for the game straight away. Opening a material with no graph writes a starter graph that matches its Silhouette,
 so the game looks the same until it is edited. The preview draws the saved shader, not unsaved edits, because a preview
 of unsaved edits would compile a shader on every change. Provisional: not reviewed by Dean.
+
+## D-263: The material preview lights a sphere with the sky but hides the sky behind it
+
+The Material Graph tab's preview draws a smooth sphere turning under fixed lights, so a highlight shows the material
+rather than moving with it: a warm sun as the key light, a cool point light as the rim and the sky as image-based
+light whose bright horizon band is what a metal reflects. `SkySettings` gains `backdropVisible` (on by default): off,
+the sky still lights and reflects in the scene but the background is the clear colour, so the preview sits on a dark
+studio backdrop. Entity previews reset the sun and sky first, since they share the preview's render world.
+Provisional: not reviewed by Dean.
+

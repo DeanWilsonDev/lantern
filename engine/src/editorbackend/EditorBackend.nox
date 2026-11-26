@@ -563,13 +563,33 @@ lantern:::editorbackend :: namespace {
             return `no template '${templateId}'`;
         }
 
-        // Draws a one metre cube with a material, spinning by `spin`, into the preview pixels: the material tab's preview.
+        // Draws a sphere with a material, turning by `spin`, in the preview's studio lighting: the material tab's preview.
         RenderMaterialPreview~: (materialName: string, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
-            sample := new lantern:::world:::WorldEntity(0, materialName, "material_preview");
-            defer delete sample;
-            sample->shape = lantern:::world:::Shape { kind: lantern:::world:::ShapeKind:::Box, halfExtents: lantern:::core:::Splat3(0.5f) };
-            sample->material = `${materialName}`;
-            return RenderEntityPreviewOf(sample, requestedWidth, requestedHeight, spin);
+            width: u32 = ClampSide(requestedWidth, MAXIMUM_PREVIEW_SIDE);
+            height: u32 = ClampSide(requestedHeight, MAXIMUM_PREVIEW_SIDE);
+            failure: string!? = EnsureGpu();
+            if failure != null {
+                return failure!;
+            }
+            delete failure;
+            active~ GpuViewportResources*!? = gpuResources!;
+            gpuResources = null;
+            guard active return "viewport GPU unavailable".copy();
+            activeRenderWorld~ lantern:::renderer:::RenderWorld*! = previewWorld!;
+            outcome~ string!? = null;
+            BuildMaterialPreview(materialName, active, activeRenderWorld, spin);
+            when active->viewportRenderer->RenderOffscreen(activeRenderWorld, width, height, previewPixels) {
+                Result:::Ok(report) -> { },
+                Result:::Err(problem) -> {
+                    outcome = problem!;
+                }
+            }
+            activeRenderWorld->lights.clear();
+            previewWidth = width;
+            previewHeight = height;
+            previewWorld = activeRenderWorld!;
+            gpuResources = active!;
+            return outcome!;
         }
 
         // Drops the viewport's cached materials, so each is loaded again with its current Silhouette, graph and shader.

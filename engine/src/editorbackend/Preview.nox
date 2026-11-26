@@ -37,6 +37,10 @@ lantern:::editorbackend :: namespace {
     // the backdrop is not tinted.
     BuildEntityPreview :: (entity: lantern:::world:::WorldEntity*, palette: lantern:::editor:::Palette*, resources: lantern:::editor:::ViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*, spin: f32) -> void {
         renderWorld->Clear();
+        renderWorld->lights.clear();
+        renderWorld->light = lantern:::renderer:::DirectionalLight:::Default();
+        renderWorld->sky = lantern:::renderer:::SkySettings { };
+        renderWorld->post.exposure = 1.0f;
         renderWorld->clearColor = PreviewSkyColor();
         renderWorld->sky.zenith = lantern:::core:::Color:::Rgb(0.2f, 0.21f, 0.23f);
         renderWorld->sky.horizon = lantern:::core:::Color:::Rgb(0.3f, 0.31f, 0.32f);
@@ -123,6 +127,48 @@ lantern:::editorbackend :: namespace {
         !Thumbnail~: () {
             delete templateId;
             delete pixels;
+        }
+    }
+
+    // The material preview's studio: a dark room with a bright band of light around the horizon, so a metal shows a clear
+    // reflection and a rough surface a soft one, a warm key light from the upper left and a cool fill from below. The
+    // sphere turns by `spin` while the lights stay put, so the highlight shows the material rather than moving with it.
+    BuildMaterialPreview :: (materialName: string, resources: GpuViewportResources~*, renderWorld: lantern:::renderer:::RenderWorld~*, spin: f32) -> void {
+        renderWorld->Clear();
+        renderWorld->lights.clear();
+        renderWorld->clearColor = lantern:::core:::Color:::Rgb(0.07f, 0.075f, 0.085f);
+        renderWorld->sky = lantern:::renderer:::SkySettings { };
+        renderWorld->sky.zenith = lantern:::core:::Color:::Rgb(0.16f, 0.17f, 0.2f);
+        renderWorld->sky.horizon = lantern:::core:::Color:::Rgb(1.1f, 1.04f, 0.95f);
+        renderWorld->sky.ground = lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.058f);
+        renderWorld->sky.sunDiscStrength = 0.0f;
+        renderWorld->sky.backdropVisible = false;
+        renderWorld->sky.lightingStrength = 1.0f;
+        renderWorld->sky.lightingIntensity = 0.9f;
+        renderWorld->fogStart = 1000.0f;
+        renderWorld->fogEnd = 2000.0f;
+        renderWorld->post.exposure = 1.0f;
+        renderWorld->light = lantern:::renderer:::DirectionalLight {
+            direction: lantern:::core:::Normalize3(Vec3 { x: 0.55f, y: -0.7f, z: -0.45f }),
+            color: lantern:::core:::Color:::Rgb(2.0f, 1.9f, 1.72f),
+            ambient: lantern:::core:::Color:::Rgb(0.12f, 0.13f, 0.16f),
+            groundAmbient: lantern:::core:::Color:::Rgb(0.03f, 0.03f, 0.04f),
+            castsShadows: false
+        };
+        renderWorld->AddLight(lantern:::renderer:::Light:::Point(Vec3 { x: -1.4f, y: 0.9f, z: -1.6f }, lantern:::core:::Color:::Rgb(1.2f, 1.4f, 1.9f), 6.0f));
+        camera~ lantern:::renderer:::Camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 1.05f, z: 1.45f }, Vec3 { x: 0.0f, y: -0.04f, z: 0.0f });
+        camera.verticalFieldOfViewRadians = 38.0f * (Math:::PI / 180.0f);
+        camera.nearPlane = 0.05f;
+        camera.farPlane = 200.0f;
+        renderWorld->camera = camera;
+        guard mesh := resources->PreviewSphereMesh() return;
+        turn: Mat4 = lantern:::core:::MatrixFromQuaternion(lantern:::core:::QuaternionFromRotationY(spin));
+        texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = resources->MaterialTexture(materialName);
+        look: lantern:::renderer:::MaterialLook? = resources->MaterialLook(materialName);
+        if found := look {
+            renderWorld->DrawWithLook(mesh, texture, turn, found.tint, found);
+        } else {
+            renderWorld->Draw(mesh, texture, turn, lantern:::core:::Color:::White());
         }
     }
 }

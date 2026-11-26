@@ -141,9 +141,18 @@ the side panel edits a node's fields, with the output's five ports labelled base
 and normal. A colour node's `text` is typed as `#RRGGBB`. The text under the canvas is the generated GLSL, or the line
 saying which node stops it.
 
-**Save** writes `material.graph.json` beside the Silhouette and runs the bake, so the game's compiled shader is current
-at once. The preview panel above the fields draws a spinning cube with the material as last saved, and the level
-viewport and the content browser draw every graph material with its own shader too. Tests:
+**Save and compile** writes `material.graph.json` beside the Silhouette and runs the bake, so the game's compiled shader
+is current at once. The preview panel shows the material as last saved on a turning sphere in a studio: a dark backdrop,
+a warm key light, a cool rim light and a bright band of sky light around the horizon that metals reflect, so metallic,
+roughness and normal maps all read at a glance. The level viewport and the content browser draw every graph material
+with its own shader too. **Hide shader** folds the generated GLSL away to give the canvas more room, and the panels only
+script graphs use (functions and variables) are hidden while a material is open.
+
+Two sample materials show the range: `gold` (a colour, full metal and a polished roughness parameter) and `brick` (a
+tiled brick texture, its normal map with a `bumpiness` parameter, and a rough non-metal). Their textures,
+`textures/brick.png` and `textures/brick_normal.png`, are made by `mist run assets` (`engine/tools/generate-assets/Bricks.nox`).
+
+Tests:
 `engine/tests/graphs/a-material-graph-offers-material-nodes` and
 `engine/tests/materialgraph/a-material-graph-opens-in-the-editor`.
 
