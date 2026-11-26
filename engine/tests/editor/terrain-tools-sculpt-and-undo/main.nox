@@ -1,0 +1,172 @@
+// The terrain tools in the editor session: a held brush sculpts the terrain under the pointer as one undo step, the
+// generate, regenerate and erode actions are undoable edits, and options outside their range are refused.
+lantern :: import lantern;
+
+DemoSession :: () -> lantern:::editor:::EditorSession*!? {
+    when lantern:::editor:::Palette:::Load("../games/platformer/assets/editor/palette.json") {
+        Result:::Ok(palette) -> {
+            when lantern:::editor:::EditorSession:::Open(
+                "../games/platformer/assets/worlds/terrain-demo.world.json",
+                palette!
+            ) {
+                Result:::Ok(session) -> {
+                    session->SetViewportSize(Vec2 { x: 1280.0f, y: 720.0f });
+                    return session!;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return null;
+                }
+            }
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return null;
+        }
+    }
+}
+
+TerrainKey :: (session: lantern:::editor:::EditorSession*) -> u64 {
+    for entity in session->World()->entities {
+        if lantern:::terrain:::IsTerrain(entity) {
+            return entity->id;
+        }
+    }
+    assert(false, "the demo world has a terrain");
+    return 0;
+}
+
+CentreHeight :: (session: lantern:::editor:::EditorSession*, key: u64) -> f32 {
+    guard index := session->World()->IndexOf(key) return 0.0f;
+    decoded := lantern:::terrain:::HeightfieldFromEntity(session->World()->entities[index]);
+    when decoded! {
+        Result:::Ok(field) -> {
+            height: f32 = field->HeightAtVertex(field->columns / 2, field->columns / 2);
+            delete field;
+            return height;
+        },
+        Result:::Err(message) -> {
+            delete message;
+            return 0.0f;
+        }
+    }
+}
+
+TerrainCount :: (session: lantern:::editor:::EditorSession*) -> usize {
+    count~ usize = 0;
+    for entity in session->World()->entities {
+        if lantern:::terrain:::IsTerrain(entity) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+SculptAtTheCentre :: (session: lantern:::editor:::EditorSession~*, key: u64) -> void {
+    centre: Vec3 = Vec3 { x: 0.0f, y: CentreHeight(session, key), z: 0.0f };
+    projected: Vec2? = session->Projection().Project(centre);
+    assert(projected != null, "the centre of the terrain is in view");
+    session->PointerMoved(projected ?? Vec2 { });
+    session->SetPointerButton(
+        lantern:::editor:::PointerButton:::Left,
+        true,
+        lantern:::editor:::Modifiers { }
+    );
+    for frame~ i32 = 0; frame < 6; frame++ {
+        session->Update(0.1f);
+    }
+    session->SetPointerButton(
+        lantern:::editor:::PointerButton:::Left,
+        false,
+        lantern:::editor:::Modifiers { }
+    );
+}
+
+OptionsAreCheckedAndRemembered :: (session: lantern:::editor:::EditorSession~*) -> void {
+    outcome1: bool = session->SetTerrainOption("radius", 6.0f);
+    assert(outcome1, "a radius is accepted");
+    assert(session->TerrainOption("radius") == 6.0f, "and remembered");
+    outcome2: bool = !session->SetTerrainOption("radius", -1.0f);
+    assert(outcome2, "a negative radius is refused");
+    assert(session->TerrainOption("radius") == 6.0f, "and changes nothing");
+    outcome3: bool = !session->SetTerrainOption("octaves", 99.0f);
+    assert(outcome3, "too many octaves are refused");
+    outcome4: bool = !session->SetTerrainOption("columns", 1000.0f);
+    assert(outcome4, "a terrain too big is refused");
+    outcome5: bool = !session->SetTerrainOption("nonsense", 1.0f);
+    assert(outcome5, "an unknown option is refused");
+    outcome6: bool = session->SetTerrainOption(
+        "brush",
+        0.0f
+    ) && session->SetTerrainOption("strength", 1.0f);
+    assert(outcome6, "the brush and strength are set");
+}
+
+AHeldBrushRaisesTheGroundInOneUndoStep :: (
+    session: lantern:::editor:::EditorSession~*,
+    key: u64
+) -> void {
+    before: f32 = CentreHeight(session, key);
+    session->SetTerrainOption("active", 1.0f);
+    SculptAtTheCentre(session, key);
+    after: f32 = CentreHeight(session, key);
+    assert(after > before + 0.5f, "holding the raise brush lifts the ground");
+    assert(session->PrimarySelection() == key, "the sculpted terrain is selected");
+    outcome7: bool = session->Undo();
+    assert(outcome7, "the stroke can be undone");
+    assert(
+        Math:::abs(CentreHeight(session, key) - before) < 0.01f,
+        "one undo takes back the whole stroke"
+    );
+    outcome8: bool = session->Redo();
+    assert(outcome8, "and redone");
+    assert(Math:::abs(CentreHeight(session, key) - after) < 0.01f, "redo brings the stroke back");
+    session->SetTerrainOption("active", 0.0f);
+    assert(session->terrainCursor == null, "turning the brush off hides the ring");
+}
+
+ActionsAreUndoable :: (session: lantern:::editor:::EditorSession~*, key: u64) -> void {
+    outcome9: bool = session->TerrainAction("reseed");
+    assert(outcome9, "a new seed can be picked");
+    assert(session->TerrainOption("seed") != 2026.0f, "and differs");
+    before: f32 = CentreHeight(session, key);
+    outcome10: bool = session->TerrainAction("regenerate");
+    assert(outcome10, "the selected terrain is regenerated from the settings");
+    assert(CentreHeight(session, key) != before, "with a new seed the ground differs");
+    outcome11: bool = session->Undo();
+    assert(outcome11, "regenerating is one undo step");
+    assert(
+        Math:::abs(CentreHeight(session, key) - before) < 0.01f,
+        "undo brings the old ground back"
+    );
+    outcome12: bool = session->TerrainAction("erode");
+    assert(outcome12, "the selected terrain is eroded");
+    outcome13: bool = session->Undo();
+    assert(outcome13, "eroding is one undo step");
+    count: usize = TerrainCount(session);
+    session->SetTerrainOption("columns", 33.0f);
+    outcome14: bool = session->TerrainAction("generate");
+    assert(outcome14, "a terrain is generated");
+    assert(TerrainCount(session) == count + 1, "and added to the level");
+    outcome15: bool = session->Undo();
+    assert(outcome15, "generating is one undo step");
+    assert(TerrainCount(session) == count, "undo removes the generated terrain");
+    session->ClearSelection();
+    outcome16: bool = !session->TerrainAction("erode");
+    assert(outcome16, "eroding needs a selected terrain");
+}
+
+main :: () -> i32 {
+    session~ lantern:::editor:::EditorSession*!? = DemoSession();
+    guard session return 1;
+    defer delete session;
+    key: u64 = TerrainKey(session);
+    OptionsAreCheckedAndRemembered(session);
+    AHeldBrushRaisesTheGroundInOneUndoStep(session, key);
+    session->SelectOnly(key);
+    ActionsAreUndoable(session, key);
+    print("terrain tools sculpt and undo");
+    return 0;
+}

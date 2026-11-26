@@ -276,6 +276,10 @@ These are filed under the "Game engine" epic on the Nyx kanban in fearless-hq.
 
 The Assets panel shows a folder list on the left and the open folder as cards. Silhouettes show their rendered thumbnail, can be dragged into the level and opened with Edit; scripts, graphs, textures, models, sounds, music and worlds show an icon and their kind, and a graph opens in the Graph tab. The search box finds anything by name across every folder.
 
+## Terrain tab
+
+Beside Silhouettes in the bottom panel (Alt+6, or Window > Terrain): sculpt brushes, a generator and the actions that add, rebuild and erode a terrain, each one undo step. See [terrain.md](terrain.md).
+
 ## Silhouettes tab
 
 Beside Assets in the bottom panel (Alt+5, or Window > Silhouettes), this tab lists every Silhouette. The search box filters them by name; drag a card into the level, or select it and press Add to world, or Edit to open its editor.

@@ -52,6 +52,22 @@ terrain's own space. The weight is 1 in the middle and eases to 0 at `radius`.
 
 It returns how many vertices changed.
 
+## Sculpting in the editor
+
+The Terrain tab sits in the bottom panel beside Silhouettes (Alt+6, or Window > Terrain). It has three columns.
+
+- **Sculpt.** Tick "Brush on", pick a brush, a radius and a strength, then hold the left button on a terrain. A ring shows where the brush
+  works. While the brush is on, a left press on a terrain starts a stroke instead of selecting or box-selecting; anything that is not a
+  terrain is looked through, and the gizmo, the view cube, the right button and the alt-drag still work as usual. Raise and Lower move the ground by
+  `strength` metres a second at the centre, Smooth and Flatten close that share of the gap, times six, a second. Flatten levels to the height under
+  the press. Releasing the button ends the stroke as one undo step, "Sculpt terrain".
+- **Generate.** The seed (New seed picks the next one), feature size, octaves, height and base height a terrain is made from.
+- **Make.** The size (columns of vertices and cell size) and the actions. New terrain adds one centred where the view looks and selects it.
+  Regenerate selected rebuilds the selected terrain from the Generate settings. Erode selected runs the erosion passes on it. Each is one undo step.
+
+The same options are on the session as `SetTerrainOption(name, value)` and `TerrainOption(name)`, and the actions as `TerrainAction(name)`
+(`generate`, `regenerate`, `erode`, `reseed`).
+
 ## Meshes and collision
 
 `BuildTerrainMesh` makes the mesh of the whole terrain: two triangles per cell, smooth normals from the neighbouring
@@ -62,6 +78,8 @@ terrain costs no more per query than any other floor.
 
 ## Known gaps
 
-- One mesh per terrain, so a big terrain is always drawn whole (the chunk builders are ready).
+- One mesh per terrain, so a big terrain is always drawn whole (the chunk builders are ready). Each sculpt frame rebuilds the mesh of the terrain it changes, which is quick for the default 65 by 65 and noticeable at 257 by 257.
+- The Generate settings are the tools', not the selected terrain's: selecting a terrain doesn't load its seed into the tab.
+- The brush radius is in metres of the terrain's own space, so a scaled terrain gets a proportionally bigger or smaller brush.
 - Erosion is thermal only.
 - No painted layers yet: a terrain has the one material of its entity.

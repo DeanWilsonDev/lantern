@@ -1,0 +1,146 @@
+lantern:::editor :: namespace {
+    /**
+     * What the terrain tools remember between uses: whether the sculpt brush is on, which brush, how big and how strong,
+     * and the settings the Generate button builds a terrain from. The Terrain tab shows and sets them by name.
+     */
+    TerrainToolSettings :: struct {
+        active~ bool = false;
+        brush~ lantern:::terrain:::BrushKind = lantern:::terrain:::BrushKind:::Raise;
+        radius~ f32 = 4.0f;
+        strength~ f32 = 0.5f;
+        generator~ lantern:::terrain:::TerrainSettings = lantern:::terrain:::TerrainSettings { };
+        columns~ u32 = 65;
+        cellSize~ f32 = 1.0f;
+        erosionPasses~ u32 = 10;
+
+        /**
+         * Sets one option by name. The brush is its position in raise, lower, smooth, flatten. A value that does not suit
+         * the option (a negative radius, a size the terrain can't have) is refused and nothing changes.
+         */
+        Set ~: (name: string, value: f32) -> bool {
+            if !lantern:::core:::IsFinite(value) {
+                return false;
+            }
+            if name == "active" {
+                active = value > 0.5f;
+                return true;
+            }
+            if name == "brush" {
+                index: i32 = i32(value);
+                if index < 0 || index > 3 {
+                    return false;
+                }
+                brush = when index {
+                    0 -> lantern:::terrain:::BrushKind:::Raise,
+                    1 -> lantern:::terrain:::BrushKind:::Lower,
+                    2 -> lantern:::terrain:::BrushKind:::Smooth,
+                    default -> lantern:::terrain:::BrushKind:::Flatten
+                };
+                return true;
+            }
+            if name == "radius" && value > 0.0f && value <= 200.0f {
+                radius = value;
+                return true;
+            }
+            if name == "strength" && value > 0.0f && value <= 20.0f {
+                strength = value;
+                return true;
+            }
+            if name == "seed" && value >= 0.0f {
+                generator.seed = u32(value);
+                return true;
+            }
+            if name == "feature_size" && value >= 1.0f {
+                generator.featureSize = value;
+                return true;
+            }
+            if name == "octaves" && value >= 1.0f && value <= f32(lantern:::terrain:::MAX_OCTAVES) {
+                generator.octaves = u32(value);
+                return true;
+            }
+            if name == "amplitude" && value >= 0.0f {
+                generator.amplitude = value;
+                return true;
+            }
+            if name == "base_height" {
+                generator.baseHeight = value;
+                return true;
+            }
+            if name == "columns" && lantern:::terrain:::Heightfield:::IsValidSize(
+                u32(value),
+                cellSize
+            ) {
+                columns = u32(value);
+                return true;
+            }
+            if name == "cell_size" && lantern:::terrain:::Heightfield:::IsValidSize(
+                columns,
+                value
+            ) {
+                cellSize = value;
+                return true;
+            }
+            if name == "erosion_passes" && value >= 1.0f && value <= 500.0f {
+                erosionPasses = u32(value);
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * One option by name, or null for a name that is not one. The brush is its position in raise, lower, smooth,
+         * flatten.
+         */
+        Get :: (name: string) -> f32? {
+            if name == "active" {
+                return active ? 1.0f : 0.0f;
+            }
+            if name == "brush" {
+                return when brush {
+                    lantern:::terrain:::BrushKind:::Raise -> 0.0f,
+                    lantern:::terrain:::BrushKind:::Lower -> 1.0f,
+                    lantern:::terrain:::BrushKind:::Smooth -> 2.0f,
+                    lantern:::terrain:::BrushKind:::Flatten -> 3.0f
+                };
+            }
+            if name == "radius" {
+                return radius;
+            }
+            if name == "strength" {
+                return strength;
+            }
+            if name == "seed" {
+                return f32(generator.seed);
+            }
+            if name == "feature_size" {
+                return generator.featureSize;
+            }
+            if name == "octaves" {
+                return f32(generator.octaves);
+            }
+            if name == "amplitude" {
+                return generator.amplitude;
+            }
+            if name == "base_height" {
+                return generator.baseHeight;
+            }
+            if name == "columns" {
+                return f32(columns);
+            }
+            if name == "cell_size" {
+                return cellSize;
+            }
+            if name == "erosion_passes" {
+                return f32(erosionPasses);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * How fast a held brush works, per second: raise and lower move this many metres a second at strength 1, and smooth
+     * and flatten close this share of the gap a second at strength 1.
+     */
+    SCULPT_METRES_PER_SECOND: f32 : 4.0f;
+    SCULPT_BLEND_PER_SECOND: f32 : 6.0f;
+}

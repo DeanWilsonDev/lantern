@@ -2036,3 +2036,15 @@ Provisional (2026-11-26): not reviewed by Dean. The same seed gives the same gro
 
 Provisional (2026-11-26): not reviewed by Dean. `BuildPiece` makes one mesh for the whole terrain, up to 257 by 257 vertices (131072 triangles); the sample is 97 by 97. A piece is one entity and one mesh, so chunking needs the piece builder to return several meshes. `BuildChunkMesh` already makes 32 by 32 cell chunks with seamless normals, and the chunked-meshes card uses them for dirty rebuilds and culling.
 
+## D-270: Sculpting is a held brush applied every frame, committed as one preview
+
+Provisional (2026-11-26): not reviewed by Dean. While the Terrain tab's brush is on, a left press on a terrain starts a `Sculpt` drag, and `Update` applies the brush at the pointer each frame, scaled by the frame time, so a held brush works at the same speed at any frame rate. Each frame changes the terrain through `PreviewReplace`, and the release commits them as one undo step, the same way a gizmo drag does. A dab at a time on pointer moves was the other way; it would leave gaps on a fast stroke and do nothing while the pointer is still.
+
+## D-271: The sculpt tool ignores everything that is not a terrain
+
+Provisional (2026-11-26): not reviewed by Dean. With the brush on, picking skips every entity but terrains (and hidden and locked ones), so a marker or a platform over the ground never takes the stroke. Selecting other things means turning the brush off. A brush that only works where the first thing hit is a terrain was the other way; it fails around spawn markers and the kill plane.
+
+## D-272: Terrain tool options are numbers set by name
+
+Provisional (2026-11-26): not reviewed by Dean. The Terrain tab's options (brush, radius, strength, seed, size) go through `editorSetTerrainOption(name, number)` and `editorTerrainOption(name)`, the way the snap steps do, and a value out of range is refused. The tab offers fixed choices in drop-downs, which suits the editor's present widgets; a slider or number box waits for those widgets to exist.
+
