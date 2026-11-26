@@ -482,8 +482,8 @@ lantern:::gpu :: namespace {
             if source.textureCount > lantern:::renderer:::MAX_MATERIAL_SHADER_TEXTURES {
                 return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Err(`material shader ${source.name} samples ${source.textureCount} textures; at most 4`);
             }
-            created~ GpuMaterialShader = GpuMaterialShader { textures: source.textures, textureCount: source.textureCount, parameters: source.parameters };
-            when CreatePipeline(device, shaderFormat, hdrFormat, depthFormat, MaterialPipelineDescription(source.name, source.directory, source.textureCount, false)) {
+            created~ GpuMaterialShader = GpuMaterialShader { textures: source.textures, textureCount: source.textureCount, parameters: source.parameters, translucent: source.translucent };
+            when CreatePipeline(device, shaderFormat, hdrFormat, depthFormat, MaterialPipelineDescription(source.name, source.directory, source.textureCount, false, source.translucent)) {
                 Result:::Ok(pipeline) -> {
                     created.lit = pipeline;
                 },
@@ -491,13 +491,32 @@ lantern:::gpu :: namespace {
                     return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Err(message!);
                 }
             }
-            when CreatePipeline(device, shaderFormat, hdrFormat, depthFormat, MaterialPipelineDescription(source.name, source.directory, source.textureCount, true)) {
+            when CreatePipeline(device, shaderFormat, hdrFormat, depthFormat, MaterialPipelineDescription(source.name, source.directory, source.textureCount, true, source.translucent)) {
                 Result:::Ok(pipeline) -> {
                     created.litSkinned = pipeline;
                 },
                 Result:::Err(message) -> {
                     created.Release(device);
                     return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Err(message!);
+                }
+            }
+            if source.masked {
+                maskName: string! = `${source.name}.mask`;
+                defer delete maskName;
+                for skinnedIndex~ u32 = 0; skinnedIndex < 2; skinnedIndex++ {
+                    when CreatePipeline(device, shaderFormat, hdrFormat, depthFormat, MaskedShadowPipelineDescription(maskName, source.directory, source.textureCount, skinnedIndex == 1)) {
+                        Result:::Ok(pipeline) -> {
+                            if skinnedIndex == 1 {
+                                created.shadowSkinned = pipeline;
+                            } else {
+                                created.shadow = pipeline;
+                            }
+                        },
+                        Result:::Err(message) -> {
+                            created.Release(device);
+                            return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Err(message!);
+                        }
+                    }
                 }
             }
             handle: lantern:::core:::Handle<GpuMaterialShader> = materialShaders->Insert(created);
@@ -519,6 +538,38 @@ lantern:::gpu :: namespace {
             if found ~= materialShaders->BorrowMutable(lantern:::core:::CastHandle<lantern:::renderer:::MaterialShaderTag, GpuMaterialShader>(handle)) {
                 found->parameters[usize(slot)] = value;
             }
+        }
+
+        /** A material shader's parameters as they stand, or null for a removed shader. */
+        MaterialShaderParameters :: (handle: lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>) -> f32[8]? {
+            if found := materialShaders->Get(lantern:::core:::CastHandle<lantern:::renderer:::MaterialShaderTag, GpuMaterialShader>(handle)) {
+                return found.parameters;
+            }
+            return null;
+        }
+
+        /** Binds a material shader's textures from `firstSlot`: 4 in the lit pass (after the lit shader's own), 0 in a shadow pass. */
+        BindMaterialTextures :: (pass: raw Sdl:::SDL_GPURenderPass~*, materialShader: GpuMaterialShader, firstSlot: u32) -> void {
+            if materialShader.textureCount == 0 {
+                return;
+            }
+            materialBindings~ Sdl:::SDL_GPUTextureSamplerBinding[4] = filled<Sdl:::SDL_GPUTextureSamplerBinding, 4>(Sdl:::SDL_GPUTextureSamplerBinding { texture: whiteTexture.texture, sampler: whiteTexture.sampler });
+            for slot~ u32 = 0; slot < materialShader.textureCount; slot++ {
+                sampled: GpuTexture = TextureOrWhite(materialShader.textures[usize(slot)]);
+                materialBindings[usize(slot)] = Sdl:::SDL_GPUTextureSamplerBinding { texture: sampled.texture, sampler: sampled.sampler };
+            }
+            unsafe {
+                firstMaterialBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(materialBindings);
+                Sdl:::SDL_BindGPUFragmentSamplers(pass, firstSlot, firstMaterialBinding, materialShader.textureCount);
+            }
+        }
+
+        /** The parameters a draw is drawn with: its own when it overrides its material's, else the material shader's. */
+        ParametersOf :: (draw: lantern:::renderer:::DrawItem, materialParameters: f32[8]) -> f32[8] {
+            if draw.overridesParameters {
+                return draw.parameters;
+            }
+            return materialParameters;
         }
 
         /** The material shader a draw names, or null when it names none or a removed one. */
@@ -910,12 +961,15 @@ lantern:::gpu :: namespace {
                         textureKey = texture.Index();
                     }
                     shaderKey~ u32 = 0;
-                    if MaterialShaderOf(draw) != null {
+                    translucent~ bool = false;
+                    if materialShader := MaterialShaderOf(draw) {
+                        translucent = materialShader.translucent;
                         if wanted := draw.materialShader {
                             shaderKey = wanted.Index() + 1;
                         }
                     }
-                    visible.push(VisibleDraw { shaderKey: shaderKey, textureKey: textureKey, meshIndex: draw.mesh.Index(), drawIndex: drawIndex });
+                    offset: Vec3 = lantern:::core:::MatrixColumn3(draw.transform, 3) - renderWorld->camera.position;
+                    visible.push(VisibleDraw { shaderKey: shaderKey, textureKey: textureKey, meshIndex: draw.mesh.Index(), drawIndex: drawIndex, translucent: translucent, distanceSquared: lantern:::core:::LengthSquared3(offset) });
                 } else {
                     message: string! = `draw item ${drawIndex} uses a released mesh`;
                     lantern:::core:::LogWarn("renderer", message);
@@ -1019,10 +1073,11 @@ lantern:::gpu :: namespace {
                     cycle: true
                 };
                 scenePass := Sdl:::SDL_BeginGPURenderPass(commandBuffer, firstSceneTarget, 2, depthTargetInfo);
-                DrawMeshes(commandBuffer, scenePass, renderWorld, visibleDraws, chosenLights, shadowPlan, viewProjection, backdrop, encodeFlag, report);
+                DrawMeshes(commandBuffer, scenePass, renderWorld, visibleDraws, false, chosenLights, shadowPlan, viewProjection, backdrop, encodeFlag, report);
                 if skyDrawn {
                     DrawSky(commandBuffer, scenePass, renderWorld, aspect);
                 }
+                DrawMeshes(commandBuffer, scenePass, renderWorld, visibleDraws, true, chosenLights, shadowPlan, viewProjection, backdrop, encodeFlag, report);
                 Sdl:::SDL_EndGPURenderPass(scenePass);
             }
             sceneTexture~ raw Sdl:::SDL_GPUTexture~* = postTargets.hdrTexture;
@@ -1121,12 +1176,15 @@ lantern:::gpu :: namespace {
         RecordShadowTile~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, tile: lantern:::renderer:::ShadowTile, renderWorld: lantern:::renderer:::RenderWorld*, report: lantern:::renderer:::RenderReport~*) -> void {
             tileFrustum: lantern:::renderer:::Frustum = lantern:::renderer:::Frustum:::FromViewProjection(tile.viewProjection);
             tileUniforms := MatrixUniforms { matrix: tile.viewProjection.elements };
+            cameraPosition: Vec3 = renderWorld->camera.position;
+            maskLightUniforms := MaskLightUniforms { cameraPosition: [cameraPosition.x, cameraPosition.y, cameraPosition.z, renderWorld->timeSeconds] };
             unsafe {
                 for passIndex~ u32 = 0; passIndex < 2; passIndex++ {
                     isSkinnedPass: bool = passIndex == 1;
                     Sdl:::SDL_BindGPUGraphicsPipeline(pass, isSkinnedPass ? pipelines.shadowSkinned : pipelines.shadow);
                     PushVertexUniforms(commandBuffer, 0, reinterpret<u8>(tileUniforms), 64);
                     boundMesh~ u32 = NO_BINDING;
+                    boundShadowKey~ u32 = 0;
                     for drawIndex~ usize = 0; drawIndex < renderWorld->draws.length(); drawIndex++ {
                     draw: lantern:::renderer:::DrawItem = renderWorld->draws[drawIndex];
                     if !draw.castsShadows {
@@ -1138,6 +1196,39 @@ lantern:::gpu :: namespace {
                         }
                         if !tileFrustum.Intersects(mesh.bounds.Transformed(draw.transform)) {
                             continue;
+                        }
+                        found: GpuMaterialShader? = MaterialShaderOf(draw);
+                        wantedShadowKey~ u32 = 0;
+                        maskPipeline~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+                        if materialShader := found {
+                            if materialShader.translucent {
+                                continue;
+                            }
+                            maskPipeline = isSkinnedPass ? materialShader.shadowSkinned : materialShader.shadow;
+                            if maskPipeline != null {
+                                if wanted := draw.materialShader {
+                                    wantedShadowKey = wanted.Index() + 1;
+                                }
+                            }
+                        }
+                        if wantedShadowKey != boundShadowKey {
+                            if wantedShadowKey == 0 {
+                                Sdl:::SDL_BindGPUGraphicsPipeline(pass, isSkinnedPass ? pipelines.shadowSkinned : pipelines.shadow);
+                            } else {
+                                Sdl:::SDL_BindGPUGraphicsPipeline(pass, maskPipeline);
+                                PushFragmentUniforms(commandBuffer, 0, reinterpret<u8>(maskLightUniforms), 16);
+                                if materialShader := found {
+                                    BindMaterialTextures(pass, materialShader, 0);
+                                }
+                            }
+                            boundShadowKey = wantedShadowKey;
+                            boundMesh = NO_BINDING;
+                        }
+                        if wantedShadowKey != 0 {
+                            if materialShader := found {
+                                maskMaterialUniforms := MaskMaterialUniforms { parameters: ParametersOf(draw, materialShader.parameters) };
+                                PushFragmentUniforms(commandBuffer, 1, reinterpret<u8>(maskMaterialUniforms), 32);
+                            }
                         }
                         if draw.mesh.Index() != boundMesh {
                             vertexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.vertexBuffer, offset: 0 };
@@ -1172,7 +1263,16 @@ lantern:::gpu :: namespace {
          * tint) and issue one indexed draw. The byte counts pushed (80, 112, 528, 1024, 128, 80) are the uniform structs' sizes. The two shadow maps bind once,
          * to sampler slots 1 and 2 (slot 0 is the draw's texture).
          */
-        DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, chosenLights: Array<u32>, shadowPlan: lantern:::renderer:::ShadowPlan*, viewProjection: Mat4, fogColor: lantern:::core:::Color, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
+        DrawMeshes~: (commandBuffer: raw Sdl:::SDL_GPUCommandBuffer~*, pass: raw Sdl:::SDL_GPURenderPass~*, renderWorld: lantern:::renderer:::RenderWorld*, visibleDraws: Array<VisibleDraw>, translucentPhase: bool, chosenLights: Array<u32>, shadowPlan: lantern:::renderer:::ShadowPlan*, viewProjection: Mat4, fogColor: lantern:::core:::Color, encodeFlag: f32, report: lantern:::renderer:::RenderReport~*) -> void {
+            phaseDrawCount~ usize = 0;
+            for visible in visibleDraws {
+                if visible.translucent == translucentPhase {
+                    phaseDrawCount += 1;
+                }
+            }
+            if phaseDrawCount == 0 {
+                return;
+            }
             cameraPosition: Vec3 = renderWorld->camera.position;
             frameUniforms := MatrixAndVectorUniforms { matrix: viewProjection.elements, vector: [cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f] };
             directionToLight: Vec3 = lantern:::core:::NormalizeOr3(Vec3 { } - renderWorld->light.direction, lantern:::core:::WorldUp());
@@ -1212,6 +1312,9 @@ lantern:::gpu :: namespace {
                     boundShaderKey~ u32 = 0;
                     boundParameters~ f32[8] = filled<f32, 8>(0.0f);
                     for visible in visibleDraws {
+                        if visible.translucent != translucentPhase {
+                            continue;
+                        }
                         draw: lantern:::renderer:::DrawItem = renderWorld->draws[visible.drawIndex];
                         if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
                             if IsSkinnedDraw(draw, mesh) != isSkinnedPass {
@@ -1228,15 +1331,7 @@ lantern:::gpu :: namespace {
                                 boundParameters = filled<f32, 8>(0.0f);
                                 if materialShader := found {
                                     boundParameters = materialShader.parameters;
-                                    if materialShader.textureCount > 0 {
-                                        materialBindings~ Sdl:::SDL_GPUTextureSamplerBinding[4] = filled<Sdl:::SDL_GPUTextureSamplerBinding, 4>(Sdl:::SDL_GPUTextureSamplerBinding { texture: whiteTexture.texture, sampler: whiteTexture.sampler });
-                                        for slot~ u32 = 0; slot < materialShader.textureCount; slot++ {
-                                            sampled: GpuTexture = TextureOrWhite(materialShader.textures[usize(slot)]);
-                                            materialBindings[usize(slot)] = Sdl:::SDL_GPUTextureSamplerBinding { texture: sampled.texture, sampler: sampled.sampler };
-                                        }
-                                        firstMaterialBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(materialBindings);
-                                        Sdl:::SDL_BindGPUFragmentSamplers(pass, 4, firstMaterialBinding, materialShader.textureCount);
-                                    }
+                                    BindMaterialTextures(pass, materialShader, 4);
                                 }
                                 boundShaderKey = visible.shaderKey;
                                 boundMesh = NO_BINDING;
@@ -1273,7 +1368,7 @@ lantern:::gpu :: namespace {
                                 tint: draw.color.ToArray(),
                                 surface: [draw.material.metallic, draw.material.roughness, normalStrength, Math:::max(draw.material.wetness, renderWorld->worldWetness)],
                                 emissive: [draw.material.emissive.r, draw.material.emissive.g, draw.material.emissive.b, Math:::max(draw.material.puddles, renderWorld->worldPuddles)],
-                                parameters: boundParameters
+                                parameters: ParametersOf(draw, boundParameters)
                             };
                             PushVertexUniforms(commandBuffer, 1, reinterpret<u8>(objectUniforms), 128);
                             if isSkinnedPass {

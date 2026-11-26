@@ -30,10 +30,11 @@ MaterialSurface SurfaceOf(vec2 uv) {
     surface.emissive = node_glow;
     surface.tangent_normal = node_bumps;
     surface.opacity_mask = 1.0;
+    surface.opacity = 1.0;
     surface.normal_strength = 1.0;
     surface.normal_uv = node_flow;
     return surface;
 }
 
 #include "lit-main.glsl"
-// Compiled against the engine's lit shader 13426740955923470436.
+// Compiled against the engine's lit shader 17199922695573393515.

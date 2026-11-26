@@ -60,6 +60,8 @@ main :: () -> i32 {
             assert(source.contains("    surface.opacity_mask = 1.0;"), "an unwired mask leaves the surface solid");
             assert(source.contains("mix(0.4, 1.0, clamp(node_wear, 0.0, 1.0))"), "a lerp mixes by its weight");
             assert(source.contains("    surface.base_color = node_base;"), "the base colour is wired");
+            assert(source.contains("    surface.opacity = 1.0;") && !shader->isTranslucent, "an unwired opacity leaves the surface opaque");
+            assert(shader->maskSource.length() == 0, "a graph with no mask needs no shadow shader");
             assert(source.contains("    surface.emissive = vec3(0.0);"), "an unwired output keeps its default");
             assert(source.contains("ScaleTangentNormal(LinearToSrgbExact(texture(material_texture_1, node_tiled).rgb) * 2.0 - 1.0, 0.5)"), "the normal map scales its own tilt by its strength");
             assert(source.contains("    surface.normal_strength = 1.0;"), "a wired normal output is used as it comes");
@@ -94,7 +96,23 @@ main :: () -> i32 {
             assert(source.contains("    float node_height = world_position.y;"), "and a height");
             assert(source.contains("    surface.normal_uv = node_ground;"), "the normal frame follows the world coordinate");
             assert(source.contains("    surface.opacity_mask = node_wave;"), "the mask is wired");
+            mask: string = shader->maskSource;
+            assert(mask.contains("#include \"mask-common.glsl\"") && mask.contains("#include \"mask-main.glsl\""), "a wired mask also gets a shadow shader");
+            assert(mask.contains("layout(set = 2, binding = 0) uniform sampler2D material_texture_0;"), "whose textures are bound from the first slot");
+            assert(mask.contains("    surface.opacity_mask = node_wave;"), "and cuts the same mask");
             assert(!source.contains("// parameter"), "a graph with no parameters names none");
+        }
+    }
+    when Generate("{\"graph\": \"glass\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"rim\", \"kind\": \"mat_fresnel\", \"a\": {\"f32\": 2.0}}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"\", \"\", \"\", \"\", \"\", \"\", \"rim\"]}]}]}", names, values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "a see-through graph becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            defer delete shader;
+            assert(shader->isTranslucent, "a wired opacity makes the material see-through");
+            assert(shader->source.contains("    surface.opacity = node_rim;"), "and sets how much shows through");
         }
     }
     ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"spot\", \"kind\": \"mat_world_position\", \"name\": \"w\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"spot\"]}]}]}",

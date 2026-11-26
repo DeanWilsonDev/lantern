@@ -61,12 +61,14 @@ layout and file format all apply. It has one function called `material`, and its
 | `mat_add` `mat_sub` `mat_mul` | `a`, `b` | per channel; a number joins any other value |
 | `mat_lerp` | `a`, `b`, `value` | `a` towards `b` by `value` (0 to 1) |
 | `mat_one_minus` `mat_clamp` | `a` | `1 - a`, or `a` held between 0 and 1 |
-| `mat_output` | `args`: base colour, metallic, roughness, emissive, normal, opacity mask | the material |
+| `mat_output` | `args`: base colour, metallic, roughness, emissive, normal, opacity mask, opacity | the material |
 
 Values have one of four shapes: a number, a coordinate (`vec2`), a colour (`vec3`) or a normal. A number combines with any
 of them; a coordinate and a colour don't, and the generator says which node tried. An output a graph leaves unwired takes
 the default a material Silhouette with no properties has: white, not metallic, roughness 0.8, no light of its own, flat,
-solid. Where the opacity mask is below 0.5 the pixel is cut away, for grates, leaves and chain-link fences.
+solid and opaque. Where the opacity mask is below 0.5 the pixel is cut away, for grates, leaves and chain-link fences,
+and its shadow is cut the same way. A graph that wires its opacity is see-through: the lit colour is blended over what
+is behind it by that amount (0 shows only what is behind, 1 hides it), for glass and water.
 A material samples at most four textures.
 
 ## The shader
@@ -75,11 +77,16 @@ A material samples at most four textures.
 `engine/src/materialgraph/`) writes a `SurfaceOf(vec2 uv)` function with one local per node, in the order they are read,
 between the lit shader's two halves:
 
-- `engine/shaders/lit-common.glsl`: every declaration and lighting function the lit shader has, `MaterialSurface`,
-  `DefaultSurface(uv)` (every field set to the defaults above, which a generated `SurfaceOf` starts from), `MaterialTime()`
-  and `Fresnel`.
+- `engine/shaders/lit-common.glsl`: every declaration and lighting function the lit shader has. It includes
+  `material-surface.glsl`: `MaterialSurface`, `DefaultSurface(uv)` (every field set to the defaults above, which a
+  generated `SurfaceOf` starts from), `MaterialTime()` and `Fresnel`.
 - `engine/shaders/lit-main.glsl`: `main`, which calls `SurfaceOf`, multiplies its base colour by the vertex colour and the
   draw's tint, bends the normal, applies wetness and lights the result. A graph's emissive is added to the draw's own.
+
+A graph that wires its opacity mask also gets `maskSource`: the same `SurfaceOf` between `mask-common.glsl` (only what
+a surface reads: the time, the parameters and its textures from binding 0) and `mask-main.glsl`, which discards where the
+mask is below 0.5. The shadow pass draws the material's pieces with it. A graph that wires its opacity is marked
+`isTranslucent`.
 
 `lit.frag` is the same two halves around the default `SurfaceOf`: the draw's texture, its uniform metallic and roughness,
 and its normal map. Splitting it changed no picture (the screenshot tests pass unchanged).
@@ -103,11 +110,18 @@ renderer builds two pipelines from it, the lit one and the skinned one, both wit
 handle, uses the ordinary lit pipeline. Visible draws sort by material shader first, so each pipeline is bound once a
 frame, then by texture and mesh as before. On a switch the renderer binds the shadow maps again and the material's
 textures from slot 4, and each draw's material uniforms carry that shader's parameters (SDL's GPU API allows only
-four uniform blocks per stage, and the lit shader uses all four). Shadow maps don't change: a material decides
-how a surface looks, not its shape, so a masked material still casts the shadow of its whole mesh.
+four uniform blocks per stage, and the lit shader uses all four).
+
+A source marked `masked` also gets two shadow pipelines from `<name>.mask.frag` (with the `shadow-masked` and
+`shadow-masked-skinned` vertex shaders, which pass the world position, normal and coordinate on), so the shadow is cut by
+the mask: a grate's shadow has its slats. A source marked `translucent` gets lit pipelines that blend by the surface's
+opacity, test depth without writing it, and leave the second colour target (the surface buffer reflections read) alone.
+Its draws are sorted after every opaque draw, farthest first, and drawn after the sky, so each one blends over what is
+behind it. A see-through piece casts no shadow.
 
 `MaterialShaderSource.parameters` holds the values the parameters start at, and
-`RenderBackend.SetMaterialShaderParameter(shader, slot, value)` changes one for every draw from then on.
+`RenderBackend.SetMaterialShaderParameter(shader, slot, value)` changes one for every draw from then on. A `DrawItem`
+with `overridesParameters` set carries its own eight values in `parameters` instead, in the lit pass and the shadow pass.
 `RenderWorld.timeSeconds` is the clock `mat_time` reads: the game moves it on each frame (`AdvanceTime`), and the
 editor sets it from SDL's clock, so a moving material moves in the viewport and the preview too.
 
@@ -153,8 +167,19 @@ lantern:::world:::SetMaterialParameter("painted_metal", "wear", 0.8f);
 ```
 
 It returns false, and changes nothing, when the material has no shader or no parameter by that name. The change applies
-to every piece with that material; a per-piece value is still to come. Test:
+to every piece with that material. One piece can have a value of its own instead:
+
+```nyx
+lantern:::world:::SetEntityMaterialParameter(door, "wear", 0.1f);
+```
+
+The first value a piece gets copies the material's parameters as they stand, with that one changed; from then on the
+piece keeps its own, and a later `SetMaterialParameter` no longer reaches it. It returns false when the entity has no
+graph material or no parameter by that name. Test:
 `engine/tests/host/a-game-changes-a-material-parameter-while-it-runs`.
+
+`SetMaterialShader`'s last argument names what else the shader does: `masked` when it has a shadow shader beside it and
+`translucent` when it is see-through, separated by a space, or empty.
 
 The platformer's sample is `assets/silhouettes/materials/painted_metal`: blue paint over the tiled wall texture, with
 its roughness from the `wear` property. Test: `engine/tests/editorbackend/the-game-materials-are-built-and-current`
@@ -169,8 +194,8 @@ its texture times its tint as the base colour, and its metallic and roughness as
 
 In a material graph the right-click menu offers the material kinds (inputs first, then maths) and a comment; the output
 is made with the graph and a second one is refused. Each node shows its pins and the value or link each one holds, and
-the side panel edits a node's fields, with the output's six ports labelled base colour, metallic, roughness, emissive,
-normal and opacity mask. A colour node's `text` is typed as `#RRGGBB`. The text under the canvas is the generated GLSL, or the line
+the side panel edits a node's fields, with the output's seven ports labelled base colour, metallic, roughness, emissive,
+normal, opacity mask and opacity. A colour node's `text` is typed as `#RRGGBB`. The text under the canvas is the generated GLSL, or the line
 saying which node stops it.
 
 **Save and compile** writes `material.graph.json` beside the Silhouette and runs the bake, so the game's compiled shader
@@ -185,7 +210,9 @@ tiled brick texture, its normal map with a `bumpiness` parameter, and a rough no
 `textures/brick.png` and `textures/brick_normal.png`, are made by `mist run assets` (`engine/tools/generate-assets/Bricks.nox`).
 Three more show the moving and world nodes: `neon_pulse` (a pink glow that pulses with `mat_time` and `mat_sine` and
 brightens at the edges with `mat_fresnel`), `lava_flow` (the ground texture sliding under a `mat_panner`, glowing orange)
-and `vent_grille` (steel slats cut by an opacity mask from the sine of the world height).
+and `vent_grille` (steel slats cut by an opacity mask from the sine of the world height, whose shadow has its slats).
+`sea_glass` is see-through: a pale teal whose opacity is a `thickness` parameter plus a `mat_fresnel`, so its edges are
+more solid than its face, as glass is.
 
 Tests:
 `engine/tests/graphs/a-material-graph-offers-material-nodes` and
@@ -195,9 +222,7 @@ Tests:
 
 Tracked on the board under `material-graphs-an-unreal-style-material-editor-that-generates-a-shader-per-material`:
 
-- Translucent materials (glass, water): the lit pipeline doesn't blend, so a mask only cuts pixels away.
-- Masked shadows: a masked material casts the shadow of its whole mesh.
-- Per-piece parameter values (material instances placed in a level); `SetMaterialParameter` changes the material.
-- The editor viewport only redraws when something changes, so a moving material moves there only while the view is
-  redrawn; the preview moves all the time.
-- The preview shows the material as last saved; it doesn't follow unsaved edits.
+- Per-piece values set in the editor and saved with the level; today a game sets them while it runs.
+- See-through pieces are sorted by their origin, so two that overlap can blend in the wrong order, and they cast no
+  shadow (a coloured shadow would need its own pass).
+- Refraction: glass and water blend over what is behind them but don't bend it.

@@ -85,7 +85,7 @@ void main() {
 
     // The value goes out as linear light, which can be far above 1: the target is a 16-bit float texture, and
     // composite.frag tone maps it to the screen's range and encodes it to sRGB.
-    // Meshes are opaque: the lit pipeline doesn't blend, so alpha is written as 1.
-    output_color = vec4(lit, 1.0);
+    // An opaque material's opacity is 1. A translucent one's pipeline blends this colour over what is behind it by alpha.
+    output_color = vec4(lit, clamp(surface.opacity, 0.0, 1.0));
     output_surface = PackSurface(normal, roughness, f0);
 }

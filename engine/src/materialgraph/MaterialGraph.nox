@@ -22,7 +22,7 @@
 // | `mat_add` `mat_sub` `mat_mul` | `a`, `b` | the sum, difference or product, per channel; a number joins anything |
 // | `mat_lerp` | `a`, `b`, `value` | `a` towards `b` by `value` |
 // | `mat_one_minus` `mat_clamp` | `a` | `1 - a`, or `a` held between 0 and 1 |
-// | `mat_output` | `arg0` base colour, `arg1` metallic, `arg2` roughness, `arg3` emissive, `arg4` normal, `arg5` opacity mask | the material |
+// | `mat_output` | `arg0` base colour, `arg1` metallic, `arg2` roughness, `arg3` emissive, `arg4` normal, `arg5` opacity mask, `arg6` opacity | the material |
 lantern:::materialgraph :: namespace {
     MATERIAL_FUNCTION_NAME: string : "material";
     OUTPUT_KIND: string : "mat_output";
@@ -33,12 +33,14 @@ lantern:::materialgraph :: namespace {
 
     // The ports of the output node, in `arguments` order.
     OutputPortName :: (portIndex: usize) -> string {
-        names: string[6] = ["base colour", "metallic", "roughness", "emissive", "normal", "opacity mask"];
+        names: string[7] = ["base colour", "metallic", "roughness", "emissive", "normal", "opacity mask", "opacity"];
         return names[portIndex];
     }
 
-    OUTPUT_PORT_COUNT: usize : 6;
+    OUTPUT_PORT_COUNT: usize : 7;
     NORMAL_PORT: usize : 4;
+    MASK_PORT: usize : 5;
+    OPACITY_PORT: usize : 6;
 
     // The GLSL type of a node's value. A number joins any other type, as GLSL lets it.
     ValueShape :: enum {
@@ -58,20 +60,29 @@ lantern:::materialgraph :: namespace {
     }
 
     // One generated material shader: the GLSL text, the textures it samples in binding order from binding 4, and the
-    // parameters a game can change while it runs, in slot order, with the values they start at.
+    // parameters a game can change while it runs, in slot order, with the values they start at. A graph with an opacity mask
+    // also gets `maskSource`, the shader its shadow is drawn with; a graph with an opacity is translucent.
     MaterialShader :: class {
     public:
         source~ string!;
+        maskSource~ string!;
         textureNames~ Array<string!>! = [];
         parameterNames~ Array<string!>! = [];
         parameterDefaults~ Array<f32>! = [];
+        isTranslucent~ bool = false;
 
         MaterialShader~: () {
             source = "".copy();
+            maskSource = "".copy();
+        }
+
+        HasMask :: () -> bool {
+            return maskSource.length() > 0;
         }
 
         !MaterialShader~: () {
             delete source;
+            delete maskSource;
             textureNames.freeAll();
             parameterNames.freeAll();
             delete parameterDefaults;
@@ -572,12 +583,12 @@ lantern:::materialgraph :: namespace {
     // What an unwired output gives: the same as a material Silhouette with no properties (white, not metallic, roughness 0.8,
     // no light, flat).
     OutputDefault :: (portIndex: usize) -> string {
-        defaults: string[6] = ["vec3(1.0)", "0.0", "0.8", "vec3(0.0)", "vec3(0.0, 0.0, 1.0)", "1.0"];
+        defaults: string[7] = ["vec3(1.0)", "0.0", "0.8", "vec3(0.0)", "vec3(0.0, 0.0, 1.0)", "1.0", "1.0"];
         return defaults[portIndex];
     }
 
     OutputShape :: (portIndex: usize) -> ValueShape {
-        if portIndex == 1 || portIndex == 2 || portIndex == 5 {
+        if portIndex == 1 || portIndex == 2 || portIndex == MASK_PORT || portIndex == OPACITY_PORT {
             return ValueShape:::Number;
         }
         if portIndex == NORMAL_PORT {
@@ -635,13 +646,14 @@ lantern:::materialgraph :: namespace {
         }
         assignments~ string! = "".copy();
         defer delete assignments;
-        fieldNames: string[6] = [
+        fieldNames: string[7] = [
             "base_color",
             "metallic",
             "roughness",
             "emissive",
             "tangent_normal",
-            "opacity_mask"
+            "opacity_mask",
+            "opacity"
         ];
         for portIndex~ usize = 0; portIndex < OUTPUT_PORT_COUNT; portIndex++ {
             when ValueOfReference(
@@ -684,37 +696,59 @@ lantern:::materialgraph :: namespace {
         }
 
         shader := new MaterialShader();
-        shader->source += `// Generated from the material graph '${graph->name}' by lantern:::materialgraph. Edit the graph, not this file.`;
-        shader->source += "\n";
-        shader->source += "#version 450\n";
-        shader->source += "#extension GL_GOOGLE_include_directive : require\n";
-        shader->source += "#include \"sky-common.glsl\"\n";
-        shader->source += "#include \"surface-common.glsl\"\n";
-        shader->source += "#include \"lit-common.glsl\"\n\n";
         for slot~ usize = 0; slot < writer->textureNames.length(); slot++ {
-            shader->source += `// ${writer->textureNames[slot]}`;
-            shader->source += "\n";
-            shader->source += `layout(set = 2, binding = ${u32(slot) + FIRST_TEXTURE_BINDING}) uniform sampler2D material_texture_${slot};`;
-            shader->source += "\n";
             shader->textureNames.push(`${writer->textureNames[slot]}`);
         }
+        for slot~ usize = 0; slot < writer->slotNames.length(); slot++ {
+            shader->parameterNames.push(`${writer->slotNames[slot]}`);
+            shader->parameterDefaults.push(writer->slotDefaults[slot]);
+        }
+        shader->isTranslucent = OutputReference(output, OPACITY_PORT).length() > 0;
+        delete shader->source;
+        shader->source = ShaderText(graph->name, writer, assignments, false);
+        if OutputReference(output, MASK_PORT).length() > 0 {
+            delete shader->maskSource;
+            shader->maskSource = ShaderText(graph->name, writer, assignments, true);
+        }
+        return Result<MaterialShader*!, string!>:::Ok(shader!);
+    }
+
+    // The text of a material's lit shader, or with `forMask` its shadow's mask shader: the same SurfaceOf between
+    // mask-common.glsl and mask-main.glsl, with its textures bound from 0, since a shadow pass binds nothing else.
+    ShaderText :: (graphName: string, writer: ShaderWriter*, assignments: string, forMask: bool) -> string! {
+        text~ string! = `// Generated from the material graph '${graphName}' by lantern:::materialgraph. Edit the graph, not this file.`;
+        text += "\n";
+        text += "#version 450\n";
+        text += "#extension GL_GOOGLE_include_directive : require\n";
+        if forMask {
+            text += "#include \"mask-common.glsl\"\n\n";
+        } else {
+            text += "#include \"sky-common.glsl\"\n";
+            text += "#include \"surface-common.glsl\"\n";
+            text += "#include \"lit-common.glsl\"\n\n";
+        }
+        firstBinding: u32 = forMask ? 0 : FIRST_TEXTURE_BINDING;
+        for slot~ usize = 0; slot < writer->textureNames.length(); slot++ {
+            text += `// ${writer->textureNames[slot]}`;
+            text += "\n";
+            text += `layout(set = 2, binding = ${u32(slot) + firstBinding}) uniform sampler2D material_texture_${slot};`;
+            text += "\n";
+        }
         if writer->slotNames.length() > 0 {
-            shader->source += "\n";
+            text += "\n";
             for slot~ usize = 0; slot < writer->slotNames.length(); slot++ {
-                shader->source += `// parameter ${slot}: ${writer->slotNames[slot]}`;
-                shader->source += "\n";
-                shader->parameterNames.push(`${writer->slotNames[slot]}`);
-                shader->parameterDefaults.push(writer->slotDefaults[slot]);
+                text += `// parameter ${slot}: ${writer->slotNames[slot]}`;
+                text += "\n";
             }
         }
-        shader->source += "\nMaterialSurface SurfaceOf(vec2 uv) {\n";
-        shader->source += writer->statements;
-        shader->source += "    MaterialSurface surface = DefaultSurface(uv);\n";
-        shader->source += assignments;
-        shader->source += "    return surface;\n";
-        shader->source += "}\n\n";
-        shader->source += "#include \"lit-main.glsl\"\n";
-        return Result<MaterialShader*!, string!>:::Ok(shader!);
+        text += "\nMaterialSurface SurfaceOf(vec2 uv) {\n";
+        text += writer->statements;
+        text += "    MaterialSurface surface = DefaultSurface(uv);\n";
+        text += assignments;
+        text += "    return surface;\n";
+        text += "}\n\n";
+        text += forMask ? "#include \"mask-main.glsl\"\n" : "#include \"lit-main.glsl\"\n";
+        return text!;
     }
 
     // `GenerateMaterialShader` from the text of a `.graph.json` file.

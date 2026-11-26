@@ -153,6 +153,8 @@ lantern:::editorbackend :: namespace {
     public:
         name~ string!;
         source~ string!;
+        maskSource~ string!;
+        isTranslucent~ bool = false;
         textureNames~ Array<string!>! = [];
         parameterNames~ Array<string!>! = [];
         parameterDefaults~ Array<f32>! = [];
@@ -161,11 +163,29 @@ lantern:::editorbackend :: namespace {
         GeneratedMaterialShader~: (materialName: string) {
             name = `${materialName}`;
             source = "".copy();
+            maskSource = "".copy();
+        }
+
+        // The words `SetMaterialShader` takes after the parameters: `masked` for a shadow cut by the mask, `translucent`
+        // for a material that blends.
+        Options :: () -> string! {
+            text~ string! = "".copy();
+            if maskSource.length() > 0 {
+                text += "masked";
+            }
+            if isTranslucent {
+                if text.length() > 0 {
+                    text += " ";
+                }
+                text += "translucent";
+            }
+            return text!;
         }
 
         !GeneratedMaterialShader~: () {
             delete name;
             delete source;
+            delete maskSource;
             textureNames.freeAll();
             parameterNames.freeAll();
             delete parameterDefaults;
@@ -238,6 +258,9 @@ lantern:::editorbackend :: namespace {
                 defer delete shader;
                 delete generated->source;
                 generated->source = `${shader->source}`;
+                delete generated->maskSource;
+                generated->maskSource = `${shader->maskSource}`;
+                generated->isTranslucent = shader->isTranslucent;
                 for textureName in shader->textureNames {
                     generated->textureNames.push(`${textureName}`);
                 }
@@ -336,14 +359,16 @@ lantern:::editorbackend :: namespace {
             }
             parameterText: string! = ParameterList(shader);
             defer delete parameterText;
-            lines += `        lantern:::world:::SetMaterialShader("${shader->name}", "../game-assets/${MATERIAL_SHADERS_FOLDER}", "${shader->name}"${arguments}, "${parameterText}");`;
+            optionText: string! = shader->Options();
+            defer delete optionText;
+            lines += `        lantern:::world:::SetMaterialShader("${shader->name}", "../game-assets/${MATERIAL_SHADERS_FOLDER}", "${shader->name}"${arguments}, "${parameterText}", "${optionText}");`;
             lines += "\n";
             delete arguments;
         }
         return lines!;
     }
 
-    ENGINE_SHADER_INCLUDES: string[4] = ["sky-common.glsl", "surface-common.glsl", "lit-common.glsl", "lit-main.glsl"];
+    ENGINE_SHADER_INCLUDES: string[7] = ["sky-common.glsl", "surface-common.glsl", "lit-common.glsl", "lit-main.glsl", "material-surface.glsl", "mask-common.glsl", "mask-main.glsl"];
 
     // A line naming the engine shader code a material shader includes, by a hash of its text, so the bake compiles every
     // material again when the lit shader changes even though the graph didn't.
@@ -371,6 +396,48 @@ lantern:::editorbackend :: namespace {
         stampLine~ string! = stamp!;
         stampLine += "\n";
         return stampLine!;
+    }
+
+    // Writes (or only checks) one shader's `<name>.frag` and compiles it when its text changed or a compiled file is missing.
+    // The Ok value is whether it was out of date.
+    SyncMaterialShaderFile :: (
+        shadersFolder: string,
+        name: string,
+        source: string,
+        stamp: string,
+        engineShaders: string,
+        writeFiles: bool
+    ) -> Result<bool, string!> {
+        fileName: string! = `${name}.frag`;
+        defer delete fileName;
+        stampedSource: string! = `${source}${stamp}`;
+        defer delete stampedSource;
+        sourceChanged~ bool = false;
+        when SyncOutput(shadersFolder, fileName, stampedSource, writeFiles) {
+            Result:::Err(message) -> {
+                return Result<bool, string!>:::Err(message!);
+            },
+            Result:::Ok(wasStale) -> {
+                sourceChanged = wasStale;
+            }
+        }
+        spirvPath: string! = `${shadersFolder}/${name}.frag.spv`;
+        defer delete spirvPath;
+        mslPath: string! = `${shadersFolder}/${name}.frag.msl`;
+        defer delete mslPath;
+        compiledMissing: bool = !pathExists(spirvPath) || !pathExists(mslPath);
+        if !sourceChanged && !compiledMissing {
+            return Result<bool, string!>:::Ok(false);
+        }
+        if writeFiles {
+            failure: string!? = CompileMaterialShader(shadersFolder, name, engineShaders);
+            if problem := failure {
+                message: string! = `material '${name}': ${problem}`;
+                delete failure;
+                return Result<bool, string!>:::Err(message!);
+            }
+        }
+        return Result<bool, string!>:::Ok(true);
     }
 
     // Writes (or with `writeFiles` false only checks) each generated shader into `<outputFolder>/materials`, compiling each
@@ -408,36 +475,25 @@ lantern:::editorbackend :: namespace {
         stamp: string! = EngineShaderStamp(engineShaders);
         defer delete stamp;
         for shader in shaders {
-            fileName: string! = `${shader->name}.frag`;
-            defer delete fileName;
-            stampedSource: string! = `${shader->source}${stamp}`;
-            defer delete stampedSource;
-            sourceChanged~ bool = false;
-            when SyncOutput(shadersFolder, fileName, stampedSource, writeFiles) {
+            when SyncMaterialShaderFile(shadersFolder, shader->name, shader->source, stamp, engineShaders, writeFiles) {
                 Result:::Err(message) -> {
                     return Result<bool, string!>:::Err(message!);
                 },
                 Result:::Ok(wasStale) -> {
-                    sourceChanged = wasStale;
+                    changed = changed || wasStale;
                 }
             }
-            spirvPath: string! = `${shadersFolder}/${shader->name}.frag.spv`;
-            defer delete spirvPath;
-            mslPath: string! = `${shadersFolder}/${shader->name}.frag.msl`;
-            defer delete mslPath;
-            compiledMissing: bool = !pathExists(spirvPath) || !pathExists(mslPath);
-            if !sourceChanged && !compiledMissing {
-                continue;
-            }
-            changed = true;
-            if !writeFiles {
-                continue;
-            }
-            failure: string!? = CompileMaterialShader(shadersFolder, shader->name, engineShaders);
-            if problem := failure {
-                message: string! = `material '${shader->name}': ${problem}`;
-                delete failure;
-                return Result<bool, string!>:::Err(message!);
+            if shader->maskSource.length() > 0 {
+                maskName: string! = `${shader->name}.mask`;
+                defer delete maskName;
+                when SyncMaterialShaderFile(shadersFolder, maskName, shader->maskSource, stamp, engineShaders, writeFiles) {
+                    Result:::Err(message) -> {
+                        return Result<bool, string!>:::Err(message!);
+                    },
+                    Result:::Ok(wasStale) -> {
+                        changed = changed || wasStale;
+                    }
+                }
             }
         }
         return Result<bool, string!>:::Ok(changed);

@@ -23,6 +23,7 @@ struct MaterialSurface
     float normal_strength;
     float2 normal_uv;
     float opacity_mask;
+    float opacity;
 };
 
 struct ShadowUniforms
@@ -98,6 +99,7 @@ MaterialSurface DefaultSurface(thread const float2& uv)
     surface.normal_strength = 0.0;
     surface.normal_uv = uv;
     surface.opacity_mask = 1.0;
+    surface.opacity = 1.0;
     return surface;
 }
 
@@ -120,6 +122,7 @@ MaterialSurface SurfaceOf(thread const float2& uv, texture2d<float> material_tex
     surface.emissive = float3(0.0);
     surface.tangent_normal = float3(0.0, 0.0, 1.0);
     surface.opacity_mask = 1.0;
+    surface.opacity = 1.0;
     surface.normal_strength = 0.0;
     return surface;
 }
@@ -559,11 +562,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     float puddle = PuddleMask(param_6, param_7, param_8);
     float darkening = mix(1.0, 0.550000011920928955078125, wetness * (1.0 - metallic));
     darkening = mix(darkening, 0.300000011920928955078125, puddle);
-    float4 _1328 = albedo;
-    float3 _1330 = _1328.xyz * darkening;
-    albedo.x = _1330.x;
-    albedo.y = _1330.y;
-    albedo.z = _1330.z;
+    float4 _1331 = albedo;
+    float3 _1333 = _1331.xyz * darkening;
+    albedo.x = _1333.x;
+    albedo.y = _1333.y;
+    albedo.z = _1333.z;
     roughness = mix(roughness, 0.100000001490116119384765625, wetness * 0.800000011920928955078125);
     roughness = mix(roughness, 0.039999999105930328369140625, puddle);
     normal = fast::normalize(mix(normal, float3(0.0, 1.0, 0.0), float3(puddle)));
@@ -604,7 +607,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     lit += EvaluateLight(param_24, param_25, param_26, param_27, param_28, param_29, param_30);
     int local_count = min(int(locals.header.x), 8);
     LocalLight local;
-    float _1574;
+    float _1576;
     for (int index = 0; index < local_count; index++)
     {
         local.position_and_range = locals.lights[index].position_and_range;
@@ -628,13 +631,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
             float inner_cosine = local.cone.x;
             if ((inner_cosine - outer_cosine) > 9.9999997473787516355514526367188e-05)
             {
-                _1574 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
+                _1576 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
             }
             else
             {
-                _1574 = step(outer_cosine, cosine_to_axis);
+                _1576 = step(outer_cosine, cosine_to_axis);
             }
-            float cone_fade = _1574;
+            float cone_fade = _1576;
             strength *= cone_fade;
         }
         LocalLight param_33 = local;
@@ -657,7 +660,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     float fog_range = fast::max(light.fog_and_output.y - light.fog_and_output.x, 0.001000000047497451305389404296875);
     float fog = fast::clamp((distance_to_camera - light.fog_and_output.x) / fog_range, 0.0, 1.0);
     lit = mix(lit, light.fog_color.xyz, float3(fog));
-    out.output_color = float4(lit, 1.0);
+    out.output_color = float4(lit, fast::clamp(surface.opacity, 0.0, 1.0));
     float3 param_45 = normal;
     float param_46 = roughness;
     float3 param_47 = f0;

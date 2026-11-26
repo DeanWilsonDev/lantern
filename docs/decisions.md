@@ -2089,3 +2089,16 @@ reads goes in `LightUniforms.camera_position.w`, which nothing read, so time nee
 keep float precision. A surface carries the coordinate its normal map was sampled at (`normal_uv`) and an opacity mask
 that discards below 0.5; shadows ignore the mask and translucency is still not built, because the lit pipeline doesn't
 blend. Provisional: not reviewed by Dean.
+
+## D-265: Masked shadows use a second, smaller shader; see-through materials blend after the sky; a piece's values ride on its draw
+
+A graph with an opacity mask bakes a second shader, `<name>.mask.frag`, with the same `SurfaceOf` and only what it reads
+(time, parameters, textures from binding 0), and the shadow pass draws that material's pieces with it, so a grate's
+shadow has its slats. The shadow pass didn't run any material code before; one shader per masked material keeps every
+other material on the plain shadow pipeline. A graph that wires its new `opacity` port is translucent: its lit pipelines
+blend by the opacity, test depth without writing it and leave the surface buffer alone, its draws sort after every
+opaque draw, farthest origin first, and they are drawn after the sky, since the sky fills only pixels whose depth is
+still clear and would cover them. A see-through piece casts no shadow. `SetMaterialShader` takes a ninth argument naming
+these (`masked`, `translucent`). A piece's own parameter values ride on its `MeshRenderer` and `DrawItem`
+(`overridesParameters` and eight floats) and replace the shader's in that draw's uniforms; the first value copies the
+shader's current values, so `SetEntityMaterialParameter` changes only the one named. Provisional: not reviewed by Dean.

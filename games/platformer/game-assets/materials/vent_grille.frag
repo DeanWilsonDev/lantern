@@ -24,9 +24,10 @@ MaterialSurface SurfaceOf(vec2 uv) {
     surface.emissive = vec3(0.0);
     surface.tangent_normal = vec3(0.0, 0.0, 1.0);
     surface.opacity_mask = node_mask;
+    surface.opacity = 1.0;
     surface.normal_strength = 0.0;
     return surface;
 }
 
 #include "lit-main.glsl"
-// Compiled against the engine's lit shader 13426740955923470436.
+// Compiled against the engine's lit shader 17199922695573393515.

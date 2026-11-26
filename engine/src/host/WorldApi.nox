@@ -485,7 +485,7 @@ lantern:::host :: namespace {
                 state->SetMaterialLook(material, look);
             }
         });
-        worldNamespace->Function("SetMaterialShader", "(material: string, folder: string, shader: string, texture0: i64, texture1: i64, texture2: i64, texture3: i64, parameters: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("SetMaterialShader", "(material: string, folder: string, shader: string, texture0: i64, texture1: i64, texture2: i64, texture3: i64, parameters: string, options: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             material: string! = context->Text(0);
             defer delete material;
             folder: string! = AssetPathArgument(context, state, 1);
@@ -504,6 +504,10 @@ lantern:::host :: namespace {
             }
             parameterText: string! = context->Text(7);
             defer delete parameterText;
+            optionText: string! = context->Text(8);
+            defer delete optionText;
+            source.masked = optionText.contains("masked");
+            source.translucent = optionText.contains("translucent");
             if Stopped(context) {
                 return;
             }
@@ -543,6 +547,35 @@ lantern:::host :: namespace {
                         if shader := look.shader {
                             state->renderBackend->SetMaterialShaderParameter(shader, slot, value);
                             changed = true;
+                        }
+                    }
+                }
+            }
+            context->ReturnBool(changed);
+        });
+        worldNamespace->Function("SetEntityMaterialParameter", "(entity: i64, name: string, value: f32) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            parameterName: string! = context->Text(1);
+            defer delete parameterName;
+            value: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            changed~ bool = false;
+            unsafe {
+                if record ~= state->entityWorld->BorrowMutable(entity) {
+                    if current := record->meshRenderer {
+                        if shader := current.materialShader {
+                            if slot := state->ShaderParameterSlotOf(shader, parameterName) {
+                                updated~ lantern:::engine:::MeshRenderer = current;
+                                if !updated.overridesParameters {
+                                    updated.parameters = state->renderBackend->MaterialShaderParameters(shader) ?? filled<f32, 8>(0.0f);
+                                    updated.overridesParameters = true;
+                                }
+                                updated.parameters[usize(slot)] = value;
+                                record->meshRenderer = updated;
+                                changed = true;
+                            }
                         }
                     }
                 }

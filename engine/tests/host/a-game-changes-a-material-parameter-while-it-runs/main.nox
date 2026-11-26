@@ -1,14 +1,26 @@
 // A baked material shader names its parameters, and a game script changes one by name while it runs: the renderer gets the
-// new value in that parameter's slot, and a name the material doesn't have changes nothing.
+// new value in that parameter's slot, and a name the material doesn't have changes nothing. One piece can also have a value of
+// its own: its draw carries the shader's values with that one changed, and every other piece keeps the shader's.
 NyxC :: import NyxC;
 lantern :: import lantern;
 
-SCRIPT: string : "Register :: () -> void { lantern:::world:::SetMaterialShader(\"brick\", \"materials\", \"brick\", 0, 0, 0, 0, \"roughness=0.85;bumpiness=1.0\"); }\nWear :: () -> bool { return lantern:::world:::SetMaterialParameter(\"brick\", \"bumpiness\", 0.25f); }\nUnknownName :: () -> bool { return lantern:::world:::SetMaterialParameter(\"brick\", \"shine\", 1.0f); }\nUnknownMaterial :: () -> bool { return lantern:::world:::SetMaterialParameter(\"gold\", \"roughness\", 1.0f); }";
+SCRIPT: string : "Register :: () -> void { lantern:::world:::SetMaterialShader(\"brick\", \"materials\", \"brick\", 0, 0, 0, 0, \"roughness=0.85;bumpiness=1.0\", \"\"); }\nWear :: () -> bool { return lantern:::world:::SetMaterialParameter(\"brick\", \"bumpiness\", 0.25f); }\nUnknownName :: () -> bool { return lantern:::world:::SetMaterialParameter(\"brick\", \"shine\", 1.0f); }\nUnknownMaterial :: () -> bool { return lantern:::world:::SetMaterialParameter(\"gold\", \"roughness\", 1.0f); }\nPieceWear :: (entity: i64) -> bool { return lantern:::world:::SetEntityMaterialParameter(entity, \"bumpiness\", 0.5f); }\nPieceUnknown :: (entity: i64) -> bool { return lantern:::world:::SetEntityMaterialParameter(entity, \"shine\", 0.5f); }";
 
 BoolResult :: (program: lantern:::nyx:::Program*, name: string) -> bool {
     noArguments: Array<lantern:::nyx:::Value*>! = [];
     value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
     delete noArguments;
+    result: bool = lantern:::testing:::BoolOrFail(value->Bool());
+    delete value;
+    return result;
+}
+
+PieceResult :: (runtime: lantern:::nyx:::Runtime*, program: lantern:::nyx:::Program*, name: string, entity: lantern:::core:::Handle<lantern:::engine:::EntityTag>) -> bool {
+    entityValue := runtime->MakeI64(i64(entity.ToBits()));
+    pieceArguments: Array<lantern:::nyx:::Value*>! = [entityValue];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, pieceArguments));
+    delete pieceArguments;
+    delete entityValue;
     result: bool = lantern:::testing:::BoolOrFail(value->Bool());
     delete value;
     return result;
@@ -35,6 +47,37 @@ main :: () -> i32 {
     assert(ParameterOf(state, 0) == 0.85f, "the other parameters keep theirs");
     assert(!BoolResult(program, "UnknownName"), "a name the material doesn't have changes nothing");
     assert(!BoolResult(program, "UnknownMaterial"), "a material with no shader changes nothing");
+    unsafe {
+        if look := state->LookOf("brick") {
+            mesh := lantern:::core:::HandleFromBits<lantern:::renderer:::MeshTag>(0);
+            white := lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f, a: 1.0f };
+            pieceRenderer~ lantern:::engine:::MeshRenderer = lantern:::engine:::MeshRenderer:::Create(mesh, null, white);
+            pieceRenderer.materialShader = look.shader;
+            worn := state->entityWorld->SpawnMesh("worn", lantern:::host:::GameScene(), lantern:::engine:::Transform:::Identity(), pieceRenderer);
+            plain := state->entityWorld->SpawnMesh("plain", lantern:::host:::GameScene(), lantern:::engine:::Transform:::Identity(), pieceRenderer);
+            assert(PieceResult(runtime, program, "PieceWear", worn), "a piece takes a value of its own");
+            assert(!PieceResult(runtime, program, "PieceUnknown", worn), "a name the material doesn't have changes nothing on a piece");
+            assert(ParameterOf(state, 1) == 0.25f, "the shader keeps its own value");
+            renderWorld := new lantern:::renderer:::RenderWorld();
+            lantern:::engine:::ExtractDraws(state->entityWorld, 1.0f, renderWorld);
+            wornDraws~ usize = 0;
+            plainDraws~ usize = 0;
+            for draw in renderWorld->draws {
+                if draw.overridesParameters {
+                    wornDraws += 1;
+                    assert(draw.parameters[0] == 0.85f && draw.parameters[1] == 0.5f, "the piece's draw starts from the shader's values with its own changed");
+                } else {
+                    plainDraws += 1;
+                }
+            }
+            assert(wornDraws == 1 && plainDraws == 1, "only the piece with a value of its own overrides the shader's");
+            delete renderWorld;
+            state->entityWorld->Despawn(worn);
+            state->entityWorld->Despawn(plain);
+        } else {
+            assert(false, "brick has a look");
+        }
+    }
     state->ResetForNewSession();
     assert(state->ShaderParameterSlot("brick", "bumpiness") == null, "a new session forgets the parameter names");
     delete program;

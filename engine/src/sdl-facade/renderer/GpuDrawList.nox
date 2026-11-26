@@ -16,9 +16,22 @@ lantern:::gpu :: namespace {
         meshIndex~ u32 = 0;
         /** Its position in the `RenderWorld`'s draw list, to find the `DrawItem` and keep the sort stable. */
         drawIndex~ usize = 0;
+        /** Whether its material shader blends over what is behind it, so it is drawn after every opaque draw and the sky. */
+        translucent~ bool = false;
+        /** The squared distance from the camera to its origin, so see-through draws go far to near. */
+        distanceSquared~ f32 = 0.0f;
 
-        /** Orders by material shader, then texture, then mesh, then submission order. */
+        /**
+         * Opaque draws first, ordered by material shader, then texture, then mesh, then submission order; then
+         * see-through draws, farthest first, so each one blends over what is behind it.
+         */
         ComesBefore :: (other: VisibleDraw) -> bool {
+            if translucent != other.translucent {
+                return !translucent;
+            }
+            if translucent && distanceSquared != other.distanceSquared {
+                return distanceSquared > other.distanceSquared;
+            }
             if shaderKey != other.shaderKey {
                 return shaderKey < other.shaderKey;
             }
