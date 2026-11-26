@@ -35,6 +35,7 @@ to be read in order: the first three under "Start here" give you the whole pictu
 | [`camera.md`](camera.md) | The follow camera, camera volumes, authored shots, blends and how a level designer places them. |
 | [`audio.md`](audio.md) | The mixer and its buses, positional sound, ambience and music layers, footsteps, and how to swap in real recordings. |
 | [`debug-window.md`](debug-window.md) | The paged, filterable debug window: keys, pages, the filter, and how a subsystem publishes values. |
+| [`terrain.md`](terrain.md) | Heightmap terrain: how it is stored, generated, sculpted, drawn and walked on, and every setting. |
 | [`photo-mode.md`](photo-mode.md) | The photo collectable: raising the camera, what counts as a photo, and how sights are authored. |
 
 ## The renderer's effects

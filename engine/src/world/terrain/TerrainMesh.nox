@@ -1,0 +1,80 @@
+lantern:::terrain :: namespace {
+    /**
+     * How many cells wide one chunk of terrain is. A chunk is a block of cells with a mesh of its own, so a sculpt stroke
+     * rebuilds only the chunks it touched and the renderer can skip chunks that are out of view.
+     */
+    CHUNK_CELLS: u32 : 32;
+
+    /**
+     * How many chunks run along one side of a terrain.
+     */
+    ChunkCount :: (field: Heightfield*) -> u32 {
+        return (field->columns - 1 + CHUNK_CELLS - 1) / CHUNK_CELLS;
+    }
+
+    /**
+     * The mesh of a block of cells: `cellColumns` by `cellRows` cells, with the top left cell at `firstColumn`,
+     * `firstRow`. Each vertex has the smooth normal of the ground there, so neighbouring blocks shade without a seam, and
+     * each texture coordinate is the position in metres. Every cell is two triangles facing up.
+     */
+    BuildBlockMesh :: (
+        field: Heightfield*,
+        firstColumn: u32,
+        firstRow: u32,
+        cellColumns: u32,
+        cellRows: u32
+    ) -> lantern:::renderer:::MeshData*! {
+        mesh := new lantern:::renderer:::MeshData();
+        verticesPerRow: u32 = cellColumns + 1;
+        white: Vec4 = lantern:::renderer:::White4();
+        for row~ u32 = 0; row <= cellRows; row++ {
+            for column~ u32 = 0; column <= cellColumns; column++ {
+                position: Vec3 = field->VertexPosition(firstColumn + column, firstRow + row);
+                normal: Vec3 = field->NormalAtVertex(firstColumn + column, firstRow + row);
+                mesh->vertices.push(lantern:::renderer:::Vertex:::Create(
+                    position,
+                    normal,
+                    Vec2 { x: position.x, y: position.z },
+                    white
+                ));
+            }
+        }
+        for row~ u32 = 0; row < cellRows; row++ {
+            for column~ u32 = 0; column < cellColumns; column++ {
+                nearLeft: u32 = row * verticesPerRow + column;
+                nearRight: u32 = nearLeft + 1;
+                farLeft: u32 = nearLeft + verticesPerRow;
+                farRight: u32 = farLeft + 1;
+                mesh->indices.push(farLeft);
+                mesh->indices.push(farRight);
+                mesh->indices.push(nearRight);
+                mesh->indices.push(farLeft);
+                mesh->indices.push(nearRight);
+                mesh->indices.push(nearLeft);
+            }
+        }
+        return mesh!;
+    }
+
+    /**
+     * The mesh of the whole terrain.
+     */
+    BuildTerrainMesh :: (field: Heightfield*) -> lantern:::renderer:::MeshData*! {
+        return BuildBlockMesh(field, 0, 0, field->columns - 1, field->columns - 1);
+    }
+
+    /**
+     * The mesh of one chunk, counted from the first row and column. The last chunk on a side may be narrower.
+     */
+    BuildChunkMesh :: (
+        field: Heightfield*,
+        chunkColumn: u32,
+        chunkRow: u32
+    ) -> lantern:::renderer:::MeshData*! {
+        firstColumn: u32 = chunkColumn * CHUNK_CELLS;
+        firstRow: u32 = chunkRow * CHUNK_CELLS;
+        cellColumns: u32 = SmallerCount(CHUNK_CELLS, field->columns - 1 - firstColumn);
+        cellRows: u32 = SmallerCount(CHUNK_CELLS, field->columns - 1 - firstRow);
+        return BuildBlockMesh(field, firstColumn, firstRow, cellColumns, cellRows);
+    }
+}

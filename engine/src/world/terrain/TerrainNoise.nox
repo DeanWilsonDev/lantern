@@ -1,0 +1,212 @@
+lantern:::terrain :: namespace {
+    /**
+     * Everything that decides what a generated terrain looks like. The same settings always make the same terrain.
+     *
+     * `seed` picks the terrain. `featureSize` is the width in metres of the biggest hills. Each of `octaves` layers adds
+     * finer detail: it is `lacunarity` times smaller than the layer before and `persistence` times as tall. `amplitude`
+     * is how tall the hills are in metres and `baseHeight` is the level they stand on.
+     */
+    TerrainSettings :: struct {
+        seed~ u32 = 1;
+        featureSize~ f32 = 24.0f;
+        octaves~ u32 = 4;
+        persistence~ f32 = 0.5f;
+        lacunarity~ f32 = 2.0f;
+        amplitude~ f32 = 4.0f;
+        baseHeight~ f32 = 0.0f;
+    }
+
+    /**
+     * The most layers of detail a terrain can have.
+     */
+    MAX_OCTAVES: u32 : 8;
+
+    /**
+     * Mixes a lattice point and a seed into one number that looks random but is always the same for the same input.
+     */
+    LatticeHash :: (latticeX: i32, latticeZ: i32, seed: u32) -> u32 {
+        offsetX: u32 = u32(latticeX + 1048576);
+        offsetZ: u32 = u32(latticeZ + 1048576);
+        mixed~ u32 = seed.wrappingAdd(offsetX.wrappingMultiply(374761393)).wrappingAdd(offsetZ.wrappingMultiply(668265263));
+        mixed = (mixed ^ (mixed >> 13)).wrappingMultiply(1274126177);
+        mixed = (mixed ^ (mixed >> 16)).wrappingMultiply(2246822519);
+        return mixed ^ (mixed >> 15);
+    }
+
+    /**
+     * The smooth curve noise blends along: 0 at 0, 1 at 1, flat at both ends.
+     */
+    Fade :: (amount: f32) -> f32 {
+        return amount * amount * amount * (amount * (amount * 6.0f - 15.0f) + 10.0f);
+    }
+
+    /**
+     * How much the random direction at a lattice point pushes on a point `offsetX`, `offsetZ` away from it.
+     */
+    GradientDot :: (latticeX: i32, latticeZ: i32, seed: u32, offsetX: f32, offsetZ: f32) -> f32 {
+        hashed: u32 = LatticeHash(latticeX, latticeZ, seed);
+        angle: f32 = f32(hashed % 65536) / 65536.0f * Math:::TAU;
+        return Math:::cos(angle) * offsetX + Math:::sin(angle) * offsetZ;
+    }
+
+    /**
+     * Smooth gradient noise at a point, between about -1 and 1. It is 0 on every whole-number lattice point and varies
+     * smoothly in between.
+     */
+    GradientNoise :: (x: f32, z: f32, seed: u32) -> f32 {
+        floorX: f32 = Math:::floor(x);
+        floorZ: f32 = Math:::floor(z);
+        latticeX: i32 = i32(floorX);
+        latticeZ: i32 = i32(floorZ);
+        fractionX: f32 = x - floorX;
+        fractionZ: f32 = z - floorZ;
+        blendX: f32 = Fade(fractionX);
+        blendZ: f32 = Fade(fractionZ);
+        first: f32 = GradientDot(latticeX, latticeZ, seed, fractionX, fractionZ);
+        second: f32 = GradientDot(latticeX + 1, latticeZ, seed, fractionX - 1.0f, fractionZ);
+        third: f32 = GradientDot(latticeX, latticeZ + 1, seed, fractionX, fractionZ - 1.0f);
+        fourth: f32 = GradientDot(
+            latticeX + 1,
+            latticeZ + 1,
+            seed,
+            fractionX - 1.0f,
+            fractionZ - 1.0f
+        );
+        return Math:::lerp(
+            Math:::lerp(first, second, blendX),
+            Math:::lerp(third, fourth, blendX),
+            blendZ
+        ) * 1.4142f;
+    }
+
+    /**
+     * Layered noise at a point in metres: the sum of the octaves, scaled so the result stays between about -1 and 1.
+     */
+    LayeredNoise :: (settings: TerrainSettings, worldX: f32, worldZ: f32) -> f32 {
+        total~ f32 = 0.0f;
+        heightShare~ f32 = 1.0f;
+        shareSum~ f32 = 0.0f;
+        frequency~ f32 = 1.0f / settings.featureSize;
+        octaveCount: u32 = SmallerCount(settings.octaves, MAX_OCTAVES);
+        for octave~ u32 = 0; octave < octaveCount; octave++ {
+            total += GradientNoise(
+                worldX * frequency,
+                worldZ * frequency,
+                settings.seed.wrappingAdd(octave.wrappingMultiply(1013))
+            ) * heightShare;
+            shareSum += heightShare;
+            heightShare *= settings.persistence;
+            frequency *= settings.lacunarity;
+        }
+        if shareSum <= 0.0f {
+            return 0.0f;
+        }
+        return total / shareSum;
+    }
+
+    /**
+     * Fills a terrain with noise hills, replacing whatever it held. The noise is read at each vertex's position in metres
+     * plus `offsetX` and `offsetZ`, so two terrains side by side with offsets that differ by their width join up.
+     */
+    GenerateTerrain :: (
+        field: Heightfield~*,
+        settings: TerrainSettings,
+        offsetX: f32,
+        offsetZ: f32
+    ) -> void {
+        for row~ u32 = 0; row < field->columns; row++ {
+            for column~ u32 = 0; column < field->columns; column++ {
+                noise: f32 = LayeredNoise(
+                    settings,
+                    field->LocalCoordinate(column) + offsetX,
+                    field->LocalCoordinate(row) + offsetZ
+                );
+                field->SetHeight(column, row, settings.baseHeight + noise * settings.amplitude);
+            }
+        }
+    }
+
+    /**
+     * Lets loose material roll downhill, the way a pile of sand settles. Each pass moves part of any height difference
+     * steeper than `talusSlope` (rise over run) from a vertex to its lower neighbours. More passes make smoother, older
+     * hills. The same terrain and settings always give the same result.
+     */
+    ErodeTerrain :: (field: Heightfield~*, passes: u32, talusSlope: f32, strength: f32) -> void {
+        columnCount: u32 = field->columns;
+        talusHeight: f32 = talusSlope * field->cellSize;
+        for pass~ u32 = 0; pass < passes; pass++ {
+            changes~ Array<f32>! = [];
+            for index~ usize = 0; index < field->heights.length(); index++ {
+                changes.push(0.0f);
+            }
+            for row~ u32 = 0; row < columnCount; row++ {
+                for column~ u32 = 0; column < columnCount; column++ {
+                    here: f32 = field->HeightAtVertex(column, row);
+                    lowerTotal~ f32 = 0.0f;
+                    biggestDrop~ f32 = 0.0f;
+                    for direction~ u32 = 0; direction < 4; direction++ {
+                        neighbourColumn~ i32 = i32(column);
+                        neighbourRow~ i32 = i32(row);
+                        if direction == 0 {
+                            neighbourColumn -= 1;
+                        } else if direction == 1 {
+                            neighbourColumn += 1;
+                        } else if direction == 2 {
+                            neighbourRow -= 1;
+                        } else {
+                            neighbourRow += 1;
+                        }
+                        if neighbourColumn < 0 || neighbourRow < 0 || neighbourColumn >=
+                            i32(columnCount) || neighbourRow >= i32(columnCount) {
+                            continue;
+                        }
+                        drop: f32 = here - field->HeightAtVertex(
+                            u32(neighbourColumn),
+                            u32(neighbourRow)
+                        );
+                        if drop > talusHeight {
+                            lowerTotal += drop;
+                            biggestDrop = Math:::max(biggestDrop, drop);
+                        }
+                    }
+                    if lowerTotal <= 0.0f {
+                        continue;
+                    }
+                    moved: f32 = (biggestDrop - talusHeight) * 0.5f * strength;
+                    changes[field->IndexOf(column, row)] -= moved;
+                    for direction~ u32 = 0; direction < 4; direction++ {
+                        neighbourColumn~ i32 = i32(column);
+                        neighbourRow~ i32 = i32(row);
+                        if direction == 0 {
+                            neighbourColumn -= 1;
+                        } else if direction == 1 {
+                            neighbourColumn += 1;
+                        } else if direction == 2 {
+                            neighbourRow -= 1;
+                        } else {
+                            neighbourRow += 1;
+                        }
+                        if neighbourColumn < 0 || neighbourRow < 0 || neighbourColumn >=
+                            i32(columnCount) || neighbourRow >= i32(columnCount) {
+                            continue;
+                        }
+                        drop: f32 = here - field->HeightAtVertex(
+                            u32(neighbourColumn),
+                            u32(neighbourRow)
+                        );
+                        if drop > talusHeight {
+                            changes[field->IndexOf(
+                                u32(neighbourColumn),
+                                u32(neighbourRow)
+                            )] += moved * drop / lowerTotal;
+                        }
+                    }
+                }
+            }
+            for index~ usize = 0; index < field->heights.length(); index++ {
+                field->heights[index] += changes[index];
+            }
+            delete changes;
+        }
+    }
+}

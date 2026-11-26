@@ -10,6 +10,7 @@ lantern:::editor :: namespace {
     // editor backend supplies the real one (GpuViewportResources).
     ViewportResources :: interface {
         ShapeMesh~ (shape: lantern:::world:::Shape) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
+        TerrainMesh~ (entity: lantern:::world:::WorldEntity*) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
         MaterialTexture~ (material: string?) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? : 0;
         MaterialLook~ (material: string?) -> lantern:::renderer:::MaterialLook? : 0;
         MarkerMeshHandle~ (mesh: MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? : 0;
@@ -327,7 +328,7 @@ lantern:::editor :: namespace {
             if hidden && !view.showHidden {
                 continue;
             }
-            if entity->shape == null && !view.showMarkers {
+            if entity->shape == null && !view.showMarkers && !lantern:::terrain:::IsTerrain(entity) {
                 continue;
             }
             if !hidden {
@@ -362,6 +363,32 @@ lantern:::editor :: namespace {
                     if collider := entity->collider {
                         colliderColor: lantern:::core:::Color = when (collider == lantern:::world:::ColliderKind:::Kinematic) { true -> KinematicColliderColor(), false -> StaticColliderColor() };
                         OrientedBoxLines(renderWorld, ShapeLocalBounds(shape), placed->worldMatrix, colliderColor);
+                    }
+                }
+            } else if lantern:::terrain:::IsTerrain(entity) {
+                if drawSolid {
+                    if mesh := resources->TerrainMesh(entity) {
+                        materialName~ string? = null;
+                        if material := entity->material {
+                            materialName = material;
+                        }
+                        texture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = resources->MaterialTexture(materialName);
+                        look: lantern:::renderer:::MaterialLook? = resources->MaterialLook(materialName);
+                        if found := look {
+                            entityTint: lantern:::core:::Color = entity->TintColor();
+                            combined: lantern:::core:::Color = lantern:::core:::Color:::Rgba(entityTint.r * found.tint.r, entityTint.g * found.tint.g, entityTint.b * found.tint.b, entityTint.a);
+                            renderWorld->DrawWithMaterial(mesh, texture, placed->worldMatrix, combined, found.material);
+                        } else {
+                            renderWorld->Draw(mesh, texture, placed->worldMatrix, entity->TintColor());
+                        }
+                    }
+                }
+                if outline := outlineColor {
+                    renderWorld->AabbLines(placed->bounds, outline);
+                } else if view.showColliders {
+                    if collider := entity->collider {
+                        colliderColor: lantern:::core:::Color = when (collider == lantern:::world:::ColliderKind:::Kinematic) { true -> KinematicColliderColor(), false -> StaticColliderColor() };
+                        renderWorld->AabbLines(placed->bounds, colliderColor);
                     }
                 }
             } else {
@@ -412,6 +439,14 @@ lantern:::editor :: namespace {
         }
         if session->IsRubberBanding() {
             DrawRubberBand(renderWorld, session->Projection(), session->RubberBandStart(), session->pointer);
+        }
+        if session->terrainTools.active {
+            if cursor := session->terrainCursor {
+                ringColor: lantern:::core:::Color = lantern:::core:::Color:::Rgb(1.0f, 0.85f, 0.2f);
+                ringCentre: Vec3 = cursor + Vec3 { y: 0.08f };
+                renderWorld->CircleLines(ringCentre, Vec3 { y: 1.0f }, session->terrainTools.radius, 48, ringColor);
+                renderWorld->CircleLines(ringCentre, Vec3 { y: 1.0f }, session->terrainTools.radius * 0.5f, 32, ringColor);
+            }
         }
         if frame := session->VisibleGizmo() {
             frame.Draw(session->tool, session->hoveredHandle, renderWorld);

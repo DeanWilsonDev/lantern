@@ -2102,3 +2102,32 @@ still clear and would cover them. A see-through piece casts no shadow. `SetMater
 these (`masked`, `translucent`). A piece's own parameter values ride on its `MeshRenderer` and `DrawItem`
 (`overridesParameters` and eight floats) and replace the shader's in that draw's uniforms; the first value copies the
 shader's current values, so `SetEntityMaterialParameter` changes only the one named. Provisional: not reviewed by Dean.
+
+## D-266: A terrain is a world entity of kind `terrain`, kept in properties
+
+Provisional (2026-11-26): not reviewed by Dean. A terrain is an ordinary entity, so the world file format, the validator, undo and the outliner need no change. `terrain_columns` and `terrain_cell_size` give its size and `terrain_heights` its heights; the other `terrain_*` numbers remember the generator settings so the editor can show them again. A dedicated field on `WorldEntity` was the other way; it would have needed a format version, reader, writer, copy and compare changes for no gain while a terrain is one entity.
+
+## D-267: Heights are 16-bit centimetres written as hex text
+
+Provisional (2026-11-26): not reviewed by Dean. Each vertex is four lowercase hex digits, centimetres plus 32768, so a terrain holds -327 to +327 metres at 1 cm steps and a 97 by 97 terrain is 38 KB in the file. Text keeps the file plain and diffable, and a stroke's undo step copies one string. Sculpting snaps to the centimetre. A binary side file was the other way; it would need its own saving, copying and baking.
+
+## D-268: Noise is integer-hashed gradient noise sampled at world metres
+
+Provisional (2026-11-26): not reviewed by Dean. The same seed gives the same ground on every machine because the lattice hash uses integer arithmetic only. Noise is read at each vertex's position in metres plus an offset, so two terrains beside each other with offsets that differ by their width join along the shared edge. Erosion is thermal only (material slides down slopes steeper than a talus slope); hydraulic erosion costs a lot and is left for later.
+
+## D-269: One mesh per terrain for now, chunk builders ready
+
+Provisional (2026-11-26): not reviewed by Dean. `BuildPiece` makes one mesh for the whole terrain, up to 257 by 257 vertices (131072 triangles); the sample is 97 by 97. A piece is one entity and one mesh, so chunking needs the piece builder to return several meshes. `BuildChunkMesh` already makes 32 by 32 cell chunks with seamless normals, and the chunked-meshes card uses them for dirty rebuilds and culling.
+
+## D-270: Sculpting is a held brush applied every frame, committed as one preview
+
+Provisional (2026-11-26): not reviewed by Dean. While the Terrain tab's brush is on, a left press on a terrain starts a `Sculpt` drag, and `Update` applies the brush at the pointer each frame, scaled by the frame time, so a held brush works at the same speed at any frame rate. Each frame changes the terrain through `PreviewReplace`, and the release commits them as one undo step, the same way a gizmo drag does. A dab at a time on pointer moves was the other way; it would leave gaps on a fast stroke and do nothing while the pointer is still.
+
+## D-271: The sculpt tool ignores everything that is not a terrain
+
+Provisional (2026-11-26): not reviewed by Dean. With the brush on, picking skips every entity but terrains (and hidden and locked ones), so a marker or a platform over the ground never takes the stroke. Selecting other things means turning the brush off. A brush that only works where the first thing hit is a terrain was the other way; it fails around spawn markers and the kill plane.
+
+## D-272: Terrain tool options are numbers set by name
+
+Provisional (2026-11-26): not reviewed by Dean. The Terrain tab's options (brush, radius, strength, seed, size) go through `editorSetTerrainOption(name, number)` and `editorTerrainOption(name)`, the way the snap steps do, and a value out of range is refused. The tab offers fixed choices in drop-downs, which suits the editor's present widgets; a slider or number box waits for those widgets to exist.
+

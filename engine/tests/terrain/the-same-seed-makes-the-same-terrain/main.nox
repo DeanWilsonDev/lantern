@@ -1,0 +1,62 @@
+// Generating with the same settings gives the same hills, a different seed gives different ones, and the hills stay
+// within the amplitude.
+lantern :: import lantern;
+
+main :: () -> i32 {
+    settings: lantern:::terrain:::TerrainSettings = lantern:::terrain:::TerrainSettings {
+        seed: 7,
+        amplitude: 5.0f,
+        baseHeight: 1.0f
+    };
+    first := new lantern:::terrain:::Heightfield(33, 1.0f);
+    defer delete first;
+    second := new lantern:::terrain:::Heightfield(33, 1.0f);
+    defer delete second;
+    other := new lantern:::terrain:::Heightfield(33, 1.0f);
+    defer delete other;
+    lantern:::terrain:::GenerateTerrain(first, settings, 0.0f, 0.0f);
+    lantern:::terrain:::GenerateTerrain(second, settings, 0.0f, 0.0f);
+    lantern:::terrain:::GenerateTerrain(
+        other,
+        lantern:::terrain:::TerrainSettings { seed: 8, amplitude: 5.0f, baseHeight: 1.0f },
+        0.0f,
+        0.0f
+    );
+    sameCount~ usize = 0;
+    differentCount~ usize = 0;
+    for index~ usize = 0; index < first->heights.length(); index++ {
+        if first->heights[index] == second->heights[index] {
+            sameCount += 1;
+        }
+        if first->heights[index] != other->heights[index] {
+            differentCount += 1;
+        }
+    }
+    assert(sameCount == first->heights.length(), "the same seed gives the same heights");
+    assert(differentCount > first->heights.length() / 2, "another seed gives other heights");
+    assert(
+        first->HighestHeight() <= 1.0f + 5.0f + 0.001f && first->LowestHeight() >= 1.0f - 5.0f -
+            0.001f,
+        "heights stay inside base plus or minus amplitude"
+    );
+    assert(first->HighestHeight() - first->LowestHeight() > 1.0f, "the ground is not flat");
+
+    left := new lantern:::terrain:::Heightfield(17, 1.0f);
+    defer delete left;
+    right := new lantern:::terrain:::Heightfield(17, 1.0f);
+    defer delete right;
+    lantern:::terrain:::GenerateTerrain(left, settings, -8.0f, 0.0f);
+    lantern:::terrain:::GenerateTerrain(right, settings, 8.0f, 0.0f);
+    for row~ u32 = 0; row < 17; row++ {
+        assert(
+            Math:::abs(left->HeightAtVertex(16, row) - right->HeightAtVertex(0, row)) < 0.0001f,
+            "neighbouring terrains join along their shared edge"
+        );
+    }
+
+    before: f32 = first->HighestHeight();
+    lantern:::terrain:::ErodeTerrain(first, 10, 0.2f, 1.0f);
+    assert(first->HighestHeight() < before, "erosion lowers the peaks");
+    print("the same seed makes the same terrain");
+    return 0;
+}

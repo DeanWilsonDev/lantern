@@ -1,0 +1,73 @@
+// A terrain entity goes through a world file unchanged, becomes a piece with a mesh, and a capsule dropped on its
+// collision stops where the ground is.
+lantern :: import lantern;
+
+main :: () -> i32 {
+    settings: lantern:::terrain:::TerrainSettings = lantern:::terrain:::TerrainSettings {
+        seed: 3,
+        amplitude: 3.0f
+    };
+    world := new lantern:::world:::WorldFile("terrain test");
+    defer delete world;
+    hills := lantern:::terrain:::NewTerrainEntity(
+        world->NextEntityKey(),
+        "Hills",
+        17,
+        1.0f,
+        settings
+    );
+    world->Add(hills!);
+    text: string! = world->ToJson();
+    defer delete text;
+    reloaded := lantern:::world:::FromJson(text, "terrain test.json");
+    when reloaded! {
+        Result:::Ok(loaded) -> {
+            assert(
+                loaded->entities.length() == 1 && loaded->entities[0]->kind == "terrain",
+                "the terrain is saved and loaded"
+            );
+            assert(loaded->entities[0]->SameAs(world->entities[0]), "nothing changed on the way");
+            delete loaded;
+        },
+        Result:::Err(message) -> {
+            delete message;
+            return 1;
+        }
+    }
+    pieces~ Array<lantern:::world:::WorldPiece*!>! = lantern:::world:::BuildPieces(world);
+    defer pieces.freeAll();
+    assert(pieces[0]->HasMesh(), "the terrain has a mesh");
+    triangles: Array<lantern:::physics:::Triangle>! = pieces[0]->WorldTriangles();
+    assert(triangles.length() == 16 * 16 * 2, "two triangles per cell");
+    collision := new lantern:::physics:::CollisionWorld();
+    defer delete collision;
+    collision->AddStaticTriangles(triangles);
+    delete triangles;
+    field := lantern:::terrain:::HeightfieldFromEntity(world->entities[0]);
+    when field! {
+        Result:::Ok(ground) -> {
+            defer delete ground;
+            for sample~ i32 = 0; sample < 4; sample++ {
+                x: f32 = -5.3f + f32(sample) * 3.1f;
+                z: f32 = 2.2f - f32(sample) * 2.7f;
+                hit := collision->Raycast(
+                    Vec3 { x: x, y: 50.0f, z: z },
+                    Vec3 { x: 0.0f, y: -1.0f, z: 0.0f },
+                    100.0f
+                );
+                guard found := hit return 1;
+                assert(
+                    Math:::abs((50.0f - found.distance) - ground->HeightAtLocal(x, z)) < 0.08f,
+                    "the ray lands where the height says"
+                );
+                assert(found.normal.y > 0.5f, "the ground faces up");
+            }
+        },
+        Result:::Err(message) -> {
+            delete message;
+            return 1;
+        }
+    }
+    print("a terrain entity saves loads and collides");
+    return 0;
+}

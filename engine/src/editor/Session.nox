@@ -42,6 +42,8 @@ lantern:::editor :: namespace {
         recentFiles~ Array<string!>! = [];
         paletteRevision~ u64 = 0;
         localRevision~ u64 = 0;
+        terrainTools~ TerrainToolSettings = TerrainToolSettings { };
+        terrainCursor~ Vec3? = null;
 
         // Builds the session for a document and palette, makes the pick geometry and the camera bookmark slots,
         // and frames the whole level.
@@ -1875,6 +1877,12 @@ lantern:::editor :: namespace {
         // Works out what the pointer is over, in priority order: a view cube face, a gizmo handle, an entity.
         UpdateHover~: () -> void {
             hoveredViewCubeFace = ViewCubeHit(camera, viewportSize, pointer);
+            terrainCursor = null;
+            if terrainTools.active && hoveredViewCubeFace == null {
+                if terrainHit := TerrainUnderPointer() {
+                    terrainCursor = terrainHit.point;
+                }
+            }
             if hoveredViewCubeFace != null {
                 hoveredHandle = null;
                 hoveredEntity = null;
@@ -1970,6 +1978,9 @@ lantern:::editor :: namespace {
                 CameraPreset(ViewCubeFacePreset(face));
                 return;
             }
+            if terrainTools.active && BeginSculpt() {
+                return;
+            }
             projection: ViewportProjection = Projection();
             if frame := CurrentGizmoFrame() {
                 if handle := frame.HitTest(tool, projection, pointer) {
@@ -2049,6 +2060,8 @@ lantern:::editor :: namespace {
                     document->CommitPreview(label);
                     delete label;
                     delete count;
+                } else if kind == DragKind:::Sculpt {
+                    document->CommitPreview("Sculpt terrain");
                 } else if kind == DragKind:::RubberBand {
                     FinishRubberBand(activeFound->press, activeFound->additive || modifiers.shift);
                 } else if kind == DragKind:::Pan {
@@ -2351,9 +2364,198 @@ lantern:::editor :: namespace {
             return false;
         }
 
+        // Sets one terrain tool option by name (see TerrainToolSettings). False when the name or value is refused.
+        SetTerrainOption~: (name: string, value: f32) -> bool {
+            if !terrainTools.Set(name, value) {
+                return false;
+            }
+            if name == "active" && !terrainTools.active {
+                terrainCursor = null;
+            }
+            localRevision += 1;
+            return true;
+        }
+
+        // One terrain tool option by name, or zero for a name that is not one.
+        TerrainOption :: (name: string) -> f32 {
+            return terrainTools.Get(name) ?? 0.0f;
+        }
+
+        // The terrain under the pointer and where the ray meets it, or null. Everything that is not a terrain, and hidden
+        // and locked terrains, are looked through.
+        TerrainUnderPointer~: () -> PickHit? {
+            ray: Ray = Projection().RayThrough(pointer);
+            RefreshGeometry();
+            excluded~ Array<u64>! = CopyKeys(hidden);
+            for key in locked {
+                excluded.push(key);
+            }
+            for entity in document->documentWorldFile->entities {
+                if !lantern:::terrain:::IsTerrain(entity) {
+                    excluded.push(entity->id);
+                }
+            }
+            hit: PickHit? = geometry->PickExcluding(ray, excluded);
+            delete excluded;
+            return hit;
+        }
+
+        // Starts a sculpt stroke when the pointer is over a terrain: selects it and remembers the height under the press,
+        // which the flatten brush levels to. The strokes themselves are applied each frame by SculptWhileHeld.
+        BeginSculpt~: () -> bool {
+            hitFound: PickHit? = TerrainUnderPointer();
+            guard hit := hitFound return false;
+            guard index := document->documentWorldFile->IndexOf(hit.key) return false;
+            decoded := lantern:::terrain:::HeightfieldFromEntity(document->documentWorldFile->entities[index]);
+            when decoded! {
+                Result:::Ok(field) -> {
+                    local: Vec3 = InverseOrIdentity(WorldMatrixOf(hit.key)).transformPoint(hit.point);
+                    sculptDrag := new Drag(DragKind:::Sculpt);
+                    sculptDrag->hit = hit.key;
+                    sculptDrag->start = field->HeightAtLocal(local.x, local.z);
+                    sculptDrag->startPoint = hit.point;
+                    delete field;
+                    SelectOnly(hit.key);
+                    drag = sculptDrag!;
+                    return true;
+                },
+                Result:::Err(message) -> {
+                    return Report(message!);
+                }
+            }
+        }
+
+        // While a sculpt stroke is held, applies the brush where the pointer is, scaled by the time since the last frame, as
+        // part of one preview that the release commits as a single undo step.
+        SculptWhileHeld~: (seconds: f32) -> void {
+            if drag == null || !leftDown {
+                return;
+            }
+            activeFound~ Drag*!? = drag!;
+            drag = null;
+            guard activeFound return;
+            if activeFound->kind == DragKind:::Sculpt {
+                SculptDab(activeFound, seconds);
+            }
+            drag = activeFound!;
+        }
+
+        // One application of the brush to the terrain the stroke began on.
+        SculptDab~: (active: Drag*, seconds: f32) -> void {
+            guard key := active->hit return;
+            hitFound: PickHit? = TerrainUnderPointer();
+            guard hit := hitFound return;
+            if hit.key != key {
+                return;
+            }
+            terrainCursor = hit.point;
+            guard index := document->documentWorldFile->IndexOf(key) return;
+            entity := document->documentWorldFile->entities[index]->Copy();
+            decoded := lantern:::terrain:::HeightfieldFromEntity(entity);
+            when decoded! {
+                Result:::Ok(field) -> {
+                    local: Vec3 = InverseOrIdentity(WorldMatrixOf(key)).transformPoint(hit.point);
+                    brush: lantern:::terrain:::BrushKind = terrainTools.brush;
+                    amount~ f32 = terrainTools.strength * SCULPT_METRES_PER_SECOND * seconds;
+                    if brush == lantern:::terrain:::BrushKind:::Smooth || brush == lantern:::terrain:::BrushKind:::Flatten {
+                        amount = Math:::min(1.0f, terrainTools.strength * SCULPT_BLEND_PER_SECOND * seconds);
+                    }
+                    changed: usize = lantern:::terrain:::ApplyBrush(field, brush, local.x, local.z, terrainTools.radius, amount, active->start);
+                    if changed > 0 {
+                        lantern:::terrain:::StoreHeightfield(entity, field);
+                        document->PreviewReplace(entity!);
+                    } else {
+                        delete entity;
+                    }
+                    delete field;
+                },
+                Result:::Err(message) -> {
+                    delete message;
+                    delete entity;
+                }
+            }
+        }
+
+        // Runs a terrain action by name: `generate` adds a new terrain from the settings where the view looks, `regenerate`
+        // rebuilds the selected terrain from them, `erode` weathers the selected terrain and `reseed` picks the next seed.
+        // Each is one undo step. False, with a message in the status line, when it can't be done.
+        TerrainAction~: (name: string) -> bool {
+            if name == "reseed" {
+                next: u32 = (terrainTools.generator.seed % 100000 * 25173 + 13849) % 100000;
+                terrainTools.generator.seed = next;
+                localRevision += 1;
+                return true;
+            }
+            if name == "generate" {
+                return GenerateNewTerrain();
+            }
+            if name == "regenerate" || name == "erode" {
+                return ReshapeSelectedTerrain(name == "erode");
+            }
+            return Refuse(`no terrain action ${name}`);
+        }
+
+        // Adds a terrain made from the settings, centred where the view looks, and selects it.
+        GenerateNewTerrain~: () -> bool {
+            if !lantern:::terrain:::Heightfield:::IsValidSize(terrainTools.columns, terrainTools.cellSize) {
+                return Refuse("that terrain size is not possible".copy());
+            }
+            ray: Ray = Projection().RayThrough(viewportSize * 0.5f);
+            RefreshGeometry();
+            placed: Vec3? = geometry->PlacementPoint(ray);
+            surface: Vec3 = placed ?? camera.target;
+            key: u64 = document->documentWorldFile->NextEntityKey();
+            name: string! = UniqueName(document->documentWorldFile, "terrain");
+            entity := lantern:::terrain:::NewTerrainEntity(key, name, terrainTools.columns, terrainTools.cellSize, terrainTools.generator);
+            delete name;
+            entity->transform = lantern:::world:::TransformData:::FromPosition(Vec3 { x: Snap(surface.x, 1.0f), y: 0.0f, z: Snap(surface.z, 1.0f) });
+            edits~ Array<Edit*!>! = [];
+            edits.push(Edit:::Insert(document->documentWorldFile->entities.length(), entity!));
+            succeeded: bool = ExecuteEdits("Generate terrain", edits!);
+            if !succeeded {
+                return false;
+            }
+            SelectOnly(key);
+            SetStatus("Generated a terrain".copy());
+            return true;
+        }
+
+        // Rebuilds the selected terrain from the generator settings, or weathers it, as one undo step.
+        ReshapeSelectedTerrain~: (erode: bool) -> bool {
+            guard key := PrimarySelection() return Refuse("select a terrain first".copy());
+            guard index := document->documentWorldFile->IndexOf(key) return Refuse("select a terrain first".copy());
+            if !lantern:::terrain:::IsTerrain(document->documentWorldFile->entities[index]) {
+                return Refuse("select a terrain first".copy());
+            }
+            entity := document->documentWorldFile->entities[index]->Copy();
+            decoded := lantern:::terrain:::HeightfieldFromEntity(entity);
+            when decoded! {
+                Result:::Ok(field) -> {
+                    label~ string = "Regenerate terrain";
+                    if erode {
+                        lantern:::terrain:::ErodeTerrain(field, terrainTools.erosionPasses, 0.8f, 0.5f);
+                        label = "Erode terrain";
+                    } else {
+                        lantern:::terrain:::GenerateTerrain(field, terrainTools.generator, 0.0f, 0.0f);
+                        lantern:::terrain:::StoreSettings(entity, terrainTools.generator);
+                    }
+                    lantern:::terrain:::StoreHeightfield(entity, field);
+                    delete field;
+                    edits~ Array<Edit*!>! = [];
+                    edits.push(Edit:::Replace(entity!));
+                    return ExecuteEdits(label, edits!);
+                },
+                Result:::Err(message) -> {
+                    delete entity;
+                    return Report(message!);
+                }
+            }
+        }
+
         // Called every frame. While the right button is held, W A S D move the camera and Q and E move it down
         // and up.
         Update~: (seconds: f32) -> void {
+            SculptWhileHeld(seconds);
             if !rightDown {
                 return;
             }
