@@ -1,0 +1,160 @@
+AssetCard :: import AssetCard;
+Editor :: import Editor;
+EditorModel :: import EditorModel;
+IconButton :: import IconButton;
+SilhouetteCategories :: import SilhouetteCategories;
+TemplateItem :: import TemplateItem;
+
+// What the panel shows for a category and a search: the templates in it, laid out in rows of a few cards each (a row of
+// frames is the way to lay cards out in a grid), and how many each category holds.
+SilhouettesPanelUi :: namespace {
+    CARDS_PER_ROW: i32 : 3;
+
+    // The category of a template, counting a Silhouette's components, since one made of parts is a prop.
+    Category :: (template: TemplateItem) -> string {
+        components := template.fromSilhouette ? editorSilhouetteComponentCount(template.id) : 1;
+        return SilhouetteCategories:::CategoryOf(template.kind, components);
+    }
+
+    // The templates in a category whose label or id holds the search text.
+    Matching :: (category: string, query: string) -> Array<TemplateItem> {
+        found~ Array<TemplateItem> = [];
+        for template in EditorModel:::Templates() {
+            guard SilhouetteCategories:::InCategory(category, Category(template)) continue;
+            if SilhouetteCategories:::Matches(query, template.label, template.id) {
+                found.add(template);
+            }
+        }
+        return found;
+    }
+
+    // How many templates a category holds, for the number beside its name.
+    Count :: (category: string) -> i32 {
+        return Matching(category, "").length();
+    }
+
+    // The categories worth a row: All, Terrain (which always offers New Terrain), and any other with something in it.
+    Shown :: () -> Array<string> {
+        shown~ Array<string> = [];
+        for category in SilhouetteCategories:::Categories() {
+            if category == SilhouetteCategories:::ALL || category == "Terrain" || Count(category) > 0 {
+                shown.add(category);
+            }
+        }
+        return shown;
+    }
+
+    // True when the New Terrain button belongs above the grid: in All or Terrain, unless the search rules it out.
+    OffersNewTerrain :: (category: string, query: string) -> bool {
+        guard category == SilhouetteCategories:::ALL || category == "Terrain" return false;
+        return SilhouetteCategories:::Matches(query, "New Terrain", "terrain");
+    }
+
+    Rows :: (items: Array<TemplateItem>) -> Array<Array<TemplateItem>> {
+        rows~ Array<Array<TemplateItem>> = [];
+        row~ Array<TemplateItem> = [];
+        for item in items {
+            row.add(item);
+            if row.length() == CARDS_PER_ROW {
+                rows.add(row);
+                row = [];
+            }
+        }
+        if row.length() > 0 {
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    // The first card's id names its row, so a row keeps its cards when the grid redraws.
+    RowKey :: (row: Array<TemplateItem>) -> string {
+        return row.length() > 0 ? `silhouette-row-${row[0].id}` : "silhouette-row-empty";
+    }
+
+    CategoryClass :: (active: bool) -> string {
+        return active ? "silhouettes-category-active" : "silhouettes-category";
+    }
+}
+
+// The Silhouettes panel. It pops out from the side rail beside the viewport (or at the mouse for Shift+A) and floats
+// over the level in a <portal>, so the viewport keeps its size. Everything that can be placed is here: shapes, lights,
+// cameras, gameplay markers, terrain and the project's own Silhouettes. The column on the left picks a category with a
+// click (editor.overlays.silhouettesCategory remembers it, so the panel reopens where it was), the search box narrows
+// the cards, and the grid on the right shows a live thumbnail of each. Pressing a card places that thing in front of
+// the camera and selects it; dragging a card drops it where the mouse lets go in the viewport. The panel stays out
+// while things are placed, so several can go down in a row; the rail button, the close button or Escape put it away.
+// `query` is the panel's own state.
+SilhouettesPanel :: () -> Penumbra:::Component {
+    @context editor~ Editor;
+    @signal query~ string = "";
+    return (
+        <portal ref="silhouettes-panel" x={editor.overlays.silhouettesX} y={editor.overlays.silhouettesY}
+                width={SilhouetteCategories:::PANEL_WIDTH} height={SilhouetteCategories:::PANEL_HEIGHT}
+                onDismiss={() -> editor.overlays.CloseSilhouettes()}>
+            <frame class="silhouettes-panel">
+                <frame class="silhouettes-panel-header">
+                    <icon class="silhouettes-category-icon" icon="layers" size={13.0f} />
+                    <text class="silhouettes-panel-title">Silhouettes</text>
+                    <frame class="toolbar-spacer" />
+                    <IconButton icon="close" tooltip="Close (Esc)" tooltipPlacement="inside"
+                                onPress={() -> editor.overlays.CloseSilhouettes()} />
+                </frame>
+                <frame class="search-row">
+                    <icon class="search-icon" icon="search" size={12.0f} />
+                    <input ref="silhouettes-search" class="search-input" text={query} preferredWidth={480.0f}
+                           onTextChange={(text: string) -> { query = text; }} />
+                </frame>
+                <frame class="silhouettes-panel-body">
+                    <frame class="silhouettes-panel-categories">
+                        <slot>
+                            !{SilhouettesPanelUi:::Shown().map((category: string) ->
+                                <frame key={`silhouettes-category-${category}`} ref={`silhouettes-category-${category}`}
+                                       class={SilhouettesPanelUi:::CategoryClass(editor.overlays.silhouettesCategory == category)}
+                                       onRelease={() -> { editor.overlays.silhouettesCategory = category; }}>
+                                    <icon class="silhouettes-category-icon" icon={SilhouetteCategories:::Icon(category)} size={12.0f} />
+                                    <text class="silhouettes-category-label">{category}</text>
+                                    <frame class="toolbar-spacer" />
+                                    <text class="silhouettes-category-count">{`${SilhouettesPanelUi:::Count(category)}`}</text>
+                                </frame>)}
+                        </slot>
+                    </frame>
+                    <frame class="silhouettes-panel-divider" />
+                    <frame class="silhouettes-panel-content">
+                        <slot>
+                            !{SilhouettesPanelUi:::OffersNewTerrain(editor.overlays.silhouettesCategory, query)
+                                ? <frame ref="silhouettes-new-terrain" class="small-button-accent"
+                                         onRelease={() -> editor.commands.RunCommand("terrain:generate")}>
+                                      <icon class="small-button-icon-accent" icon="plus" size={12.0f} />
+                                      <text class="small-button-label-accent">New Terrain</text>
+                                  </frame>
+                                : <frame class="nothing" />}
+                        </slot>
+                        <scroll ref="silhouettes-scroll" class="silhouettes-panel-scroll" direction="vertical">
+                            <frame class="silhouettes-panel-rows">
+                                <slot>
+                                    !{(() -> Penumbra:::Component {
+                                        matches := SilhouettesPanelUi:::Matching(editor.overlays.silhouettesCategory, query);
+                                        return matches.length() == 0
+                                            ? <text class="silhouettes-panel-empty">Nothing matches</text>
+                                            : <frame class="silhouettes-panel-rows">
+                                                  <slot>
+                                                      !{SilhouettesPanelUi:::Rows(matches).map((row: Array<TemplateItem>) ->
+                                                          <frame key={SilhouettesPanelUi:::RowKey(row)} class="asset-cards">
+                                                              <slot>
+                                                                  !{row.map((item: TemplateItem) ->
+                                                                      <AssetCard key={`place-${item.id}`} item={item} selected={false}
+                                                                                 onSelect={() -> editor.commands.RunCommand(SilhouetteCategories:::PlaceCommand(item.id))} />)}
+                                                              </slot>
+                                                          </frame>)}
+                                                  </slot>
+                                              </frame>;
+                                    })()}
+                                </slot>
+                            </frame>
+                        </scroll>
+                    </frame>
+                </frame>
+            </frame>
+        </portal>
+    );
+}

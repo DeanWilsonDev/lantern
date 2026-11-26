@@ -3,7 +3,7 @@ EditorModes :: import EditorModes;
 IconButton :: import IconButton;
 ToolbarState :: import ToolbarState;
 
-// One button of the tool palette (or a gap between groups when `separator` is set): its icon, its tooltip, the command
+// One button of the tool palette (or a gap between groups when `separator` is set, or a group's heading when `heading` is): its icon, its tooltip, the command
 // it runs and whether it is the tool in use.
 ToolEntry :: data {
     icon: string = "";
@@ -11,15 +11,19 @@ ToolEntry :: data {
     command: string = "";
     active: bool = false;
     separator: bool = false;
+    heading: bool = false;
 }
 
-// What the palette holds in each mode, and its size. Select mode has Add and the three transform tools; Terrain mode
-// has the seven brushes and New Terrain. The Silhouette and graph tabs have no palette.
+// What the palette holds in each mode, and its size. Select mode has the three transform tools, and while a terrain is
+// selected a Terrain group under them with the brushes, so the terrain tools turn up when there is a terrain to work
+// on instead of behind a mode button. Picking a brush enters Terrain mode, where the palette has the brushes, New
+// Terrain and Done, which goes back to selecting (as Escape does). The Silhouette and graph tabs have no palette.
 ToolPaletteUi :: namespace {
     WIDTH: f32 : 40.0f;
     HANDLE_HEIGHT: f32 : 30.0f;
     BUTTON_HEIGHT: f32 : 28.0f;
     SEPARATOR_HEIGHT: f32 : 9.0f;
+    LABEL_HEIGHT: f32 : 16.0f;
     PADDING: f32 : 8.0f;
 
     Tool :: (icon: string, tooltip: string, command: string, active: bool) -> ToolEntry {
@@ -30,23 +34,34 @@ ToolPaletteUi :: namespace {
         return ToolEntry { separator: true };
     }
 
+    // A small heading over a group of tools, kept in the `tooltip` field since a heading has no tooltip of its own.
+    Heading :: (text: string) -> ToolEntry {
+        return ToolEntry { tooltip: text, heading: true };
+    }
+
     Tools :: (mode: string, state: ToolbarState) -> Array<ToolEntry> {
         if mode == EditorModes:::SELECT {
-            return [
-                Tool("plus", "Add to the level (Shift+A)", "addMenu", false),
-                Gap(),
+            tools~ Array<ToolEntry> = [
                 Tool("move", "Move (W)", "tool:move", state.tool == "move"),
                 Tool("rotate", "Rotate (E)", "tool:rotate", state.tool == "rotate"),
                 Tool("scale", "Scale (R)", "tool:scale", state.tool == "scale")
             ];
+            guard state.terrainSelected return tools;
+            tools.add(Gap());
+            tools.add(Heading("Terrain"));
+            for brush in Brushes() {
+                tools.add(Tool(BrushIcon(brush), `Sculpt: ${Capitalised(brush)} brush`, `terrain:brush:${brush}`, false));
+            }
+            return tools;
         }
         guard mode == EditorModes:::TERRAIN return [];
-        tools~ Array<ToolEntry> = [];
+        tools~ Array<ToolEntry> = [Heading("Terrain")];
         for brush in Brushes() {
             tools.add(Tool(BrushIcon(brush), `${Capitalised(brush)} brush`, `terrain:brush:${brush}`, state.terrainBrush == brush));
         }
         tools.add(Gap());
         tools.add(Tool("plus", "New terrain", "terrain:generate", false));
+        tools.add(Tool("check", "Done sculpting (Esc)", "mode:select", false));
         return tools;
     }
 
@@ -72,41 +87,48 @@ ToolPaletteUi :: namespace {
         return word.substring(0, 1).toUpper() + word.substring(1, word.length() - 1);
     }
 
-    // The palette's height for its tools, the handle and the pin button included.
+    // The palette's height for its tools and the handle.
     Height :: (tools: Array<ToolEntry>) -> f32 {
-        height~ f32 = HANDLE_HEIGHT + PADDING + SEPARATOR_HEIGHT + BUTTON_HEIGHT;
+        height~ f32 = HANDLE_HEIGHT + PADDING;
         for tool in tools {
-            height += tool.separator ? SEPARATOR_HEIGHT : BUTTON_HEIGHT;
+            height += tool.separator ? SEPARATOR_HEIGHT : (tool.heading ? LABEL_HEIGHT : BUTTON_HEIGHT);
         }
         return height;
+    }
+
+    // The tool entry's key in the palette's list.
+    Key :: (tool: ToolEntry) -> string {
+        return tool.heading ? `tool-heading-${tool.tooltip}` : (tool.separator ? `tool-gap-${tool.command}` : `tool-${tool.command}`);
     }
 }
 
 // The tool palette, a narrow column of the mode's tools like the tools panel of a paint program. It sits docked beside
 // the viewport or floats over it (editor.layout.toolsFloating); App.chaos puts the floating one in a <portal> and
-// CentreArea puts the docked one at the viewport's left. Dragging the grip at its top moves it, and dropping it near
-// the window's left edge docks it (EditorLayout.FollowToolsDrag); the pin button docks or floats it at once.
+// MainPane puts the docked one at the viewport's left. The grip at its top shows while the mouse is over the palette
+// (`hovered`, the palette's own state) and stays out of the way otherwise. Dragging it moves the palette, floating a
+// docked one, and dropping it near the window's left edge docks it again (EditorLayout.FollowToolsDrag).
 ToolPalette :: () -> Penumbra:::Component {
     @context editor~ Editor;
+    @signal hovered~ bool = false;
     return (
-        <frame ref="tool-palette" class="tool-palette">
+        <frame ref="tool-palette" class="tool-palette"
+               onHover={() -> { hovered = true; }} onHoverEnd={() -> { hovered = false; }}>
             <frame ref="tool-palette-handle" class="tool-palette-handle" onPress={() -> editor.layout.BeginToolsDrag()}>
-                <icon class="tool-palette-grip" icon="dot-grid" size={10.0f} />
+                <slot>
+                    !{hovered
+                        ? <icon class="tool-palette-grip" icon="dot-grid" size={10.0f} />
+                        : <frame class="nothing" />}
+                </slot>
             </frame>
             <slot>
                 !{ToolPaletteUi:::Tools(editor.Mode(), editor.document.toolbar).map((tool: ToolEntry) ->
-                    tool.separator
-                        ? <frame key={`tool-gap-${tool.command}`} class="tool-palette-separator" />
-                        : <IconButton key={`tool-${tool.command}`} icon={tool.icon} tooltip={tool.tooltip}
+                    tool.heading
+                        ? <text key={ToolPaletteUi:::Key(tool)} class="tool-palette-heading">{tool.tooltip}</text>
+                        : tool.separator
+                        ? <frame key={ToolPaletteUi:::Key(tool)} class="tool-palette-separator" />
+                        : <IconButton key={ToolPaletteUi:::Key(tool)} icon={tool.icon} tooltip={tool.tooltip}
                                       tooltipPlacement="inside" active={tool.active}
                                       onPress={() -> editor.commands.RunCommand(tool.command)} />)}
-            </slot>
-            <frame class="tool-palette-separator" />
-            <slot>
-                !{<IconButton icon="pin" tooltipPlacement="inside"
-                              tooltip={editor.layout.toolsFloating ? "Dock beside the viewport" : "Float the tools"}
-                              active={!editor.layout.toolsFloating}
-                              onPress={() -> editor.layout.ToggleToolsDock()} />}
             </slot>
         </frame>
     );

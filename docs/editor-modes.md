@@ -7,26 +7,29 @@ stroke and a move are steps in the same history.
 
 | Mode | Shortcut | Icon | What it is for |
 | --- | --- | --- | --- |
-| Select | Shift+1 | cursor | Picking, placing (the Add menu) and transforming entities |
+| Select | Shift+1 | cursor | Picking, placing (the Silhouettes panel) and transforming entities |
 | Terrain | Shift+2 (or B) | chart-line | Sculpting and generating terrain |
 
-The mode switcher is the pair of buttons after Undo and Redo on the toolbar. The Window menu lists the modes too, so the
+There are no mode buttons: the mode follows what is being worked on. Selecting a terrain adds a Terrain group of brushes
+to the tool palette, and picking one of them enters Terrain mode; Done at the foot of the palette, or Escape, goes back
+to Select with the terrain still selected. Shift+1 and Shift+2 still switch, and the Window menu lists the modes, so the
 command palette finds them ("Window: Terrain Mode"). The status bar's first chip names the mode.
 
-Placing anything is part of Select mode: basic shapes, lights, cameras, spawn points and Silhouettes all come from the one
-Add menu, so placing a Silhouette is the same job as placing a block.
+Placing anything is part of Select mode. Everything that can be placed is a Silhouette (a block, a light, a camera
+volume and a terrain are each an entity with its own properties), so they all come from the one Silhouettes panel.
 
 ## Silhouette and graph tabs
 
 Editing a Silhouette, and the graph, aren't modes: each is a document in a tab of its own. While one of those tabs is up,
-the level's menus and panels (Add, Selection, Entity, View, Terrain, the outliner and the details panel) are hidden and
+the level's menus and panels (the Silhouettes panel, Selection, Entity, View, Terrain, the outliner and the details panel) are hidden and
 only the tab's own panels show; the status bar says "Silhouette tab" or "Graph tab". The level's mode comes back with
 the Level tab. Below, "Silhouette" and "Graph" in the Modes columns mean those tabs.
 
 ## How Terrain mode works
 
 Terrain mode is the terrain brush. Entering it turns the brush on and leaving it turns the brush off, and B, which turns
-the brush on and off, moves between Select and Terrain mode. Entering Terrain mode also opens the drawer on its Terrain
+the brush on and off, moves between Select and Terrain mode. Escape while sculpting puts the brush down and keeps the
+selection; a second Escape clears the selection, as it does in Select mode. Entering Terrain mode also opens the drawer on its Terrain
 page, since the brush settings live there. Asking for a page another mode owns (Alt+6 for Terrain while selecting, say)
 switches to that mode.
 
@@ -44,7 +47,6 @@ drawer's page) are kept as before.
 | --- | --- |
 | File | All |
 | Edit | All. Rename, Duplicate, Delete and the Snap, Local Space and Pivot toggles only in Select |
-| Add | Select |
 | Selection | Select |
 | View | Select, Terrain (it changes the level viewport) |
 | Entity | Select |
@@ -54,8 +56,8 @@ drawer's page) are kept as before.
 
 ### Toolbar
 
-The toolbar keeps only what is used all the time: the mode switcher (Select and Terrain, each named) on the left, Play
-in the middle, and the command palette and settings on the right. It is the same in every mode.
+The toolbar keeps only what is used all the time: Play in the middle, and the command palette and settings on the
+right. It is the same in every mode.
 
 Play is white while nothing runs and green while the game runs, when it reads Stop. Beside it while the game runs is
 Pause, which turns orange while the game is paused and resumes it when pressed again. A paused game keeps its window
@@ -68,13 +70,14 @@ are named toggles in the viewport's header in Select mode.
 ### Tool palette
 
 The tool palette is a narrow column of the mode's tools, like Photoshop's tools panel. It sits docked at the viewport's
-left, or floats over the window: drag it out by the grip at its top, and drop it near the window's left edge to dock it
-again. The pin button at its foot docks or floats it at once. Whether it floats, and where, is remembered.
+left, or floats over the window. The grip at its top shows while the mouse is over the palette: drag it out by the grip,
+and drop it near the window's left edge to dock it again. Whether it floats, and where, is remembered.
 
 | Tools | Modes |
 | --- | --- |
-| Add, Move, Rotate, Scale | Select |
-| The seven brushes, New Terrain | Terrain |
+| Move, Rotate, Scale | Select |
+| A Terrain group with the seven brushes | Select, while a terrain is selected |
+| The seven brushes, New Terrain, Done | Terrain |
 
 The Silhouette and graph tabs have no palette.
 
@@ -83,6 +86,7 @@ The Silhouette and graph tabs have no palette.
 | Panel | Modes |
 | --- | --- |
 | Outliner | Select |
+| Side rail (the Silhouettes button) | Select |
 | Details | Select |
 | Viewport header (Camera and Show menus) | Select, Terrain (it belongs to the Level tab) |
 | Snap, World or Local, Pivot toggles in the viewport header | Select |
@@ -95,7 +99,7 @@ The Silhouette and graph tabs have no palette.
 | Page | Modes |
 | --- | --- |
 | Assets | Select |
-| Silhouettes | Select, Silhouette |
+| Silhouettes | Silhouette (on the level it is the side rail's panel) |
 | Terrain | Terrain |
 | Console | All |
 | History | All |
@@ -109,26 +113,27 @@ the drawer.
 The palette lists the commands of the menus the mode shows, plus the two modes, and the tools in Select mode. A command the mode hides
 can't be found there either.
 
-## The Add menu
+## The Silhouettes panel
 
-The Add menu places something on the level. It opens from the Add button on the tool palette, from Shift+A over the
-viewport, and from the Add title in the menu bar, all in Select mode. It has a column of categories and a column of the
-things in the hovered category:
+The Silhouettes panel places something on the level. Its button sits on the side rail at the viewport's right edge in
+Select mode; pressing it pops the panel out beside the rail, over the viewport, and pressing it again puts the panel
+away. Shift+A opens it at the mouse, Alt+5 and Window > Silhouettes open it too, and Escape or its close button put it
+away. It stays out while things are placed, so several can go down in a row.
+
+The panel is like a small file browser: a search box over a column of categories and a scrolling grid of cards, each with
+a live thumbnail. A click on a category shows its cards, and the search keeps the cards whose name or label holds the
+text. Pressing a card places it in front of the camera and selects it; dragging a card into the viewport places it where
+the mouse lets go.
 
 | Category | What is in it |
 | --- | --- |
+| All | Everything below |
 | Shapes | Blocks, ramps and platforms |
 | Lights | Point, spot and sun lights |
 | Cameras | Camera volumes and camera shots |
 | Gameplay | Player starts, spawns and kill planes |
-| Terrain | New Terrain (with the generator settings on the Terrain page) |
-| Silhouettes | The project's own Silhouettes |
+| Terrain | New Terrain (with the generator settings on the Terrain page), and terrain templates |
+| Props | Silhouettes made of several parts, and any kind none of the others name (a gem) |
 
-A template goes in the category of its kind; one made from a Silhouette that isn't one of those kinds goes in
-Silhouettes. A new entity is placed in front of the camera, as Add to World in the drawer does, and becomes the
-selection.
-
-The Silhouettes category is a searchable grid of thumbnails rather than a list, like a small file browser, since a
-project can gather hundreds of Silhouettes. It holds every Silhouette in the project, those also listed under Shapes or
-Lights included. Typing in its search box keeps the ones whose name or label holds the text, and pressing a card places
-that Silhouette.
+A template goes in the category of its kind, with the number of each beside its name. A category with nothing in it is
+left out, except All and Terrain, which always offer New Terrain.
