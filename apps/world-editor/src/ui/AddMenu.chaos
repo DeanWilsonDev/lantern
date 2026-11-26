@@ -1,6 +1,7 @@
 AddMenuItems :: import AddMenuItems;
 Editor :: import Editor;
 EditorModel :: import EditorModel;
+SilhouettePicker :: import SilhouettePicker;
 TemplateItem :: import TemplateItem;
 
 // One row of the Add menu's right-hand column: what it says and the command it runs.
@@ -61,6 +62,21 @@ AddMenuUi :: namespace {
         return categories > items ? categories : items;
     }
 
+    // The Silhouettes category is a searchable grid of thumbnails rather than a list, so it gets a bigger menu.
+    ShowsPicker :: (category: string) -> bool {
+        return category == "Silhouettes";
+    }
+
+    Width :: (category: string) -> f32 {
+        return AddMenuItems:::CATEGORY_WIDTH + (ShowsPicker(category) ? AddMenuItems:::PICKER_WIDTH : AddMenuItems:::ITEM_WIDTH);
+    }
+
+    MenuHeight :: (category: string) -> f32 {
+        rowsHeight := AddMenuItems:::Height(RowCount(category));
+        guard ShowsPicker(category) return rowsHeight;
+        return rowsHeight > AddMenuItems:::PICKER_HEIGHT ? rowsHeight : AddMenuItems:::PICKER_HEIGHT;
+    }
+
     CategoryClass :: (active: bool) -> string {
         return active ? "add-category-active" : "add-category";
     }
@@ -82,8 +98,8 @@ AddMenu :: (props: AddMenuProps) -> Penumbra:::Component {
     @context editor~ Editor;
     return (
         <portal ref="add-menu" x={props.x} y={props.y}
-                width={AddMenuItems:::CATEGORY_WIDTH + AddMenuItems:::ITEM_WIDTH}
-                height={AddMenuItems:::Height(AddMenuUi:::RowCount(editor.overlays.addCategory))}
+                width={AddMenuUi:::Width(editor.overlays.addCategory)}
+                height={AddMenuUi:::MenuHeight(editor.overlays.addCategory)}
                 dismissOnOutsideClick={true} onDismiss={props.onDismiss}>
             <frame class="add-menu">
                 <frame class="add-menu-categories">
@@ -101,12 +117,18 @@ AddMenu :: (props: AddMenuProps) -> Penumbra:::Component {
                 <frame class="add-menu-divider" />
                 <frame class="add-menu-items">
                     <slot>
-                        !{AddMenuUi:::Rows(editor.overlays.addCategory).map((row: AddMenuRow) ->
-                            <frame key={`add-item-${row.label}-${row.command}`} ref={`add-item-${row.label}`}
-                                   class={row.command == "" ? "menu-entry-disabled" : "menu-entry"}
-                                   onRelease={() -> { if row.command != "" { editor.commands.RunCommand(row.command); } }}>
-                                <text class={row.command == "" ? "menu-entry-label-disabled" : "menu-entry-label"}>{row.label}</text>
-                            </frame>)}
+                        !{AddMenuUi:::ShowsPicker(editor.overlays.addCategory)
+                            ? <SilhouettePicker ref="add-menu-silhouette-picker" />
+                            : <frame class="add-menu-rows">
+                                  <slot>
+                                      !{AddMenuUi:::Rows(editor.overlays.addCategory).map((row: AddMenuRow) ->
+                                          <frame key={`add-item-${row.label}-${row.command}`} ref={`add-item-${row.label}`}
+                                                 class={row.command == "" ? "menu-entry-disabled" : "menu-entry"}
+                                                 onRelease={() -> { if row.command != "" { editor.commands.RunCommand(row.command); } }}>
+                                              <text class={row.command == "" ? "menu-entry-label-disabled" : "menu-entry-label"}>{row.label}</text>
+                                          </frame>)}
+                                  </slot>
+                              </frame>}
                     </slot>
                 </frame>
             </frame>

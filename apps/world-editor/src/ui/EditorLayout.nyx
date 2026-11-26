@@ -1,8 +1,9 @@
+EditorModel :: import EditorModel;
 PanelVisibility :: import PanelVisibility;
 
 // Layout choices that are remembered between runs: which panels are shown (the outliner and the
-// details panel on the right, the content drawer under the viewport) and which tab the drawer is on
-// (assets, console or history). Hiding every panel (focusViewport) remembers what was shown so the same
+// details panel on the right, the content drawer under the viewport), where the tool palette is (docked
+// beside the viewport, or floating and where), and which tab the drawer is on (assets, console or history). Hiding every panel (focusViewport) remembers what was shown so the same
 // command brings it back.
 EditorLayout :: class {
 public:
@@ -10,6 +11,18 @@ public:
     @signal outlinerVisible~ bool = RememberedFlag("ui.outliner");
     @signal detailsVisible~ bool = RememberedFlag("ui.details");
     @signal drawerVisible~ bool = RememberedFlag("ui.drawer");
+
+    // The tool palette: docked beside the viewport, or floating at (toolsX, toolsY) in the window. While its handle is
+    // dragged, toolsDragging is set and the grab point's offset from its corner is kept so it doesn't jump.
+    @signal toolsFloating~ bool = editorPreference("ui.toolsFloating") == "1";
+    @signal toolsX~ f32 = RememberedPosition("ui.toolsX", 160.0f);
+    @signal toolsY~ f32 = RememberedPosition("ui.toolsY", 180.0f);
+    // Escape closes the topmost floating thing, which can be the palette itself. It isn't a popup, so it comes
+    // straight back: a new toolsShowing number gives its <portal> a new key, which shows a fresh one.
+    @signal toolsShowing~ i32 = 0;
+    toolsDragging~ bool = false;
+    toolsGrabX~ f32 = 0.0f;
+    toolsGrabY~ f32 = 0.0f;
 
     focusSavedOutliner~ bool = true;
     focusSavedDetails~ bool = true;
@@ -38,6 +51,52 @@ public:
         this.bottomPanel = panel;
         editorSetPreference("ui.bottomPanel", panel);
         this.SetDrawer(true);
+    }
+
+    // The tool palette's handle was pressed: start dragging it. A docked palette comes off the dock under the mouse.
+    BeginToolsDrag~: () -> void {
+        if !this.toolsFloating {
+            this.toolsX = penumbra:::mouseX() - 18.0f;
+            this.toolsY = penumbra:::mouseY() - 8.0f;
+            this.toolsFloating = true;
+        }
+        this.toolsGrabX = penumbra:::mouseX() - this.toolsX;
+        this.toolsGrabY = penumbra:::mouseY() - this.toolsY;
+        this.toolsDragging = true;
+    }
+
+    // Called once a frame. While the handle is held the palette follows the mouse, kept inside the window; when it is let
+    // go near the window's left edge it docks beside the viewport, and otherwise it stays where it was dropped. Either
+    // way the choice is remembered.
+    FollowToolsDrag~: () -> void {
+        guard this.toolsDragging return;
+        if penumbra:::isMouseButtonDown() {
+            this.toolsX = Clamp(penumbra:::mouseX() - this.toolsGrabX, 0.0f, penumbra:::windowWidth() - 48.0f);
+            this.toolsY = Clamp(penumbra:::mouseY() - this.toolsGrabY, 0.0f, penumbra:::windowHeight() - 48.0f);
+            return;
+        }
+        this.toolsDragging = false;
+        if penumbra:::mouseX() < DOCK_ZONE {
+            this.SetToolsFloating(false);
+            return;
+        }
+        this.SetToolsFloating(true);
+    }
+
+    ReshowTools~: () -> void {
+        this.toolsShowing += 1;
+    }
+
+    // Docks the palette beside the viewport or floats it, from its pin button or the Window menu.
+    ToggleToolsDock~: () -> void {
+        this.SetToolsFloating(!this.toolsFloating);
+    }
+
+    SetToolsFloating~: (floating: bool) -> void {
+        this.toolsFloating = floating;
+        editorSetPreference("ui.toolsFloating", floating ? "1" : "0");
+        editorSetPreference("ui.toolsX", HexOf(i32(this.toolsX)));
+        editorSetPreference("ui.toolsY", HexOf(i32(this.toolsY)));
     }
 
     // Shows or hides a panel by name ("outliner", "details" or "drawer").
@@ -92,6 +151,41 @@ public:
     SetDrawer~: (shown: bool) -> void {
         this.drawerVisible = shown;
         editorSetPreference("ui.drawer", shown ? "1" : "0");
+    }
+
+    // How close to the window's left edge, in pixels, a dropped palette docks.
+    static DOCK_ZONE :: 70.0f;
+
+    // A number kept between 0 and an upper end.
+    static Clamp :: (value: f32, lowest: f32, highest: f32) -> f32 {
+        guard value >= lowest return lowest;
+        guard value <= highest return highest;
+        return value;
+    }
+
+    // A whole number from 0 to 65535 as four hexadecimal digits, the way a position is saved in the preferences (they
+    // hold text, and Nyx has no text-to-number conversion, so EditorModel's hex reader brings it back).
+    static HexOf :: (value: i32) -> string {
+        digits := "0123456789abcdef";
+        kept := value < 0 ? 0 : (value > 65535 ? 65535 : value);
+        text~ string = "";
+        remaining~ i32 = kept;
+        for place~ i32 = 0; place < 4; place++ {
+            text = digits.substring(remaining % 16, 1) + text;
+            remaining = remaining / 16;
+        }
+        return text;
+    }
+
+    // A position saved by HexOf, or a fallback the first time.
+    static RememberedPosition :: (name: string, fallback: f32) -> f32 {
+        saved := editorPreference(name);
+        guard saved.length() == 4 return fallback;
+        value~ i32 = 0;
+        for place~ i32 = 0; place < 4; place++ {
+            value = value * 16 + EditorModel:::HexDigit(saved, place);
+        }
+        return f32(value);
     }
 
     // The panel saved last time, or "assets" the first time.

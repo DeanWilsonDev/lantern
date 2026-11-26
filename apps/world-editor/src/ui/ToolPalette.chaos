@@ -1,0 +1,113 @@
+Editor :: import Editor;
+EditorModes :: import EditorModes;
+IconButton :: import IconButton;
+ToolbarState :: import ToolbarState;
+
+// One button of the tool palette (or a gap between groups when `separator` is set): its icon, its tooltip, the command
+// it runs and whether it is the tool in use.
+ToolEntry :: data {
+    icon: string = "";
+    tooltip: string = "";
+    command: string = "";
+    active: bool = false;
+    separator: bool = false;
+}
+
+// What the palette holds in each mode, and its size. Select mode has Add and the three transform tools; Terrain mode
+// has the seven brushes and New Terrain. The Silhouette and graph tabs have no palette.
+ToolPaletteUi :: namespace {
+    WIDTH: f32 : 40.0f;
+    HANDLE_HEIGHT: f32 : 30.0f;
+    BUTTON_HEIGHT: f32 : 28.0f;
+    SEPARATOR_HEIGHT: f32 : 9.0f;
+    PADDING: f32 : 8.0f;
+
+    Tool :: (icon: string, tooltip: string, command: string, active: bool) -> ToolEntry {
+        return ToolEntry { icon: icon, tooltip: tooltip, command: command, active: active };
+    }
+
+    Gap :: () -> ToolEntry {
+        return ToolEntry { separator: true };
+    }
+
+    Tools :: (mode: string, state: ToolbarState) -> Array<ToolEntry> {
+        if mode == EditorModes:::SELECT {
+            return [
+                Tool("plus", "Add to the level (Shift+A)", "addMenu", false),
+                Gap(),
+                Tool("move", "Move (W)", "tool:move", state.tool == "move"),
+                Tool("rotate", "Rotate (E)", "tool:rotate", state.tool == "rotate"),
+                Tool("scale", "Scale (R)", "tool:scale", state.tool == "scale")
+            ];
+        }
+        guard mode == EditorModes:::TERRAIN return [];
+        tools~ Array<ToolEntry> = [];
+        for brush in Brushes() {
+            tools.add(Tool(BrushIcon(brush), `${Capitalised(brush)} brush`, `terrain:brush:${brush}`, state.terrainBrush == brush));
+        }
+        tools.add(Gap());
+        tools.add(Tool("plus", "New terrain", "terrain:generate", false));
+        return tools;
+    }
+
+    Brushes :: () -> Array<string> {
+        return ["raise", "lower", "smooth", "flatten", "noise", "terrace", "erode"];
+    }
+
+    BrushIcon :: (brush: string) -> string {
+        return when brush {
+            "raise" -> "chevrons-up",
+            "lower" -> "chevrons-down",
+            "smooth" -> "circle",
+            "flatten" -> "equals",
+            "noise" -> "dot-grid",
+            "terrace" -> "chart-bar",
+            default -> "circle-half"
+        };
+    }
+
+    // "raise" becomes "Raise", for a tooltip.
+    Capitalised :: (word: string) -> string {
+        guard word.length() > 0 return word;
+        return word.substring(0, 1).toUpper() + word.substring(1, word.length() - 1);
+    }
+
+    // The palette's height for its tools, the handle and the pin button included.
+    Height :: (tools: Array<ToolEntry>) -> f32 {
+        height~ f32 = HANDLE_HEIGHT + PADDING + SEPARATOR_HEIGHT + BUTTON_HEIGHT;
+        for tool in tools {
+            height += tool.separator ? SEPARATOR_HEIGHT : BUTTON_HEIGHT;
+        }
+        return height;
+    }
+}
+
+// The tool palette, a narrow column of the mode's tools like the tools panel of a paint program. It sits docked beside
+// the viewport or floats over it (editor.layout.toolsFloating); App.chaos puts the floating one in a <portal> and
+// CentreArea puts the docked one at the viewport's left. Dragging the grip at its top moves it, and dropping it near
+// the window's left edge docks it (EditorLayout.FollowToolsDrag); the pin button docks or floats it at once.
+ToolPalette :: () -> Penumbra:::Component {
+    @context editor~ Editor;
+    return (
+        <frame ref="tool-palette" class="tool-palette">
+            <frame ref="tool-palette-handle" class="tool-palette-handle" onPress={() -> editor.layout.BeginToolsDrag()}>
+                <icon class="tool-palette-grip" icon="dot-grid" size={10.0f} />
+            </frame>
+            <slot>
+                !{ToolPaletteUi:::Tools(editor.Mode(), editor.document.toolbar).map((tool: ToolEntry) ->
+                    tool.separator
+                        ? <frame key={`tool-gap-${tool.command}`} class="tool-palette-separator" />
+                        : <IconButton key={`tool-${tool.command}`} icon={tool.icon} tooltip={tool.tooltip}
+                                      tooltipPlacement="inside" active={tool.active}
+                                      onPress={() -> editor.commands.RunCommand(tool.command)} />)}
+            </slot>
+            <frame class="tool-palette-separator" />
+            <slot>
+                !{<IconButton icon="pin" tooltipPlacement="inside"
+                              tooltip={editor.layout.toolsFloating ? "Dock beside the viewport" : "Float the tools"}
+                              active={!editor.layout.toolsFloating}
+                              onPress={() -> editor.layout.ToggleToolsDock()} />}
+            </slot>
+        </frame>
+    );
+}

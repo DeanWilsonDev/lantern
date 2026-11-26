@@ -444,7 +444,9 @@ lantern:::worldeditor :: namespace {
                     overlays->Arrange(Rect { x: 0.0f, y: 0.0f, width: viewport.x, height: viewport.y }, layout);
                     layout->EndPass();
                     overlayConsumed: bool = overlays->UpdateInteractionState(input, stacking);
-                    rootConsumedInput = root->UpdateInteractionState(input, stacking) || overlayConsumed;
+                    beneathOverlays~ InputState = input;
+                    beneathOverlays.pointerOccluded = input.pointerOccluded || PointerIsOverAnOverlay(input, overlays);
+                    rootConsumedInput = root->UpdateInteractionState(beneathOverlays, stacking) || overlayConsumed;
                 }
             }
             sdlRenderer->BeginFrame(clearColor);
@@ -463,6 +465,20 @@ lantern:::worldeditor :: namespace {
         host->Shutdown();
         PrintMessages(host);
         return 0;
+    }
+
+    // Whether the mouse is over a shown overlay (a menu, a dialog, the floating tool palette). The overlay has the
+    // pointer there, so the editor beneath sees it as covered: a click on the Add menu's search box mustn't also
+    // click the 3D viewport behind it. Keys still reach the editor, which knows when a text box has them.
+    PointerIsOverAnOverlay :: (input: InputState, overlays: OverlayHost*) -> bool {
+        for index~ usize = 0; index < overlays->GetChildCount(); index++ {
+            if overlay := overlays->GetChildAt(index) {
+                if overlay->GetArrangedRect().Contains(input.mousePosition) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // Gives back the project in `folder` in place of `current`, which it deletes. When the folder can't be opened it
