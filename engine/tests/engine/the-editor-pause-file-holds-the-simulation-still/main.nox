@@ -1,0 +1,47 @@
+// While the file the editor's Pause button makes exists, the loop keeps rendering but runs no simulation steps; once the
+// file is gone the simulation carries on.
+lantern :: import lantern;
+
+PAUSE_FILE: string : "the-editor-pause-file-holds-the-simulation-still.paused";
+
+main :: () -> i32 {
+    frameLoop := lantern:::testing:::MakeLoop();
+    defer delete frameLoop;
+    delete frameLoop->pauseFilePath;
+    frameLoop->pauseFilePath = PAUSE_FILE.copy();
+    platform := new lantern:::testing:::ScriptedPlatform();
+    defer delete platform;
+    game := new lantern:::testing:::RecordingGame();
+    defer delete game;
+    when writeTextFile(PAUSE_FILE, "paused") {
+        Result:::Ok(written) -> { },
+        Result:::Err(error) -> {
+            delete error;
+            assert(false, "the pause file can be written");
+        }
+    }
+    for frame~ usize = 0; frame < 30; frame++ {
+        platform->AddFrame(f64(frame) * 0.016f);
+    }
+    for frame~ usize = 0; frame < 30; frame++ {
+        frameLoop->RunFrame(platform, game);
+    }
+    print(`paused: ${game->steps} steps, ${game->renders} renders`);
+    assert(game->steps == 0, "no steps run while the pause file exists");
+    when removeFile(PAUSE_FILE) {
+        Result:::Ok(removed) -> { },
+        Result:::Err(error) -> {
+            delete error;
+        }
+    }
+    for frame~ usize = 30; frame < 60; frame++ {
+        platform->AddFrame(f64(frame) * 0.016f);
+    }
+    for frame~ usize = 30; frame < 60; frame++ {
+        frameLoop->RunFrame(platform, game);
+    }
+    assert(game->steps > 0, "the simulation carries on once the file is gone");
+    assert(game->renders == 60, "every frame rendered");
+    print("the simulation held still while paused and carried on after");
+    return 0;
+}

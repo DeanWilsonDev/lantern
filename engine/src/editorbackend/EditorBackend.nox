@@ -414,7 +414,14 @@ lantern:::editorbackend :: namespace {
                 }
             }
             ForgetFailure();
-            process: raw Sdl:::SDL_Process~* = SpawnRunner(runner, gameDirectory, levelAssetPath, assetsDirectory, errorFilePath);
+            pauseFilePath: string! = `${assetsDirectory}/worlds/${PAUSE_FILE}`;
+            when removeFile(pauseFilePath) {
+                Result:::Ok(removed) -> { },
+                Result:::Err(error) -> {
+                    delete error;
+                }
+            }
+            process: raw Sdl:::SDL_Process~* = SpawnRunner(runner, gameDirectory, levelAssetPath, assetsDirectory, errorFilePath, pauseFilePath);
             delete errorFilePath;
             delete levelAssetPath;
             if process == null {
@@ -436,13 +443,15 @@ lantern:::editorbackend :: namespace {
                 delete runnerFound;
                 delete gameDirectory;
                 delete levelPath;
+                delete pauseFilePath;
                 return false;
             }
             origin: string = when fromSelection { true -> "the selected entity", false -> "the editor camera" };
             message: string! = `Playing ${levelPath} with ${runner}, starting at ${origin}`;
             session->Note(lantern:::editor:::LogLevel:::Info, message);
             delete message;
-            play = new PlaySession(process, levelPath);
+            play = new PlaySession(process, levelPath, pauseFilePath);
+            delete pauseFilePath;
             delete runnerFound;
             delete gameDirectory;
             delete levelPath;
@@ -502,7 +511,8 @@ lantern:::editorbackend :: namespace {
 
         // Deletes the scratch level and drops the process record.
         ForgetPlay~: () -> void {
-            if running := play {
+            if running ~= play {
+                running->SetPaused(false);
                 when removeFile(running->levelPath) {
                     Result:::Ok(removed) -> { },
                     Result:::Err(error) -> {
@@ -512,6 +522,26 @@ lantern:::editorbackend :: namespace {
             }
             delete play;
             play = null;
+        }
+
+        // Whether the running game is paused from the editor. False when no game runs.
+        IsPlayPaused~: () -> bool {
+            guard IsPlaying() return false;
+            if running := play {
+                return running->IsPaused();
+            }
+            return false;
+        }
+
+        // Pauses or resumes the running game. False when no game runs or the pause couldn't be set.
+        SetPlayPaused~: (paused: bool) -> bool {
+            guard IsPlaying() return false;
+            if running ~= play {
+                guard running->SetPaused(paused) return false;
+                session->Note(lantern:::editor:::LogLevel:::Info, paused ? "Paused the game" : "Resumed the game");
+                return true;
+            }
+            return false;
         }
 
         // Kills the running game and cleans up. False when none was running.
