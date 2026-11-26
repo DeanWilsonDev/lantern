@@ -2143,3 +2143,15 @@ Provisional (2026-11-26): not reviewed by Dean. As in most sculpting tools, Ctrl
 
 Provisional (2026-11-26): not reviewed by Dean. Each Terrain page choice is saved as `terrain.NAME` with the label of the choice, through the editor's existing preferences, and read back as the editor starts. Labels rather than numbers because Nyx has no text-to-number conversion the interface could use; the seed is not a fixed choice and so is not kept. The brush always starts off, so opening the editor never leaves a left click sculpting.
 
+
+## D-276: The editor has two modes, Select and Terrain; a Silhouette and the graph stay tabs
+
+Dean (2026-11-26) asked for the editor to work in modes, as Blender and Unreal do, so that only what the job needs is on screen. A mode is what is being done to the level: Select (pick, place and transform) and Terrain (sculpt). He settled on these two after a first proposal also made the graph and the Silhouette editor modes: a graph is part of a Silhouette, and placing a Silhouette is the same job as placing a basic shape. So a Silhouette and the graph stay documents in tabs, and while their tab is up the level's menus and panels hide the same way a mode hides them. `apps/world-editor/src/ui/editor-modes.nyx` holds the rules and `docs/editor-modes.md` the table of what each mode shows. To undo, return every list in `EditorModes` to its full set.
+
+## D-277: Terrain mode is the terrain brush
+
+Provisional (2026-11-26): not reviewed by Dean. Entering Terrain mode turns the brush on and leaving it turns it off, and B, which the editor (Nox) handles, moves between the two modes because the interface follows the brush once a frame. One flag rather than two keeps a mode that says Terrain from ever leaving the brush off, or the other way round. The editor still starts in Select mode with the brush off, as D-275 has it. Shift+1 and Shift+2 enter the modes (Unreal numbers its modes the same way), so the editor's camera bookmarks now ignore a digit with Shift.
+
+## D-278: The Add menu sorts the palette by kind
+
+Provisional (2026-11-26): not reviewed by Dean. The Add menu (toolbar +, the Add title in the menu bar and Shift+A, all in Select mode) has categories (Shapes, Lights, Cameras, Gameplay, Terrain, Silhouettes, Other) worked out from each palette template's kind, so neither the game nor `palette.json` needs a list of its own. A Silhouette made of several parts, or of a kind no category names, goes under Silhouettes. A placed thing goes in front of the camera and is selected, as Add to World does. Right click on the empty viewport stays orbit, so it doesn't open the menu; that is a follow-up card.

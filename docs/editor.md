@@ -107,6 +107,13 @@ ctest --test-dir engine/editor-backend/build --output-on-failure   # needs a GPU
 `LANTERN_REQUIRE_GPU=1` turns a skipped render into a failure, and `LANTERN_EDITOR_CAPTURE=out.ppm`
 saves the rendered viewport.
 
+## Modes and the Add menu
+
+The editor works in one of two modes, Select and Terrain, chosen with the switcher on the toolbar, Shift+1 and Shift+2,
+the Window menu or B. Each shows only its own menus, toolbar buttons, panels and drawer pages, and a Silhouette or graph
+tab hides the level's. Things are placed on the level from the Add menu (the toolbar's +, the Add menu title or Shift+A
+in Select mode). [editor-modes.md](editor-modes.md) lists what each mode shows.
+
 ## The panels
 
 The outliner and the details panel are docked on the right, the viewport fills the middle and the content
@@ -214,6 +221,8 @@ Anywhere in the editor:
 | Ctrl/Cmd + , | Settings |
 | Ctrl/Cmd + L / Shift + L / I | Lock / unlock / invert the selection |
 | Ctrl/Cmd + Q | Quit (asks about unsaved changes) |
+| Shift + 1 / 2 | Select mode / Terrain mode |
+| Shift + A | The Add menu at the pointer (Select mode) |
 | Alt + 1 / 2 / 3 | Show or hide the outliner / details / content drawer |
 | Ctrl + Space, ` or Alt + 4 | Assets, console or history in the content drawer (again hides it) |
 | F11 | Hide every panel for a clean viewport, or bring them back |
