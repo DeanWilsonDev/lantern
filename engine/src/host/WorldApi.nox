@@ -1,6 +1,44 @@
 SceneLink :: import SceneLink;
 
 lantern:::host :: namespace {
+    // The parameters a baked material shader starts with, `name=value;name=value` in slot order: the values go into
+    // `source.parameters` and the names come back, so `SetMaterialParameter` can find each slot by name.
+    ParseShaderParameters :: (text: string, source: lantern:::renderer:::MaterialShaderSource~*) -> Array<string!>! {
+        names~ Array<string!>! = [];
+        start~ usize = 0;
+        while start < text.length() && names.length() < usize(lantern:::renderer:::MAX_MATERIAL_SHADER_PARAMETERS) {
+            end~ usize = start;
+            while end < text.length() && text.byteAt(end) != 59 {
+                end++;
+            }
+            entry: string = text.substring(start, end - start);
+            equals~ usize? = null;
+            for position~ usize = 0; position < entry.length(); position++ {
+                if entry.byteAt(position) == 61 && equals == null {
+                    equals = position;
+                }
+            }
+            if split := equals {
+                value~ f32 = 0.0f;
+                when lantern:::json:::Parse(entry.substring(split + 1, entry.length() - split - 1)) {
+                    Result:::Err(message) -> {
+                        delete message;
+                    },
+                    Result:::Ok(parsed) -> {
+                        if parsed->Kind(parsed->root) == lantern:::json:::JsonKind:::Number {
+                            value = f32(parsed->Node(parsed->root).number);
+                        }
+                        delete parsed;
+                    }
+                }
+                source->parameters[names.length()] = value;
+                names.push(`${entry.substring(0, split)}`);
+            }
+            start = end + 1;
+        }
+        return names!;
+    }
+
     /**
      * Reads argument `index` as an entity id and checks that entity still exists, failing the call with not-found if it
      * doesn't. A script that keeps an id past a despawn gets an error and not a crash.
@@ -447,7 +485,7 @@ lantern:::host :: namespace {
                 state->SetMaterialLook(material, look);
             }
         });
-        worldNamespace->Function("SetMaterialShader", "(material: string, folder: string, shader: string, texture0: i64, texture1: i64, texture2: i64, texture3: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+        worldNamespace->Function("SetMaterialShader", "(material: string, folder: string, shader: string, texture0: i64, texture1: i64, texture2: i64, texture3: i64, parameters: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             material: string! = context->Text(0);
             defer delete material;
             folder: string! = AssetPathArgument(context, state, 1);
@@ -464,14 +502,21 @@ lantern:::host :: namespace {
                     source.textureCount += 1;
                 }
             }
+            parameterText: string! = context->Text(7);
+            defer delete parameterText;
             if Stopped(context) {
                 return;
             }
+            parameterNames~ Array<string!>! = ParseShaderParameters(parameterText, source);
+            defer parameterNames.freeAll();
             unsafe {
                 when state->renderBackend->CreateMaterialShader(source) {
                     Result:::Ok(handle) -> {
                         state->scriptMaterialShaders.push(handle);
                         state->SetMaterialShader(material, handle);
+                        for slot~ usize = 0; slot < parameterNames.length(); slot++ {
+                            state->AddShaderParameter(material, parameterNames[slot], u32(slot));
+                        }
                     },
                     Result:::Err(message) -> {
                         warning: string! = `material '${material}': ${message}; it keeps its plain look`;
@@ -481,6 +526,28 @@ lantern:::host :: namespace {
                     }
                 }
             }
+        });
+        worldNamespace->Function("SetMaterialParameter", "(material: string, name: string, value: f32) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            material: string! = context->Text(0);
+            defer delete material;
+            parameterName: string! = context->Text(1);
+            defer delete parameterName;
+            value: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            changed~ bool = false;
+            unsafe {
+                if slot := state->ShaderParameterSlot(material, parameterName) {
+                    if look := state->LookOf(material) {
+                        if shader := look.shader {
+                            state->renderBackend->SetMaterialShaderParameter(shader, slot, value);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            context->ReturnBool(changed);
         });
         worldNamespace->Function("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;

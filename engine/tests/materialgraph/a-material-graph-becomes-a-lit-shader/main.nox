@@ -4,6 +4,8 @@ lantern :: import lantern;
 
 GRAPH: string : "{\"graph\": \"rusty_metal\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#804020\"}, {\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"tiled\", \"kind\": \"mat_mul\", \"a\": \"coordinate\", \"b\": {\"f32\": 4.0}}, {\"id\": \"rust\", \"kind\": \"mat_texture\", \"name\": \"rust\", \"a\": \"tiled\"}, {\"id\": \"base\", \"kind\": \"mat_mul\", \"a\": \"paint\", \"b\": \"rust\"}, {\"id\": \"wear\", \"kind\": \"mat_param\", \"name\": \"wear\", \"a\": {\"f32\": 0.2}}, {\"id\": \"worn\", \"kind\": \"mat_lerp\", \"a\": {\"f32\": 0.4}, \"b\": {\"f32\": 1.0}, \"value\": \"wear\"}, {\"id\": \"bare\", \"kind\": \"mat_one_minus\", \"a\": \"wear\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"a\": \"tiled\", \"b\": {\"f32\": 0.5}}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"base\", \"bare\", \"worn\", \"\", \"bumps\"]}]}]}";
 
+MOVING: string : "{\"graph\": \"neon_flow\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"flow\", \"kind\": \"mat_panner\", \"b\": {\"f32\": 0.5}, \"value\": {\"f32\": -0.25}}, {\"id\": \"pulse\", \"kind\": \"mat_time\", \"a\": {\"f32\": 3.0}}, {\"id\": \"wave\", \"kind\": \"mat_sine\", \"a\": \"pulse\"}, {\"id\": \"rim\", \"kind\": \"mat_fresnel\", \"a\": {\"f32\": 3.0}}, {\"id\": \"ground\", \"kind\": \"mat_world_position\", \"name\": \"xz\"}, {\"id\": \"height\", \"kind\": \"mat_world_position\", \"name\": \"y\"}, {\"id\": \"grate\", \"kind\": \"mat_texture\", \"name\": \"grate\", \"a\": \"flow\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"grate_normal\", \"a\": \"ground\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"grate\", \"\", \"height\", \"rim\", \"bumps\", \"wave\"]}]}]}";
+
 Generate :: (text: string, parameterNames: Array<string!>, parameterValues: Array<f32>) -> Result<lantern:::materialgraph:::MaterialShader*!, string!> {
     return lantern:::materialgraph:::GenerateMaterialShaderFromText(text, parameterNames, parameterValues);
 }
@@ -49,7 +51,13 @@ main :: () -> i32 {
             assert(source.contains("layout(set = 2, binding = 5) uniform sampler2D material_texture_1;"), "the second follows it");
             assert(source.contains("    vec2 node_tiled = node_coordinate * 4.0;"), "a coordinate scales by a number");
             assert(source.contains("    vec3 node_rust = texture(material_texture_0, node_tiled).rgb;"), "a texture samples at the tiled coordinate");
-            assert(source.contains("    float node_wear = 0.75;"), "a parameter takes the Silhouette's value");
+            assert(source.contains("    float node_wear = material.parameters[0].x;"), "a parameter reads its uniform slot");
+            assert(source.contains("// parameter 0: wear"), "the shader names its parameter slots");
+            assert(shader->parameterNames.length() == 1 && shader->parameterNames[0] == "wear", "the parameter is named by its slot");
+            assert(shader->parameterDefaults.length() == 1 && shader->parameterDefaults[0] == 0.75f, "it starts at the Silhouette's value");
+            assert(source.contains("    MaterialSurface surface = DefaultSurface(uv);"), "the surface starts from every field set");
+            assert(source.contains("    surface.normal_uv = node_tiled;"), "the normal map's tangent frame follows its own coordinate");
+            assert(source.contains("    surface.opacity_mask = 1.0;"), "an unwired mask leaves the surface solid");
             assert(source.contains("mix(0.4, 1.0, clamp(node_wear, 0.0, 1.0))"), "a lerp mixes by its weight");
             assert(source.contains("    surface.base_color = node_base;"), "the base colour is wired");
             assert(source.contains("    surface.emissive = vec3(0.0);"), "an unwired output keeps its default");
@@ -69,6 +77,28 @@ main :: () -> i32 {
             delete shader;
         }
     }
+    when Generate(MOVING, names, values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "a graph with moving and world nodes becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            defer delete shader;
+            source: string = shader->source;
+            assert(source.contains("    vec2 node_flow = uv + vec2(0.5, -0.25) * MaterialTime();"), "a panner slides the coordinate over time");
+            assert(source.contains("    float node_pulse = MaterialTime() * 3.0;"), "time is scaled by its speed");
+            assert(source.contains("    float node_wave = sin(node_pulse);"), "a sine waves");
+            assert(source.contains("    float node_rim = Fresnel(world_position, world_normal, 3.0);"), "fresnel brightens the edge");
+            assert(source.contains("    vec2 node_ground = world_position.xz;"), "the world position gives a ground coordinate");
+            assert(source.contains("    float node_height = world_position.y;"), "and a height");
+            assert(source.contains("    surface.normal_uv = node_ground;"), "the normal frame follows the world coordinate");
+            assert(source.contains("    surface.opacity_mask = node_wave;"), "the mask is wired");
+            assert(!source.contains("// parameter"), "a graph with no parameters names none");
+        }
+    }
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"spot\", \"kind\": \"mat_world_position\", \"name\": \"w\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"spot\"]}]}]}",
+        "node 'spot' needs xyz", "a world position names its axes");
     ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}, {\"id\": \"sum\", \"kind\": \"mat_add\", \"a\": \"coordinate\", \"b\": \"paint\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"sum\"]}]}]}",
         "node 'sum' can't combine a vec2 with a vec3", "a coordinate and a colour don't add, and the node is named");
     ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}]}]}",

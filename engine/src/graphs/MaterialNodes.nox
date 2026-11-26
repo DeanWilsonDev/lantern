@@ -13,7 +13,8 @@ lantern:::graphs :: namespace {
     IsMaterialNodeKind :: (kind: string) -> bool {
         return kind == "mat_scalar" || kind == "mat_color" || kind == "mat_param" || kind == "mat_uv" || kind == "mat_texture"
             || kind == "mat_normal_map" || kind == "mat_add" || kind == "mat_sub" || kind == "mat_mul" || kind == "mat_lerp"
-            || kind == "mat_one_minus" || kind == "mat_clamp" || kind == MATERIAL_OUTPUT_KIND;
+            || kind == "mat_one_minus" || kind == "mat_clamp" || kind == "mat_time" || kind == "mat_panner"
+            || kind == "mat_world_position" || kind == "mat_fresnel" || kind == "mat_sine" || kind == MATERIAL_OUTPUT_KIND;
     }
 
     // Every material kind the add-node menu offers, inputs first, then maths. The output is made with the graph, and a graph
@@ -26,12 +27,17 @@ lantern:::graphs :: namespace {
         list.push("mat_param");
         list.push("mat_uv");
         list.push("mat_normal_map");
+        list.push("mat_time");
+        list.push("mat_panner");
+        list.push("mat_world_position");
+        list.push("mat_fresnel");
         list.push("mat_mul");
         list.push("mat_add");
         list.push("mat_sub");
         list.push("mat_lerp");
         list.push("mat_one_minus");
         list.push("mat_clamp");
+        list.push("mat_sine");
         return list!;
     }
 
@@ -68,6 +74,9 @@ lantern:::graphs :: namespace {
         if kind == "mat_one_minus" {
             return "one minus".copy();
         }
+        if kind == "mat_world_position" {
+            return node->name.length() > 0 ? `world position ${node->name}` : "world position".copy();
+        }
         return kind.substring(4, kind.length() - 4).copy();
     }
 
@@ -75,8 +84,8 @@ lantern:::graphs :: namespace {
     MaterialPins :: (function: GraphFunction*, node: GraphNode*, pins: PinList~*) -> void {
         kind: string = node->kind;
         if kind == MATERIAL_OUTPUT_KIND {
-            labels: string[5] = ["base colour", "metallic", "roughness", "emissive", "normal"];
-            for portIndex~ i32 = 0; portIndex < 5; portIndex++ {
+            labels: string[6] = ["base colour", "metallic", "roughness", "emissive", "normal", "opacity mask"];
+            for portIndex~ i32 = 0; portIndex < 6; portIndex++ {
                 port: string! = `arg${portIndex}`;
                 reference~ string = "";
                 if usize(portIndex) < node->arguments.length() {
@@ -120,9 +129,22 @@ lantern:::graphs :: namespace {
             labels.push("b");
             ports.push("value");
             labels.push("by");
-        } else if kind == "mat_one_minus" || kind == "mat_clamp" {
+        } else if kind == "mat_one_minus" || kind == "mat_clamp" || kind == "mat_sine" {
             ports.push("a");
             labels.push("a");
+        } else if kind == "mat_time" {
+            ports.push("a");
+            labels.push("speed");
+        } else if kind == "mat_panner" {
+            ports.push("a");
+            labels.push("uv");
+            ports.push("b");
+            labels.push("speed x");
+            ports.push("value");
+            labels.push("speed y");
+        } else if kind == "mat_fresnel" {
+            ports.push("a");
+            labels.push("power");
         }
         for index~ usize = 0; index < ports.length(); index++ {
             label: string! = ValueLabel(function, labels[index], PortReference(node, ports[index]));

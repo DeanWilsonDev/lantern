@@ -2,11 +2,14 @@
 // lights it. Included last by lit.frag and by every generated material shader.
 void main() {
     MaterialSurface surface = SurfaceOf(surface_uv);
+    if (surface.opacity_mask < 0.5) {
+        discard;
+    }
     vec4 albedo = vec4(surface.base_color, 1.0) * surface_color * material.color;
     // Interpolating unit normals across a triangle shortens them, so normalise again per pixel.
     vec3 normal = normalize(world_normal);
     if (surface.normal_strength > 0.0) {
-        normal = PerturbNormal(normal, world_position, surface_uv, surface.tangent_normal, surface.normal_strength);
+        normal = PerturbNormal(normal, world_position, surface.normal_uv, surface.tangent_normal, surface.normal_strength);
     }
     vec3 view = normalize(light.camera_position.xyz - world_position);
 

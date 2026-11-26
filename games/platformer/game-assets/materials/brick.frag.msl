@@ -21,6 +21,8 @@ struct MaterialSurface
     float3 emissive;
     float3 tangent_normal;
     float normal_strength;
+    float2 normal_uv;
+    float opacity_mask;
 };
 
 struct ShadowUniforms
@@ -53,6 +55,7 @@ struct MaterialUniforms
     float4 color;
     float4 surface;
     float4 emissive;
+    float4 parameters[2];
 };
 
 struct LocalLight_1
@@ -98,25 +101,43 @@ float3 ScaleTangentNormal(thread const float3& tangent_space, thread const float
 }
 
 static inline __attribute__((always_inline))
-MaterialSurface SurfaceOf(thread const float2& uv, texture2d<float> material_texture_0, sampler material_texture_0Smplr, texture2d<float> material_texture_1, sampler material_texture_1Smplr)
+MaterialSurface DefaultSurface(thread const float2& uv)
+{
+    MaterialSurface surface;
+    surface.base_color = float3(1.0);
+    surface.metallic = 0.0;
+    surface.roughness = 0.800000011920928955078125;
+    surface.emissive = float3(0.0);
+    surface.tangent_normal = float3(0.0, 0.0, 1.0);
+    surface.normal_strength = 0.0;
+    surface.normal_uv = uv;
+    surface.opacity_mask = 1.0;
+    return surface;
+}
+
+static inline __attribute__((always_inline))
+MaterialSurface SurfaceOf(thread const float2& uv, texture2d<float> material_texture_0, sampler material_texture_0Smplr, constant MaterialUniforms& material, texture2d<float> material_texture_1, sampler material_texture_1Smplr)
 {
     float2 node_coordinate = uv;
     float2 node_tiled = node_coordinate * 3.0;
     float3 node_bricks = material_texture_0.sample(material_texture_0Smplr, node_tiled).xyz;
     float node_no_metal = 0.0;
-    float node_rough = 0.85000002384185791015625;
-    float node_bumpiness = 1.0;
+    float node_rough = material.parameters[0].x;
+    float node_bumpiness = material.parameters[0].y;
     float3 param = material_texture_1.sample(material_texture_1Smplr, node_tiled).xyz;
     float3 param_1 = (LinearToSrgbExact(param) * 2.0) - float3(1.0);
     float param_2 = node_bumpiness;
     float3 node_bumps = ScaleTangentNormal(param_1, param_2);
-    MaterialSurface surface;
+    float2 param_3 = uv;
+    MaterialSurface surface = DefaultSurface(param_3);
     surface.base_color = node_bricks;
     surface.metallic = node_no_metal;
     surface.roughness = node_rough;
     surface.emissive = float3(0.0);
     surface.tangent_normal = node_bumps;
+    surface.opacity_mask = 1.0;
     surface.normal_strength = 1.0;
+    surface.normal_uv = node_tiled;
     return surface;
 }
 
@@ -215,8 +236,8 @@ float FilteredShadow(depth2d<float> shadow_map, sampler shadow_mapSmplr, thread 
         float ring = sqrt((float(sample_index) + 0.5) / float(sample_count)) * radius;
         float angle = (float(sample_index) * 2.3999631404876708984375) + turn;
         float2 sample_uv = fast::clamp(uv + ((float2(cos(angle), sin(angle)) * ring) * texel), tile_minimum + (texel * 0.5), tile_maximum - (texel * 0.5));
-        float3 _542 = float3(sample_uv, reference_depth);
-        lit_amount += shadow_map.sample_compare(shadow_mapSmplr, _542.xy, _542.z);
+        float3 _545 = float3(sample_uv, reference_depth);
+        lit_amount += shadow_map.sample_compare(shadow_mapSmplr, _545.xy, _545.z);
     }
     return lit_amount / float(sample_count);
 }
@@ -227,44 +248,44 @@ float CascadeShadow(thread const int& cascade, thread const float3& position, th
     float3 pushed = position + (normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w));
     float4 clip = shadows.cascade_matrices[cascade] * float4(pushed, 1.0);
     float2 tile_uv = float2((clip.x * 0.5) + 0.5, 0.5 - (clip.y * 0.5));
-    bool _591 = clip.z > 1.0;
-    bool _598;
-    if (!_591)
+    bool _594 = clip.z > 1.0;
+    bool _601;
+    if (!_594)
     {
-        _598 = tile_uv.x < 0.0;
+        _601 = tile_uv.x < 0.0;
     }
     else
     {
-        _598 = _591;
+        _601 = _594;
     }
-    bool _605;
-    if (!_598)
+    bool _608;
+    if (!_601)
     {
-        _605 = tile_uv.x > 1.0;
+        _608 = tile_uv.x > 1.0;
     }
     else
     {
-        _605 = _598;
+        _608 = _601;
     }
-    bool _612;
-    if (!_605)
+    bool _615;
+    if (!_608)
     {
-        _612 = tile_uv.y < 0.0;
+        _615 = tile_uv.y < 0.0;
     }
     else
     {
-        _612 = _605;
+        _615 = _608;
     }
-    bool _619;
-    if (!_612)
+    bool _622;
+    if (!_615)
     {
-        _619 = tile_uv.y > 1.0;
+        _622 = tile_uv.y > 1.0;
     }
     else
     {
-        _619 = _612;
+        _622 = _615;
     }
-    if (_619)
+    if (_622)
     {
         return 1.0;
     }
@@ -322,19 +343,19 @@ float SunShadow(thread const float3& position, thread const float3& normal, cons
         float blend = smoothstep(cascade_end * (1.0 - blend_fraction), cascade_end, view_depth);
         if (blend > 0.0)
         {
-            float _754;
+            float _757;
             if (cascade < 2)
             {
                 int param_3 = cascade + 1;
                 float3 param_4 = position;
                 float3 param_5 = normal;
-                _754 = CascadeShadow(param_3, param_4, param_5, shadows, gl_FragCoord, sun_shadow_map, sun_shadow_mapSmplr);
+                _757 = CascadeShadow(param_3, param_4, param_5, shadows, gl_FragCoord, sun_shadow_map, sun_shadow_mapSmplr);
             }
             else
             {
-                _754 = 1.0;
+                _757 = 1.0;
             }
-            float neighbour = _754;
+            float neighbour = _757;
             shadow = mix(shadow, neighbour, blend);
         }
     }
@@ -408,17 +429,17 @@ float LocalShadow(thread const LocalLight& local, thread const float3& position,
     {
         float3 magnitude = abs(light_to_position);
         int face = 5;
-        bool _796 = magnitude.x >= magnitude.y;
-        bool _804;
-        if (_796)
+        bool _799 = magnitude.x >= magnitude.y;
+        bool _807;
+        if (_799)
         {
-            _804 = magnitude.x >= magnitude.z;
+            _807 = magnitude.x >= magnitude.z;
         }
         else
         {
-            _804 = _796;
+            _807 = _799;
         }
-        if (_804)
+        if (_807)
         {
             face = (light_to_position.x > 0.0) ? 0 : 1;
         }
@@ -439,44 +460,44 @@ float LocalShadow(thread const LocalLight& local, thread const float3& position,
     float4 clip = shadows.local_tile_matrices[tile] * float4(pushed, 1.0);
     float reference_depth = clip.z / clip.w;
     float2 tile_uv = float2(((clip.x / clip.w) * 0.5) + 0.5, 0.5 - ((clip.y / clip.w) * 0.5));
-    bool _879 = (clip.w <= 0.0) || (reference_depth > 1.0);
-    bool _886;
-    if (!_879)
+    bool _882 = (clip.w <= 0.0) || (reference_depth > 1.0);
+    bool _889;
+    if (!_882)
     {
-        _886 = tile_uv.x < 0.0;
+        _889 = tile_uv.x < 0.0;
     }
     else
     {
-        _886 = _879;
+        _889 = _882;
     }
-    bool _893;
-    if (!_886)
+    bool _896;
+    if (!_889)
     {
-        _893 = tile_uv.x > 1.0;
+        _896 = tile_uv.x > 1.0;
     }
     else
     {
-        _893 = _886;
+        _896 = _889;
     }
-    bool _900;
-    if (!_893)
+    bool _903;
+    if (!_896)
     {
-        _900 = tile_uv.y < 0.0;
+        _903 = tile_uv.y < 0.0;
     }
     else
     {
-        _900 = _893;
+        _903 = _896;
     }
-    bool _907;
-    if (!_900)
+    bool _910;
+    if (!_903)
     {
-        _907 = tile_uv.y > 1.0;
+        _910 = tile_uv.y > 1.0;
     }
     else
     {
-        _907 = _900;
+        _910 = _903;
     }
-    if (_907)
+    if (_910)
     {
         return 1.0;
     }
@@ -504,17 +525,17 @@ static inline __attribute__((always_inline))
 float2 EncodeNormal(thread const float3& normal)
 {
     float3 on_octahedron = normal / float3((abs(normal.x) + abs(normal.y)) + abs(normal.z));
-    float2 _223;
+    float2 _226;
     if (on_octahedron.z >= 0.0)
     {
-        _223 = on_octahedron.xy;
+        _226 = on_octahedron.xy;
     }
     else
     {
         float2 param = on_octahedron.xy;
-        _223 = OctahedronWrap(param);
+        _226 = OctahedronWrap(param);
     }
-    float2 folded = _223;
+    float2 folded = _226;
     return (folded * 0.5) + float2(0.5);
 }
 
@@ -529,14 +550,18 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
 {
     main0_out out = {};
     float2 param = in.surface_uv;
-    MaterialSurface surface = SurfaceOf(param, material_texture_0, material_texture_0Smplr, material_texture_1, material_texture_1Smplr);
+    MaterialSurface surface = SurfaceOf(param, material_texture_0, material_texture_0Smplr, material, material_texture_1, material_texture_1Smplr);
+    if (surface.opacity_mask < 0.5)
+    {
+        discard_fragment();
+    }
     float4 albedo = (float4(surface.base_color, 1.0) * in.surface_color) * material.color;
     float3 normal = fast::normalize(in.world_normal);
     if (surface.normal_strength > 0.0)
     {
         float3 param_1 = normal;
         float3 param_2 = in.world_position;
-        float2 param_3 = in.surface_uv;
+        float2 param_3 = surface.normal_uv;
         float3 param_4 = surface.tangent_normal;
         float param_5 = surface.normal_strength;
         normal = PerturbNormal(param_1, param_2, param_3, param_4, param_5);
@@ -551,11 +576,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     float puddle = PuddleMask(param_6, param_7, param_8);
     float darkening = mix(1.0, 0.550000011920928955078125, wetness * (1.0 - metallic));
     darkening = mix(darkening, 0.300000011920928955078125, puddle);
-    float4 _1341 = albedo;
-    float3 _1343 = _1341.xyz * darkening;
-    albedo.x = _1343.x;
-    albedo.y = _1343.y;
-    albedo.z = _1343.z;
+    float4 _1378 = albedo;
+    float3 _1380 = _1378.xyz * darkening;
+    albedo.x = _1380.x;
+    albedo.y = _1380.y;
+    albedo.z = _1380.z;
     roughness = mix(roughness, 0.100000001490116119384765625, wetness * 0.800000011920928955078125);
     roughness = mix(roughness, 0.039999999105930328369140625, puddle);
     normal = fast::normalize(mix(normal, float3(0.0, 1.0, 0.0), float3(puddle)));
@@ -596,7 +621,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     lit += EvaluateLight(param_24, param_25, param_26, param_27, param_28, param_29, param_30);
     int local_count = min(int(locals.header.x), 8);
     LocalLight local;
-    float _1589;
+    float _1624;
     for (int index = 0; index < local_count; index++)
     {
         local.position_and_range = locals.lights[index].position_and_range;
@@ -620,13 +645,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
             float inner_cosine = local.cone.x;
             if ((inner_cosine - outer_cosine) > 9.9999997473787516355514526367188e-05)
             {
-                _1589 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
+                _1624 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
             }
             else
             {
-                _1589 = step(outer_cosine, cosine_to_axis);
+                _1624 = step(outer_cosine, cosine_to_axis);
             }
-            float cone_fade = _1589;
+            float cone_fade = _1624;
             strength *= cone_fade;
         }
         LocalLight param_33 = local;

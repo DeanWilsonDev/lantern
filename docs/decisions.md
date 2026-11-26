@@ -2076,3 +2076,16 @@ the sky still lights and reflects in the scene but the background is the clear c
 studio backdrop. Entity previews reset the sun and sky first, since they share the preview's render world.
 Provisional: not reviewed by Dean.
 
+## D-264: Material parameters ride in the per-draw material uniforms; time rides in the camera position's spare component
+
+A material graph's `mat_param` nodes read eight floats added to the end of the per-draw material uniforms
+(`material.parameters`) instead of constants, so a game changes them while it runs with
+`lantern:::world:::SetMaterialParameter(material, name, value)`. A separate block would have been a fifth fragment
+uniform buffer, and SDL's GPU API allows four per stage (a fifth crashed lavapipe). The values live on the renderer's
+material shader and are copied into each of its draws' uniforms, 32 more bytes per draw. A parameter is per material, not per placed piece:
+per-piece values would need the draw item to carry them and are left for later. The bake passes each parameter's name
+and starting value to `SetMaterialShader` as `name=value;…`, and the engine keeps the names. The clock `mat_time`
+reads goes in `LightUniforms.camera_position.w`, which nothing read, so time needs no new uniform; it wraps every hour to
+keep float precision. A surface carries the coordinate its normal map was sampled at (`normal_uv`) and an opacity mask
+that discards below 0.5; shadows ignore the mask and translucency is still not built, because the lit pipeline doesn't
+blend. Provisional: not reviewed by Dean.

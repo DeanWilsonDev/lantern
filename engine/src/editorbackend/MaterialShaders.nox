@@ -154,6 +154,8 @@ lantern:::editorbackend :: namespace {
         name~ string!;
         source~ string!;
         textureNames~ Array<string!>! = [];
+        parameterNames~ Array<string!>! = [];
+        parameterDefaults~ Array<f32>! = [];
         failure~ string!? = null;
 
         GeneratedMaterialShader~: (materialName: string) {
@@ -165,6 +167,8 @@ lantern:::editorbackend :: namespace {
             delete name;
             delete source;
             textureNames.freeAll();
+            parameterNames.freeAll();
+            delete parameterDefaults;
             delete failure;
         }
     }
@@ -237,6 +241,12 @@ lantern:::editorbackend :: namespace {
                 for textureName in shader->textureNames {
                     generated->textureNames.push(`${textureName}`);
                 }
+                for parameterName in shader->parameterNames {
+                    generated->parameterNames.push(`${parameterName}`);
+                }
+                for parameterDefault in shader->parameterDefaults {
+                    generated->parameterDefaults.push(parameterDefault);
+                }
             }
         }
         return generated!;
@@ -298,6 +308,20 @@ lantern:::editorbackend :: namespace {
         return shaders!;
     }
 
+    // A material shader's parameters as `SetMaterialShader` takes them: `name=value` in slot order, separated by `;`.
+    ParameterList :: (shader: GeneratedMaterialShader*) -> string! {
+        text~ string! = "".copy();
+        for slot~ usize = 0; slot < shader->parameterNames.length() && slot < shader->parameterDefaults.length(); slot++ {
+            if slot > 0 {
+                text += ";";
+            }
+            value: string! = lantern:::materialgraph:::GlslFloat(shader->parameterDefaults[slot]);
+            text += `${shader->parameterNames[slot]}=${value}`;
+            delete value;
+        }
+        return text!;
+    }
+
     // The Nyx lines that load each material's compiled shader with its textures, for `BakedMaterials:::Register()`.
     MaterialShaderRegistrations :: (shaders: Array<GeneratedMaterialShader*!>) -> string! {
         lines~ string! = "".copy();
@@ -310,7 +334,9 @@ lantern:::editorbackend :: namespace {
                     arguments += ", 0";
                 }
             }
-            lines += `        lantern:::world:::SetMaterialShader("${shader->name}", "../game-assets/${MATERIAL_SHADERS_FOLDER}", "${shader->name}"${arguments});`;
+            parameterText: string! = ParameterList(shader);
+            defer delete parameterText;
+            lines += `        lantern:::world:::SetMaterialShader("${shader->name}", "../game-assets/${MATERIAL_SHADERS_FOLDER}", "${shader->name}"${arguments}, "${parameterText}");`;
             lines += "\n";
             delete arguments;
         }

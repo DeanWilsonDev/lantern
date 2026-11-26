@@ -31,6 +31,12 @@ lantern:::editorbackend :: namespace {
         return now;
     }
 
+    // Seconds since SDL started, wrapped every hour: the clock a material's `mat_time` reads in the editor.
+    EditorSeconds :: () -> f32 {
+        wrapNanoseconds: u64 = u64(lantern:::renderer:::MATERIAL_TIME_WRAP_SECONDS) * 1000000000;
+        return f32(NowNanoseconds() % wrapNanoseconds) / 1000000000.0f;
+    }
+
     // The numbers the stats readout shows: how long the last render took, a smoothed frame rate, and
     // the draw, triangle and line counts the renderer reported.
     RenderStats :: struct {
@@ -341,6 +347,7 @@ lantern:::editorbackend :: namespace {
             active->Prepare();
             activeRenderWorld~ lantern:::renderer:::RenderWorld*! = renderWorld!;
             lantern:::editor:::BuildViewport(session, active, activeRenderWorld);
+            activeRenderWorld->timeSeconds = EditorSeconds();
             outcome~ string!? = null;
             when active->viewportRenderer->RenderOffscreen(activeRenderWorld, width, height, pixels) {
                 Result:::Ok(report) -> {
@@ -578,6 +585,7 @@ lantern:::editorbackend :: namespace {
             activeRenderWorld~ lantern:::renderer:::RenderWorld*! = previewWorld!;
             outcome~ string!? = null;
             BuildMaterialPreview(materialName, active, activeRenderWorld, spin);
+            activeRenderWorld->timeSeconds = EditorSeconds();
             when active->viewportRenderer->RenderOffscreen(activeRenderWorld, width, height, previewPixels) {
                 Result:::Ok(report) -> { },
                 Result:::Err(problem) -> {

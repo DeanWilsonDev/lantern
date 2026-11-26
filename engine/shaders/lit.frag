@@ -52,13 +52,11 @@
 
 // The surface of a draw with no material graph: the draw's texture, and its uniform metallic, roughness and normal map.
 MaterialSurface SurfaceOf(vec2 uv) {
-    MaterialSurface surface;
+    MaterialSurface surface = DefaultSurface(uv);
     surface.base_color = texture(albedo_texture, uv).rgb;
     surface.metallic = material.surface.x;
     surface.roughness = material.surface.y;
-    surface.emissive = vec3(0.0);
     surface.normal_strength = material.surface.z;
-    surface.tangent_normal = vec3(0.0, 0.0, 1.0);
     if (surface.normal_strength > 0.0) {
         surface.tangent_normal = LinearToSrgbExact(texture(normal_texture, uv).rgb) * 2.0 - 1.0;
     }

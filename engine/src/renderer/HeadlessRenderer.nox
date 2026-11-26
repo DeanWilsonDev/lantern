@@ -11,7 +11,9 @@ lantern:::renderer :: namespace {
     TextureSlot :: struct { }
 
     /** What the headless pool stores per material shader: nothing. */
-    MaterialShaderSlot :: struct { }
+    MaterialShaderSlot :: struct {
+        parameters~ f32[8] = filled<f32, 8>(0.0f);
+    }
 
     /** What the headless renderer counted, for tests to assert on. */
     HeadlessStats :: struct {
@@ -90,8 +92,30 @@ lantern:::renderer :: namespace {
 
         /** Hands out a material shader handle without loading anything. */
         CreateMaterialShader~: (source: MaterialShaderSource) -> Result<lantern:::core:::Handle<MaterialShaderTag>, string!> {
-            slot: lantern:::core:::Handle<MaterialShaderSlot> = materialShaders->Insert(MaterialShaderSlot { });
+            slot: lantern:::core:::Handle<MaterialShaderSlot> = materialShaders->Insert(MaterialShaderSlot { parameters: source.parameters });
             return Result<lantern:::core:::Handle<MaterialShaderTag>, string!>:::Ok(lantern:::core:::CastHandle<MaterialShaderSlot, MaterialShaderTag>(slot));
+        }
+
+        /** Keeps the value, so a test can read it back with `MaterialShaderParameter`. */
+        SetMaterialShaderParameter~: (shader: lantern:::core:::Handle<MaterialShaderTag>, slot: u32, value: f32) -> void {
+            if slot >= MAX_MATERIAL_SHADER_PARAMETERS {
+                return;
+            }
+            handle: lantern:::core:::Handle<MaterialShaderSlot> = lantern:::core:::CastHandle<MaterialShaderTag, MaterialShaderSlot>(shader);
+            if found ~= materialShaders->BorrowMutable(handle) {
+                found->parameters[usize(slot)] = value;
+            }
+        }
+
+        /** A material shader's parameter as last set, or null for a removed shader. */
+        MaterialShaderParameter :: (shader: lantern:::core:::Handle<MaterialShaderTag>, slot: u32) -> f32? {
+            if slot >= MAX_MATERIAL_SHADER_PARAMETERS {
+                return null;
+            }
+            if found := materialShaders->Get(lantern:::core:::CastHandle<MaterialShaderTag, MaterialShaderSlot>(shader)) {
+                return found.parameters[usize(slot)];
+            }
+            return null;
         }
 
         /** Frees the handle's slot. */

@@ -10,28 +10,35 @@
 // | --- | --- | --- |
 // | `mat_scalar` | `a`: a literal such as `#0.5f` | a number |
 // | `mat_color` | `text`: `#RRGGBB` | a colour |
-// | `mat_param` | `name`: a value of the Silhouette's `properties`; `a`: the default | a number |
+// | `mat_param` | `name`: a value of the Silhouette's `properties`; `a`: the default | a number a game can change while it runs |
 // | `mat_uv` | | the surface's texture coordinate |
+// | `mat_time` | `a`: speed (1) | seconds since the game started, times the speed |
+// | `mat_panner` | `a`: the coordinate; `b`, `value`: speed along x and y | the coordinate sliding over time |
+// | `mat_world_position` | `name`: `xyz` (a colour), `xz` `xy` `zy` (a coordinate) or `x` `y` `z` (a number) | where the pixel is in the world |
+// | `mat_fresnel` | `a`: power (5) | 0 facing the camera, 1 at the surface's edge |
+// | `mat_sine` | `a` | the sine of `a`, per channel |
 // | `mat_texture` | `name`: a texture in `textures/`; `a`: the coordinate (the surface's own when unwired) | a colour |
 // | `mat_normal_map` | `name`: a normal-map texture; `a`: the coordinate; `b`: strength (1) | a tangent-space normal |
 // | `mat_add` `mat_sub` `mat_mul` | `a`, `b` | the sum, difference or product, per channel; a number joins anything |
 // | `mat_lerp` | `a`, `b`, `value` | `a` towards `b` by `value` |
 // | `mat_one_minus` `mat_clamp` | `a` | `1 - a`, or `a` held between 0 and 1 |
-// | `mat_output` | `arg0` base colour, `arg1` metallic, `arg2` roughness, `arg3` emissive, `arg4` normal | the material |
+// | `mat_output` | `arg0` base colour, `arg1` metallic, `arg2` roughness, `arg3` emissive, `arg4` normal, `arg5` opacity mask | the material |
 lantern:::materialgraph :: namespace {
     MATERIAL_FUNCTION_NAME: string : "material";
     OUTPUT_KIND: string : "mat_output";
     FIRST_TEXTURE_BINDING: u32 : 4;
     MAX_MATERIAL_TEXTURES: usize : 4;
     MAX_NODE_DEPTH: i32 : 64;
+    MAX_MATERIAL_PARAMETERS: usize : 8;
 
     // The ports of the output node, in `arguments` order.
     OutputPortName :: (portIndex: usize) -> string {
-        names: string[5] = ["base colour", "metallic", "roughness", "emissive", "normal"];
+        names: string[6] = ["base colour", "metallic", "roughness", "emissive", "normal", "opacity mask"];
         return names[portIndex];
     }
 
-    OUTPUT_PORT_COUNT: usize : 5;
+    OUTPUT_PORT_COUNT: usize : 6;
+    NORMAL_PORT: usize : 4;
 
     // The GLSL type of a node's value. A number joins any other type, as GLSL lets it.
     ValueShape :: enum {
@@ -50,11 +57,14 @@ lantern:::materialgraph :: namespace {
         };
     }
 
-    // One generated material shader: the GLSL text and the textures it samples, in binding order from binding 4.
+    // One generated material shader: the GLSL text, the textures it samples in binding order from binding 4, and the
+    // parameters a game can change while it runs, in slot order, with the values they start at.
     MaterialShader :: class {
     public:
         source~ string!;
         textureNames~ Array<string!>! = [];
+        parameterNames~ Array<string!>! = [];
+        parameterDefaults~ Array<f32>! = [];
 
         MaterialShader~: () {
             source = "".copy();
@@ -63,6 +73,8 @@ lantern:::materialgraph :: namespace {
         !MaterialShader~: () {
             delete source;
             textureNames.freeAll();
+            parameterNames.freeAll();
+            delete parameterDefaults;
         }
     }
 
@@ -76,6 +88,10 @@ lantern:::materialgraph :: namespace {
         textureNames~ Array<string!>! = [];
         parameterNames~ Array<string!>! = [];
         parameterValues~ Array<f32>! = [];
+        slotNames~ Array<string!>! = [];
+        slotDefaults~ Array<f32>! = [];
+        normalMapIds~ Array<string!>! = [];
+        normalMapCoordinates~ Array<string!>! = [];
 
         ShaderWriter~: () {
             statements = "".copy();
@@ -90,6 +106,10 @@ lantern:::materialgraph :: namespace {
             textureNames.freeAll();
             parameterNames.freeAll();
             delete parameterValues;
+            slotNames.freeAll();
+            delete slotDefaults;
+            normalMapIds.freeAll();
+            normalMapCoordinates.freeAll();
         }
 
         ShapeOfWritten :: (nodeId: string) -> ValueShape? {
@@ -113,6 +133,41 @@ lantern:::materialgraph :: namespace {
             }
             textureNames.push(`${textureName}`);
             return textureNames.length() - 1;
+        }
+
+        // The uniform slot of a runtime parameter, adding it with its starting value when it is new. Null when the material
+        // already has eight.
+        ParameterSlot~: (parameterName: string, startingValue: f32) -> usize? {
+            for index~ usize = 0; index < slotNames.length(); index++ {
+                if slotNames[index] == parameterName {
+                    return index;
+                }
+            }
+            if slotNames.length() >= MAX_MATERIAL_PARAMETERS {
+                return null;
+            }
+            slotNames.push(`${parameterName}`);
+            slotDefaults.push(startingValue);
+            return slotNames.length() - 1;
+        }
+
+        KeepNormalCoordinate~: (nodeId: string, coordinate: string) -> void {
+            normalMapIds.push(`${nodeId}`);
+            normalMapCoordinates.push(`${coordinate}`);
+        }
+
+        // The coordinate the normal output's map was sampled at: that node's when it feeds the output directly, else the
+        // first normal map written. Null when the graph has no normal map.
+        NormalCoordinateFor :: (nodeId: string) -> string!? {
+            for index~ usize = 0; index < normalMapIds.length(); index++ {
+                if normalMapIds[index] == nodeId {
+                    return `${normalMapCoordinates[index]}`;
+                }
+            }
+            if normalMapCoordinates.length() > 0 {
+                return `${normalMapCoordinates[0]}`;
+            }
+            return null;
         }
 
         KeepFailure~: (message: string!) -> void {
@@ -208,6 +263,8 @@ lantern:::materialgraph :: namespace {
     IsMaterialKind :: (kind: string) -> bool {
         return kind == "mat_scalar" || kind == "mat_color" || kind == "mat_param" || kind ==
             "mat_uv" || kind == "mat_texture" || kind == "mat_normal_map"
+            || kind == "mat_time" || kind == "mat_panner" || kind == "mat_world_position" || kind == "mat_fresnel"
+            || kind == "mat_sine"
             || kind == "mat_add" || kind == "mat_sub" || kind == "mat_mul" || kind == "mat_lerp" ||
                 kind == "mat_one_minus" || kind == "mat_clamp"
             || kind == OUTPUT_KIND;
@@ -304,7 +361,61 @@ lantern:::materialgraph :: namespace {
                 return Failure(`node '${node->id}' needs the name of a Silhouette value`);
             }
             number: f32 = writer->ParameterValue(node->name) ?? LiteralNumber(node->a) ?? 0.0f;
-            return Expression(GlslFloat(number), ValueShape:::Number);
+            guard slot := writer->ParameterSlot(node->name, number) return Failure(`node '${node->id}': a material has at most eight parameters`);
+            components: string[4] = ["x", "y", "z", "w"];
+            return Expression(`material.parameters[${slot / 4}].${components[slot % 4]}`, ValueShape:::Number);
+        }
+        if kind == "mat_time" {
+            held := Operand(function, writer, node->a, "1.0", ValueShape:::Number, depth);
+            defer delete held;
+            guard speed := held return Failure(writer->TakeFailure());
+            if speed->shape != ValueShape:::Number {
+                return Failure(`node '${node->id}' takes a number for its speed, not a ${GlslTypeOf(speed->shape)}`);
+            }
+            return Expression(`MaterialTime() * ${speed->expression}`, ValueShape:::Number);
+        }
+        if kind == "mat_panner" {
+            coordinateHeld := Operand(function, writer, node->a, "uv", ValueShape:::Coordinate, depth);
+            defer delete coordinateHeld;
+            guard coordinate := coordinateHeld return Failure(writer->TakeFailure());
+            if coordinate->shape != ValueShape:::Coordinate {
+                return Failure(`node '${node->id}' slides a coordinate, not a ${GlslTypeOf(coordinate->shape)}`);
+            }
+            acrossHeld := Operand(function, writer, node->b, "0.0", ValueShape:::Number, depth);
+            defer delete acrossHeld;
+            guard across := acrossHeld return Failure(writer->TakeFailure());
+            upHeld := Operand(function, writer, node->value, "0.0", ValueShape:::Number, depth);
+            defer delete upHeld;
+            guard up := upHeld return Failure(writer->TakeFailure());
+            if across->shape != ValueShape:::Number || up->shape != ValueShape:::Number {
+                return Failure(`node '${node->id}' takes numbers for its speeds`);
+            }
+            return Expression(
+                `${coordinate->expression} + vec2(${across->expression}, ${up->expression}) * MaterialTime()`,
+                ValueShape:::Coordinate
+            );
+        }
+        if kind == "mat_world_position" {
+            swizzle: string = node->name.length() == 0 ? "xyz" : node->name;
+            if swizzle == "xyz" {
+                return Expression("world_position".copy(), ValueShape:::Color);
+            }
+            if swizzle == "xz" || swizzle == "xy" || swizzle == "zy" {
+                return Expression(`world_position.${swizzle}`, ValueShape:::Coordinate);
+            }
+            if swizzle == "x" || swizzle == "y" || swizzle == "z" {
+                return Expression(`world_position.${swizzle}`, ValueShape:::Number);
+            }
+            return Failure(`node '${node->id}' needs xyz, xz, xy, zy, x, y or z, not '${swizzle}'`);
+        }
+        if kind == "mat_fresnel" {
+            held := Operand(function, writer, node->a, "5.0", ValueShape:::Number, depth);
+            defer delete held;
+            guard power := held return Failure(writer->TakeFailure());
+            if power->shape != ValueShape:::Number {
+                return Failure(`node '${node->id}' takes a number for its power, not a ${GlslTypeOf(power->shape)}`);
+            }
+            return Expression(`Fresnel(world_position, world_normal, ${power->expression})`, ValueShape:::Number);
         }
         if kind == "mat_color" {
             guard color := lantern:::world:::ParseHexColor(node->text) return Failure(`node '${node->id}' needs a colour written #RRGGBB`);
@@ -336,6 +447,7 @@ lantern:::materialgraph :: namespace {
                     ValueShape:::Color
                 );
             }
+            writer->KeepNormalCoordinate(node->id, coordinate->expression);
             strengthHeld := Operand(function, writer, node->b, "1.0", ValueShape:::Number, depth);
             defer delete strengthHeld;
             guard strength := strengthHeld return Failure(writer->TakeFailure());
@@ -347,10 +459,13 @@ lantern:::materialgraph :: namespace {
                 ValueShape:::Normal
             );
         }
-        if kind == "mat_one_minus" || kind == "mat_clamp" {
+        if kind == "mat_one_minus" || kind == "mat_clamp" || kind == "mat_sine" {
             held := Operand(function, writer, node->a, "0.0", ValueShape:::Number, depth);
             defer delete held;
             guard input := held return Failure(writer->TakeFailure());
+            if kind == "mat_sine" {
+                return Expression(`sin(${input->expression})`, input->shape);
+            }
             if kind == "mat_clamp" {
                 return Expression(`clamp(${input->expression}, 0.0, 1.0)`, input->shape);
             }
@@ -457,15 +572,15 @@ lantern:::materialgraph :: namespace {
     // What an unwired output gives: the same as a material Silhouette with no properties (white, not metallic, roughness 0.8,
     // no light, flat).
     OutputDefault :: (portIndex: usize) -> string {
-        defaults: string[5] = ["vec3(1.0)", "0.0", "0.8", "vec3(0.0)", "vec3(0.0, 0.0, 1.0)"];
+        defaults: string[6] = ["vec3(1.0)", "0.0", "0.8", "vec3(0.0)", "vec3(0.0, 0.0, 1.0)", "1.0"];
         return defaults[portIndex];
     }
 
     OutputShape :: (portIndex: usize) -> ValueShape {
-        if portIndex == 1 || portIndex == 2 {
+        if portIndex == 1 || portIndex == 2 || portIndex == 5 {
             return ValueShape:::Number;
         }
-        if portIndex == 4 {
+        if portIndex == NORMAL_PORT {
             return ValueShape:::Normal;
         }
         return ValueShape:::Color;
@@ -480,14 +595,15 @@ lantern:::materialgraph :: namespace {
         if wanted == ValueShape:::Number && value->shape != ValueShape:::Number {
             return Result<string!, string!>:::Ok(`${value->expression}.r`);
         }
-        if portIndex == 4 && value->shape != ValueShape:::Normal {
+        if portIndex == NORMAL_PORT && value->shape != ValueShape:::Normal {
             return Result<string!, string!>:::Err("the normal output takes a mat_normal_map".copy());
         }
         return Result<string!, string!>:::Ok(Widened(value, wanted));
     }
 
     // Turns a material graph into its lit fragment shader. `parameterNames` and `parameterValues` are the Silhouette's numeric
-    // values, which `mat_param` nodes read (and which are baked into the shader as constants). The error names the node at fault.
+    // values, which `mat_param` nodes start at; each parameter is a slot of the material's parameter uniforms, so a game can
+    // change it while it runs. The error names the node at fault.
     GenerateMaterialShader :: (
         graph: lantern:::graphs:::Graph*,
         parameterNames: Array<string!>,
@@ -519,12 +635,13 @@ lantern:::materialgraph :: namespace {
         }
         assignments~ string! = "".copy();
         defer delete assignments;
-        fieldNames: string[5] = [
+        fieldNames: string[6] = [
             "base_color",
             "metallic",
             "roughness",
             "emissive",
-            "tangent_normal"
+            "tangent_normal",
+            "opacity_mask"
         ];
         for portIndex~ usize = 0; portIndex < OUTPUT_PORT_COUNT; portIndex++ {
             when ValueOfReference(
@@ -553,10 +670,18 @@ lantern:::materialgraph :: namespace {
                 }
             }
         }
-        hasNormal: bool = OutputReference(output, 4).length() > 0;
+        hasNormal: bool = OutputReference(output, NORMAL_PORT).length() > 0;
         normalStrength: string = hasNormal ? "1.0" : "0.0";
         assignments += `    surface.normal_strength = ${normalStrength};`;
         assignments += "\n";
+        if hasNormal {
+            normalCoordinate: string!? = writer->NormalCoordinateFor(OutputReference(output, NORMAL_PORT));
+            if coordinate := normalCoordinate {
+                assignments += `    surface.normal_uv = ${coordinate};`;
+                assignments += "\n";
+            }
+            delete normalCoordinate;
+        }
 
         shader := new MaterialShader();
         shader->source += `// Generated from the material graph '${graph->name}' by lantern:::materialgraph. Edit the graph, not this file.`;
@@ -573,9 +698,18 @@ lantern:::materialgraph :: namespace {
             shader->source += "\n";
             shader->textureNames.push(`${writer->textureNames[slot]}`);
         }
+        if writer->slotNames.length() > 0 {
+            shader->source += "\n";
+            for slot~ usize = 0; slot < writer->slotNames.length(); slot++ {
+                shader->source += `// parameter ${slot}: ${writer->slotNames[slot]}`;
+                shader->source += "\n";
+                shader->parameterNames.push(`${writer->slotNames[slot]}`);
+                shader->parameterDefaults.push(writer->slotDefaults[slot]);
+            }
+        }
         shader->source += "\nMaterialSurface SurfaceOf(vec2 uv) {\n";
         shader->source += writer->statements;
-        shader->source += "    MaterialSurface surface;\n";
+        shader->source += "    MaterialSurface surface = DefaultSurface(uv);\n";
         shader->source += assignments;
         shader->source += "    return surface;\n";
         shader->source += "}\n\n";

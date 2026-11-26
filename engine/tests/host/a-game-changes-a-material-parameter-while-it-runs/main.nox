@@ -1,0 +1,46 @@
+// A baked material shader names its parameters, and a game script changes one by name while it runs: the renderer gets the
+// new value in that parameter's slot, and a name the material doesn't have changes nothing.
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+SCRIPT: string : "Register :: () -> void { lantern:::world:::SetMaterialShader(\"brick\", \"materials\", \"brick\", 0, 0, 0, 0, \"roughness=0.85;bumpiness=1.0\"); }\nWear :: () -> bool { return lantern:::world:::SetMaterialParameter(\"brick\", \"bumpiness\", 0.25f); }\nUnknownName :: () -> bool { return lantern:::world:::SetMaterialParameter(\"brick\", \"shine\", 1.0f); }\nUnknownMaterial :: () -> bool { return lantern:::world:::SetMaterialParameter(\"gold\", \"roughness\", 1.0f); }";
+
+BoolResult :: (program: lantern:::nyx:::Program*, name: string) -> bool {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    result: bool = lantern:::testing:::BoolOrFail(value->Bool());
+    delete value;
+    return result;
+}
+
+ParameterOf :: (state: lantern:::host:::EngineState*, slot: u32) -> f32 {
+    guard look := state->LookOf("brick") return -1.0f;
+    guard shader := look.shader return -1.0f;
+    guard headless := state->renderBackend as lantern:::renderer:::HeadlessRenderer* return -1.0f;
+    return headless->MaterialShaderParameter(shader, slot) ?? -1.0f;
+}
+
+main :: () -> i32 {
+    state := lantern:::testing:::HeadlessState();
+    runtime := new lantern:::nyx:::Runtime();
+    math~ lantern:::host:::MathTypes = lantern:::host:::MathTypes { };
+    gameUi := lantern:::testing:::RegisterEngineOrFail(runtime, state, math);
+    program := lantern:::testing:::Mount(runtime, SCRIPT);
+    lantern:::testing:::CallOrFail(program, "Register");
+    assert(ParameterOf(state, 0) == 0.85f && ParameterOf(state, 1) == 1.0f, "the shader starts at its baked values");
+    assert(state->ShaderParameterSlot("brick", "bumpiness") == 1, "each parameter is named by its slot");
+    assert(BoolResult(program, "Wear"), "a parameter the material has is changed");
+    assert(ParameterOf(state, 1) == 0.25f, "the renderer gets the new value");
+    assert(ParameterOf(state, 0) == 0.85f, "the other parameters keep theirs");
+    assert(!BoolResult(program, "UnknownName"), "a name the material doesn't have changes nothing");
+    assert(!BoolResult(program, "UnknownMaterial"), "a material with no shader changes nothing");
+    state->ResetForNewSession();
+    assert(state->ShaderParameterSlot("brick", "bumpiness") == null, "a new session forgets the parameter names");
+    delete program;
+    delete runtime;
+    delete gameUi;
+    delete state;
+    print("a game changes a material parameter while it runs");
+    return 0;
+}

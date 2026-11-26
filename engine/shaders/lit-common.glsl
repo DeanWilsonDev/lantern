@@ -36,16 +36,19 @@ layout(set = 3, binding = 0) uniform LightUniforms {
     // x: how much of the ambient light comes from the sky instead of the flat sky and ground pair (0 to 1), y: how
     // bright that sky light is.
     vec4 sky_strength_and_intensity;
+    // xyz: the camera's position, w: seconds since the game or editor started, wrapped every hour (a material's mat_time).
     vec4 camera_position;
 } light;
 
-// Slot 1, pushed once per draw: the draw's tint and material (MaterialUniforms in GpuUniforms.nox, 48 bytes).
+// Slot 1, pushed once per draw: the draw's tint and material (MaterialUniforms in GpuUniforms.nox, 80 bytes).
 layout(set = 3, binding = 1) uniform MaterialUniforms {
     vec4 color;
     // x: metallic, y: roughness, z: normal map strength (0 when the draw has no normal map), w: wetness (0 dry, 1 soaked).
     vec4 surface;
     // rgb: light the surface gives off, w: how much of a wet upward-facing surface is puddles (0 to 1).
     vec4 emissive;
+    // A material graph's parameters (its mat_param nodes), four to a vec4 in slot order; zero for a draw without a graph.
+    vec4 parameters[2];
 } material;
 
 // One local light, four vec4s (GpuUniforms.nox, `LocalLightUniforms`).
@@ -338,4 +341,35 @@ struct MaterialSurface {
     // A tangent-space normal (0, 0, 1 is flat) and how strongly it bends the surface; 0 leaves the normal alone.
     vec3 tangent_normal;
     float normal_strength;
+    // The coordinate the normal map was sampled at, so the tangent frame follows a scaled, panned or flipped coordinate.
+    vec2 normal_uv;
+    // Below 0.5 the pixel is cut away (a masked material: leaves, grates, chain-link). 1 for every solid surface.
+    float opacity_mask;
 };
+
+// A surface with every field set: white, not metallic, roughness 0.8, no light, flat and solid. A generated SurfaceOf starts
+// from this and overwrites what its graph wires.
+MaterialSurface DefaultSurface(vec2 uv) {
+    MaterialSurface surface;
+    surface.base_color = vec3(1.0);
+    surface.metallic = 0.0;
+    surface.roughness = 0.8;
+    surface.emissive = vec3(0.0);
+    surface.tangent_normal = vec3(0.0, 0.0, 1.0);
+    surface.normal_strength = 0.0;
+    surface.normal_uv = uv;
+    surface.opacity_mask = 1.0;
+    return surface;
+}
+
+// Seconds since the game or editor started, wrapped every hour so it keeps its precision.
+float MaterialTime() {
+    return light.camera_position.w;
+}
+
+// How much a surface faces away from the camera: 0 looking straight at it, 1 at its silhouette, sharpened by `power`.
+float Fresnel(vec3 position, vec3 surface_normal, float power) {
+    vec3 to_camera = normalize(light.camera_position.xyz - position);
+    float facing = clamp(dot(normalize(surface_normal), to_camera), 0.0, 1.0);
+    return pow(1.0 - facing, max(power, 0.0001));
+}

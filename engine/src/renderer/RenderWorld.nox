@@ -13,6 +13,10 @@ lantern:::renderer :: namespace {
 
     /** How many textures one material shader samples, after the draw's texture, the two shadow maps and the normal map. */
     MAX_MATERIAL_SHADER_TEXTURES: u32 : 4;
+    /** How many parameters a material shader reads from its uniforms; a game changes them with `SetMaterialShaderParameter`. */
+    MAX_MATERIAL_SHADER_PARAMETERS: u32 : 8;
+    /** `RenderWorld.timeSeconds` wraps back to 0 after this many seconds, so a float still counts it to the millisecond. */
+    MATERIAL_TIME_WRAP_SECONDS: f32 : 3600.0f;
 
     /**
      * What `CreateMaterialShader` needs: where the compiled shader is (`<directory>/<name>.frag.spv` and `.msl`, written by
@@ -24,6 +28,8 @@ lantern:::renderer :: namespace {
         directory~ string = "";
         textures~ lantern:::core:::Handle<TextureTag>[4] = filled<lantern:::core:::Handle<TextureTag>, 4>(lantern:::core:::Handle<TextureTag> { });
         textureCount~ u32 = 0;
+        /** The values the shader's parameters start at, in slot order. */
+        parameters~ f32[8] = filled<f32, 8>(0.0f);
     }
 
     /** How many matrices a skinned draw's palette holds. The skinned shaders declare the same number. */
@@ -661,6 +667,8 @@ lantern:::renderer :: namespace {
         fogStart~ f32 = 60.0f;
         /** The distance where fog is total. Keeping it inside the camera's far plane hides the far plane's cut. */
         fogEnd~ f32 = 160.0f;
+        /** Seconds the game or editor has run, wrapped every hour: what a material graph's `mat_time` and `mat_panner` read. */
+        timeSeconds~ f32 = 0.0f;
         /** The dust, sparks and trails; they live across frames and draw as lines each frame. See `ParticleSystem`. */
         particles~ ParticleSystem*!;
         /** The meshes to draw this frame. */
@@ -755,6 +763,15 @@ lantern:::renderer :: namespace {
             blobShadows.clear();
             lines.clear();
             overlay->Clear();
+        }
+
+        /** Moves the clock material graphs read on by `seconds`, wrapping it every hour. */
+        AdvanceTime~: (seconds: f32) -> void {
+            advanced~ f32 = timeSeconds + Math:::max(seconds, 0.0f);
+            while advanced >= MATERIAL_TIME_WRAP_SECONDS {
+                advanced -= MATERIAL_TIME_WRAP_SECONDS;
+            }
+            timeSeconds = advanced;
         }
 
         /** Moves the particles on by `seconds` and adds a streak for each to this frame's lines, fading out as it ages. */

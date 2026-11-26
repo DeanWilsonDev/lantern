@@ -49,18 +49,24 @@ layout and file format all apply. It has one function called `material`, and its
 | --- | --- | --- |
 | `mat_scalar` | `a`: a number | a number |
 | `mat_color` | `text`: `#RRGGBB` | a colour |
-| `mat_param` | `name`: a number in the Silhouette's `properties`; `a`: the default | a number, baked in as a constant |
+| `mat_param` | `name`: a number in the Silhouette's `properties`; `a`: the default | a number that starts at the Silhouette's value and that a game can change while it runs (at most eight per material) |
 | `mat_uv` | | the surface's texture coordinate |
+| `mat_time` | `a`: speed (1) | seconds since the game (or editor) started, times the speed; wraps every hour |
+| `mat_panner` | `a`: the coordinate (the surface's own); `b`, `value`: speed along x and y | the coordinate sliding over time |
+| `mat_world_position` | `name`: `xyz` (a colour, the default), `xz` `xy` `zy` (a coordinate) or `x` `y` `z` (a number) | where the pixel is in the world, for world-aligned textures or height fades |
+| `mat_fresnel` | `a`: power (5) | 0 where the surface faces the camera, rising to 1 at its edge |
+| `mat_sine` | `a` | the sine of `a`, per channel; with `mat_time`, a pulse |
 | `mat_texture` | `name`: a texture in `textures/`; `a`: the coordinate (the surface's own when unwired) | a colour |
 | `mat_normal_map` | `name`: a normal-map texture; `a`: the coordinate; `b`: its strength, a number or any number node (1) | a tangent-space normal, its tilt scaled by the strength |
 | `mat_add` `mat_sub` `mat_mul` | `a`, `b` | per channel; a number joins any other value |
 | `mat_lerp` | `a`, `b`, `value` | `a` towards `b` by `value` (0 to 1) |
 | `mat_one_minus` `mat_clamp` | `a` | `1 - a`, or `a` held between 0 and 1 |
-| `mat_output` | `args`: base colour, metallic, roughness, emissive, normal | the material |
+| `mat_output` | `args`: base colour, metallic, roughness, emissive, normal, opacity mask | the material |
 
 Values have one of four shapes: a number, a coordinate (`vec2`), a colour (`vec3`) or a normal. A number combines with any
 of them; a coordinate and a colour don't, and the generator says which node tried. An output a graph leaves unwired takes
-the default a material Silhouette with no properties has: white, not metallic, roughness 0.8, no light of its own, flat.
+the default a material Silhouette with no properties has: white, not metallic, roughness 0.8, no light of its own, flat,
+solid. Where the opacity mask is below 0.5 the pixel is cut away, for grates, leaves and chain-link fences.
 A material samples at most four textures.
 
 ## The shader
@@ -69,14 +75,21 @@ A material samples at most four textures.
 `engine/src/materialgraph/`) writes a `SurfaceOf(vec2 uv)` function with one local per node, in the order they are read,
 between the lit shader's two halves:
 
-- `engine/shaders/lit-common.glsl`: every declaration and lighting function the lit shader has, and `MaterialSurface`.
+- `engine/shaders/lit-common.glsl`: every declaration and lighting function the lit shader has, `MaterialSurface`,
+  `DefaultSurface(uv)` (every field set to the defaults above, which a generated `SurfaceOf` starts from), `MaterialTime()`
+  and `Fresnel`.
 - `engine/shaders/lit-main.glsl`: `main`, which calls `SurfaceOf`, multiplies its base colour by the vertex colour and the
   draw's tint, bends the normal, applies wetness and lights the result. A graph's emissive is added to the draw's own.
 
 `lit.frag` is the same two halves around the default `SurfaceOf`: the draw's texture, its uniform metallic and roughness,
 and its normal map. Splitting it changed no picture (the screenshot tests pass unchanged).
 
-A graph's textures are bound after the normal map, from binding 4. A broken graph is refused with the node at fault:
+A graph's textures are bound after the normal map, from binding 4. Its parameters are eight floats at the end of the
+per-draw material uniforms (`material.parameters`, two vec4s); each parameter takes the next slot in the order the
+graph reads them. The surface records the coordinate its
+normal map was sampled at (`normal_uv`), and the lit shader builds the tangent frame from it, so a normal map follows a
+scaled, panned, flipped or world-aligned coordinate. Time is the camera position uniform's fourth component, which the
+lit shader didn't use. A broken graph is refused with the node at fault:
 `node 'sum' can't combine a vec2 with a vec3`.
 
 Test: `engine/tests/materialgraph/a-material-graph-becomes-a-lit-shader`.
@@ -89,7 +102,14 @@ renderer builds two pipelines from it, the lit one and the skinned one, both wit
 `4 + textureCount` samplers. A `DrawItem` with `materialShader` set is drawn with them; one without, or with a removed
 handle, uses the ordinary lit pipeline. Visible draws sort by material shader first, so each pipeline is bound once a
 frame, then by texture and mesh as before. On a switch the renderer binds the shadow maps again and the material's
-textures from slot 4. Shadow maps don't change: a material decides how a surface looks, not its shape.
+textures from slot 4, and each draw's material uniforms carry that shader's parameters (SDL's GPU API allows only
+four uniform blocks per stage, and the lit shader uses all four). Shadow maps don't change: a material decides
+how a surface looks, not its shape, so a masked material still casts the shadow of its whole mesh.
+
+`MaterialShaderSource.parameters` holds the values the parameters start at, and
+`RenderBackend.SetMaterialShaderParameter(shader, slot, value)` changes one for every draw from then on.
+`RenderWorld.timeSeconds` is the clock `mat_time` reads: the game moves it on each frame (`AdvanceTime`), and the
+editor sets it from SDL's clock, so a moving material moves in the viewport and the preview too.
 
 A graph material ignores the draw's own `texture` and `normalTexture` and its uniform metallic and roughness; the tint,
 the draw's emissive and wetness still apply. `RemoveMaterialShader` frees the pipelines, not the textures.
@@ -113,8 +133,10 @@ in `silhouettes/` and then `silhouettes/materials/`. For each one it:
 3. adds a line to `BakedMaterials:::Register()`, after every material's `SetMaterialLook`:
 
 ```nyx
-lantern:::world:::SetMaterialShader("painted_metal", "../game-assets/materials", "painted_metal", Texture("textures/wall.png"), 0, 0, 0);
+lantern:::world:::SetMaterialShader("painted_metal", "../game-assets/materials", "painted_metal", Texture("textures/wall.png"), 0, 0, 0, "metallic=0.6;wear=0.3");
 ```
+
+The last argument names the shader's parameters in slot order with the values they start at.
 
 The engine's shader folder is found from the assets folder (the checkout they sit in), or from `LANTERN_ENGINE_SHADERS`.
 A graph that can't be a material stops the bake with the node at fault, and the previous files stay. The package keeps
@@ -123,6 +145,16 @@ the compiled `.spv` and `.msl` and drops the graph, the Silhouette and the `.fra
 `SetMaterialShader` asks the renderer for the material shader and gives it to the material's look, so every piece placed
 with that material draws with it. A graph material's look still takes the Silhouette's tint (keep it `#FFFFFF` to let the
 graph decide the colour). A shader that fails to load logs a warning and the material keeps its plain look.
+
+A game changes a parameter while it runs by the name its graph gave it:
+
+```nyx
+lantern:::world:::SetMaterialParameter("painted_metal", "wear", 0.8f);
+```
+
+It returns false, and changes nothing, when the material has no shader or no parameter by that name. The change applies
+to every piece with that material; a per-piece value is still to come. Test:
+`engine/tests/host/a-game-changes-a-material-parameter-while-it-runs`.
 
 The platformer's sample is `assets/silhouettes/materials/painted_metal`: blue paint over the tiled wall texture, with
 its roughness from the `wear` property. Test: `engine/tests/editorbackend/the-game-materials-are-built-and-current`
@@ -137,8 +169,8 @@ its texture times its tint as the base colour, and its metallic and roughness as
 
 In a material graph the right-click menu offers the material kinds (inputs first, then maths) and a comment; the output
 is made with the graph and a second one is refused. Each node shows its pins and the value or link each one holds, and
-the side panel edits a node's fields, with the output's five ports labelled base colour, metallic, roughness, emissive
-and normal. A colour node's `text` is typed as `#RRGGBB`. The text under the canvas is the generated GLSL, or the line
+the side panel edits a node's fields, with the output's six ports labelled base colour, metallic, roughness, emissive,
+normal and opacity mask. A colour node's `text` is typed as `#RRGGBB`. The text under the canvas is the generated GLSL, or the line
 saying which node stops it.
 
 **Save and compile** writes `material.graph.json` beside the Silhouette and runs the bake, so the game's compiled shader
@@ -151,6 +183,9 @@ script graphs use (functions and variables) are hidden while a material is open.
 Two sample materials show the range: `gold` (a colour, full metal and a polished roughness parameter) and `brick` (a
 tiled brick texture, its normal map with a `bumpiness` parameter, and a rough non-metal). Their textures,
 `textures/brick.png` and `textures/brick_normal.png`, are made by `mist run assets` (`engine/tools/generate-assets/Bricks.nox`).
+Three more show the moving and world nodes: `neon_pulse` (a pink glow that pulses with `mat_time` and `mat_sine` and
+brightens at the edges with `mat_fresnel`), `lava_flow` (the ground texture sliding under a `mat_panner`, glowing orange)
+and `vent_grille` (steel slats cut by an opacity mask from the sine of the world height).
 
 Tests:
 `engine/tests/graphs/a-material-graph-offers-material-nodes` and
@@ -160,7 +195,9 @@ Tests:
 
 Tracked on the board under `material-graphs-an-unreal-style-material-editor-that-generates-a-shader-per-material`:
 
-- A normal map sampled at a coordinate other than the mesh's own (flipped or rotated) still tilts along
-  the mesh's UV directions, because the tangent frame is built from the mesh's UVs; tiling and offsets are fine.
-- Time and panner nodes, world position and fresnel, and parameters a game changes while it runs.
+- Translucent materials (glass, water): the lit pipeline doesn't blend, so a mask only cuts pixels away.
+- Masked shadows: a masked material casts the shadow of its whole mesh.
+- Per-piece parameter values (material instances placed in a level); `SetMaterialParameter` changes the material.
+- The editor viewport only redraws when something changes, so a moving material moves there only while the view is
+  redrawn; the preview moves all the time.
 - The preview shows the material as last saved; it doesn't follow unsaved edits.
