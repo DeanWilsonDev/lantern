@@ -20,7 +20,7 @@ trap 'rm -rf "$staging_directory"' EXIT
 cp -R "$game_directory/." "$staging_directory/"
 rm -rf "$staging_directory/assets/silhouettes" "$staging_directory/assets/editor" "$staging_directory/build" "$staging_directory/mist_packages"
 rm -f "$staging_directory/lantern.project.json" "$staging_directory/mist.json" "$staging_directory/mist.local.json" "$staging_directory/README.md"
-find "$staging_directory" \( -name '*.calamus' -o -name '*.graph.json' -o -name '.editor-play*' \) -delete
+find "$staging_directory" \( -name '*.calamus' -o -name '*.graph.json' -o -name '.editor-play*' -o -path '*/game-assets/materials/*.frag' \) -delete
 if find "$staging_directory" -name '*.calamus' | grep -q .; then
     echo "a Calamus file reached the package" >&2
     exit 1

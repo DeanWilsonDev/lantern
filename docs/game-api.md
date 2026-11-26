@@ -111,6 +111,7 @@ Defining an action twice is a script error (`the action 'jump' is defined twice`
 | `lantern:::world:::NumberProperty / TextProperty / VectorProperty(entity, key)` | world-file properties |
 | `lantern:::world:::SetMaterial(material, texture: i64)` | the texture world-file pieces with that material use (set before `Load`) |
 | `lantern:::world:::SetMaterialLook(material, texture: i64, tint, metallic: f32, roughness: f32, emissive)` | a material's texture (0 for none), tint, metallic, roughness and emissive colour (hex text); `BakedMaterials:::Register()` calls it for each material Silhouette |
+| `lantern:::world:::SetMaterialShader(material, folder, shader, texture0: i64, texture1: i64, texture2: i64, texture3: i64)` | draws the material with the compiled fragment shader `<folder>/<shader>.frag.spv` (or `.msl`), with up to four textures (0 for none) at bindings 4 to 7; the folder is relative to `assets/`. `BakedMaterials:::Register()` calls it for each material Silhouette with a material graph |
 | `lantern:::world:::SetMesh(entity, mesh, tint)`, `SetTexturedMesh(entity, mesh, texture, tint)` | |
 | `lantern:::world:::SetTint(entity, tint)`, `SetVisible(entity, visible)`, `IsVisible(entity) -> bool` | |
 | `lantern:::world:::SetNormalMap(entity, texture, strength)` | fine surface bumps from a normal map, strength 0 to 4; see `normal-maps.md` |

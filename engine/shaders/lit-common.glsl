@@ -269,6 +269,12 @@ vec3 LinearToSrgbExact(vec3 linear) {
     return mix(high, low, lessThanEqual(linear, vec3(0.0031308)));
 }
 
+// A tangent-space normal with its tilt scaled by `strength`: 0 is flat, 1 is the map as drawn. A material graph's normal map
+// applies its own strength with this, so the normal output can take any graph value.
+vec3 ScaleTangentNormal(vec3 tangent_space, float strength) {
+    return vec3(tangent_space.xy * strength, tangent_space.z);
+}
+
 // Bends the surface normal by a tangent-space normal from a map. The mesh has no tangents, so the tangent frame comes from
 // how position and uv change from pixel to pixel (a "cotangent frame"). The map's green channel points up the image.
 vec3 PerturbNormal(vec3 surface_normal, vec3 position, vec2 uv, vec3 tangent_space, float strength) {
@@ -281,7 +287,11 @@ vec3 PerturbNormal(vec3 surface_normal, vec3 position, vec2 uv, vec3 tangent_spa
     vec3 tangent = perpendicular_y * uv_dx.x + perpendicular_x * uv_dy.x;
     vec3 bitangent = -(perpendicular_y * uv_dx.y + perpendicular_x * uv_dy.y);
     float scale = inversesqrt(max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-12));
-    vec3 bent = normalize(vec3(tangent_space.xy * strength, tangent_space.z));
+    vec3 scaled = vec3(tangent_space.xy * strength, tangent_space.z);
+    if (dot(scaled, scaled) < 1e-12) {
+        return surface_normal;
+    }
+    vec3 bent = normalize(scaled);
     return normalize(tangent * scale * bent.x + bitangent * scale * bent.y + surface_normal * bent.z);
 }
 

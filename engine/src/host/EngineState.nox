@@ -214,6 +214,7 @@ lantern:::host :: namespace {
         looks~ Array<lantern:::renderer:::MaterialLook>! = [];
         scriptMeshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
         scriptTextures~ Array<lantern:::core:::Handle<lantern:::renderer:::TextureTag>>! = [];
+        scriptMaterialShaders~ Array<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>>! = [];
         worldMeshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
         worldLightIds~ Array<u32>! = [];
         streaming~ RoomStreamer*!;
@@ -263,6 +264,7 @@ lantern:::host :: namespace {
             delete looks;
             delete scriptMeshes;
             delete scriptTextures;
+            delete scriptMaterialShaders;
             delete worldMeshes;
             delete worldLightIds;
             entityTags.freeAll();
@@ -352,12 +354,31 @@ lantern:::host :: namespace {
         SetMaterialLook~: (name: string, look: lantern:::renderer:::MaterialLook) -> void {
             for index~ usize = 0; index < lookNames.length(); index++ {
                 if lookNames[index] == name {
+                    keptShader: lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>? = looks[index].shader;
                     looks[index] = look;
+                    if look.shader == null {
+                        looks[index].shader = keptShader;
+                    }
                     return;
                 }
             }
             lookNames.push(`${name}`);
             looks.push(look);
+        }
+
+        /**
+         * Gives a material name the shader its graph became. A material with no look yet gets the default one, so
+         * `SetMaterialLook` before or after both keep the shader.
+         */
+        SetMaterialShader~: (name: string, shader: lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>) -> void {
+            for index~ usize = 0; index < lookNames.length(); index++ {
+                if lookNames[index] == name {
+                    looks[index].shader = shader;
+                    return;
+                }
+            }
+            lookNames.push(`${name}`);
+            looks.push(lantern:::renderer:::MaterialLook { shader: shader });
         }
 
         /**
@@ -491,6 +512,10 @@ lantern:::host :: namespace {
                 renderBackend->RemoveTexture(texture);
             }
             scriptTextures.clear();
+            for materialShader in scriptMaterialShaders {
+                renderBackend->RemoveMaterialShader(materialShader);
+            }
+            scriptMaterialShaders.clear();
             materialNames.freeAll();
             materialNames = [];
             materialTextures.clear();

@@ -2046,3 +2046,13 @@ up front, so a frame never compiles anything, and sorts visible draws by shader 
 is bound once. The material's textures are part of the shader resource, not the draw, because every draw with that
 material samples the same ones; a per-draw texture override is not built. The shadow pipelines are shared by every
 material. Provisional: not reviewed by Dean.
+
+## D-261: The material bake compiles each graph's shader beside the baked Nyx, with the engine's own shader tools
+
+`mist run materials` writes each material graph's GLSL and its compiled SPIR-V and MSL into the game's
+`game-assets/materials/`, and `BakedMaterials:::Register()` loads them with `SetMaterialShader`, so the game reads only
+compiled files (D-213's asset rule). The bake runs `glslangValidator` and `spirv-cross` itself through SDL's process API,
+the same tools and flags as `engine/tools/build-shaders.sh`, and compiles only when the GLSL changed or a compiled file
+is missing, so a check run (`writeFiles` false, as the staleness test uses) needs neither tool. The `.frag` is kept beside
+the compiled files so a change shows in review, and the package leaves it out. Parameters are baked as constants from
+the Silhouette's numeric properties; changing one while the game runs is later work. Provisional: not reviewed by Dean.

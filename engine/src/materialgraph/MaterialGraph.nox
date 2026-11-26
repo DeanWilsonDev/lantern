@@ -336,8 +336,14 @@ lantern:::materialgraph :: namespace {
                     ValueShape:::Color
                 );
             }
+            strengthHeld := Operand(function, writer, node->b, "1.0", ValueShape:::Number, depth);
+            defer delete strengthHeld;
+            guard strength := strengthHeld return Failure(writer->TakeFailure());
+            if strength->shape != ValueShape:::Number {
+                return Failure(`node '${node->id}' takes a number for its strength, not a ${GlslTypeOf(strength->shape)}`);
+            }
             return Expression(
-                `LinearToSrgbExact(texture(material_texture_${slot}, ${coordinate->expression}).rgb) * 2.0 - 1.0`,
+                `ScaleTangentNormal(LinearToSrgbExact(texture(material_texture_${slot}, ${coordinate->expression}).rgb) * 2.0 - 1.0, ${strength->expression})`,
                 ValueShape:::Normal
             );
         }
@@ -484,7 +490,7 @@ lantern:::materialgraph :: namespace {
     // values, which `mat_param` nodes read (and which are baked into the shader as constants). The error names the node at fault.
     GenerateMaterialShader :: (
         graph: lantern:::graphs:::Graph*,
-        parameterNames: Array<string>,
+        parameterNames: Array<string!>,
         parameterValues: Array<f32>
     ) -> Result<MaterialShader*!, string!> {
         guard function := MaterialFunction(graph) return Result<MaterialShader*!, string!>:::Err("a material graph needs a function called 'material'".copy());
@@ -548,20 +554,9 @@ lantern:::materialgraph :: namespace {
             }
         }
         hasNormal: bool = OutputReference(output, 4).length() > 0;
-        normalStrength~ string! = "0.0".copy();
-        if hasNormal {
-            delete normalStrength;
-            normalStrength = "1.0".copy();
-            if normalIndex := function->IndexOfNode(OutputReference(output, 4)) {
-                if number := LiteralNumber(function->nodes[normalIndex]->b) {
-                    delete normalStrength;
-                    normalStrength = GlslFloat(number);
-                }
-            }
-        }
+        normalStrength: string = hasNormal ? "1.0" : "0.0";
         assignments += `    surface.normal_strength = ${normalStrength};`;
         assignments += "\n";
-        delete normalStrength;
 
         shader := new MaterialShader();
         shader->source += `// Generated from the material graph '${graph->name}' by lantern:::materialgraph. Edit the graph, not this file.`;
@@ -591,7 +586,7 @@ lantern:::materialgraph :: namespace {
     // `GenerateMaterialShader` from the text of a `.graph.json` file.
     GenerateMaterialShaderFromText :: (
         jsonText: string,
-        parameterNames: Array<string>,
+        parameterNames: Array<string!>,
         parameterValues: Array<f32>
     ) -> Result<MaterialShader*!, string!> {
         when lantern:::graphs:::LoadGraph(jsonText) {

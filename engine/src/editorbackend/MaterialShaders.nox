@@ -1,0 +1,419 @@
+Sdl :: import Sdl;
+
+// The material graphs' half of the bake (docs/material-graphs.md). For each material Silhouette with a `material.graph.json`,
+// the generated GLSL goes to `game-assets/materials/<name>.frag`, and glslangValidator and spirv-cross (the same tools
+// `engine/tools/build-shaders.sh` runs for the engine's own shaders) compile it beside itself to `.frag.spv` for Vulkan and
+// `.frag.msl` for Metal. The game loads only the compiled files; the graph and the Silhouette stay in the project.
+lantern:::editorbackend :: namespace {
+    Sdl :: import Sdl;
+
+    MATERIAL_SHADERS_FOLDER: string : "materials";
+
+    // A command line as SDL wants it: a C array of C strings ending in a null pointer. The fields sit side by side, so a pointer
+    // to the struct reads as that array. Nine words cover the longest command the bake runs.
+    CommandArguments :: struct {
+        word0~ raw u8~* = null;
+        word1~ raw u8~* = null;
+        word2~ raw u8~* = null;
+        word3~ raw u8~* = null;
+        word4~ raw u8~* = null;
+        word5~ raw u8~* = null;
+        word6~ raw u8~* = null;
+        word7~ raw u8~* = null;
+        terminator~ raw u8~* = null;
+    }
+
+    // Runs a program with its output captured and waits for it. Ok with the output when it exits 0; Err with the output
+    // (or why it couldn't start) otherwise.
+    RunCommand :: (words: Array<string>) -> Result<string!, string!> {
+        if words.length() == 0 || words.length() > 8 {
+            return Result<string!, string!>:::Err("a command needs one to eight words".copy());
+        }
+        arguments~ CommandArguments = CommandArguments { };
+        output~ string! = "".copy();
+        exitCode~ i32 = 0;
+        started~ bool = false;
+        unsafe {
+            arguments.word0 = Sdl:::SDL_strdup(words[0]);
+            if words.length() > 1 {
+                arguments.word1 = Sdl:::SDL_strdup(words[1]);
+            }
+            if words.length() > 2 {
+                arguments.word2 = Sdl:::SDL_strdup(words[2]);
+            }
+            if words.length() > 3 {
+                arguments.word3 = Sdl:::SDL_strdup(words[3]);
+            }
+            if words.length() > 4 {
+                arguments.word4 = Sdl:::SDL_strdup(words[4]);
+            }
+            if words.length() > 5 {
+                arguments.word5 = Sdl:::SDL_strdup(words[5]);
+            }
+            if words.length() > 6 {
+                arguments.word6 = Sdl:::SDL_strdup(words[6]);
+            }
+            if words.length() > 7 {
+                arguments.word7 = Sdl:::SDL_strdup(words[7]);
+            }
+            properties: Sdl:::SDL_PropertiesID = Sdl:::SDL_CreateProperties();
+            argumentBytes: u8~* = reinterpret<u8>(arguments);
+            Sdl:::SDL_SetPointerProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argumentBytes);
+            Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_NULL));
+            Sdl:::SDL_SetNumberProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, i64(Sdl:::SDL_PROCESS_STDIO_APP));
+            Sdl:::SDL_SetBooleanProperty(properties, Sdl:::SDL_PROP_PROCESS_CREATE_STDERR_TO_STDOUT_BOOLEAN, true);
+            process: raw Sdl:::SDL_Process~* = Sdl:::SDL_CreateProcessWithProperties(properties);
+            Sdl:::SDL_DestroyProperties(properties);
+            if process != null {
+                started = true;
+                outputSize~ usize = 0;
+                bytes: raw u8~* = Sdl:::SDL_ReadProcess(process, outputSize, exitCode);
+                if bytes != null {
+                    delete output;
+                    output = copyCString(bytes);
+                    Sdl:::SDL_free(bytes);
+                }
+                Sdl:::SDL_DestroyProcess(process);
+            }
+            Sdl:::SDL_free(arguments.word0);
+            Sdl:::SDL_free(arguments.word1);
+            Sdl:::SDL_free(arguments.word2);
+            Sdl:::SDL_free(arguments.word3);
+            Sdl:::SDL_free(arguments.word4);
+            Sdl:::SDL_free(arguments.word5);
+            Sdl:::SDL_free(arguments.word6);
+            Sdl:::SDL_free(arguments.word7);
+        }
+        if !started {
+            delete output;
+            return Result<string!, string!>:::Err(`couldn't start ${words[0]}; is it installed and on PATH?`);
+        }
+        if exitCode != 0 {
+            failure: string! = `${words[0]} exited ${exitCode}: ${output}`;
+            delete output;
+            return Result<string!, string!>:::Err(failure!);
+        }
+        return Result<string!, string!>:::Ok(output!);
+    }
+
+    // Compiles `<folder>/<name>.frag` to `.frag.spv` and `.frag.msl` beside it, with the engine's shader folder on the include
+    // path for `lit-common.glsl`. The error is the compiler's own message.
+    CompileMaterialShader :: (folder: string, name: string, engineShaderFolder: string) -> string!? {
+        sourcePath: string! = `${folder}/${name}.frag`;
+        defer delete sourcePath;
+        spirvPath: string! = `${sourcePath}.spv`;
+        defer delete spirvPath;
+        mslPath: string! = `${sourcePath}.msl`;
+        defer delete mslPath;
+        includeFlag: string! = `-I${engineShaderFolder}`;
+        defer delete includeFlag;
+        compileWords: string[6] = ["glslangValidator", includeFlag, "-V", sourcePath, "-o", spirvPath];
+        when RunCommand(compileWords.borrow()) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(output) -> {
+                delete output;
+            }
+        }
+        crossWords: string[8] = ["spirv-cross", spirvPath, "--msl", "--msl-version", "20100", "--msl-decoration-binding", "--output", mslPath];
+        when RunCommand(crossWords.borrow()) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(output) -> {
+                delete output;
+            }
+        }
+        return null;
+    }
+
+    // The engine's GLSL folder (`engine/shaders`), found from the assets folder: LANTERN_ENGINE_SHADERS when set, else the
+    // checkout the assets sit in. Null when neither is there.
+    EngineShaderFolder :: (assetsDirectory: string) -> string!? {
+        explicit: string!? = environmentVariable("LANTERN_ENGINE_SHADERS");
+        if text := explicit {
+            if text.length() > 0 {
+                return explicit!;
+            }
+        }
+        delete explicit;
+        found: string!? = WorkspaceRoot(assetsDirectory);
+        guard root := found return null;
+        folder: string! = `${root}/engine/shaders`;
+        delete found;
+        return folder!;
+    }
+
+    MATERIAL_GRAPH_FILE: string : "material.graph.json";
+
+    // One material Silhouette's generated shader: its GLSL and the textures it samples in binding order, or why its graph
+    // couldn't become a shader.
+    GeneratedMaterialShader :: class {
+    public:
+        name~ string!;
+        source~ string!;
+        textureNames~ Array<string!>! = [];
+        failure~ string!? = null;
+
+        GeneratedMaterialShader~: (materialName: string) {
+            name = `${materialName}`;
+            source = "".copy();
+        }
+
+        !GeneratedMaterialShader~: () {
+            delete name;
+            delete source;
+            textureNames.freeAll();
+            delete failure;
+        }
+    }
+
+    // The Silhouette's numeric properties, which a graph's `mat_param` nodes read by name.
+    MaterialParameters :: class {
+    public:
+        names~ Array<string!>! = [];
+        values~ Array<f32>! = [];
+
+        !MaterialParameters~: () {
+            names.freeAll();
+            delete values;
+        }
+    }
+
+    ReadMaterialParameters :: (folder: string) -> MaterialParameters*! {
+        parameters := new MaterialParameters();
+        rootPath: string! = `${folder}/root.calamus`;
+        defer delete rootPath;
+        when lantern:::silhouette:::ReadCalamusFile(rootPath) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                defer delete document;
+                when document->Resolve("") {
+                    Result:::Err(message) -> {
+                        delete message;
+                    },
+                    Result:::Ok(valuesJson) -> {
+                        defer delete valuesJson;
+                        when lantern:::json:::Parse(valuesJson) {
+                            Result:::Err(message) -> {
+                                delete message;
+                            },
+                            Result:::Ok(parsed) -> {
+                                defer delete parsed;
+                                if propertiesAt := parsed->Member(parsed->root, "properties") {
+                                    child~ u32 = parsed->FirstChild(propertiesAt);
+                                    while child != lantern:::json:::NO_NODE {
+                                        if parsed->Kind(child) == lantern:::json:::JsonKind:::Number {
+                                            parameters->names.push(`${parsed->Key(child)}`);
+                                            parameters->values.push(f32(parsed->Node(child).number));
+                                        }
+                                        child = parsed->NextSibling(child);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return parameters!;
+    }
+
+    GenerateMaterialShaderFor :: (name: string, folder: string, graphText: string) -> GeneratedMaterialShader*! {
+        generated := new GeneratedMaterialShader(name);
+        parameters: MaterialParameters*! = ReadMaterialParameters(folder);
+        defer delete parameters;
+        when lantern:::materialgraph:::GenerateMaterialShaderFromText(graphText, parameters->names, parameters->values) {
+            Result:::Err(message) -> {
+                generated->failure = message!;
+            },
+            Result:::Ok(shader) -> {
+                defer delete shader;
+                delete generated->source;
+                generated->source = `${shader->source}`;
+                for textureName in shader->textureNames {
+                    generated->textureNames.push(`${textureName}`);
+                }
+            }
+        }
+        return generated!;
+    }
+
+    // Every material Silhouette with a `material.graph.json` beside its root file, in the order the Silhouettes are listed:
+    // `silhouettes/` first, then `silhouettes/materials/`. A name found in both is the first one's, as the engine finds it.
+    GenerateMaterialShaders :: (assetsDirectory: string) -> Array<GeneratedMaterialShader*!>! {
+        shaders~ Array<GeneratedMaterialShader*!>! = [];
+        seenNames~ Array<string!>! = [];
+        defer seenNames.freeAll();
+        silhouettesFolder: string! = `${assetsDirectory}/silhouettes`;
+        defer delete silhouettesFolder;
+        nestedFolder: string! = `${silhouettesFolder}/${lantern:::silhouette:::MATERIALS_FOLDER_NAME}`;
+        defer delete nestedFolder;
+        folders: string[2] = [silhouettesFolder, nestedFolder];
+        for folder in folders {
+            if !directoryExists(folder) {
+                continue;
+            }
+            when lantern:::silhouette:::SortedEntries(folder) {
+                Result:::Err(message) -> {
+                    delete message;
+                },
+                Result:::Ok(listed) -> {
+                    names~ Array<string!>! = listed!;
+                    for name in names {
+                        entryPath: string! = `${folder}/${name}`;
+                        defer delete entryPath;
+                        graphPath: string! = `${entryPath}/${MATERIAL_GRAPH_FILE}`;
+                        defer delete graphPath;
+                        alreadySeen~ bool = false;
+                        for seen in seenNames {
+                            if seen == name {
+                                alreadySeen = true;
+                            }
+                        }
+                        if alreadySeen || !pathExists(graphPath) || !lantern:::silhouette:::IsMaterialSilhouetteFolder(entryPath) {
+                            continue;
+                        }
+                        seenNames.push(`${name}`);
+                        when readTextFile(graphPath) {
+                            Result:::Err(error) -> {
+                                failed := new GeneratedMaterialShader(name);
+                                failed->failure = `${error.message()}`;
+                                delete error;
+                                shaders.push(failed!);
+                            },
+                            Result:::Ok(graphText) -> {
+                                shaders.push(GenerateMaterialShaderFor(name, entryPath, graphText));
+                                delete graphText;
+                            }
+                        }
+                    }
+                    names.freeAll();
+                }
+            }
+        }
+        return shaders!;
+    }
+
+    // The Nyx lines that load each material's compiled shader with its textures, for `BakedMaterials:::Register()`.
+    MaterialShaderRegistrations :: (shaders: Array<GeneratedMaterialShader*!>) -> string! {
+        lines~ string! = "".copy();
+        for shader in shaders {
+            arguments~ string! = "".copy();
+            for slot~ usize = 0; slot < 4; slot++ {
+                if slot < shader->textureNames.length() {
+                    arguments += `, Texture("textures/${shader->textureNames[slot]}.png")`;
+                } else {
+                    arguments += ", 0";
+                }
+            }
+            lines += `        lantern:::world:::SetMaterialShader("${shader->name}", "../game-assets/${MATERIAL_SHADERS_FOLDER}", "${shader->name}"${arguments});`;
+            lines += "\n";
+            delete arguments;
+        }
+        return lines!;
+    }
+
+    ENGINE_SHADER_INCLUDES: string[4] = ["sky-common.glsl", "surface-common.glsl", "lit-common.glsl", "lit-main.glsl"];
+
+    // A line naming the engine shader code a material shader includes, by a hash of its text, so the bake compiles every
+    // material again when the lit shader changes even though the graph didn't.
+    EngineShaderStamp :: (engineShaderFolder: string) -> string! {
+        combined~ string! = "".copy();
+        defer delete combined;
+        for includeName in ENGINE_SHADER_INCLUDES {
+            includePath: string! = `${engineShaderFolder}/${includeName}`;
+            defer delete includePath;
+            when readTextFile(includePath) {
+                Result:::Err(error) -> {
+                    delete error;
+                },
+                Result:::Ok(text) -> {
+                    combined += text;
+                    delete text;
+                }
+            }
+        }
+        hash~ u64 = 14695981039346656037;
+        for index~ usize = 0; index < combined.length(); index++ {
+            hash = (hash ^ u64(combined.byteAt(index))).wrappingMultiply(1099511628211);
+        }
+        stamp: string! = `// Compiled against the engine's lit shader ${hash}.`;
+        stampLine~ string! = stamp!;
+        stampLine += "\n";
+        return stampLine!;
+    }
+
+    // Writes (or with `writeFiles` false only checks) each generated shader into `<outputFolder>/materials`, compiling each
+    // one whose GLSL changed or whose compiled files are missing. The Ok value is whether anything was out of date.
+    BuildMaterialShaders :: (
+        shaders: Array<GeneratedMaterialShader*!>,
+        assetsDirectory: string,
+        outputFolder: string,
+        writeFiles: bool
+    ) -> Result<bool, string!> {
+        shadersFolder: string! = `${outputFolder}/${MATERIAL_SHADERS_FOLDER}`;
+        defer delete shadersFolder;
+        changed~ bool = false;
+        if shaders.length() == 0 {
+            return Result<bool, string!>:::Ok(false);
+        }
+        for shader in shaders {
+            if failure := shader->failure {
+                return Result<bool, string!>:::Err(`material '${shader->name}': ${failure}`);
+            }
+        }
+        if writeFiles && !directoryExists(shadersFolder) {
+            when createDirectories(shadersFolder) {
+                Result:::Ok(made) -> { },
+                Result:::Err(error) -> {
+                    failure: string! = `${shadersFolder}: ${error.message()}`;
+                    delete error;
+                    return Result<bool, string!>:::Err(failure!);
+                }
+            }
+        }
+        found: string!? = EngineShaderFolder(assetsDirectory);
+        defer delete found;
+        guard engineShaders := found return Result<bool, string!>:::Err("can't find the engine's shaders folder to compile material shaders; set LANTERN_ENGINE_SHADERS".copy());
+        stamp: string! = EngineShaderStamp(engineShaders);
+        defer delete stamp;
+        for shader in shaders {
+            fileName: string! = `${shader->name}.frag`;
+            defer delete fileName;
+            stampedSource: string! = `${shader->source}${stamp}`;
+            defer delete stampedSource;
+            sourceChanged~ bool = false;
+            when SyncOutput(shadersFolder, fileName, stampedSource, writeFiles) {
+                Result:::Err(message) -> {
+                    return Result<bool, string!>:::Err(message!);
+                },
+                Result:::Ok(wasStale) -> {
+                    sourceChanged = wasStale;
+                }
+            }
+            spirvPath: string! = `${shadersFolder}/${shader->name}.frag.spv`;
+            defer delete spirvPath;
+            mslPath: string! = `${shadersFolder}/${shader->name}.frag.msl`;
+            defer delete mslPath;
+            compiledMissing: bool = !pathExists(spirvPath) || !pathExists(mslPath);
+            if !sourceChanged && !compiledMissing {
+                continue;
+            }
+            changed = true;
+            if !writeFiles {
+                continue;
+            }
+            failure: string!? = CompileMaterialShader(shadersFolder, shader->name, engineShaders);
+            if problem := failure {
+                message: string! = `material '${shader->name}': ${problem}`;
+                delete failure;
+                return Result<bool, string!>:::Err(message!);
+            }
+        }
+        return Result<bool, string!>:::Ok(changed);
+    }
+}

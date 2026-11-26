@@ -52,7 +52,7 @@ layout and file format all apply. It has one function called `material`, and its
 | `mat_param` | `name`: a number in the Silhouette's `properties`; `a`: the default | a number, baked in as a constant |
 | `mat_uv` | | the surface's texture coordinate |
 | `mat_texture` | `name`: a texture in `textures/`; `a`: the coordinate (the surface's own when unwired) | a colour |
-| `mat_normal_map` | `name`: a normal-map texture; `a`: the coordinate; `b`: its strength (1) | a tangent-space normal |
+| `mat_normal_map` | `name`: a normal-map texture; `a`: the coordinate; `b`: its strength, a number or any number node (1) | a tangent-space normal, its tilt scaled by the strength |
 | `mat_add` `mat_sub` `mat_mul` | `a`, `b` | per channel; a number joins any other value |
 | `mat_lerp` | `a`, `b`, `value` | `a` towards `b` by `value` (0 to 1) |
 | `mat_one_minus` `mat_clamp` | `a` | `1 - a`, or `a` held between 0 and 1 |
@@ -98,11 +98,41 @@ Test: `engine/tests/gpu/a-material-shader-draws-its-own-surface` (a red-tinted s
 that samples a blue texture and glows green, and goes back to red when the shader is removed). Its compiled shader is
 checked in beside it in `materials/`, generated from `green_glow.graph.json`.
 
+## The bake
+
+`mist run materials` (`engine/tools/build-materials`, also run by the content watcher and the editor after a Silhouette
+save, and by `mist run package`) finds every material Silhouette with a `material.graph.json` beside its `root.calamus`,
+in `silhouettes/` and then `silhouettes/materials/`. For each one it:
+
+1. generates the GLSL, with the Silhouette's numeric `properties` as the values `mat_param` nodes read;
+2. writes it to `game-assets/materials/<name>.frag`, ending with a hash of the engine's lit shader code it includes, and
+   when that text changed (so a graph change or a lit shader change), or the compiled files are missing,
+   compiles it beside itself to `<name>.frag.spv` (`glslangValidator -I engine/shaders -V`) and `<name>.frag.msl`
+   (`spirv-cross --msl --msl-version 20100 --msl-decoration-binding`), the same tools `engine/tools/build-shaders.sh`
+   uses;
+3. adds a line to `BakedMaterials:::Register()`, after every material's `SetMaterialLook`:
+
+```nyx
+lantern:::world:::SetMaterialShader("painted_metal", "../game-assets/materials", "painted_metal", Texture("textures/wall.png"), 0, 0, 0);
+```
+
+The engine's shader folder is found from the assets folder (the checkout they sit in), or from `LANTERN_ENGINE_SHADERS`.
+A graph that can't be a material stops the bake with the node at fault, and the previous files stay. The package keeps
+the compiled `.spv` and `.msl` and drops the graph, the Silhouette and the `.frag`.
+
+`SetMaterialShader` asks the renderer for the material shader and gives it to the material's look, so every piece placed
+with that material draws with it. A graph material's look still takes the Silhouette's tint (keep it `#FFFFFF` to let the
+graph decide the colour). A shader that fails to load logs a warning and the material keeps its plain look.
+
+The platformer's sample is `assets/silhouettes/materials/painted_metal`: blue paint over the tiled wall texture, with
+its roughness from the `wear` property. Test: `engine/tests/editorbackend/the-game-materials-are-built-and-current`
+checks the baked files are current and what the bake writes for it.
+
 ## Still to come
 
 Tracked on the board under `material-graphs-an-unreal-style-material-editor-that-generates-a-shader-per-material`:
 
-1. **The bake.** `mist run materials` writes each graph's `.frag` and its compiled `.spv` and `.msl` into `game-assets/`,
-   and `BakedMaterials.nyx` registers them.
-2. **The editor.** A Material Graph tab reusing the graph canvas, with live preview.
-3. **Later.** Time and panner nodes, world position and fresnel, parameters a game changes while it runs.
+1. **The editor.** A Material Graph tab reusing the graph canvas, with live preview.
+2. **Later.** A normal map sampled at a coordinate other than the mesh's own (flipped or rotated) still tilts along
+   the mesh's UV directions, because the tangent frame is built from the mesh's UVs; tiling and offsets are fine. Time and
+   panner nodes, world position and fresnel, parameters a game changes while it runs.

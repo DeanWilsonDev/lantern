@@ -99,6 +99,7 @@ lantern:::host :: namespace {
                         if look := state->LookOf(materialName) {
                             meshRenderer.color = lantern:::core:::Color:::Rgba(piece->tint.r * look.tint.r, piece->tint.g * look.tint.g, piece->tint.b * look.tint.b, piece->tint.a);
                             meshRenderer.material = look.material;
+                            meshRenderer.materialShader = look.shader;
                         }
                     }
                     return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Ok(state->entityWorld->SpawnMesh(entity->name, GameScene(), transform, meshRenderer));
@@ -444,6 +445,41 @@ lantern:::host :: namespace {
                     state->SetMaterial(material, HandleFromScript<lantern:::renderer:::TextureTag>(texture));
                 }
                 state->SetMaterialLook(material, look);
+            }
+        });
+        worldNamespace->Function("SetMaterialShader", "(material: string, folder: string, shader: string, texture0: i64, texture1: i64, texture2: i64, texture3: i64) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            material: string! = context->Text(0);
+            defer delete material;
+            folder: string! = AssetPathArgument(context, state, 1);
+            defer delete folder;
+            shaderName: string! = context->Text(2);
+            defer delete shaderName;
+            source~ lantern:::renderer:::MaterialShaderSource = lantern:::renderer:::MaterialShaderSource { name: shaderName, directory: folder };
+            for slot~ usize = 0; slot < 4; slot++ {
+                texture: i64 = context->I64(3 + slot);
+                if texture != 0 {
+                    unsafe {
+                        source.textures[usize(source.textureCount)] = HandleFromScript<lantern:::renderer:::TextureTag>(texture);
+                    }
+                    source.textureCount += 1;
+                }
+            }
+            if Stopped(context) {
+                return;
+            }
+            unsafe {
+                when state->renderBackend->CreateMaterialShader(source) {
+                    Result:::Ok(handle) -> {
+                        state->scriptMaterialShaders.push(handle);
+                        state->SetMaterialShader(material, handle);
+                    },
+                    Result:::Err(message) -> {
+                        warning: string! = `material '${material}': ${message}; it keeps its plain look`;
+                        lantern:::core:::LogWarn("world", warning);
+                        delete warning;
+                        delete message;
+                    }
+                }
             }
         });
         worldNamespace->Function("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {

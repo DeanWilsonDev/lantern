@@ -110,7 +110,12 @@ float3 PerturbNormal(thread const float3& surface_normal, thread const float3& p
     float3 tangent = (perpendicular_y * uv_dx.x) + (perpendicular_x * uv_dy.x);
     float3 bitangent = -((perpendicular_y * uv_dx.y) + (perpendicular_x * uv_dy.y));
     float scale = rsqrt(fast::max(fast::max(dot(tangent, tangent), dot(bitangent, bitangent)), 9.9999999600419720025001879548654e-13));
-    float3 bent = fast::normalize(float3(tangent_space.xy * strength, tangent_space.z));
+    float3 scaled = float3(tangent_space.xy * strength, tangent_space.z);
+    if (dot(scaled, scaled) < 9.9999999600419720025001879548654e-13)
+    {
+        return surface_normal;
+    }
+    float3 bent = fast::normalize(scaled);
     return fast::normalize((((tangent * scale) * bent.x) + ((bitangent * scale) * bent.y)) + (surface_normal * bent.z));
 }
 
@@ -524,11 +529,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     float puddle = PuddleMask(param_6, param_7, param_8);
     float darkening = mix(1.0, 0.550000011920928955078125, wetness * (1.0 - metallic));
     darkening = mix(darkening, 0.300000011920928955078125, puddle);
-    float4 _1264 = albedo;
-    float3 _1266 = _1264.xyz * darkening;
-    albedo.x = _1266.x;
-    albedo.y = _1266.y;
-    albedo.z = _1266.z;
+    float4 _1274 = albedo;
+    float3 _1276 = _1274.xyz * darkening;
+    albedo.x = _1276.x;
+    albedo.y = _1276.y;
+    albedo.z = _1276.z;
     roughness = mix(roughness, 0.100000001490116119384765625, wetness * 0.800000011920928955078125);
     roughness = mix(roughness, 0.039999999105930328369140625, puddle);
     normal = fast::normalize(mix(normal, float3(0.0, 1.0, 0.0), float3(puddle)));
@@ -569,7 +574,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     lit += EvaluateLight(param_24, param_25, param_26, param_27, param_28, param_29, param_30);
     int local_count = min(int(locals.header.x), 8);
     LocalLight local;
-    float _1511;
+    float _1521;
     for (int index = 0; index < local_count; index++)
     {
         local.position_and_range = locals.lights[index].position_and_range;
@@ -593,13 +598,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
             float inner_cosine = local.cone.x;
             if ((inner_cosine - outer_cosine) > 9.9999997473787516355514526367188e-05)
             {
-                _1511 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
+                _1521 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
             }
             else
             {
-                _1511 = step(outer_cosine, cosine_to_axis);
+                _1521 = step(outer_cosine, cosine_to_axis);
             }
-            float cone_fade = _1511;
+            float cone_fade = _1521;
             strength *= cone_fade;
         }
         LocalLight param_33 = local;

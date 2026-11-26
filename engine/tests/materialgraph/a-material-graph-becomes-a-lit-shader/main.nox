@@ -4,14 +4,15 @@ lantern :: import lantern;
 
 GRAPH: string : "{\"graph\": \"rusty_metal\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#804020\"}, {\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"tiled\", \"kind\": \"mat_mul\", \"a\": \"coordinate\", \"b\": {\"f32\": 4.0}}, {\"id\": \"rust\", \"kind\": \"mat_texture\", \"name\": \"rust\", \"a\": \"tiled\"}, {\"id\": \"base\", \"kind\": \"mat_mul\", \"a\": \"paint\", \"b\": \"rust\"}, {\"id\": \"wear\", \"kind\": \"mat_param\", \"name\": \"wear\", \"a\": {\"f32\": 0.2}}, {\"id\": \"worn\", \"kind\": \"mat_lerp\", \"a\": {\"f32\": 0.4}, \"b\": {\"f32\": 1.0}, \"value\": \"wear\"}, {\"id\": \"bare\", \"kind\": \"mat_one_minus\", \"a\": \"wear\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"a\": \"tiled\", \"b\": {\"f32\": 0.5}}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"base\", \"bare\", \"worn\", \"\", \"bumps\"]}]}]}";
 
-Generate :: (text: string, parameterNames: Array<string>, parameterValues: Array<f32>) -> Result<lantern:::materialgraph:::MaterialShader*!, string!> {
+Generate :: (text: string, parameterNames: Array<string!>, parameterValues: Array<f32>) -> Result<lantern:::materialgraph:::MaterialShader*!, string!> {
     return lantern:::materialgraph:::GenerateMaterialShaderFromText(text, parameterNames, parameterValues);
 }
 
 ExpectRefused :: (text: string, expected: string, what: string) -> void {
-    names: string[1] = ["unused"];
+    names~ Array<string!>! = ["unused".copy()];
+    defer names.freeAll();
     values: f32[1] = [0.0f];
-    when Generate(text, names.borrow(), values.borrow()) {
+    when Generate(text, names, values.borrow()) {
         Result:::Err(message) -> {
             if !message.contains(expected) {
                 print(message);
@@ -29,9 +30,10 @@ ExpectRefused :: (text: string, expected: string, what: string) -> void {
 }
 
 main :: () -> i32 {
-    names: string[1] = ["wear"];
+    names~ Array<string!>! = ["wear".copy()];
+    defer names.freeAll();
     values: f32[1] = [0.75f];
-    when Generate(GRAPH, names.borrow(), values.borrow()) {
+    when Generate(GRAPH, names, values.borrow()) {
         Result:::Err(message) -> {
             print(message);
             delete message;
@@ -51,7 +53,8 @@ main :: () -> i32 {
             assert(source.contains("mix(0.4, 1.0, clamp(node_wear, 0.0, 1.0))"), "a lerp mixes by its weight");
             assert(source.contains("    surface.base_color = node_base;"), "the base colour is wired");
             assert(source.contains("    surface.emissive = vec3(0.0);"), "an unwired output keeps its default");
-            assert(source.contains("    surface.normal_strength = 0.5;"), "the normal map's strength is the output's strength");
+            assert(source.contains("ScaleTangentNormal(LinearToSrgbExact(texture(material_texture_1, node_tiled).rgb) * 2.0 - 1.0, 0.5)"), "the normal map scales its own tilt by its strength");
+            assert(source.contains("    surface.normal_strength = 1.0;"), "a wired normal output is used as it comes");
         }
     }
 
@@ -65,6 +68,8 @@ main :: () -> i32 {
         "node 'start' has the kind 'entry'", "a script node isn't a material node");
     ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"sample\", \"kind\": \"mat_texture\", \"name\": \"../secret\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"sample\"]}]}]}",
         "needs the name of a texture", "a texture name can't leave textures/");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"b\": \"paint\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"\", \"\", \"\", \"\", \"bumps\"]}]}]}",
+        "node 'bumps' takes a number for its strength", "a normal map's strength is a number");
     print("a material graph becomes a lit shader");
     return 0;
 }
