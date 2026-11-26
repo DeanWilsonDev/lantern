@@ -2,15 +2,17 @@ EditorCommands :: import EditorCommands;
 EditorDocument :: import EditorDocument;
 EditorKeyboard :: import EditorKeyboard;
 EditorLayout :: import EditorLayout;
+EditorModeState :: import EditorModeState;
 EditorOverlays :: import EditorOverlays;
 OutlinerState :: import OutlinerState;
+PanelVisibility :: import PanelVisibility;
 EditorSelection :: import EditorSelection;
 EditorTabs :: import EditorTabs;
 
 // Everything the editor interface keeps, in one object that App.chaos creates and offers to every
 // part of the interface as a service (@provide). Each part is a small class of its own: the document
-// (what the engine tells us), overlays (menus and dialogs), the outliner, the layout, the document tabs, the selection,
-// the commands and the keyboard. This class only builds them and gives them what they share.
+// (what the engine tells us), overlays (menus and dialogs), the outliner, the layout, the document tabs, the mode, the
+// selection, the commands and the keyboard. This class only builds them and gives them what they share.
 Editor :: class {
 public:
     document~ EditorDocument = new EditorDocument();
@@ -18,13 +20,15 @@ public:
     outliner~ OutlinerState = new OutlinerState();
     layout~ EditorLayout = new EditorLayout();
     tabs~ EditorTabs = new EditorTabs();
+    modes~ EditorModeState;
     selection~ EditorSelection;
     commands~ EditorCommands;
     keyboard~ EditorKeyboard;
 
     Editor~: () {
         this.selection = new EditorSelection(this.overlays);
-        this.commands = new EditorCommands(this.document, this.overlays, this.layout, this.outliner, this.tabs);
+        this.modes = new EditorModeState(this.tabs, this.layout);
+        this.commands = new EditorCommands(this.document, this.overlays, this.layout, this.outliner, this.tabs, this.modes);
         this.keyboard = new EditorKeyboard(this.commands, this.overlays, this.document, this.selection);
     }
 
@@ -34,7 +38,25 @@ public:
         this.document.Tick(deltaSeconds);
         this.outliner.SyncRows(this.document.revision);
         this.tabs.DropMissing();
+        this.modes.FollowBrush();
         this.commands.PollFileDialog();
         this.selection.PollContextMenu();
+    }
+
+    // The mode the editor is in ("select", "terrain", "graph" or "silhouette"; see editor-modes.nyx).
+    Mode :: () -> string {
+        return this.modes.Current();
+    }
+
+    // What is shown, for the menus and the command palette: the panels and the mode.
+    Panels :: () -> PanelVisibility {
+        panels := this.layout.Visibility();
+        return PanelVisibility {
+            outliner: panels.outliner,
+            details: panels.details,
+            drawer: panels.drawer,
+            bottomPanel: panels.bottomPanel,
+            mode: this.modes.Current()
+        };
     }
 }

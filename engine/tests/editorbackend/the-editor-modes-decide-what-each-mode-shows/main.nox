@@ -1,0 +1,34 @@
+// The world editor's modes decide what is on screen: Select mode has the Add, Selection and Entity menus and the
+// outliner; Terrain mode has the Terrain menu and page and none of those; a Silhouette or graph tab keeps only File,
+// Edit, Window and Help. The Add menu sorts the palette by kind, with Silhouettes made of several parts under
+// Silhouettes. The rules are plain Nyx functions (editor-modes.nyx and add-menu.nyx), so they are run here on a bare
+// runtime with no editor behind them; editor-mode-checks.nyx beside this file counts the checks that fail.
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+EDITOR_UI_DIRECTORY: string : "../apps/world-editor/src/ui";
+
+CHECKS_DIRECTORY: string : "tests/editorbackend/the-editor-modes-decide-what-each-mode-shows";
+CHECKS: string : "EditorModeChecks :: import EditorModeChecks;\nFailures :: () -> i32 { return EditorModeChecks:::Failures(); }";
+
+main :: () -> i32 {
+    runtime := new lantern:::nyx:::Runtime();
+    failure: lantern:::nyx:::NyxError*!? = runtime->AddImportSearchPath(EDITOR_UI_DIRECTORY);
+    assert(failure == null, "the editor's ui directory is a search path");
+    delete failure;
+    checksFailure: lantern:::nyx:::NyxError*!? = runtime->AddImportSearchPath(CHECKS_DIRECTORY);
+    assert(checksFailure == null, "the checks' directory is a search path");
+    delete checksFailure;
+    program := lantern:::testing:::Mount(runtime, CHECKS);
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    failures := lantern:::testing:::CallI32(program, "Failures", noArguments);
+    delete noArguments;
+    if failures != 0 {
+        print(`${failures} mode checks failed`);
+    }
+    assert(failures == 0, "every mode and Add menu rule holds");
+    delete program;
+    delete runtime;
+    print("the editor modes decide what each mode shows");
+    return 0;
+}

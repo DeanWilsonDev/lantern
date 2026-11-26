@@ -65,6 +65,7 @@ finding what to turn down when a frame is slow. Each effect has its own guide.
 | Document | What it tells you |
 | --- | --- |
 | [`editor.md`](editor.md) | The editor's architecture, its controls, play in editor, the C API rules and its gaps. |
+| [`editor-modes.md`](editor-modes.md) | The editor's Select and Terrain modes, what each shows, and the Add menu. |
 | [`../apps/world-editor/nox/README.md`](../apps/world-editor/nox/README.md) | The editor's Nox host: its files and how to run it. |
 
 ## Decisions, status and history

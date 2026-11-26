@@ -3,37 +3,53 @@ BottomTab :: import BottomTab;
 ConsoleFilters :: import ConsoleFilters;
 ConsolePanel :: import ConsolePanel;
 Editor :: import Editor;
+EditorMenus :: import EditorMenus;
+EditorModes :: import EditorModes;
 HistoryPanel :: import HistoryPanel;
 SilhouetteBrowser :: import SilhouetteBrowser;
 TerrainPanel :: import TerrainPanel;
 
-// The drawer under the viewport: a row of tabs (Assets, Silhouettes, Terrain, Console, History) and the page the active tab
-// names. editor.layout.bottomPanel holds the active tab, so a menu command can switch it too. This component also
+// The icon on each page's tab.
+BottomPanelUi :: namespace {
+    Icon :: (page: string) -> string {
+        return when page {
+            "assets" -> "cube",
+            "silhouettes" -> "layers",
+            "terrain" -> "chart-line",
+            "console" -> "terminal",
+            default -> "history"
+        };
+    }
+}
+
+// The drawer under the viewport: a row of tabs for the pages the mode has (Assets, Silhouettes, Terrain, Console and
+// History, see editor-modes.nyx) and the page the active tab names. editor.layout.bottomPanel holds the remembered tab,
+// so a menu command can switch it too; a mode without that page shows its own first page instead. This component also
 // creates the console's filters and provides them to the Console page below it.
 BottomPanel :: () -> Penumbra:::Component {
     @context editor~ Editor;
     @provide consoleFilters~ ConsoleFilters = new ConsoleFilters();
     return (
         <frame class="bottom-panel">
+            <frame class="tab-row">
+                <slot>
+                    !{EditorModes:::BottomPages(editor.Mode()).map((page: string) ->
+                        <BottomTab key={page} tab={page} icon={BottomPanelUi:::Icon(page)} label={EditorMenus:::PageLabel(page)} />)}
+                </slot>
+            </frame>
             <slot>
-                !{<frame class="tab-row">
-                    <BottomTab tab="assets" icon="cube" label="Assets" />
-                    <BottomTab tab="silhouettes" icon="layers" label="Silhouettes" />
-                    <BottomTab tab="terrain" icon="chart-line" label="Terrain" />
-                    <BottomTab tab="console" icon="terminal" label="Console" />
-                    <BottomTab tab="history" icon="history" label="History" />
-                </frame>}
-            </slot>
-            <slot>
-                !{editor.layout.bottomPanel == "console"
-                    ? <ConsolePanel />
-                    : editor.layout.bottomPanel == "history"
-                        ? <HistoryPanel />
-                        : editor.layout.bottomPanel == "silhouettes"
-                            ? <SilhouetteBrowser />
-                            : editor.layout.bottomPanel == "terrain"
-                                ? <TerrainPanel />
-                                : <AssetBrowser />}
+                !{(() -> Penumbra:::Component {
+                    page := EditorModes:::BottomPageShown(editor.Mode(), editor.layout.bottomPanel);
+                    return page == "console"
+                        ? <ConsolePanel />
+                        : page == "history"
+                            ? <HistoryPanel />
+                            : page == "silhouettes"
+                                ? <SilhouetteBrowser />
+                                : page == "terrain"
+                                    ? <TerrainPanel />
+                                    : <AssetBrowser />;
+                })()}
             </slot>
         </frame>
     );

@@ -1,3 +1,6 @@
+AddMenuItems :: import AddMenuItems;
+EditorModel :: import EditorModel;
+EditorModes :: import EditorModes;
 MenuEntry :: import MenuEntry;
 PanelVisibility :: import PanelVisibility;
 ToolbarState :: import ToolbarState;
@@ -5,7 +8,8 @@ ToolbarState :: import ToolbarState;
 // The menus: what each menu bar menu and the right click menu contain. A menu is a list of MenuEntry
 // values (label, command name, shortcut text, and whether it is a checked toggle, disabled, or a
 // separator). The commands are run by EditorCommands. Nothing here draws; App.chaos does that, using the
-// sizes below to place the popup.
+// sizes below to place the popup. Which menus there are, and some of their entries, depend on the editor's mode
+// (editor-modes.nyx), so the screen only offers what the mode is for.
 EditorMenus :: namespace {
     BAR_HEIGHT: f32 : 28.0f;
     POPUP_WIDTH: f32 : 250.0f;
@@ -22,9 +26,9 @@ EditorMenus :: namespace {
         return height;
     }
 
-    // The menu bar's menus, left to right.
-    Names :: () -> Array<string> {
-        return ["File", "Edit", "Selection", "View", "Entity", "Terrain", "Window", "Help"];
+    // The menu bar's menus in a mode, left to right.
+    Names :: (mode: string) -> Array<string> {
+        return EditorModes:::MenuNames(mode);
     }
 
     // An ordinary entry.
@@ -51,7 +55,7 @@ EditorMenus :: namespace {
     Entries :: (menu: string, state: ToolbarState, recentFiles: Array<string>, panels: PanelVisibility) -> Array<MenuEntry> {
         return when menu {
             "File" -> FileEntries(state, recentFiles),
-            "Edit" -> EditEntries(state),
+            "Edit" -> EditEntries(state, panels.mode),
             "Selection" -> SelectionEntries(state),
             "View" -> ViewEntries(state),
             "Entity" -> EntityEntries(state),
@@ -113,8 +117,15 @@ EditorMenus :: namespace {
         return found;
     }
 
-    // Edit: undo and redo, duplicate and delete, and the snap, space and pivot toggles.
-    EditEntries :: (state: ToolbarState) -> Array<MenuEntry> {
+    // Edit: undo and redo, which every mode shares, then in Select mode rename, duplicate and delete and the snap, space
+    // and pivot toggles.
+    EditEntries :: (state: ToolbarState, mode: string) -> Array<MenuEntry> {
+        guard EditorModes:::EditsSelection(mode) return [
+            Needs("Undo", "undo", "Ctrl+Z", state.canUndo),
+            Needs("Redo", "redo", "Ctrl+Shift+Z", state.canRedo),
+            Separator(),
+            Item("Command Palette…", "commandPalette", "Ctrl+Shift+P")
+        ];
         return [
             Needs("Undo", "undo", "Ctrl+Z", state.canUndo),
             Needs("Redo", "redo", "Ctrl+Shift+Z", state.canRedo),
@@ -279,28 +290,57 @@ EditorMenus :: namespace {
         ];
     }
 
-    // Window: each panel with a tick when it is shown, hiding every panel, and the settings.
+    // Window: the modes with a tick on the current one, each panel the mode has with a tick when it is shown, the tabs,
+    // the drawer pages the mode has, hiding every panel, and the settings.
     WindowEntries :: (panels: PanelVisibility) -> Array<MenuEntry> {
-        return [
-            Toggle("Outliner", "togglePanel:outliner", "Alt+1", panels.outliner),
-            Toggle("Details", "togglePanel:details", "Alt+2", panels.details),
-            Toggle("Content Drawer", "togglePanel:drawer", "Alt+3", panels.drawer),
-            Separator(),
-            Item("Level Tab", "levelTab", ""),
-            Item("Graph Editor", "graphTab", ""),
-            Item("Next Tab", "nextTab", "Ctrl+Tab"),
-            Item("Close Tab", "closeTab", "Ctrl+W"),
-            Separator(),
-            Toggle("Assets", "panel:assets", "Ctrl+Space", panels.drawer && panels.bottomPanel == "assets"),
-            Toggle("Silhouettes", "panel:silhouettes", "Alt+5", panels.drawer && panels.bottomPanel == "silhouettes"),
-            Toggle("Terrain", "panel:terrain", "Alt+6", panels.drawer && panels.bottomPanel == "terrain"),
-            Toggle("Console", "panel:console", "Backtick", panels.drawer && panels.bottomPanel == "console"),
-            Toggle("History", "panel:history", "Alt+4", panels.drawer && panels.bottomPanel == "history"),
-            Separator(),
-            Item("Hide or Restore All Panels", "focusViewport", "F11"),
-            Separator(),
-            Item("Settings…", "settings", "Ctrl+,")
-        ];
+        entries~ Array<MenuEntry> = [];
+        for mode in EditorModes:::Names() {
+            entries.add(Toggle(`${EditorModes:::Label(mode)} Mode`, `mode:${mode}`, EditorModes:::Shortcut(mode), panels.mode == mode));
+        }
+        entries.add(Separator());
+        if EditorModes:::ShowsRightDock(panels.mode) {
+            entries.add(Toggle("Outliner", "togglePanel:outliner", "Alt+1", panels.outliner));
+            entries.add(Toggle("Details", "togglePanel:details", "Alt+2", panels.details));
+        }
+        entries.add(Toggle("Content Drawer", "togglePanel:drawer", "Alt+3", panels.drawer));
+        entries.add(Separator());
+        entries.add(Item("Level Tab", "levelTab", ""));
+        entries.add(Item("Next Tab", "nextTab", "Ctrl+Tab"));
+        entries.add(Item("Close Tab", "closeTab", "Ctrl+W"));
+        entries.add(Separator());
+        shownPage := EditorModes:::BottomPageShown(panels.mode, panels.bottomPanel);
+        for page in EditorModes:::BottomPages(panels.mode) {
+            entries.add(Toggle(PageLabel(page), `panel:${page}`, PageShortcut(page), panels.drawer && shownPage == page));
+        }
+        entries.add(Separator());
+        entries.add(Item("Hide or Restore All Panels", "focusViewport", "F11"));
+        entries.add(Separator());
+        entries.add(Item("Settings…", "settings", "Ctrl+,"));
+        return entries;
+    }
+
+    // The name of a drawer page, as its tab and the Window menu show it.
+    PageLabel :: (page: string) -> string {
+        return when page {
+            "assets" -> "Assets",
+            "silhouettes" -> "Silhouettes",
+            "terrain" -> "Terrain",
+            "console" -> "Console",
+            "history" -> "History",
+            default -> page
+        };
+    }
+
+    // The shortcut that shows a drawer page.
+    PageShortcut :: (page: string) -> string {
+        return when page {
+            "assets" -> "Ctrl+Space",
+            "silhouettes" -> "Alt+5",
+            "terrain" -> "Alt+6",
+            "console" -> "Backtick",
+            "history" -> "Alt+4",
+            default -> ""
+        };
     }
 
     // Help: the help pages.
@@ -333,11 +373,12 @@ EditorMenus :: namespace {
         ];
     }
 
-    // Every menu command as one flat list for the command palette, each labelled with its menu
-    // ("Edit: Undo"), plus the three tools. Separators and entries with no command are left out.
+    // Every command of the menus the mode shows as one flat list for the command palette, each labelled with its menu
+    // ("Edit: Undo"), plus in Select mode the three tools and everything the Add menu places ("Add: Block"). Separators and entries with no command are left out, so a
+    // command the mode hides can't be found here either.
     AllCommands :: (state: ToolbarState, panels: PanelVisibility) -> Array<MenuEntry> {
         commands~ Array<MenuEntry> = [];
-        for menu in Names() {
+        for menu in Names(panels.mode) {
             entries := Entries(menu, state, [], panels);
             for entry in entries {
                 guard !entry.separator && entry.command != "" continue;
@@ -349,9 +390,14 @@ EditorMenus :: namespace {
                 });
             }
         }
+        guard EditorModes:::EditsSelection(panels.mode) return commands;
         commands.add(Item("Tool: Move", "tool:move", "W"));
         commands.add(Item("Tool: Rotate", "tool:rotate", "E"));
         commands.add(Item("Tool: Scale", "tool:scale", "R"));
+        for template in EditorModel:::Templates() {
+            commands.add(Item(`Add: ${template.label}`, AddMenuItems:::PlaceCommand(template.id), ""));
+        }
+        commands.add(Item("Add: New Terrain", "terrain:generate", ""));
         return commands;
     }
 

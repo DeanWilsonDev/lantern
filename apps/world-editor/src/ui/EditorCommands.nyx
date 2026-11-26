@@ -1,5 +1,7 @@
 EditorDocument :: import EditorDocument;
 EditorLayout :: import EditorLayout;
+EditorModeState :: import EditorModeState;
+EditorModes :: import EditorModes;
 EditorModel :: import EditorModel;
 EditorOverlays :: import EditorOverlays;
 EditorTabs :: import EditorTabs;
@@ -21,11 +23,13 @@ public:
     layout~ EditorLayout;
     outliner~ OutlinerState;
     tabs~ EditorTabs;
+    modes~ EditorModeState;
     pendingDialog~ string = "";
 
     EditorCommands~: (document~ EditorDocument, overlays~ EditorOverlays, layout~ EditorLayout,
-                      outliner~ OutlinerState, tabs~ EditorTabs) {
+                      outliner~ OutlinerState, tabs~ EditorTabs, modes~ EditorModeState) {
         this.tabs = tabs;
+        this.modes = modes;
         this.outliner = outliner;
         this.document = document;
         this.overlays = overlays;
@@ -53,6 +57,8 @@ public:
             "duplicateProject" -> this.overlays.OpenProject("duplicate"),
             "openProject" -> this.WhenSaved(command, () -> { this.ShowDialog("openProject"); }),
             "commandPalette" -> this.overlays.OpenPalette(),
+            "addMenu" -> this.overlays.OpenAddMenu(penumbra:::mouseX() - EditorOverlays:::MENU_OFFSET, penumbra:::mouseY() + EditorOverlays:::VIEWPORT_MENU_DROP),
+            "addMenuAtMouse" -> this.overlays.OpenAddMenu(penumbra:::mouseX(), penumbra:::mouseY()),
             "undo" -> { editorUndo(); },
             "redo" -> { editorRedo(); },
             "duplicate" -> { editorDuplicateSelection(); },
@@ -105,7 +111,7 @@ public:
     }
 
     // Runs a command of the form "prefix:argument": camera preset, duplicate along an axis, mirror, align,
-    // distribute, show a bottom panel, show a help page, choose a tool, open a recent file, and the
+    // distribute, show a bottom panel, show a help page, choose a tool, enter a mode, open a recent file, and the
     // camera bookmarks (the argument is a single digit). Unknown prefixes do nothing.
     RunPrefixedCommand~: (command: string) -> void {
         colon := command.indexOf(":", 0);
@@ -119,17 +125,45 @@ public:
             "align" -> { editorAlignSelection(argument); },
             "distribute" -> { editorDistributeSelection(argument); },
             "viewportMenu" -> this.overlays.ToggleViewportMenu(argument),
-            "panel" -> this.layout.ShowBottomPanel(argument),
+            "panel" -> this.ShowPage(argument),
             "terrain" -> TerrainUi:::Command(argument),
             "togglePanel" -> this.layout.TogglePanel(argument),
             "help" -> this.overlays.ShowHelp(argument),
             "tool" -> { editorSetTool(argument); },
+            "mode" -> this.modes.Enter(argument),
+            "add" -> this.Place(argument),
             "openRecent" -> this.OpenRecent(EditorModel:::HexDigit(argument, 0)),
             "openProjectRecent" -> this.OpenRecentProject(EditorModel:::HexDigit(argument, 0)),
             "bookmarkSet" -> { editorSetBookmark(EditorModel:::HexDigit(argument, 0)); },
             "bookmarkGo" -> { editorGoToBookmark(EditorModel:::HexDigit(argument, 0)); },
             (other) -> {}
         }
+    }
+
+    // Places a template from the Add menu in front of the camera, where Add to World in the drawer puts it too. The new
+    // entity becomes the selection, so the move tool is ready for it.
+    Place~: (templateId: string) -> void {
+        guard templateId != "" return;
+        if this.modes.Current() != EditorModes:::SELECT {
+            this.modes.Enter(EditorModes:::SELECT);
+        }
+        editorAddEntity(templateId);
+    }
+
+    // Shows a drawer page, or hides the drawer if the page is already up. A page the mode doesn't have (Terrain while
+    // selecting, say) first switches to the mode it belongs to.
+    ShowPage~: (page: string) -> void {
+        mode := this.modes.Current();
+        if !EditorModes:::HasBottomPage(mode, page) && EditorModes:::ModeOfPage(page) != "" {
+            this.modes.Enter(EditorModes:::ModeOfPage(page));
+            this.layout.OpenBottomPanel(page);
+            return;
+        }
+        if EditorModes:::BottomPageShown(mode, this.layout.bottomPanel) != page {
+            this.layout.OpenBottomPanel(page);
+            return;
+        }
+        this.layout.ShowBottomPanel(page);
     }
 
     // The answer "save" to the save question: saves, asking for a file name first if the level has none, and

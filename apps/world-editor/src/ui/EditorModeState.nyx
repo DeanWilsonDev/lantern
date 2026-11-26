@@ -1,0 +1,66 @@
+EditorLayout :: import EditorLayout;
+EditorModes :: import EditorModes;
+EditorTabs :: import EditorTabs;
+
+// Which mode the editor is in (see editor-modes.nyx for what each mode shows). The modes, Select and Terrain, are for
+// the level, so they apply on the Level tab and on an entity's tab; `levelMode` holds the one in use. While the
+// Silhouette or graph tab is up, what is shown follows that tab instead, so Current() names the tab ("silhouette" or
+// "graph"), and the level's mode comes back with the Level tab.
+//
+// Terrain mode is the terrain brush: entering it turns the brush on and leaving it turns it off. The brush can also be
+// turned on and off by B, which the editor (Nox) handles itself, so FollowBrush catches that once a frame and moves
+// levelMode to match.
+EditorModeState :: class {
+public:
+    tabs~ EditorTabs;
+    layout~ EditorLayout;
+    // Select or Terrain: the mode the level's tabs are in. A signal, so whatever reads Current() redraws when it changes.
+    @signal levelMode~ string = EditorModes:::SELECT;
+
+    EditorModeState~: (tabs~ EditorTabs, layout~ EditorLayout) {
+        this.tabs = tabs;
+        this.layout = layout;
+    }
+
+    // The mode the editor is in now.
+    Current :: () -> string {
+        if this.tabs.active == -2 {
+            return EditorModes:::GRAPH;
+        }
+        if this.tabs.active == -1 {
+            return EditorModes:::SILHOUETTE;
+        }
+        return this.levelMode;
+    }
+
+    // Enters a mode: shows the level, and turns the terrain brush on for Terrain mode and off for Select mode.
+    Enter~: (mode: string) -> void {
+        when mode {
+            "select" -> this.EnterLevelMode(EditorModes:::SELECT),
+            "terrain" -> this.EnterLevelMode(EditorModes:::TERRAIN),
+            default -> {}
+        }
+    }
+
+    // Shows the level (unless an entity's tab is up, which is on the level too) in Select or Terrain mode. Entering
+    // Terrain mode opens the drawer on the Terrain page, since the brush settings live there.
+    EnterLevelMode~: (mode: string) -> void {
+        if this.tabs.active < 0 {
+            this.tabs.Show(0);
+        }
+        this.levelMode = mode;
+        terrainOn := mode == EditorModes:::TERRAIN;
+        editorSetTerrainOption("active", terrainOn ? 1.0f : 0.0f);
+        if terrainOn {
+            this.layout.OpenBottomPanel("terrain");
+        }
+    }
+
+    // Called once a frame. When B (or the Terrain menu) turned the brush on or off, the level's mode follows.
+    FollowBrush~: () -> void {
+        wanted := editorTerrainOption("active") > 0.5f ? EditorModes:::TERRAIN : EditorModes:::SELECT;
+        if this.levelMode != wanted {
+            this.levelMode = wanted;
+        }
+    }
+}

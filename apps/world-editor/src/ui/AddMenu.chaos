@@ -1,0 +1,115 @@
+AddMenuItems :: import AddMenuItems;
+Editor :: import Editor;
+EditorModel :: import EditorModel;
+TemplateItem :: import TemplateItem;
+
+// One row of the Add menu's right-hand column: what it says and the command it runs.
+AddMenuRow :: data {
+    label: string;
+    command: string;
+}
+
+// The rows of a category: each palette template the category holds, by its label, and for Terrain the New Terrain action
+// first (its generator settings are on the Terrain page). A category with nothing in it says so.
+AddMenuUi :: namespace {
+    Rows :: (category: string) -> Array<AddMenuRow> {
+        rows~ Array<AddMenuRow> = [];
+        if category == "Terrain" {
+            rows.add(AddMenuRow { label: "New Terrain", command: "terrain:generate" });
+        }
+        for template in EditorModel:::Templates() {
+            if Category(template) == category {
+                rows.add(AddMenuRow { label: template.label, command: AddMenuItems:::PlaceCommand(template.id) });
+            }
+        }
+        if rows.length() == 0 {
+            rows.add(AddMenuRow { label: "Nothing here yet", command: "" });
+        }
+        return rows;
+    }
+
+    // The category of a template, counting its components for a Silhouette.
+    Category :: (template: TemplateItem) -> string {
+        components := template.fromSilhouette ? editorSilhouetteComponentCount(template.id) : 1;
+        return AddMenuItems:::CategoryOf(template.kind, template.fromSilhouette, components);
+    }
+
+    // The categories that have something in them, so an empty one doesn't take a row.
+    Shown :: () -> Array<string> {
+        shown~ Array<string> = [];
+        for category in AddMenuItems:::Categories() {
+            if category == "Terrain" || HasTemplates(category) {
+                shown.add(category);
+            }
+        }
+        return shown;
+    }
+
+    HasTemplates :: (category: string) -> bool {
+        for template in EditorModel:::Templates() {
+            if Category(template) == category {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The taller column's number of rows, for the menu's height.
+    RowCount :: (category: string) -> i32 {
+        categories := Shown().length();
+        items := Rows(category).length();
+        return categories > items ? categories : items;
+    }
+
+    CategoryClass :: (active: bool) -> string {
+        return active ? "add-category-active" : "add-category";
+    }
+}
+
+// Where the Add menu opens and what closes it.
+AddMenuProps :: data {
+    x: f32;
+    y: f32;
+    onDismiss: () -> void;
+}
+
+// The Add menu, which places something on the level. It floats over everything in a <portal> that closes when the
+// person clicks elsewhere. The left column lists the categories; moving the mouse over one shows its things in the right
+// column (editor.overlays.addCategory remembers which, so the menu reopens where it was). Releasing a thing runs its
+// command: a template is placed in front of the camera and selected (EditorCommands.Place), and New Terrain builds a
+// terrain from the Terrain page's generator settings.
+AddMenu :: (props: AddMenuProps) -> Penumbra:::Component {
+    @context editor~ Editor;
+    return (
+        <portal ref="add-menu" x={props.x} y={props.y}
+                width={AddMenuItems:::CATEGORY_WIDTH + AddMenuItems:::ITEM_WIDTH}
+                height={AddMenuItems:::Height(AddMenuUi:::RowCount(editor.overlays.addCategory))}
+                dismissOnOutsideClick={true} onDismiss={props.onDismiss}>
+            <frame class="add-menu">
+                <frame class="add-menu-categories">
+                    <slot>
+                        !{AddMenuUi:::Shown().map((category: string) ->
+                            <frame key={`add-category-${category}`} ref={`add-category-${category}`}
+                                   class={AddMenuUi:::CategoryClass(editor.overlays.addCategory == category)}
+                                   onHover={() -> { editor.overlays.addCategory = category; }}>
+                                <icon class="add-category-icon" icon={AddMenuItems:::Icon(category)} size={12.0f} />
+                                <text class="menu-entry-label">{category}</text>
+                                <icon class="add-category-arrow" icon="chevron-right" size={10.0f} />
+                            </frame>)}
+                    </slot>
+                </frame>
+                <frame class="add-menu-divider" />
+                <frame class="add-menu-items">
+                    <slot>
+                        !{AddMenuUi:::Rows(editor.overlays.addCategory).map((row: AddMenuRow) ->
+                            <frame key={`add-item-${row.label}-${row.command}`} ref={`add-item-${row.label}`}
+                                   class={row.command == "" ? "menu-entry-disabled" : "menu-entry"}
+                                   onRelease={() -> { if row.command != "" { editor.commands.RunCommand(row.command); } }}>
+                                <text class={row.command == "" ? "menu-entry-label-disabled" : "menu-entry-label"}>{row.label}</text>
+                            </frame>)}
+                    </slot>
+                </frame>
+            </frame>
+        </portal>
+    );
+}

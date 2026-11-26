@@ -1,0 +1,119 @@
+// The editor's modes and what each one shows. A mode is what is being done to the level, one at a time, as Blender's
+// Object and Sculpt modes are: Select (pick, place and transform entities) and Terrain (sculpt the ground). A Silhouette
+// and the graph are documents with tabs of their own, not modes, but they decide what is on screen the same way while
+// their tab is up, so they have a name here too ("silhouette" and "graph"). Each of these decides which menus, toolbar
+// groups, panels and drawer pages are shown, so the screen holds only what the job needs. docs/editor-modes.md has the
+// whole table.
+//
+// Everything here is a plain function of the mode's name: no state and no calls into the editor, so the rules can be
+// read (and tested) on their own. EditorModeState.nyx holds which mode is current; the menus, the toolbar and the
+// panels ask these functions what to show.
+EditorModes :: namespace {
+    SELECT: string : "select";
+    TERRAIN: string : "terrain";
+    GRAPH: string : "graph";
+    SILHOUETTE: string : "silhouette";
+
+    // The modes in the order the switcher shows them. The Silhouette and graph tabs aren't among them: their tab is
+    // how they are reached.
+    Names :: () -> Array<string> {
+        return [SELECT, TERRAIN];
+    }
+
+    // The word for a mode or a tab's context, as the switcher's tooltip, the Window menu and the status bar show it.
+    Label :: (mode: string) -> string {
+        return when mode {
+            "terrain" -> "Terrain",
+            "graph" -> "Graph",
+            "silhouette" -> "Silhouette",
+            default -> "Select"
+        };
+    }
+
+    // The icon of a mode's switcher button.
+    Icon :: (mode: string) -> string {
+        return when mode {
+            "terrain" -> "chart-line",
+            "graph" -> "kanban",
+            "silhouette" -> "layers",
+            default -> "cursor"
+        };
+    }
+
+    // The keyboard shortcut that enters a mode, Shift and the mode's place in the switcher, as Unreal numbers its modes.
+    Shortcut :: (mode: string) -> string {
+        return mode == TERRAIN ? "Shift+2" : "Shift+1";
+    }
+
+    // The mode a shortcut's digit enters, or "" for a digit that isn't one.
+    ForDigit :: (digit: string) -> string {
+        return when digit {
+            "1" -> SELECT,
+            "2" -> TERRAIN,
+            default -> ""
+        };
+    }
+
+    // True for the two modes that work on the level in the viewport, where the View menu and the viewport header belong.
+    OnLevel :: (mode: string) -> bool {
+        return mode == SELECT || mode == TERRAIN;
+    }
+
+    // The menu bar's menus in a mode, left to right. File, Edit, Window and Help are always there; the rest belong to
+    // the job: Add, Selection and Entity to selecting, View to the level viewport, and Terrain to sculpting.
+    MenuNames :: (mode: string) -> Array<string> {
+        return when mode {
+            "select" -> ["File", "Edit", "Add", "Selection", "View", "Entity", "Window", "Help"],
+            "terrain" -> ["File", "Edit", "View", "Terrain", "Window", "Help"],
+            default -> ["File", "Edit", "Window", "Help"]
+        };
+    }
+
+    // The drawer's pages in a mode, left to right. Console and History are always there.
+    BottomPages :: (mode: string) -> Array<string> {
+        return when mode {
+            "select" -> ["assets", "silhouettes", "console", "history"],
+            "terrain" -> ["terrain", "console", "history"],
+            "silhouette" -> ["silhouettes", "console", "history"],
+            default -> ["console", "history"]
+        };
+    }
+
+    // True when a page belongs to a mode.
+    HasBottomPage :: (mode: string, page: string) -> bool {
+        for shown in BottomPages(mode) {
+            if shown == page {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The page the drawer shows in a mode: the remembered one if the mode has it, otherwise the mode's first page.
+    BottomPageShown :: (mode: string, remembered: string) -> string {
+        guard !HasBottomPage(mode, remembered) return remembered;
+        return BottomPages(mode)[0];
+    }
+
+    // The mode to switch to for a page the current mode doesn't have: Assets and Silhouettes are Select's, Terrain is
+    // Terrain's. Console and History are in every mode, so they give "".
+    ModeOfPage :: (page: string) -> string {
+        return when page {
+            ("assets" || "silhouettes") -> SELECT,
+            "terrain" -> TERRAIN,
+            default -> ""
+        };
+    }
+
+    // True when the outliner and the details panel belong to a mode. They are for picking and changing entities, so
+    // only Select mode has them.
+    ShowsRightDock :: (mode: string) -> bool {
+        return mode == SELECT;
+    }
+
+    // True when the Edit menu's selection and transform entries (rename, duplicate, delete, snap, space and pivot)
+    // belong to a mode.
+    EditsSelection :: (mode: string) -> bool {
+        return mode == SELECT;
+    }
+}
