@@ -90,6 +90,10 @@ lantern:::gpu :: namespace {
         meshes~ lantern:::core:::Pool<GpuMesh>*!;
         /** Every uploaded texture, in a pool like the meshes. */
         textures~ lantern:::core:::Pool<GpuTexture>*!;
+        /** Material graphs' lit pipelines, by handle (docs/material-graphs.md). */
+        materialShaders~ lantern:::core:::Pool<GpuMaterialShader>*!;
+        /** The compiled shader format the device takes, kept for material shaders built after start-up. */
+        shaderFormat~ ShaderFormat = ShaderFormat:::Spirv;
         /**
          * A 1x1 white texture bound wherever a draw has no texture, so the shader always samples and multiplies and
          * never branches.
@@ -158,6 +162,7 @@ lantern:::gpu :: namespace {
             driverName = "" + "";
             meshes = new lantern:::core:::Pool<GpuMesh>();
             textures = new lantern:::core:::Pool<GpuTexture>();
+            materialShaders = new lantern:::core:::Pool<GpuMaterialShader>();
             lineBuffer.usage = Sdl:::SDL_GPU_BUFFERUSAGE_VERTEX;
             overlayBuffer.usage = Sdl:::SDL_GPU_BUFFERUSAGE_VERTEX;
         }
@@ -167,6 +172,7 @@ lantern:::gpu :: namespace {
             ReleaseDevice();
             delete meshes;
             delete textures;
+            delete materialShaders;
             delete driverName;
         }
 
@@ -298,6 +304,7 @@ lantern:::gpu :: namespace {
                 return Result<GpuRenderer*!, string!>:::Err("the GPU can't draw into and sample 16-bit float textures, which the renderer's high dynamic range scene needs" + "");
             }
             gpuRenderer->hdrFormat = Sdl:::SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+            gpuRenderer->shaderFormat = shaderFormat;
             when CreatePipelines(gpuRenderer->device, shaderFormat, gpuRenderer->colorFormat, gpuRenderer->hdrFormat, gpuRenderer->depthFormat) {
                 Result:::Ok(created) -> {
                     gpuRenderer->pipelines = created;
@@ -361,6 +368,11 @@ lantern:::gpu :: namespace {
                 texture.Release(device);
             }
             delete liveTextures;
+            liveMaterialShaders: Array<GpuMaterialShader>! = materialShaders->Drain();
+            for materialShader in liveMaterialShaders {
+                materialShader.Release(device);
+            }
+            delete liveMaterialShaders;
             whiteTexture.Release(device);
             lineBuffer.Release(device);
             overlayBuffer.Release(device);
@@ -460,6 +472,51 @@ lantern:::gpu :: namespace {
             if removed := textures->Remove(lantern:::core:::CastHandle<lantern:::renderer:::TextureTag, GpuTexture>(handle)) {
                 removed.Release(device);
             }
+        }
+
+        /**
+         * Builds a material graph's plain and skinned lit pipelines from its compiled fragment shader. Nothing is kept when
+         * either fails.
+         */
+        CreateMaterialShader~: (source: lantern:::renderer:::MaterialShaderSource) -> Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!> {
+            if source.textureCount > lantern:::renderer:::MAX_MATERIAL_SHADER_TEXTURES {
+                return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Err(`material shader ${source.name} samples ${source.textureCount} textures; at most 4`);
+            }
+            created~ GpuMaterialShader = GpuMaterialShader { textures: source.textures, textureCount: source.textureCount };
+            when CreatePipeline(device, shaderFormat, hdrFormat, depthFormat, MaterialPipelineDescription(source.name, source.directory, source.textureCount, false)) {
+                Result:::Ok(pipeline) -> {
+                    created.lit = pipeline;
+                },
+                Result:::Err(message) -> {
+                    return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Err(message!);
+                }
+            }
+            when CreatePipeline(device, shaderFormat, hdrFormat, depthFormat, MaterialPipelineDescription(source.name, source.directory, source.textureCount, true)) {
+                Result:::Ok(pipeline) -> {
+                    created.litSkinned = pipeline;
+                },
+                Result:::Err(message) -> {
+                    created.Release(device);
+                    return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Err(message!);
+                }
+            }
+            handle: lantern:::core:::Handle<GpuMaterialShader> = materialShaders->Insert(created);
+            return Result<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, string!>:::Ok(lantern:::core:::CastHandle<GpuMaterialShader, lantern:::renderer:::MaterialShaderTag>(handle));
+        }
+
+        /** Frees a material shader's pipelines. Draws that still name it use the ordinary lit pipeline. */
+        RemoveMaterialShader~: (handle: lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>) -> void {
+            if removed := materialShaders->Remove(lantern:::core:::CastHandle<lantern:::renderer:::MaterialShaderTag, GpuMaterialShader>(handle)) {
+                removed.Release(device);
+            }
+        }
+
+        /** The material shader a draw names, or null when it names none or a removed one. */
+        MaterialShaderOf :: (draw: lantern:::renderer:::DrawItem) -> GpuMaterialShader? {
+            if wanted := draw.materialShader {
+                return materialShaders->Get(lantern:::core:::CastHandle<lantern:::renderer:::MaterialShaderTag, GpuMaterialShader>(wanted));
+            }
+            return null;
         }
 
         /**
@@ -842,7 +899,13 @@ lantern:::gpu :: namespace {
                     if texture := draw.texture {
                         textureKey = texture.Index();
                     }
-                    visible.push(VisibleDraw { textureKey: textureKey, meshIndex: draw.mesh.Index(), drawIndex: drawIndex });
+                    shaderKey~ u32 = 0;
+                    if MaterialShaderOf(draw) != null {
+                        if wanted := draw.materialShader {
+                            shaderKey = wanted.Index() + 1;
+                        }
+                    }
+                    visible.push(VisibleDraw { shaderKey: shaderKey, textureKey: textureKey, meshIndex: draw.mesh.Index(), drawIndex: drawIndex });
                 } else {
                     message: string! = `draw item ${drawIndex} uses a released mesh`;
                     lantern:::core:::LogWarn("renderer", message);
@@ -1136,11 +1199,35 @@ lantern:::gpu :: namespace {
                     boundMesh~ u32 = NO_BINDING;
                     boundTexture~ u32 = NO_BINDING;
                     textureBound~ bool = false;
+                    boundShaderKey~ u32 = 0;
                     for visible in visibleDraws {
                         draw: lantern:::renderer:::DrawItem = renderWorld->draws[visible.drawIndex];
                         if mesh := meshes->Get(lantern:::core:::CastHandle<lantern:::renderer:::MeshTag, GpuMesh>(draw.mesh)) {
                             if IsSkinnedDraw(draw, mesh) != isSkinnedPass {
                                 continue;
+                            }
+                            if visible.shaderKey != boundShaderKey {
+                                pipeline~ raw Sdl:::SDL_GPUGraphicsPipeline~* = isSkinnedPass ? pipelines.litSkinned : pipelines.lit;
+                                found: GpuMaterialShader? = MaterialShaderOf(draw);
+                                if materialShader := found {
+                                    pipeline = isSkinnedPass ? materialShader.litSkinned : materialShader.lit;
+                                }
+                                Sdl:::SDL_BindGPUGraphicsPipeline(pass, pipeline);
+                                Sdl:::SDL_BindGPUFragmentSamplers(pass, 1, firstShadowBinding, 2);
+                                if materialShader := found {
+                                    if materialShader.textureCount > 0 {
+                                        materialBindings~ Sdl:::SDL_GPUTextureSamplerBinding[4] = filled<Sdl:::SDL_GPUTextureSamplerBinding, 4>(Sdl:::SDL_GPUTextureSamplerBinding { texture: whiteTexture.texture, sampler: whiteTexture.sampler });
+                                        for slot~ u32 = 0; slot < materialShader.textureCount; slot++ {
+                                            sampled: GpuTexture = TextureOrWhite(materialShader.textures[usize(slot)]);
+                                            materialBindings[usize(slot)] = Sdl:::SDL_GPUTextureSamplerBinding { texture: sampled.texture, sampler: sampled.sampler };
+                                        }
+                                        firstMaterialBinding: Sdl:::SDL_GPUTextureSamplerBinding* = reinterpret<Sdl:::SDL_GPUTextureSamplerBinding>(materialBindings);
+                                        Sdl:::SDL_BindGPUFragmentSamplers(pass, 4, firstMaterialBinding, materialShader.textureCount);
+                                    }
+                                }
+                                boundShaderKey = visible.shaderKey;
+                                boundMesh = NO_BINDING;
+                                textureBound = false;
                             }
                             if visible.meshIndex != boundMesh {
                                 vertexBinding := Sdl:::SDL_GPUBufferBinding { buffer: mesh.vertexBuffer, offset: 0 };

@@ -1,12 +1,15 @@
 // The order meshes are drawn in.
 //
-// Binding a texture or a mesh's buffers costs the driver work, so draws that share them should sit next to each
-// other. After culling, every visible draw gets a sort key (texture, then mesh, then its place in the RenderWorld)
+// Binding a pipeline, a texture or a mesh's buffers costs the driver work, so draws that share them should sit next to
+// each other. After culling, every visible draw gets a sort key (material shader, then texture, then mesh, then its place
+// in the RenderWorld)
 // and the renderer walks the sorted list, binding a texture or mesh only when it changes. The last key keeps the sort
 // stable, so two draws with the same texture and mesh stay in the order the game submitted them.
 lantern:::gpu :: namespace {
     /** One draw that survived culling, with the keys it is sorted by. */
     VisibleDraw :: struct {
+        /** 0 for the ordinary lit shader, else the material shader's pool index plus one. Draws sort by it first, since it picks the pipeline. */
+        shaderKey~ u32 = 0;
         /** The texture's pool index, or `UNTEXTURED_KEY` for a draw with no texture. */
         textureKey~ u32 = 0;
         /** The mesh's pool index. */
@@ -14,8 +17,11 @@ lantern:::gpu :: namespace {
         /** Its position in the `RenderWorld`'s draw list, to find the `DrawItem` and keep the sort stable. */
         drawIndex~ usize = 0;
 
-        /** Orders by texture, then mesh, then submission order. */
+        /** Orders by material shader, then texture, then mesh, then submission order. */
         ComesBefore :: (other: VisibleDraw) -> bool {
+            if shaderKey != other.shaderKey {
+                return shaderKey < other.shaderKey;
+            }
             if textureKey != other.textureKey {
                 return textureKey < other.textureKey;
             }

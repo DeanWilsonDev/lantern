@@ -2037,3 +2037,12 @@ now; parameters a game changes at run time are a later card. See `docs/material-
 draw's tint and vertex colour still multiply the base colour, and the draw's emissive is added to the surface's, so `tint`
 and `SetGlow` keep working on graph materials. Wetness and puddles stay in the main, so they apply to every material.
 Provisional: not reviewed by Dean.
+
+## D-260: A material shader is a renderer resource with its own pipelines, chosen per draw
+
+`RenderBackend` gains `CreateMaterialShader` and `RemoveMaterialShader`, alongside meshes and textures, and `DrawItem`
+gains an optional `materialShader` handle. The GPU renderer builds a plain and a skinned lit pipeline per material shader
+up front, so a frame never compiles anything, and sorts visible draws by shader before texture and mesh so each pipeline
+is bound once. The material's textures are part of the shader resource, not the draw, because every draw with that
+material samples the same ones; a per-draw texture override is not built. The shadow pipelines are shared by every
+material. Provisional: not reviewed by Dean.

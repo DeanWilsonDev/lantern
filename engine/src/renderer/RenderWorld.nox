@@ -8,6 +8,24 @@ lantern:::renderer :: namespace {
     /** Marks a `Handle` as naming a texture. */
     TextureTag :: struct { }
 
+    /** Marks a `Handle` as naming a material shader: a material graph's own lit shader (docs/material-graphs.md). */
+    MaterialShaderTag :: struct { }
+
+    /** How many textures one material shader samples, after the draw's texture, the two shadow maps and the normal map. */
+    MAX_MATERIAL_SHADER_TEXTURES: u32 : 4;
+
+    /**
+     * What `CreateMaterialShader` needs: where the compiled shader is (`<directory>/<name>.frag.spv` and `.msl`, written by
+     * the bake) and the textures it samples, in the order its graph named them. The backend keeps the texture handles; the
+     * textures stay the caller's to remove.
+     */
+    MaterialShaderSource :: struct {
+        name~ string = "";
+        directory~ string = "";
+        textures~ lantern:::core:::Handle<TextureTag>[4] = filled<lantern:::core:::Handle<TextureTag>, 4>(lantern:::core:::Handle<TextureTag> { });
+        textureCount~ u32 = 0;
+    }
+
     /** How many matrices a skinned draw's palette holds. The skinned shaders declare the same number. */
     MAX_PALETTE_JOINTS: usize : 32;
 
@@ -30,6 +48,12 @@ lantern:::renderer :: namespace {
         texture~ lantern:::core:::Handle<TextureTag>? = null;
         /** The normal map that adds fine bumps to the surface, or null for a smooth one. Used when `material.normalStrength` is above 0. */
         normalTexture~ lantern:::core:::Handle<TextureTag>? = null;
+        /**
+         * The material graph's shader that decides this surface's colour, metallic, roughness, emissive and normal, or null
+         * for the lit shader that reads `texture`, `material` and `normalTexture`. The tint, wetness and the material's
+         * emissive still apply either way.
+         */
+        materialShader~ lantern:::core:::Handle<MaterialShaderTag>? = null;
         /**
          * The model matrix: places the mesh's local coordinates in the world (scale, then rotate, then translate). For
          * entities, `ExtractDraws` has already interpolated it by the frame's `alpha`.

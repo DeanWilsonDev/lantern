@@ -10,6 +10,9 @@ lantern:::renderer :: namespace {
     /** What the headless pool stores per texture: nothing. */
     TextureSlot :: struct { }
 
+    /** What the headless pool stores per material shader: nothing. */
+    MaterialShaderSlot :: struct { }
+
     /** What the headless renderer counted, for tests to assert on. */
     HeadlessStats :: struct {
         /** Meshes created and not yet removed. A test that ends with more than it started has a leak. */
@@ -37,6 +40,8 @@ lantern:::renderer :: namespace {
         meshes~ lantern:::core:::Pool<MeshSlot>*!;
         /** A pool of empty slots for texture handles. */
         textures~ lantern:::core:::Pool<TextureSlot>*!;
+        /** A pool of empty slots for material shader handles. */
+        materialShaders~ lantern:::core:::Pool<MaterialShaderSlot>*!;
         /** What has been counted so far. */
         stats~ HeadlessStats = HeadlessStats { };
 
@@ -44,12 +49,14 @@ lantern:::renderer :: namespace {
         HeadlessRenderer~: () {
             meshes = new lantern:::core:::Pool<MeshSlot>();
             textures = new lantern:::core:::Pool<TextureSlot>();
+            materialShaders = new lantern:::core:::Pool<MaterialShaderSlot>();
         }
 
         /** Frees the pools. */
         !HeadlessRenderer~: () {
             delete meshes;
             delete textures;
+            delete materialShaders;
         }
 
         /** The counts so far. */
@@ -79,6 +86,17 @@ lantern:::renderer :: namespace {
         RemoveMesh~: (mesh: lantern:::core:::Handle<MeshTag>) -> void {
             meshes->Remove(lantern:::core:::CastHandle<MeshTag, MeshSlot>(mesh));
             UpdateLiveCounts();
+        }
+
+        /** Hands out a material shader handle without loading anything. */
+        CreateMaterialShader~: (source: MaterialShaderSource) -> Result<lantern:::core:::Handle<MaterialShaderTag>, string!> {
+            slot: lantern:::core:::Handle<MaterialShaderSlot> = materialShaders->Insert(MaterialShaderSlot { });
+            return Result<lantern:::core:::Handle<MaterialShaderTag>, string!>:::Ok(lantern:::core:::CastHandle<MaterialShaderSlot, MaterialShaderTag>(slot));
+        }
+
+        /** Frees the handle's slot. */
+        RemoveMaterialShader~: (shader: lantern:::core:::Handle<MaterialShaderTag>) -> void {
+            materialShaders->Remove(lantern:::core:::CastHandle<MaterialShaderTag, MaterialShaderSlot>(shader));
         }
 
         /** Hands out a texture handle. */

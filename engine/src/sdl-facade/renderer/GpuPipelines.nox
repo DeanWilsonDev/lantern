@@ -170,6 +170,42 @@ lantern:::gpu :: namespace {
     }
 
     /**
+     * A material graph's lit pipeline (docs/material-graphs.md): the lit pipeline with the material's own fragment shader,
+     * `<directory>/<name>.frag`, which reads the lit shader's four textures and then the material's, from slot 4. Skinned
+     * draws get the skinned vertex shader with the same fragment shader.
+     */
+    MaterialPipelineDescription :: (name: string, directory: string, textureCount: u32, skinned: bool) -> PipelineDescription {
+        description~ PipelineDescription = skinned ? LitSkinnedPipelineDescription() : LitPipelineDescription();
+        description.fragment = ShaderDescription {
+            name: name,
+            directory: directory,
+            stage: ShaderStageKind:::Fragment,
+            samplerCount: 4 + textureCount,
+            uniformBufferCount: 4
+        };
+        return description;
+    }
+
+    /** One material shader on the GPU: its plain and skinned lit pipelines and the textures it samples. */
+    GpuMaterialShader :: struct {
+        lit~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        litSkinned~ raw Sdl:::SDL_GPUGraphicsPipeline~* = null;
+        textures~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>[4] = filled<lantern:::core:::Handle<lantern:::renderer:::TextureTag>, 4>(lantern:::core:::Handle<lantern:::renderer:::TextureTag> { });
+        textureCount~ u32 = 0;
+
+        Release :: (device: raw Sdl:::SDL_GPUDevice~*) -> void {
+            unsafe {
+                if lit != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, lit);
+                }
+                if litSkinned != null {
+                    Sdl:::SDL_ReleaseGPUGraphicsPipeline(device, litSkinned);
+                }
+            }
+        }
+    }
+
+    /**
      * The lit pipeline for skinned meshes: `LitPipelineDescription` plus the skin buffer, with `lit-skinned.vert` and its
      * third uniform block (the joint palette, slot 2). The fragment shader is the unskinned one.
      */

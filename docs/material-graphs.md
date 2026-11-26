@@ -81,13 +81,28 @@ A graph's textures are bound after the normal map, from binding 4. A broken grap
 
 Test: `engine/tests/materialgraph/a-material-graph-becomes-a-lit-shader`.
 
+## In the renderer
+
+`RenderBackend.CreateMaterialShader(source)` takes a `MaterialShaderSource` (the compiled shader's `name` and `directory`,
+and up to four texture handles in the order the graph named them) and returns a `Handle<MaterialShaderTag>`. The GPU
+renderer builds two pipelines from it, the lit one and the skinned one, both with the material's fragment shader and
+`4 + textureCount` samplers. A `DrawItem` with `materialShader` set is drawn with them; one without, or with a removed
+handle, uses the ordinary lit pipeline. Visible draws sort by material shader first, so each pipeline is bound once a
+frame, then by texture and mesh as before. On a switch the renderer binds the shadow maps again and the material's
+textures from slot 4. Shadow maps don't change: a material decides how a surface looks, not its shape.
+
+A graph material ignores the draw's own `texture` and `normalTexture` and its uniform metallic and roughness; the tint,
+the draw's emissive and wetness still apply. `RemoveMaterialShader` frees the pipelines, not the textures.
+
+Test: `engine/tests/gpu/a-material-shader-draws-its-own-surface` (a red-tinted sphere turns green and blue under a graph
+that samples a blue texture and glows green, and goes back to red when the shader is removed). Its compiled shader is
+checked in beside it in `materials/`, generated from `green_glow.graph.json`.
+
 ## Still to come
 
 Tracked on the board under `material-graphs-an-unreal-style-material-editor-that-generates-a-shader-per-material`:
 
-1. **Per-material pipelines in the renderer.** A material shader handle on `DrawItem`, a lit pipeline (plain and skinned)
-   per material, its textures bound from binding 4, the draw list sorted by pipeline.
-2. **The bake.** `mist run materials` writes each graph's `.frag` and its compiled `.spv` and `.msl` into `game-assets/`,
+1. **The bake.** `mist run materials` writes each graph's `.frag` and its compiled `.spv` and `.msl` into `game-assets/`,
    and `BakedMaterials.nyx` registers them.
-3. **The editor.** A Material Graph tab reusing the graph canvas, with live preview.
-4. **Later.** Time and panner nodes, world position and fresnel, parameters a game changes while it runs.
+2. **The editor.** A Material Graph tab reusing the graph canvas, with live preview.
+3. **Later.** Time and panner nodes, world position and fresnel, parameters a game changes while it runs.
