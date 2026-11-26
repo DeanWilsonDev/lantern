@@ -97,11 +97,58 @@ lantern:::graphs :: namespace {
         return `${port} = ${reference}`;
     }
 
+    // The port that holds a node's link for a pin (what SetPort takes), for reading back its reference.
+    PortReference :: (node: GraphNode*, port: string) -> string {
+        if port == "next" {
+            return node->next;
+        }
+        if port == "then" {
+            return node->thenId;
+        }
+        if port == "else" {
+            return node->elseId;
+        }
+        if port == "a" {
+            return node->a;
+        }
+        if port == "b" {
+            return node->b;
+        }
+        if port == "value" {
+            return node->value;
+        }
+        if port == "condition" {
+            return node->condition;
+        }
+        if port.startsWith("case") {
+            caseNumber: usize = PortNumber(port, 4);
+            if caseNumber < node->targets.length() {
+                return node->targets[caseNumber];
+            }
+            return "";
+        }
+        if port.startsWith("arg") {
+            argumentNumber~ usize = 0;
+            digits: string = port.substring(3, port.length() - 3);
+            for digit~ usize = 0; digit < digits.length(); digit++ {
+                argumentNumber = argumentNumber * 10 + usize(digits.byteAt(digit) - 48);
+            }
+            if argumentNumber < node->arguments.length() {
+                return node->arguments[argumentNumber];
+            }
+        }
+        return "";
+    }
+
     // Every pin of a node, in rows.
     PinsOf :: (function: GraphFunction*, node: GraphNode*) -> PinList*! {
         pins := new PinList();
         kind: string = node->kind;
         pins->width = NodeWidth(kind);
+        if IsMaterialNodeKind(kind) {
+            MaterialPins(function, node, pins);
+            return pins!;
+        }
         if kind == "reroute" {
             pins->isCompact = true;
             pins->Add("a", "", false, false, 0);

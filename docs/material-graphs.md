@@ -128,11 +128,30 @@ The platformer's sample is `assets/silhouettes/materials/painted_metal`: blue pa
 its roughness from the `wear` property. Test: `engine/tests/editorbackend/the-game-materials-are-built-and-current`
 checks the baked files are current and what the bake writes for it.
 
+## In the editor
+
+Window > Graph Editor opens the Graph tab, which lists every material Silhouette under **Materials** beside the script
+graphs. Clicking one opens its graph as `material:<name>` on the same canvas script graphs use. A material that has no
+graph yet is shown as "(new graph)", and opening it writes a starter graph that looks like the Silhouette already does:
+its texture times its tint as the base colour, and its metallic and roughness as parameters.
+
+In a material graph the right-click menu offers the material kinds (inputs first, then maths) and a comment; the output
+is made with the graph and a second one is refused. Each node shows its pins and the value or link each one holds, and
+the side panel edits a node's fields, with the output's five ports labelled base colour, metallic, roughness, emissive
+and normal. A colour node's `text` is typed as `#RRGGBB`. The text under the canvas is the generated GLSL, or the line
+saying which node stops it.
+
+**Save** writes `material.graph.json` beside the Silhouette and runs the bake, so the game's compiled shader is current
+at once. The preview panel above the fields draws a spinning cube with the material as last saved, and the level
+viewport and the content browser draw every graph material with its own shader too. Tests:
+`engine/tests/graphs/a-material-graph-offers-material-nodes` and
+`engine/tests/materialgraph/a-material-graph-opens-in-the-editor`.
+
 ## Still to come
 
 Tracked on the board under `material-graphs-an-unreal-style-material-editor-that-generates-a-shader-per-material`:
 
-1. **The editor.** A Material Graph tab reusing the graph canvas, with live preview.
-2. **Later.** A normal map sampled at a coordinate other than the mesh's own (flipped or rotated) still tilts along
-   the mesh's UV directions, because the tangent frame is built from the mesh's UVs; tiling and offsets are fine. Time and
-   panner nodes, world position and fresnel, parameters a game changes while it runs.
+- A normal map sampled at a coordinate other than the mesh's own (flipped or rotated) still tilts along
+  the mesh's UV directions, because the tangent frame is built from the mesh's UVs; tiling and offsets are fine.
+- Time and panner nodes, world position and fresnel, and parameters a game changes while it runs.
+- The preview shows the material as last saved; it doesn't follow unsaved edits.

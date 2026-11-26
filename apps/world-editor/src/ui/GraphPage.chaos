@@ -62,6 +62,16 @@ GraphPageUi :: namespace {
             "not" -> ["a"],
             "reroute" -> ["a"],
             "entry" -> [],
+            "mat_scalar" -> ["a"],
+            "mat_color" -> ["text"],
+            "mat_param" -> ["name", "a"],
+            "mat_uv" -> [],
+            "mat_texture" -> ["name", "a"],
+            "mat_normal_map" -> ["name", "a", "b"],
+            "mat_lerp" -> ["a", "b", "value"],
+            "mat_one_minus" -> ["a"],
+            "mat_clamp" -> ["a"],
+            "mat_output" -> ["arg0", "arg1", "arg2", "arg3", "arg4"],
             default -> ["a", "b"]
         };
     }
@@ -153,6 +163,50 @@ GraphPageUi :: namespace {
         return text;
     }
 
+    IsMaterialGraph :: () -> bool {
+        return editorGraphName().startsWith("material:");
+    }
+
+    // The words beside a field: what each port of a material output feeds, otherwise the field's own name.
+    FieldLabel :: (kind: string, field: string) -> string {
+        if kind != "mat_output" {
+            return field;
+        }
+        return when field {
+            "arg0" -> "base colour",
+            "arg1" -> "metallic",
+            "arg2" -> "roughness",
+            "arg3" -> "emissive",
+            "arg4" -> "normal",
+            default -> field
+        };
+    }
+
+    // A field's value as the box shows it. A colour's text is shown as it is stored; every other field undoes Reference.
+    FieldShown :: (field: string) -> string {
+        stored := editorGraphField(field);
+        return field == "text" ? stored : Shown(stored);
+    }
+
+    // What a typed value is stored as: a colour's text as typed, every other field through Reference.
+    FieldStored :: (field: string, text: string) -> string {
+        return field == "text" ? text : Reference(text);
+    }
+
+    // The material Silhouettes, as `<material>\t<yes or no>` rows, and the two fields of a row.
+    MaterialRows :: () -> Array<string> {
+        return Lines(editorMaterialList());
+    }
+
+    MaterialName :: (row: string) -> string {
+        return row.split("\t")[0];
+    }
+
+    MaterialRowLabel :: (row: string) -> string {
+        parts := row.split("\t");
+        return parts[1] == "yes" ? parts[0] : `${parts[0]} (new graph)`;
+    }
+
     DirtyMark :: () -> string {
         return editorGraphIsDirty() ? " (unsaved)" : "";
     }
@@ -235,6 +289,19 @@ GraphPage :: () -> Penumbra:::Component {
                                             <text class="small-button-label">New</text>
                                         </frame>
                                     </frame>
+                                    <text class="entity-page-heading">Materials</text>
+                                    <slot>
+                                        !{GraphPageUi:::MaterialRows().map((row: string) ->
+                                            <frame key={`material-${GraphPageUi:::MaterialName(row)}`} ref={`material-open-${GraphPageUi:::MaterialName(row)}`}
+                                                   class={GraphPageUi:::FieldClass(editorGraphName() == `material:${GraphPageUi:::MaterialName(row)}`)}
+                                                   onRelease={() -> {
+                                                       pageStatus = editorGraphOpen(`material:${GraphPageUi:::MaterialName(row)}`, false);
+                                                       chosenField = "";
+                                                       revision = revision + 1;
+                                                   }}>
+                                                <text class="entity-page-component-name">{GraphPageUi:::MaterialRowLabel(row)}</text>
+                                            </frame>)}
+                                    </slot>
                                     <text class="entity-page-heading">Functions</text>
                                     <slot>
                                         !{GraphPageUi:::Lines(editorGraphFunctions()).map((name: string) ->
@@ -351,6 +418,14 @@ GraphPage :: () -> Penumbra:::Component {
                                     </scroll>
                                 </frame>
                                 <frame class="graph-side">
+                                    <slot>
+                                        !{isOpen && GraphPageUi:::IsMaterialGraph()
+                                            ? <frame key="material-preview-panel" class="material-preview-panel">
+                                                  <text class="entity-page-heading">Preview (as last saved)</text>
+                                                  <viewport ref="material-preview" class="material-preview" renderer="material" />
+                                              </frame>
+                                            : <frame key="material-preview-none" />}
+                                    </slot>
                                     <text class="entity-page-heading">{selectedId == "" ? "No node selected" : `${kind}: ${selectedId}`}</text>
                                     <slot>
                                         !{GraphPageUi:::FieldsOf(kind).map((field: string) ->
@@ -359,10 +434,10 @@ GraphPage :: () -> Penumbra:::Component {
                                                    onRelease={() -> {
                                                        chosenField = field;
                                                        chosenNode = selectedId;
-                                                       fieldText = GraphPageUi:::Shown(editorGraphField(field));
+                                                       fieldText = GraphPageUi:::FieldShown(field);
                                                    }}>
-                                                <text class="entity-page-component-name">{field}</text>
-                                                <text class="entity-page-component-count">{GraphPageUi:::Shown(editorGraphField(field))}</text>
+                                                <text class="entity-page-component-name">{GraphPageUi:::FieldLabel(kind, field)}</text>
+                                                <text class="entity-page-component-count">{GraphPageUi:::FieldShown(field)}</text>
                                             </frame>)}
                                     </slot>
                                     <frame class="field-row">
@@ -372,7 +447,7 @@ GraphPage :: () -> Penumbra:::Component {
                                         <frame ref="graph-field-set-button" class="small-button"
                                                onRelease={() -> {
                                                    guard chosenField != "" && chosenNode == selectedId return;
-                                                   pageStatus = editorGraphSetField(chosenField, GraphPageUi:::Reference(fieldText));
+                                                   pageStatus = editorGraphSetField(chosenField, GraphPageUi:::FieldStored(chosenField, fieldText));
                                                    revision = revision + 1;
                                                }}>
                                             <text class="small-button-label">Set</text>

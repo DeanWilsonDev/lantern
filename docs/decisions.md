@@ -2056,3 +2056,13 @@ the same tools and flags as `engine/tools/build-shaders.sh`, and compiles only w
 is missing, so a check run (`writeFiles` false, as the staleness test uses) needs neither tool. The `.frag` is kept beside
 the compiled files so a change shows in review, and the package leaves it out. Parameters are baked as constants from
 the Silhouette's numeric properties; changing one while the game runs is later work. Provisional: not reviewed by Dean.
+
+## D-262: A material graph is edited in the Graph tab, opened by the name `material:<material>`
+
+The editor reuses the script graph canvas for material graphs instead of a second editor: the graph layer knows which
+kinds a material graph offers, their pins and titles (`engine/src/graphs/MaterialNodes.nox`), keyed on the function being
+called `material`, and the editor backend opens, saves and creates a material's graph by the name `material:<material>`,
+reading and writing `material.graph.json` beside the Silhouette. Saving runs the material bake, so a saved material is
+ready for the game straight away. Opening a material with no graph writes a starter graph that matches its Silhouette,
+so the game looks the same until it is edited. The preview draws the saved shader, not unsaved edits, because a preview
+of unsaved edits would compile a shader on every change. Provisional: not reviewed by Dean.

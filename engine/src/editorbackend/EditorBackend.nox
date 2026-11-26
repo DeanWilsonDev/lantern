@@ -551,6 +551,9 @@ lantern:::editorbackend :: namespace {
 
         // Draws one palette template, spinning by `spin`, into the preview pixels.
         RenderTemplatePreview~: (templateId: string, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
+            if IsMaterialGraphName(templateId) {
+                return RenderMaterialPreview(MaterialOfGraphName(templateId), requestedWidth, requestedHeight, spin);
+            }
             if template := session->palette->Template(templateId) {
                 copied: lantern:::world:::WorldEntity*! = template->prototype->Copy();
                 failure: string!? = RenderEntityPreviewOf(copied, requestedWidth, requestedHeight, spin);
@@ -558,6 +561,22 @@ lantern:::editorbackend :: namespace {
                 return failure!;
             }
             return `no template '${templateId}'`;
+        }
+
+        // Draws a one metre cube with a material, spinning by `spin`, into the preview pixels: the material tab's preview.
+        RenderMaterialPreview~: (materialName: string, requestedWidth: u32, requestedHeight: u32, spin: f32) -> string!? {
+            sample := new lantern:::world:::WorldEntity(0, materialName, "material_preview");
+            defer delete sample;
+            sample->shape = lantern:::world:::Shape { kind: lantern:::world:::ShapeKind:::Box, halfExtents: lantern:::core:::Splat3(0.5f) };
+            sample->material = `${materialName}`;
+            return RenderEntityPreviewOf(sample, requestedWidth, requestedHeight, spin);
+        }
+
+        // Drops the viewport's cached materials, so each is loaded again with its current Silhouette, graph and shader.
+        ForgetMaterials~: () -> void {
+            if resources ~= gpuResources {
+                resources->ForgetMaterials();
+            }
         }
 
         // Draws one placed entity with its current values, spinning by `spin`, into the preview pixels.
