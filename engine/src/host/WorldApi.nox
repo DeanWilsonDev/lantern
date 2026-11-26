@@ -1,6 +1,44 @@
 SceneLink :: import SceneLink;
 
 lantern:::host :: namespace {
+    // The parameters a baked material shader starts with, `name=value;name=value` in slot order: the values go into
+    // `source.parameters` and the names come back, so `SetMaterialParameter` can find each slot by name.
+    ParseShaderParameters :: (text: string, source: lantern:::renderer:::MaterialShaderSource~*) -> Array<string!>! {
+        names~ Array<string!>! = [];
+        start~ usize = 0;
+        while start < text.length() && names.length() < usize(lantern:::renderer:::MAX_MATERIAL_SHADER_PARAMETERS) {
+            end~ usize = start;
+            while end < text.length() && text.byteAt(end) != 59 {
+                end++;
+            }
+            entry: string = text.substring(start, end - start);
+            equals~ usize? = null;
+            for position~ usize = 0; position < entry.length(); position++ {
+                if entry.byteAt(position) == 61 && equals == null {
+                    equals = position;
+                }
+            }
+            if split := equals {
+                value~ f32 = 0.0f;
+                when lantern:::json:::Parse(entry.substring(split + 1, entry.length() - split - 1)) {
+                    Result:::Err(message) -> {
+                        delete message;
+                    },
+                    Result:::Ok(parsed) -> {
+                        if parsed->Kind(parsed->root) == lantern:::json:::JsonKind:::Number {
+                            value = f32(parsed->Node(parsed->root).number);
+                        }
+                        delete parsed;
+                    }
+                }
+                source->parameters[names.length()] = value;
+                names.push(`${entry.substring(0, split)}`);
+            }
+            start = end + 1;
+        }
+        return names!;
+    }
+
     /**
      * Reads argument `index` as an entity id and checks that entity still exists, failing the call with not-found if it
      * doesn't. A script that keeps an id past a despawn gets an error and not a crash.
@@ -99,6 +137,7 @@ lantern:::host :: namespace {
                         if look := state->LookOf(materialName) {
                             meshRenderer.color = lantern:::core:::Color:::Rgba(piece->tint.r * look.tint.r, piece->tint.g * look.tint.g, piece->tint.b * look.tint.b, piece->tint.a);
                             meshRenderer.material = look.material;
+                            meshRenderer.materialShader = look.shader;
                         }
                     }
                     return Result<lantern:::core:::Handle<lantern:::engine:::EntityTag>, string!>:::Ok(state->entityWorld->SpawnMesh(entity->name, GameScene(), transform, meshRenderer));
@@ -445,6 +484,103 @@ lantern:::host :: namespace {
                 }
                 state->SetMaterialLook(material, look);
             }
+        });
+        worldNamespace->Function("SetMaterialShader", "(material: string, folder: string, shader: string, texture0: i64, texture1: i64, texture2: i64, texture3: i64, parameters: string, options: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            material: string! = context->Text(0);
+            defer delete material;
+            folder: string! = AssetPathArgument(context, state, 1);
+            defer delete folder;
+            shaderName: string! = context->Text(2);
+            defer delete shaderName;
+            source~ lantern:::renderer:::MaterialShaderSource = lantern:::renderer:::MaterialShaderSource { name: shaderName, directory: folder };
+            for slot~ usize = 0; slot < 4; slot++ {
+                texture: i64 = context->I64(3 + slot);
+                if texture != 0 {
+                    unsafe {
+                        source.textures[usize(source.textureCount)] = HandleFromScript<lantern:::renderer:::TextureTag>(texture);
+                    }
+                    source.textureCount += 1;
+                }
+            }
+            parameterText: string! = context->Text(7);
+            defer delete parameterText;
+            optionText: string! = context->Text(8);
+            defer delete optionText;
+            source.masked = optionText.contains("masked");
+            source.translucent = optionText.contains("translucent");
+            if Stopped(context) {
+                return;
+            }
+            parameterNames~ Array<string!>! = ParseShaderParameters(parameterText, source);
+            defer parameterNames.freeAll();
+            unsafe {
+                when state->renderBackend->CreateMaterialShader(source) {
+                    Result:::Ok(handle) -> {
+                        state->scriptMaterialShaders.push(handle);
+                        state->SetMaterialShader(material, handle);
+                        for slot~ usize = 0; slot < parameterNames.length(); slot++ {
+                            state->AddShaderParameter(material, parameterNames[slot], u32(slot));
+                        }
+                    },
+                    Result:::Err(message) -> {
+                        warning: string! = `material '${material}': ${message}; it keeps its plain look`;
+                        lantern:::core:::LogWarn("world", warning);
+                        delete warning;
+                        delete message;
+                    }
+                }
+            }
+        });
+        worldNamespace->Function("SetMaterialParameter", "(material: string, name: string, value: f32) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            material: string! = context->Text(0);
+            defer delete material;
+            parameterName: string! = context->Text(1);
+            defer delete parameterName;
+            value: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            changed~ bool = false;
+            unsafe {
+                if slot := state->ShaderParameterSlot(material, parameterName) {
+                    if look := state->LookOf(material) {
+                        if shader := look.shader {
+                            state->renderBackend->SetMaterialShaderParameter(shader, slot, value);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            context->ReturnBool(changed);
+        });
+        worldNamespace->Function("SetEntityMaterialParameter", "(entity: i64, name: string, value: f32) -> bool", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
+            guard entity := LiveEntity(context, state, 0) return;
+            parameterName: string! = context->Text(1);
+            defer delete parameterName;
+            value: f32 = context->F32(2);
+            if Stopped(context) {
+                return;
+            }
+            changed~ bool = false;
+            unsafe {
+                if record ~= state->entityWorld->BorrowMutable(entity) {
+                    if current := record->meshRenderer {
+                        if shader := current.materialShader {
+                            if slot := state->ShaderParameterSlotOf(shader, parameterName) {
+                                updated~ lantern:::engine:::MeshRenderer = current;
+                                if !updated.overridesParameters {
+                                    updated.parameters = state->renderBackend->MaterialShaderParameters(shader) ?? filled<f32, 8>(0.0f);
+                                    updated.overridesParameters = true;
+                                }
+                                updated.parameters[usize(slot)] = value;
+                                record->meshRenderer = updated;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            context->ReturnBool(changed);
         });
         worldNamespace->Function("SetMesh", "(entity: i64, mesh: i64, tint: string) -> void", new (context: lantern:::nyx:::CallContext~*) -> void [state] {
             guard entity := LiveEntity(context, state, 0) return;

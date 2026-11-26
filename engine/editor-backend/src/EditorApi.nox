@@ -87,6 +87,7 @@ lantern:::editorapi :: namespace {
         inspectorRevision~ u64? = null;
         thumbnailSide~ u32 = 0;
         graphEditor~ lantern:::graphs:::GraphEditor*!? = null;
+        openGraphIsMaterial~ bool = false;
         graphCanvas~ lantern:::graphs:::PixelCanvas*!;
 
         Editor~: (assets: string, worldPath: string) {
@@ -576,6 +577,7 @@ lantern:::editorapi :: namespace {
         editorInstance->Session()->paletteRevision += 1;
         rebuilt: string!? = lantern:::editorbackend:::RebuildGameMaterials(assetsDirectory);
         delete rebuilt;
+        editorInstance->backend->ForgetMaterials();
         return ProblemText(refreshed!);
     }
 
@@ -1237,7 +1239,15 @@ lantern:::editorapi :: namespace {
 
     // Opens a graph from its file, or makes it when `create` is true. Returns an error message, or "" when it is open.
     export GraphOpen :: (editorInstance: Editor~*, name: string, create: bool) -> string! {
-        if create {
+        makeMaterialGraph~ bool = false;
+        if lantern:::editorbackend:::IsMaterialGraphName(name) {
+            found: string!? = lantern:::editorbackend:::MaterialGraphFile(editorInstance->backend->assetsDirectory, lantern:::editorbackend:::MaterialOfGraphName(name));
+            if file := found {
+                makeMaterialGraph = !pathExists(file);
+            }
+            delete found;
+        }
+        if create || makeMaterialGraph {
             when lantern:::editorbackend:::CreateGraphFile(editorInstance->backend->assetsDirectory, name) {
                 Result:::Err(message) -> {
                     return message!;
@@ -1258,6 +1268,17 @@ lantern:::editorapi :: namespace {
     }
 
     // Lays the open function's nodes out left to right and brings them into view. Returns false when no graph is open.
+    // The open graph's name (`material:<material>` for a material's graph), or "" when none is open.
+    export GraphName :: (editorInstance: Editor*) -> string! {
+        guard open := editorInstance->graphEditor return "".copy();
+        return open->name.copy();
+    }
+
+    // Every material Silhouette, one per line as `<material>\t<yes or no>`: whether it has a graph yet.
+    export MaterialList :: (editorInstance: Editor*) -> string! {
+        return lantern:::editorbackend:::ListMaterials(editorInstance->backend->assetsDirectory);
+    }
+
     export GraphFormat :: (editorInstance: Editor~*) -> bool {
         guard open ~= editorInstance->graphEditor return false;
         lantern:::graphs:::ArrangeFunction(open->graph->functions[open->functionIndex]);
@@ -1584,12 +1605,21 @@ lantern:::editorapi :: namespace {
     // The Nyx the open graph generates, or a comment saying what stops it.
     export GraphNyx :: (editorInstance: Editor*) -> string! {
         guard open := editorInstance->graphEditor return "".copy();
-        return lantern:::editorbackend:::GeneratedNyxText(open->graph);
+        return lantern:::editorbackend:::GeneratedTextOf(editorInstance->backend->assetsDirectory, open->name, open->graph);
     }
 
     // Writes the graph and its Nyx. Returns an error message or "".
     export GraphSave :: (editorInstance: Editor~*) -> string! {
+        result~ string! = SaveOpenGraph(editorInstance);
+        if editorInstance->graphEditor != null && editorInstance->openGraphIsMaterial {
+            editorInstance->backend->ForgetMaterials();
+        }
+        return result!;
+    }
+
+    SaveOpenGraph :: (editorInstance: Editor~*) -> string! {
         guard open ~= editorInstance->graphEditor return "No graph is open.".copy();
+        editorInstance->openGraphIsMaterial = lantern:::editorbackend:::IsMaterialGraphName(open->name);
         problem: string!? = lantern:::editorbackend:::SaveGraphFiles(editorInstance->backend->assetsDirectory, open->name, open->graph);
         if problem != null {
             return ProblemText(problem!);
@@ -1600,4 +1630,5 @@ lantern:::editorapi :: namespace {
         open->SetStatus("Saved.");
         return "".copy();
     }
+
 }

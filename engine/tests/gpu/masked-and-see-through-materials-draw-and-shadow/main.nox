@@ -1,0 +1,159 @@
+// A masked material whose mask cuts everything away casts no shadow, where the same shader without its mask shader casts the
+// shadow of the whole cube (materials/cut_away.frag and cut_away.mask.frag). A see-through material (materials/green_glass.frag,
+// glowing green with its opacity in parameter 0) blends over a red wall behind it: half see-through shows both colours,
+// fully solid hides the wall, and a draw with values of its own (opacity 0) shows only the wall.
+lantern :: import lantern;
+
+PixelAt :: (pixels: Array<u8>, width: u32, x: u32, y: u32) -> u8[4] {
+    offset: usize = usize((y * width + x) * 4);
+    return [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+}
+
+PlainWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->clearColor = lantern:::core:::Color:::Black();
+    return world!;
+}
+
+MeshOrZero :: (renderer: lantern:::gpu:::GpuRenderer~*, data: lantern:::renderer:::MeshData*) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag> {
+    when renderer->CreateMesh(data) {
+        Result:::Ok(handle) -> {
+            return handle;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the mesh uploads");
+            return lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+        }
+    }
+}
+
+ShaderOrNull :: (renderer: lantern:::gpu:::GpuRenderer~*, source: lantern:::renderer:::MaterialShaderSource) -> lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>? {
+    when renderer->CreateMaterialShader(source) {
+        Result:::Ok(handle) -> {
+            return handle;
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the material shader builds");
+            return null;
+        }
+    }
+}
+
+RenderCentreRow :: (renderer: lantern:::gpu:::GpuRenderer~*, world: lantern:::renderer:::RenderWorld*, pixels: Array<u8>!~*, size: u32, x: u32) -> u8[4] {
+    when renderer->RenderOffscreen(world, size, size, pixels^*) {
+        Result:::Ok(report) -> {
+            return PixelAt(pixels^*, size, x, size / 2);
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the frame renders");
+            return [0, 0, 0, 0];
+        }
+    }
+}
+
+FOLDER: string : "tests/gpu/masked-and-see-through-materials-draw-and-shadow/materials";
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            floorData := lantern:::renderer:::Plane(40.0f, 40.0f);
+            defer delete floorData;
+            cubeData := lantern:::renderer:::Cube(2.0f);
+            defer delete cubeData;
+            wallData := lantern:::renderer:::Cube(8.0f);
+            defer delete wallData;
+            sphereData := lantern:::renderer:::Sphere(1.0f, 32, 16);
+            defer delete sphereData;
+            floor := MeshOrZero(renderer, floorData);
+            cube := MeshOrZero(renderer, cubeData);
+            wall := MeshOrZero(renderer, wallData);
+            sphere := MeshOrZero(renderer, sphereData);
+
+            masked~ lantern:::renderer:::MaterialShaderSource = lantern:::renderer:::MaterialShaderSource { name: "cut_away", directory: FOLDER, masked: true };
+            maskedShader := ShaderOrNull(renderer, masked);
+            unmasked~ lantern:::renderer:::MaterialShaderSource = lantern:::renderer:::MaterialShaderSource { name: "cut_away", directory: FOLDER };
+            unmaskedShader := ShaderOrNull(renderer, unmasked);
+            glass~ lantern:::renderer:::MaterialShaderSource = lantern:::renderer:::MaterialShaderSource { name: "green_glass", directory: FOLDER, translucent: true };
+            glass.parameters[0] = 0.5f;
+            glassShader := ShaderOrNull(renderer, glass);
+
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 128;
+            white := lantern:::core:::Color:::White();
+
+            sunWorld := PlainWorld();
+            defer delete sunWorld;
+            sunWorld->light = lantern:::renderer:::DirectionalLight {
+                direction: lantern:::core:::Normalize3(Vec3 { x: 1.0f, y: -1.0f, z: 0.0f }),
+                color: lantern:::core:::Color:::White(),
+                ambient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f),
+                groundAmbient: lantern:::core:::Color:::Rgb(0.05f, 0.05f, 0.05f)
+            };
+            sunWorld->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 14.0f, z: 0.01f }, Vec3 { });
+            sunWorld->Draw(floor, null, Mat4 { }, white);
+            sunWorld->Draw(cube, null, Mat4:::translation(Vec3 { x: 0.0f, y: 1.0f, z: 0.0f }), white);
+
+            sunWorld->draws[1].materialShader = unmaskedShader;
+            wholeShadow: u8[4] = RenderCentreRow(renderer, sunWorld, pixels, size, 76);
+            sunWorld->draws[1].materialShader = maskedShader;
+            cutShadow: u8[4] = RenderCentreRow(renderer, sunWorld, pixels, size, 76);
+            cutTop: u8[4] = RenderCentreRow(renderer, sunWorld, pixels, size, 64);
+            if !(wholeShadow[0] < 80 && cutShadow[0] > 100) {
+                print(`shadow without the mask shader ${wholeShadow[0]}, with it ${cutShadow[0]}`);
+            }
+            assert(wholeShadow[0] < 80, "without its mask shader a cut-away cube still casts the shadow of its whole mesh");
+            assert(cutShadow[0] > 100, "with it the cut-away cube casts no shadow");
+            assert(cutTop[0] > 100, "and the floor shows where the cube would be");
+
+            glassWorld := PlainWorld();
+            defer delete glassWorld;
+            glassWorld->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 0.0f, z: 4.0f }, Vec3 { });
+            glassWorld->Draw(sphere, null, Mat4 { }, white);
+            glassWorld->Draw(wall, null, Mat4:::translation(Vec3 { x: 0.0f, y: 0.0f, z: -7.0f }), lantern:::core:::Color:::Black());
+            glassWorld->draws[1].material.emissive = lantern:::core:::Color:::Rgb(1.0f, 0.0f, 0.0f);
+            glassWorld->draws[0].materialShader = glassShader;
+
+            half: u8[4] = RenderCentreRow(renderer, glassWorld, pixels, size, 64);
+            if !(half[0] > half[2] + 40 && half[1] > half[2] + 40) {
+                print(`half see-through: ${half[0]}, ${half[1]}, ${half[2]}`);
+            }
+            assert(half[0] > half[2] + 40 && half[1] > half[2] + 40, "half see-through glass shows the red wall behind its own green");
+
+            if handle := glassShader {
+                renderer->SetMaterialShaderParameter(handle, 0, 1.0f);
+            }
+            solid: u8[4] = RenderCentreRow(renderer, glassWorld, pixels, size, 64);
+            if !(solid[1] > half[1] && solid[0] <= solid[2] + 4) {
+                print(`solid: ${solid[0]}, ${solid[1]}, ${solid[2]}; half ${half[0]}, ${half[1]}`);
+            }
+            assert(solid[1] > half[1] && solid[0] <= solid[2] + 4, "fully solid, the glass hides the wall");
+
+            glassWorld->draws[0].overridesParameters = true;
+            glassWorld->draws[0].parameters[0] = 0.0f;
+            clear: u8[4] = RenderCentreRow(renderer, glassWorld, pixels, size, 64);
+            if !(clear[0] > 100 && clear[1] <= clear[2] + 4) {
+                print(`a draw with its own opacity 0: ${clear[0]}, ${clear[1]}, ${clear[2]}`);
+            }
+            assert(clear[0] > 100 && clear[1] <= clear[2] + 4, "a draw with its own opacity of 0 shows only the wall");
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("masked and see-through materials draw and shadow");
+    return 0;
+}

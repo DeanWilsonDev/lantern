@@ -25,6 +25,8 @@ lantern:::editorbackend :: namespace {
         name~ string!;
         texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
         look~ lantern:::renderer:::MaterialLook? = null;
+        shaderTextures~ Array<lantern:::core:::Handle<lantern:::renderer:::TextureTag>>! = [];
+        translucent~ bool = false;
 
         CachedMaterial~: (materialName: string, materialTexture: lantern:::core:::Handle<lantern:::renderer:::TextureTag>?, materialLook: lantern:::renderer:::MaterialLook?) {
             name = `${materialName}`;
@@ -34,6 +36,7 @@ lantern:::editorbackend :: namespace {
 
         !CachedMaterial~: () {
             delete name;
+            delete shaderTextures;
         }
     }
 
@@ -90,6 +93,9 @@ lantern:::editorbackend :: namespace {
         markers~ Array<CachedMarkerMesh>! = [];
         materials~ Array<CachedMaterial*!>! = [];
         frame~ u64 = 0;
+        previewSphere~ lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = null;
+        previewBackdrop~ lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = null;
+        previewChecker~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
         fontAtlas~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
         fontAtlasFailed~ bool = false;
 
@@ -158,6 +164,141 @@ lantern:::editorbackend :: namespace {
             return fontAtlas;
         }
 
+        // Drops every cached material, its textures and its material shader, so each is loaded again from its Silhouette,
+        // its graph and its compiled shader the next time it is drawn. The editor calls it after a material changes on disk.
+        ForgetMaterials~: () -> void {
+            textures~ Array<lantern:::core:::Handle<lantern:::renderer:::TextureTag>>! = [];
+            defer delete textures;
+            shaders~ Array<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>>! = [];
+            defer delete shaders;
+            for cached in materials {
+                if texture := cached->texture {
+                    textures.push(texture);
+                }
+                for shaderTexture in cached->shaderTextures {
+                    textures.push(shaderTexture);
+                }
+                if look := cached->look {
+                    if shader := look.shader {
+                        shaders.push(shader);
+                    }
+                }
+            }
+            materials.freeAll();
+            materials = [];
+            for texture in textures {
+                viewportRenderer->RemoveTexture(texture);
+            }
+            for shader in shaders {
+                viewportRenderer->RemoveMaterialShader(shader);
+            }
+        }
+
+        // A texture from `textures/NAME.png`, or a grey checker with a warning when the file can't be read. Null only when the
+        // upload fails.
+        LoadNamedTexture~: (materialName: string, textureName: string) -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
+            path: string! = `${assetsDirectory}/textures/${textureName}.png`;
+            defer delete path;
+            data~ lantern:::renderer:::TextureData*!? = null;
+            when lantern:::renderer:::TextureData:::LoadPng(path) {
+                Result:::Ok(loaded) -> {
+                    data = loaded!;
+                },
+                Result:::Err(failure) -> {
+                    message: string! = `material '${materialName}': ${failure}; using a checker`;
+                    lantern:::core:::LogWarn("editor", message);
+                    delete message;
+                    delete failure;
+                    data = lantern:::renderer:::TextureData:::Checker(64, 8, lantern:::core:::Color:::Rgb(0.8f, 0.8f, 0.8f), lantern:::core:::Color:::Rgb(0.55f, 0.55f, 0.6f));
+                }
+            }
+            defer delete data;
+            guard loadedData := data return null;
+            when viewportRenderer->CreateTexture(loadedData) {
+                Result:::Ok(handle) -> {
+                    return handle;
+                },
+                Result:::Err(failure) -> {
+                    message: string! = `uploading '${materialName}' failed: ${failure}`;
+                    lantern:::core:::LogError("editor", message);
+                    delete message;
+                    delete failure;
+                    return null;
+                }
+            }
+        }
+
+        // The material graph's compiled shader for a material, when the game's `game-assets/materials` has one, with the
+        // textures its graph samples. Null when the material has no graph or its shader isn't built.
+        LoadMaterialShader~: (materialName: string, cached: CachedMaterial~*) -> lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>? {
+            game: string!? = GameAssetsFolder(assetsDirectory);
+            defer delete game;
+            guard gameFolder := game return null;
+            shaderFolder: string! = `${gameFolder}/${MATERIAL_SHADERS_FOLDER}`;
+            defer delete shaderFolder;
+            compiledPath: string! = `${shaderFolder}/${materialName}.frag.spv`;
+            defer delete compiledPath;
+            if !pathExists(compiledPath) {
+                return null;
+            }
+            graphFile: string!? = MaterialGraphFile(assetsDirectory, materialName);
+            defer delete graphFile;
+            guard graphPath := graphFile return null;
+            silhouetteFolder: string! = ParentDirectory(graphPath);
+            defer delete silhouetteFolder;
+            graphText~ string! = "".copy();
+            defer delete graphText;
+            when readTextFile(graphPath) {
+                Result:::Err(error) -> {
+                    delete error;
+                    return null;
+                },
+                Result:::Ok(text) -> {
+                    delete graphText;
+                    graphText = text!;
+                }
+            }
+            generated: GeneratedMaterialShader*! = GenerateMaterialShaderFor(materialName, silhouetteFolder, graphText);
+            defer delete generated;
+            if failure := generated->failure {
+                message: string! = `material '${materialName}': ${failure}`;
+                lantern:::core:::LogWarn("editor", message);
+                delete message;
+                return null;
+            }
+            source~ lantern:::renderer:::MaterialShaderSource = lantern:::renderer:::MaterialShaderSource { name: materialName, directory: shaderFolder };
+            maskPath: string! = `${shaderFolder}/${materialName}.mask.frag.spv`;
+            defer delete maskPath;
+            source.masked = generated->maskSource.length() > 0 && pathExists(maskPath);
+            source.translucent = generated->isTranslucent;
+            for slot~ usize = 0; slot < generated->parameterDefaults.length() && slot < usize(lantern:::renderer:::MAX_MATERIAL_SHADER_PARAMETERS); slot++ {
+                source.parameters[slot] = generated->parameterDefaults[slot];
+            }
+            for textureName in generated->textureNames {
+                if source.textureCount >= lantern:::renderer:::MAX_MATERIAL_SHADER_TEXTURES {
+                    break;
+                }
+                if handle := LoadNamedTexture(materialName, textureName) {
+                    source.textures[usize(source.textureCount)] = handle;
+                    source.textureCount += 1;
+                    cached->shaderTextures.push(handle);
+                }
+            }
+            when viewportRenderer->CreateMaterialShader(source) {
+                Result:::Ok(handle) -> {
+                    cached->translucent = source.translucent;
+                    return handle;
+                },
+                Result:::Err(failure) -> {
+                    message: string! = `material '${materialName}': ${failure}; it keeps its plain look`;
+                    lantern:::core:::LogWarn("editor", message);
+                    delete message;
+                    delete failure;
+                    return null;
+                }
+            }
+        }
+
         // The texture for a material name, loaded from `textures/NAME.png` in the assets folder. A missing
         // or unreadable file falls back to a grey checker with a warning, so the entity is still visible. No
         // material gives null (untextured).
@@ -188,47 +329,71 @@ lantern:::editorbackend :: namespace {
                 look = definition->Look();
             }
             delete loadedDefinition;
-            if textureName.length() == 0 {
-                delete textureName;
-                materials.push(new CachedMaterial(name, null, look));
-                return null;
-            }
-            path: string! = `${assetsDirectory}/textures/${textureName}.png`;
-            delete textureName;
-            data~ lantern:::renderer:::TextureData*!? = null;
-            when lantern:::renderer:::TextureData:::LoadPng(path) {
-                Result:::Ok(loaded) -> {
-                    data = loaded!;
-                },
-                Result:::Err(failure) -> {
-                    message: string! = `material '${name}': ${failure}; using a checker`;
-                    lantern:::core:::LogWarn("editor", message);
-                    delete message;
-                    delete failure;
-                    data = lantern:::renderer:::TextureData:::Checker(64, 8, lantern:::core:::Color:::Rgb(0.8f, 0.8f, 0.8f), lantern:::core:::Color:::Rgb(0.55f, 0.55f, 0.6f));
-                }
-            }
-            delete path;
             texture~ lantern:::core:::Handle<lantern:::renderer:::TextureTag>? = null;
-            if loadedData := data {
-                when viewportRenderer->CreateTexture(loadedData) {
-                    Result:::Ok(handle) -> {
-                        texture = handle;
-                    },
-                    Result:::Err(failure) -> {
-                        message: string! = `uploading '${name}' failed: ${failure}`;
-                        lantern:::core:::LogError("editor", message);
-                        delete message;
-                        delete failure;
-                    }
-                }
+            if textureName.length() > 0 {
+                texture = LoadNamedTexture(name, textureName);
             }
-            delete data;
-            materials.push(new CachedMaterial(name, texture, look));
+            delete textureName;
+            cached~ CachedMaterial*! = new CachedMaterial(name, texture, look);
+            if present := look {
+                withShader~ lantern:::renderer:::MaterialLook = present;
+                withShader.shader = LoadMaterialShader(name, cached);
+                cached->look = withShader;
+            }
+            materials.push(cached!);
             return texture;
         }
 
         // The mesh for a marker kind, made on first use. A plane marker has no mesh (it is drawn as lines).
+        // A smooth half-metre sphere for the material preview, made the first time it is asked for.
+        PreviewSphereMesh~: () -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+            if made := previewSphere {
+                return made;
+            }
+            data := lantern:::renderer:::Sphere(0.5f, 96, 48);
+            previewSphere = UploadMesh(viewportRenderer, data, "material preview sphere");
+            delete data;
+            return previewSphere;
+        }
+
+        MaterialIsTranslucent~: (material: string) -> bool {
+            MaterialTexture(material);
+            for cached in materials {
+                if cached->name == material {
+                    return cached->translucent;
+                }
+            }
+            return false;
+        }
+
+        PreviewBackdropMesh~: () -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
+            if made := previewBackdrop {
+                return made;
+            }
+            data := lantern:::renderer:::BoxMesh(Vec3 { x: 1.8f, y: 1.4f, z: 0.02f }, false);
+            previewBackdrop = UploadMesh(viewportRenderer, data, "material preview backdrop");
+            delete data;
+            return previewBackdrop;
+        }
+
+        PreviewCheckerTexture~: () -> lantern:::core:::Handle<lantern:::renderer:::TextureTag>? {
+            if made := previewChecker {
+                return made;
+            }
+            data := lantern:::renderer:::TextureData:::Checker(256, 12, lantern:::core:::Color:::Rgb(0.82f, 0.74f, 0.62f), lantern:::core:::Color:::Rgb(0.12f, 0.13f, 0.16f));
+            when viewportRenderer->CreateTexture(data) {
+                Result:::Ok(handle) -> {
+                    previewChecker = handle;
+                },
+                Result:::Err(failure) -> {
+                    lantern:::core:::LogWarn("editor", failure);
+                    delete failure;
+                }
+            }
+            delete data;
+            return previewChecker;
+        }
+
         MarkerMeshHandle~: (marker: lantern:::editor:::MarkerMesh) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
             if marker == lantern:::editor:::MarkerMesh:::Plane {
                 return null;

@@ -1,0 +1,57 @@
+// The world editor opens a material's graph by the name `material:<material>`: the material list says which materials have
+// a graph yet, the graph loads from beside its Silhouette, its generated text is the shader, and an existing graph is never
+// replaced by a starter one.
+lantern :: import lantern;
+
+ASSETS: string : "../games/platformer/assets";
+
+main :: () -> i32 {
+    materials: string! = lantern:::editorbackend:::ListMaterials(ASSETS);
+    assert(materials.contains("painted_metal\tyes\n"), "a material with a graph is listed as having one");
+    assert(materials.contains("warm_plaster\tno\n"), "a material without a graph is listed as having none");
+    delete materials;
+
+    assert(lantern:::editorbackend:::IsMaterialGraphName("material:painted_metal"), "a material graph name starts with material:");
+    assert(!lantern:::editorbackend:::IsMaterialGraphName("lamp_pulse"), "a script graph name does not");
+
+    when lantern:::editorbackend:::GraphFileOf(ASSETS, "material:no_such_material") {
+        Result:::Err(message) -> {
+            assert(message.contains("no_such_material"), "a missing material is named in the refusal");
+            delete message;
+        },
+        Result:::Ok(file) -> {
+            delete file;
+            print("a graph file was found for a material that does not exist");
+        }
+    }
+
+    when lantern:::editorbackend:::LoadGraphByName(ASSETS, "material:painted_metal") {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return 1;
+        },
+        Result:::Ok(loaded) -> {
+            graph: lantern:::graphs:::Graph*! = loaded!;
+            shaderText: string! = lantern:::editorbackend:::GeneratedTextOf(ASSETS, "material:painted_metal", graph);
+            assert(shaderText.contains("SurfaceOf"), "a material graph's generated text is its shader");
+            assert(shaderText.contains("painted_metal"), "the shader names the material it came from");
+            delete shaderText;
+            delete graph;
+        }
+    }
+
+    when lantern:::editorbackend:::CreateMaterialGraphFile(ASSETS, "material:painted_metal") {
+        Result:::Err(message) -> {
+            assert(message.contains("already has a graph"), "an existing material graph is not replaced");
+            delete message;
+        },
+        Result:::Ok(created) -> {
+            delete created;
+            print("a starter graph replaced an existing one");
+        }
+    }
+
+    print("a material graph opens in the editor");
+    return 0;
+}

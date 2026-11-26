@@ -10,7 +10,7 @@ shader_files=(
     lit.vert lit.frag lit-skinned.vert
     lines.vert lines.frag
     overlay.vert overlay.frag
-    shadow.vert shadow.frag shadow-skinned.vert
+    shadow.vert shadow.frag shadow-skinned.vert shadow-masked.vert shadow-masked-skinned.vert
     fullscreen.vert sky.vert sky.frag
     bloom-downsample.frag bloom-upsample.frag composite.frag fxaa.frag
     ao.frag ao-blur.frag ssr.frag

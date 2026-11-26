@@ -1,0 +1,134 @@
+// A material graph becomes the SurfaceOf function of a lit fragment shader: constants, a parameter, maths, texture samples and a
+// normal map feed one output node, and a graph that can't be a material is refused with the node at fault.
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"rusty_metal\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#804020\"}, {\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"tiled\", \"kind\": \"mat_mul\", \"a\": \"coordinate\", \"b\": {\"f32\": 4.0}}, {\"id\": \"rust\", \"kind\": \"mat_texture\", \"name\": \"rust\", \"a\": \"tiled\"}, {\"id\": \"base\", \"kind\": \"mat_mul\", \"a\": \"paint\", \"b\": \"rust\"}, {\"id\": \"wear\", \"kind\": \"mat_param\", \"name\": \"wear\", \"a\": {\"f32\": 0.2}}, {\"id\": \"worn\", \"kind\": \"mat_lerp\", \"a\": {\"f32\": 0.4}, \"b\": {\"f32\": 1.0}, \"value\": \"wear\"}, {\"id\": \"bare\", \"kind\": \"mat_one_minus\", \"a\": \"wear\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"a\": \"tiled\", \"b\": {\"f32\": 0.5}}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"base\", \"bare\", \"worn\", \"\", \"bumps\"]}]}]}";
+
+MOVING: string : "{\"graph\": \"neon_flow\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"flow\", \"kind\": \"mat_panner\", \"b\": {\"f32\": 0.5}, \"value\": {\"f32\": -0.25}}, {\"id\": \"pulse\", \"kind\": \"mat_time\", \"a\": {\"f32\": 3.0}}, {\"id\": \"wave\", \"kind\": \"mat_sine\", \"a\": \"pulse\"}, {\"id\": \"rim\", \"kind\": \"mat_fresnel\", \"a\": {\"f32\": 3.0}}, {\"id\": \"ground\", \"kind\": \"mat_world_position\", \"name\": \"xz\"}, {\"id\": \"height\", \"kind\": \"mat_world_position\", \"name\": \"y\"}, {\"id\": \"grate\", \"kind\": \"mat_texture\", \"name\": \"grate\", \"a\": \"flow\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"grate_normal\", \"a\": \"ground\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"grate\", \"\", \"height\", \"rim\", \"bumps\", \"wave\"]}]}]}";
+
+Generate :: (text: string, parameterNames: Array<string!>, parameterValues: Array<f32>) -> Result<lantern:::materialgraph:::MaterialShader*!, string!> {
+    return lantern:::materialgraph:::GenerateMaterialShaderFromText(text, parameterNames, parameterValues);
+}
+
+ExpectRefused :: (text: string, expected: string, what: string) -> void {
+    names~ Array<string!>! = ["unused".copy()];
+    defer names.freeAll();
+    values: f32[1] = [0.0f];
+    when Generate(text, names, values.borrow()) {
+        Result:::Err(message) -> {
+            if !message.contains(expected) {
+                print(message);
+                print(what);
+            }
+            assert(message.contains(expected), "a broken graph is refused with its reason");
+            delete message;
+        },
+        Result:::Ok(shader) -> {
+            delete shader;
+            print(what);
+            assert(false, "a broken graph is refused");
+        }
+    }
+}
+
+main :: () -> i32 {
+    names~ Array<string!>! = ["wear".copy()];
+    defer names.freeAll();
+    values: f32[1] = [0.75f];
+    when Generate(GRAPH, names, values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the graph becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            defer delete shader;
+            source: string = shader->source;
+            assert(source.startsWith("// Generated from the material graph 'rusty_metal'"), "the shader says where it came from");
+            assert(source.contains("#include \"lit-common.glsl\"") && source.contains("#include \"lit-main.glsl\""), "it sits between the lit shader's halves");
+            assert(shader->textureNames.length() == 2 && shader->textureNames[0] == "rust" && shader->textureNames[1] == "rust_normal", "it samples two textures, in order");
+            assert(source.contains("layout(set = 2, binding = 4) uniform sampler2D material_texture_0;"), "the first texture is bound after the normal map");
+            assert(source.contains("layout(set = 2, binding = 5) uniform sampler2D material_texture_1;"), "the second follows it");
+            assert(source.contains("    vec2 node_tiled = node_coordinate * 4.0;"), "a coordinate scales by a number");
+            assert(source.contains("    vec3 node_rust = texture(material_texture_0, node_tiled).rgb;"), "a texture samples at the tiled coordinate");
+            assert(source.contains("    float node_wear = material.parameters[0].x;"), "a parameter reads its uniform slot");
+            assert(source.contains("// parameter 0: wear"), "the shader names its parameter slots");
+            assert(shader->parameterNames.length() == 1 && shader->parameterNames[0] == "wear", "the parameter is named by its slot");
+            assert(shader->parameterDefaults.length() == 1 && shader->parameterDefaults[0] == 0.75f, "it starts at the Silhouette's value");
+            assert(source.contains("    MaterialSurface surface = DefaultSurface(uv);"), "the surface starts from every field set");
+            assert(source.contains("    surface.normal_uv = node_tiled;"), "the normal map's tangent frame follows its own coordinate");
+            assert(source.contains("    surface.opacity_mask = 1.0;"), "an unwired mask leaves the surface solid");
+            assert(source.contains("mix(0.4, 1.0, clamp(node_wear, 0.0, 1.0))"), "a lerp mixes by its weight");
+            assert(source.contains("    surface.base_color = node_base;"), "the base colour is wired");
+            assert(source.contains("    surface.opacity = 1.0;") && !shader->isTranslucent, "an unwired opacity leaves the surface opaque");
+            assert(shader->maskSource.length() == 0, "a graph with no mask needs no shadow shader");
+            assert(source.contains("    surface.emissive = vec3(0.0);"), "an unwired output keeps its default");
+            assert(source.contains("ScaleTangentNormal(LinearToSrgbExact(texture(material_texture_1, node_tiled).rgb) * 2.0 - 1.0, 0.5)"), "the normal map scales its own tilt by its strength");
+            assert(source.contains("    surface.normal_strength = 1.0;"), "a wired normal output is used as it comes");
+        }
+    }
+
+    when Generate("{\"graph\": \"soft_bumps\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"depth\", \"kind\": \"mat_param\", \"name\": \"wear\", \"a\": {\"f32\": 0.25}}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"b\": \"depth\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"\", \"\", \"\", \"\", \"bumps\"]}]}]}", names, values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "a normal map with a wired strength becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            assert(shader->source.contains("* 2.0 - 1.0, node_depth)"), "a wired strength node scales the normal map");
+            delete shader;
+        }
+    }
+    when Generate(MOVING, names, values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "a graph with moving and world nodes becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            defer delete shader;
+            source: string = shader->source;
+            assert(source.contains("    vec2 node_flow = uv + vec2(0.5, -0.25) * MaterialTime();"), "a panner slides the coordinate over time");
+            assert(source.contains("    float node_pulse = MaterialTime() * 3.0;"), "time is scaled by its speed");
+            assert(source.contains("    float node_wave = sin(node_pulse);"), "a sine waves");
+            assert(source.contains("    float node_rim = Fresnel(world_position, world_normal, 3.0);"), "fresnel brightens the edge");
+            assert(source.contains("    vec2 node_ground = world_position.xz;"), "the world position gives a ground coordinate");
+            assert(source.contains("    float node_height = world_position.y;"), "and a height");
+            assert(source.contains("    surface.normal_uv = node_ground;"), "the normal frame follows the world coordinate");
+            assert(source.contains("    surface.opacity_mask = node_wave;"), "the mask is wired");
+            mask: string = shader->maskSource;
+            assert(mask.contains("#include \"mask-common.glsl\"") && mask.contains("#include \"mask-main.glsl\""), "a wired mask also gets a shadow shader");
+            assert(mask.contains("layout(set = 2, binding = 0) uniform sampler2D material_texture_0;"), "whose textures are bound from the first slot");
+            assert(mask.contains("    surface.opacity_mask = node_wave;"), "and cuts the same mask");
+            assert(!source.contains("// parameter"), "a graph with no parameters names none");
+        }
+    }
+    when Generate("{\"graph\": \"glass\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"rim\", \"kind\": \"mat_fresnel\", \"a\": {\"f32\": 2.0}}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"\", \"\", \"\", \"\", \"\", \"\", \"rim\"]}]}]}", names, values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "a see-through graph becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            defer delete shader;
+            assert(shader->isTranslucent, "a wired opacity makes the material see-through");
+            assert(shader->source.contains("    surface.opacity = node_rim;"), "and sets how much shows through");
+        }
+    }
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"spot\", \"kind\": \"mat_world_position\", \"name\": \"w\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"spot\"]}]}]}",
+        "node 'spot' needs xyz", "a world position names its axes");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}, {\"id\": \"sum\", \"kind\": \"mat_add\", \"a\": \"coordinate\", \"b\": \"paint\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"sum\"]}]}]}",
+        "node 'sum' can't combine a vec2 with a vec3", "a coordinate and a colour don't add, and the node is named");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}]}]}",
+        "needs a mat_output node", "a graph needs an output");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"a\", \"kind\": \"mat_add\", \"a\": \"b\"}, {\"id\": \"b\", \"kind\": \"mat_add\", \"a\": \"a\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"a\"]}]}]}",
+        "is part of a loop", "a loop of nodes is refused");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\"}, {\"id\": \"out\", \"kind\": \"mat_output\"}]}]}",
+        "node 'start' has the kind 'entry'", "a script node isn't a material node");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"sample\", \"kind\": \"mat_texture\", \"name\": \"../secret\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"sample\"]}]}]}",
+        "needs the name of a texture", "a texture name can't leave textures/");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"b\": \"paint\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"\", \"\", \"\", \"\", \"bumps\"]}]}]}",
+        "node 'bumps' takes a number for its strength", "a normal map's strength is a number");
+    print("a material graph becomes a lit shader");
+    return 0;
+}

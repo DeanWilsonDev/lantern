@@ -3,6 +3,82 @@ lantern:::editorbackend :: namespace {
     // `<name>.generated.nyx`. Each function returns an error message or null, or a Result carrying one.
     GRAPH_FILE_EXTENSION: string : ".graph.json";
     GENERATED_FILE_EXTENSION: string : ".generated.nyx";
+    MATERIAL_GRAPH_PREFIX: string : "material:";
+
+    // A material graph is opened by the name `material:<material>`, and lives beside that material Silhouette's root file
+    // (`material.graph.json`), not in the graphs folder; saving it bakes the material's shader instead of writing Nyx.
+    IsMaterialGraphName :: (name: string) -> bool {
+        return name.startsWith(MATERIAL_GRAPH_PREFIX);
+    }
+
+    MaterialOfGraphName :: (name: string) -> string {
+        return name.substring(MATERIAL_GRAPH_PREFIX.length(), name.length() - MATERIAL_GRAPH_PREFIX.length());
+    }
+
+    // The material graph file of a material Silhouette, or null when there is no material Silhouette of that name.
+    MaterialGraphFile :: (assetsDirectory: string, materialName: string) -> string!? {
+        if !lantern:::graphs:::IsName(materialName) {
+            return null;
+        }
+        found: string!? = lantern:::silhouette:::MaterialFolderFor(assetsDirectory, materialName);
+        guard folder := found return null;
+        if !lantern:::silhouette:::IsMaterialSilhouetteFolder(folder) {
+            delete found;
+            return null;
+        }
+        file: string! = `${folder}/${MATERIAL_GRAPH_FILE}`;
+        delete found;
+        return file!;
+    }
+
+    // Every material Silhouette, one per line as `<material>\t<yes or no>`, the second field saying whether it has a graph yet,
+    // in the order the engine finds them: `silhouettes/` first, then `silhouettes/materials/`.
+    ListMaterials :: (assetsDirectory: string) -> string! {
+        lines~ string! = "".copy();
+        seenNames~ Array<string!>! = [];
+        defer seenNames.freeAll();
+        silhouettesFolder: string! = `${assetsDirectory}/silhouettes`;
+        defer delete silhouettesFolder;
+        nestedFolder: string! = `${silhouettesFolder}/${lantern:::silhouette:::MATERIALS_FOLDER_NAME}`;
+        defer delete nestedFolder;
+        folders: string[2] = [silhouettesFolder, nestedFolder];
+        for folder in folders {
+            if !directoryExists(folder) {
+                continue;
+            }
+            when lantern:::silhouette:::SortedEntries(folder) {
+                Result:::Err(message) -> {
+                    delete message;
+                },
+                Result:::Ok(listed) -> {
+                    names~ Array<string!>! = listed!;
+                    for name in names {
+                        entryPath: string! = `${folder}/${name}`;
+                        defer delete entryPath;
+                        alreadySeen~ bool = false;
+                        for seen in seenNames {
+                            if seen == name {
+                                alreadySeen = true;
+                            }
+                        }
+                        if alreadySeen || !directoryExists(entryPath) || !lantern:::silhouette:::IsMaterialSilhouetteFolder(entryPath) {
+                            continue;
+                        }
+                        seenNames.push(`${name}`);
+                        graphPath: string! = `${entryPath}/${MATERIAL_GRAPH_FILE}`;
+                        hasGraph: bool = pathExists(graphPath);
+                        delete graphPath;
+                        lines += name;
+                        lines += "\t";
+                        lines += hasGraph ? "yes" : "no";
+                        lines += "\n";
+                    }
+                    names.freeAll();
+                }
+            }
+        }
+        return lines!;
+    }
 
     // The platformer's `game-graphs` folder when the editor runs in a checkout, so a saved graph reaches the game; null otherwise.
     GameGraphsFolder :: (assetsDirectory: string) -> string!? {
@@ -56,8 +132,47 @@ lantern:::editorbackend :: namespace {
         return names!;
     }
 
+    // Where a graph of that name is kept, or why it can't be.
+    GraphFileOf :: (assetsDirectory: string, name: string) -> Result<string!, string!> {
+        if IsMaterialGraphName(name) {
+            found: string!? = MaterialGraphFile(assetsDirectory, MaterialOfGraphName(name));
+            guard file := found return Result<string!, string!>:::Err(`There is no material Silhouette called '${MaterialOfGraphName(name)}'.`);
+            materialFile: string! = file.copy();
+            delete found;
+            return Result<string!, string!>:::Ok(materialFile!);
+        }
+        if !lantern:::graphs:::IsName(name) {
+            return Result<string!, string!>:::Err("A graph name is letters, digits and underscores.".copy());
+        }
+        folder: string! = GraphsFolder(assetsDirectory);
+        file: string! = `${folder}/${name}${GRAPH_FILE_EXTENSION}`;
+        delete folder;
+        return Result<string!, string!>:::Ok(file!);
+    }
+
     // Reads and loads a graph by name.
     LoadGraphByName :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
+        if IsMaterialGraphName(name) {
+            when GraphFileOf(assetsDirectory, name) {
+                Result:::Err(message) -> {
+                    return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+                },
+                Result:::Ok(materialFile) -> {
+                    defer delete materialFile;
+                    when readTextFile(materialFile) {
+                        Result:::Err(error) -> {
+                            failure: string! = `${materialFile}: ${error.message()}`;
+                            delete error;
+                            return Result<lantern:::graphs:::Graph*!, string!>:::Err(failure!);
+                        },
+                        Result:::Ok(text) -> {
+                            defer delete text;
+                            return lantern:::graphs:::LoadGraph(text);
+                        }
+                    }
+                }
+            }
+        }
         if !lantern:::graphs:::IsName(name) {
             return Result<lantern:::graphs:::Graph*!, string!>:::Err("A graph name is letters, digits and underscores.".copy());
         }
@@ -92,8 +207,66 @@ lantern:::editorbackend :: namespace {
         }
     }
 
+    // What a graph generates: the Nyx of a script graph, or the GLSL of a material graph (named by `name`), or a comment line
+    // saying what stops it.
+    GeneratedTextOf :: (assetsDirectory: string, name: string, graph: lantern:::graphs:::Graph*) -> string! {
+        if !IsMaterialGraphName(name) {
+            return GeneratedNyxText(graph);
+        }
+        materialName: string = MaterialOfGraphName(name);
+        found: string!? = lantern:::silhouette:::MaterialFolderFor(assetsDirectory, materialName);
+        defer delete found;
+        folder~ string = assetsDirectory;
+        if present := found {
+            folder = present;
+        }
+        parameters: MaterialParameters*! = ReadMaterialParameters(folder);
+        defer delete parameters;
+        when lantern:::materialgraph:::GenerateMaterialShader(graph, parameters->names, parameters->values) {
+            Result:::Err(message) -> {
+                text: string! = `// ${message}`;
+                delete message;
+                return text!;
+            },
+            Result:::Ok(shader) -> {
+                text: string! = `${shader->source}`;
+                delete shader;
+                return text!;
+            }
+        }
+    }
+
+    // Writes a material graph beside its Silhouette and bakes the game's materials, so its shader is compiled and the game and
+    // the editor's views pick it up. A graph that can't become a shader is still saved, and the error says which node.
+    SaveMaterialGraph :: (assetsDirectory: string, name: string, graph: lantern:::graphs:::Graph*) -> string!? {
+        when GraphFileOf(assetsDirectory, name) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(file) -> {
+                defer delete file;
+                text: string! = lantern:::graphs:::WriteGraph(graph);
+                defer delete text;
+                problem: string!? = WriteFileText(file, text);
+                if problem != null {
+                    return problem!;
+                }
+                rebuilt: string!? = RebuildGameMaterials(assetsDirectory);
+                if failed := rebuilt {
+                    message: string! = `Saved, but the material's shader was not built: ${failed}`;
+                    delete rebuilt;
+                    return message!;
+                }
+                return null;
+            }
+        }
+    }
+
     // Writes the graph and its generated Nyx. A graph that can't generate Nyx is still saved, so work in progress isn't lost.
     SaveGraphFiles :: (assetsDirectory: string, name: string, graph: lantern:::graphs:::Graph*) -> string!? {
+        if IsMaterialGraphName(name) {
+            return SaveMaterialGraph(assetsDirectory, name, graph);
+        }
         folder: string! = GraphsFolder(assetsDirectory);
         defer delete folder;
         when createDirectories(folder) {
@@ -139,6 +312,9 @@ lantern:::editorbackend :: namespace {
 
     // Makes a new graph with one empty function and saves it. An existing graph is never overwritten.
     CreateGraphFile :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
+        if IsMaterialGraphName(name) {
+            return CreateMaterialGraphFile(assetsDirectory, name);
+        }
         if !lantern:::graphs:::IsName(name) {
             return Result<lantern:::graphs:::Graph*!, string!>:::Err("A graph name is letters, digits and underscores.".copy());
         }
@@ -160,5 +336,61 @@ lantern:::editorbackend :: namespace {
         }
         delete problem;
         return Result<lantern:::graphs:::Graph*!, string!>:::Ok(graph!);
+    }
+
+    // A new material graph that looks like the material Silhouette already does: its texture (when it has one) times its tint
+    // as the base colour, and its metallic and roughness values as parameters. An existing graph is never overwritten.
+    CreateMaterialGraphFile :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
+        materialName: string = MaterialOfGraphName(name);
+        file~ string! = "".copy();
+        defer delete file;
+        when GraphFileOf(assetsDirectory, name) {
+            Result:::Err(message) -> {
+                return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+            },
+            Result:::Ok(found) -> {
+                delete file;
+                file = found!;
+            }
+        }
+        if pathExists(file) {
+            return Result<lantern:::graphs:::Graph*!, string!>:::Err("This material already has a graph.".copy());
+        }
+        loaded: lantern:::silhouette:::MaterialDefinition*!? = lantern:::silhouette:::LoadMaterialSilhouette(assetsDirectory, materialName);
+        defer delete loaded;
+        guard definition := loaded return Result<lantern:::graphs:::Graph*!, string!>:::Err(`There is no material Silhouette called '${materialName}'.`);
+        tint: string! = lantern:::silhouette:::HexOf(definition->tint);
+        defer delete tint;
+        baseColour~ string! = "\"tint\"".copy();
+        defer delete baseColour;
+        textureNodes~ string! = "".copy();
+        defer delete textureNodes;
+        if definition->texture.length() > 0 {
+            textureNodes += `{"id": "surface", "kind": "mat_texture", "name": "${definition->texture}", "x": 40, "y": 40}, `;
+            textureNodes += `{"id": "tinted", "kind": "mat_mul", "a": "surface", "b": "tint", "x": 280, "y": 80}, `;
+            delete baseColour;
+            baseColour = "\"tinted\"".copy();
+        }
+        metallic: string! = `${definition->metallic}`;
+        defer delete metallic;
+        roughness: string! = `${definition->roughness}`;
+        defer delete roughness;
+        jsonText: string! = `{"graph": "${materialName}", "functions": [{"name": "material", "nodes": [${textureNodes}{"id": "tint", "kind": "mat_color", "text": "#${tint}", "x": 40, "y": 140}, {"id": "metallic", "kind": "mat_param", "name": "metallic", "a": {"f32": ${metallic}}, "x": 40, "y": 220}, {"id": "roughness", "kind": "mat_param", "name": "roughness", "a": {"f32": ${roughness}}, "x": 40, "y": 300}, {"id": "out", "kind": "mat_output", "args": [${baseColour}, "metallic", "roughness"], "x": 520, "y": 120}]}]}`;
+        defer delete jsonText;
+        when lantern:::graphs:::LoadGraph(jsonText) {
+            Result:::Err(message) -> {
+                return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+            },
+            Result:::Ok(graph) -> {
+                problem: string!? = SaveMaterialGraph(assetsDirectory, name, graph);
+                if failed := problem {
+                    message: string! = failed.copy();
+                    delete problem;
+                    delete graph;
+                    return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+                }
+                return Result<lantern:::graphs:::Graph*!, string!>:::Ok(graph!);
+            }
+        }
     }
 }

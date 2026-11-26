@@ -1,0 +1,84 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct MaterialSurface
+{
+    float3 base_color;
+    float metallic;
+    float roughness;
+    float3 emissive;
+    float3 tangent_normal;
+    float normal_strength;
+    float2 normal_uv;
+    float opacity_mask;
+    float opacity;
+};
+
+struct MaterialUniforms
+{
+    float4 parameters[2];
+};
+
+struct LightUniforms
+{
+    float4 camera_position;
+};
+
+struct main0_in
+{
+    float3 world_position [[user(locn0)]];
+    float2 surface_uv [[user(locn2)]];
+};
+
+static inline __attribute__((always_inline))
+MaterialSurface DefaultSurface(thread const float2& uv)
+{
+    MaterialSurface surface;
+    surface.base_color = float3(1.0);
+    surface.metallic = 0.0;
+    surface.roughness = 0.800000011920928955078125;
+    surface.emissive = float3(0.0);
+    surface.tangent_normal = float3(0.0, 0.0, 1.0);
+    surface.normal_strength = 0.0;
+    surface.normal_uv = uv;
+    surface.opacity_mask = 1.0;
+    surface.opacity = 1.0;
+    return surface;
+}
+
+static inline __attribute__((always_inline))
+MaterialSurface SurfaceOf(thread const float2& uv, constant MaterialUniforms& material, thread float3& world_position)
+{
+    float3 node_steel = float3(0.549019634723663330078125, 0.5764706134796142578125, 0.611764729022979736328125);
+    float node_metal = material.parameters[0].x;
+    float node_rough = material.parameters[0].y;
+    float node_height = world_position.y;
+    float node_slats = node_height * 40.0;
+    float node_wave = sin(node_slats);
+    float node_mask = node_wave + 0.60000002384185791015625;
+    float2 param = uv;
+    MaterialSurface surface = DefaultSurface(param);
+    surface.base_color = node_steel;
+    surface.metallic = node_metal;
+    surface.roughness = node_rough;
+    surface.emissive = float3(0.0);
+    surface.tangent_normal = float3(0.0, 0.0, 1.0);
+    surface.opacity_mask = node_mask;
+    surface.opacity = 1.0;
+    surface.normal_strength = 0.0;
+    return surface;
+}
+
+fragment void main0(main0_in in [[stage_in]], constant MaterialUniforms& material [[buffer(1)]])
+{
+    float2 param = in.surface_uv;
+    if (SurfaceOf(param, material, in.world_position).opacity_mask < 0.5)
+    {
+        discard_fragment();
+    }
+}
+
