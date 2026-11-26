@@ -1978,7 +1978,7 @@ lantern:::editor :: namespace {
                 CameraPreset(ViewCubeFacePreset(face));
                 return;
             }
-            if terrainTools.active && BeginSculpt() {
+            if terrainTools.active && BeginSculpt(modifiers) {
                 return;
             }
             projection: ViewportProjection = Projection();
@@ -2288,7 +2288,7 @@ lantern:::editor :: namespace {
         }
 
         // The letter shortcuts. With the command key: undo (Z), redo (shift Z or Y), duplicate (D), save (S),
-        // group (G) and select all (A). Without it: W, E and R choose move, rotate and scale; F frames the
+        // group (G) and select all (A). Without it: W, E and R choose move, rotate and scale; B turns the terrain brush on and off; F frames the
         // selection; X switches world and local axes; Z switches the pivot; G shows or hides the grid; H hides
         // the selection and shift H shows everything. These are ignored while the right button is held,
         // because then W, A, S, D, Q and E fly the camera.
@@ -2322,6 +2322,12 @@ lantern:::editor :: namespace {
                 return true;
             }
             if rightDown {
+                return true;
+            }
+            if key.IsLetter("b") {
+                terrainTools.active = !terrainTools.active;
+                terrainCursor = null;
+                localRevision += 1;
                 return true;
             }
             if key.IsLetter("w") {
@@ -2401,8 +2407,9 @@ lantern:::editor :: namespace {
         }
 
         // Starts a sculpt stroke when the pointer is over a terrain: selects it and remembers the height under the press,
-        // which the flatten brush levels to. The strokes themselves are applied each frame by SculptWhileHeld.
-        BeginSculpt~: () -> bool {
+        // which the flatten brush levels to, and whether shift (smooth instead) or the command key (raise lowers, lower
+        // raises, noise digs) is held. The strokes themselves are applied each frame by SculptWhileHeld.
+        BeginSculpt~: (modifiers: Modifiers) -> bool {
             hitFound: PickHit? = TerrainUnderPointer();
             guard hit := hitFound return false;
             guard index := document->documentWorldFile->IndexOf(hit.key) return false;
@@ -2412,6 +2419,8 @@ lantern:::editor :: namespace {
                     local: Vec3 = InverseOrIdentity(WorldMatrixOf(hit.key)).transformPoint(hit.point);
                     sculptDrag := new Drag(DragKind:::Sculpt);
                     sculptDrag->hit = hit.key;
+                    sculptDrag->additive = modifiers.shift;
+                    sculptDrag->inverted = modifiers.command;
                     sculptDrag->start = field->HeightAtLocal(local.x, local.z);
                     sculptDrag->startPoint = hit.point;
                     delete field;
@@ -2455,12 +2464,34 @@ lantern:::editor :: namespace {
             when decoded! {
                 Result:::Ok(field) -> {
                     local: Vec3 = InverseOrIdentity(WorldMatrixOf(key)).transformPoint(hit.point);
-                    brush: lantern:::terrain:::BrushKind = terrainTools.brush;
-                    amount~ f32 = terrainTools.strength * SCULPT_METRES_PER_SECOND * seconds;
-                    if brush == lantern:::terrain:::BrushKind:::Smooth || brush == lantern:::terrain:::BrushKind:::Flatten {
+                    brush~ lantern:::terrain:::BrushKind = terrainTools.brush;
+                    if active->additive {
+                        brush = lantern:::terrain:::BrushKind:::Smooth;
+                    }
+                    direction~ f32 = 1.0f;
+                    if active->inverted {
+                        if brush == lantern:::terrain:::BrushKind:::Raise {
+                            brush = lantern:::terrain:::BrushKind:::Lower;
+                        } else if brush == lantern:::terrain:::BrushKind:::Lower {
+                            brush = lantern:::terrain:::BrushKind:::Raise;
+                        } else if brush == lantern:::terrain:::BrushKind:::Noise {
+                            direction = -1.0f;
+                        }
+                    }
+                    amount~ f32 = terrainTools.strength * SCULPT_METRES_PER_SECOND * seconds * direction;
+                    if brush == lantern:::terrain:::BrushKind:::Smooth || brush == lantern:::terrain:::BrushKind:::Flatten || brush == lantern:::terrain:::BrushKind:::Terrace || brush == lantern:::terrain:::BrushKind:::Erode {
                         amount = Math:::min(1.0f, terrainTools.strength * SCULPT_BLEND_PER_SECOND * seconds);
                     }
-                    changed: usize = lantern:::terrain:::ApplyBrush(field, brush, local.x, local.z, terrainTools.radius, amount, active->start);
+                    brushSettings~ lantern:::terrain:::BrushSettings = lantern:::terrain:::BrushSettings { };
+                    brushSettings.kind = brush;
+                    brushSettings.falloff = terrainTools.falloff;
+                    brushSettings.radius = terrainTools.radius;
+                    brushSettings.strength = amount;
+                    brushSettings.flattenHeight = active->start;
+                    brushSettings.terraceStep = terrainTools.terraceStep;
+                    brushSettings.noiseSeed = terrainTools.generator.seed;
+                    brushSettings.noiseScale = Math:::max(1.0f, terrainTools.radius * 0.5f);
+                    changed: usize = lantern:::terrain:::ApplyShapedBrush(field, local.x, local.z, brushSettings);
                     if changed > 0 {
                         lantern:::terrain:::StoreHeightfield(entity, field);
                         document->PreviewReplace(entity!);

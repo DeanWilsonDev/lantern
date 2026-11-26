@@ -4,7 +4,9 @@
 TerrainUi :: namespace {
     Labels :: (name: string) -> Array<string> {
         return when name {
-            "brush" -> ["raise", "lower", "smooth", "flatten"],
+            "brush" -> ["raise", "lower", "smooth", "flatten", "noise", "terrace", "erode"],
+            "falloff" -> ["smooth", "linear", "sharp", "constant"],
+            "terrace_step" -> ["0.25", "0.5", "1", "2", "4"],
             "radius" -> ["1", "2", "4", "8", "16", "32"],
             "strength" -> ["0.1", "0.25", "0.5", "1", "2"],
             "feature_size" -> ["8", "16", "24", "48", "96"],
@@ -20,7 +22,9 @@ TerrainUi :: namespace {
 
     Values :: (name: string) -> Array<f32> {
         return when name {
-            "brush" -> [0.0f, 1.0f, 2.0f, 3.0f],
+            "brush" -> [0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f],
+            "falloff" -> [0.0f, 1.0f, 2.0f, 3.0f],
+            "terrace_step" -> [0.25f, 0.5f, 1.0f, 2.0f, 4.0f],
             "radius" -> [1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f],
             "strength" -> [0.1f, 0.25f, 0.5f, 1.0f, 2.0f],
             "feature_size" -> [8.0f, 16.0f, 24.0f, 48.0f, 96.0f],
@@ -69,5 +73,79 @@ TerrainUi :: namespace {
     // A whole number as text, such as the seed.
     Shown :: (value: f32) -> string {
         return `${i32(value)}`;
+    }
+
+    // The options kept between runs, each by the label of its choice. The seed and whether the brush is on are not kept: a
+    // session starts with the brush off.
+    Remembered :: () -> Array<string> {
+        return ["brush", "falloff", "radius", "strength", "terrace_step", "feature_size", "octaves", "amplitude", "base_height", "columns", "cell_size", "erosion_passes"];
+    }
+
+    // Sets an option to a chosen label and remembers the choice for the next run.
+    Choose :: (name: string, choice: string) -> void {
+        Pick(name, choice);
+        editorSetPreference(`terrain.${name}`, choice);
+    }
+
+    // Reads each remembered choice back into the terrain tools. Called once as the editor starts.
+    Restore :: () -> void {
+        for name in Remembered() {
+            choice := editorPreference(`terrain.${name}`);
+            if choice != "" {
+                Pick(name, choice);
+            }
+        }
+    }
+
+    // One text that changes whenever any terrain option does, so the toolbar state, and the parts of the editor that read
+    // it, redraw after a menu command, a key or the panel changes one.
+    Summary :: () -> string {
+        text~ string = "";
+        for name in Remembered() {
+            text = `${text}${editorTerrainOption(name)},`;
+        }
+        return `${text}${editorTerrainOption("seed")}`;
+    }
+
+    // The label of the brush in use.
+    BrushLabel :: () -> string {
+        return Selected("brush");
+    }
+
+    // Moves an option to the next (1) or previous (-1) choice in its list and remembers it.
+    Step :: (name: string, direction: i32) -> void {
+        labels := Labels(name);
+        current := Selected(name);
+        index~ i32 = 0;
+        position~ i32 = 0;
+        for label in labels {
+            if label == current {
+                position = index;
+            }
+            index += 1;
+        }
+        target := position + direction;
+        guard target >= 0 && target < labels.length() return;
+        Choose(name, labels[target]);
+    }
+
+    // Runs a terrain command, the part of "terrain:..." after the colon: `toggle` turns the brush on or off,
+    // `brush:NAME` picks a brush and turns it on, `radius:up`, `radius:down`, `strength:up` and `strength:down` step those
+    // options, and `generate`, `regenerate`, `erode` and `reseed` run the actions.
+    Command :: (argument: string) -> void {
+        when argument {
+            "toggle" -> { editorSetTerrainOption("active", editorTerrainOption("active") > 0.5f ? 0.0f : 1.0f); },
+            "radius:up" -> Step("radius", 1),
+            "radius:down" -> Step("radius", -1),
+            "strength:up" -> Step("strength", 1),
+            "strength:down" -> Step("strength", -1),
+            ("generate" || "regenerate" || "erode" || "reseed") -> { editorTerrainAction(argument); },
+            default -> {
+                if argument.startsWith("brush:") {
+                    Choose("brush", argument.substring(6, argument.length() - 6));
+                    editorSetTerrainOption("active", 1.0f);
+                }
+            }
+        }
     }
 }

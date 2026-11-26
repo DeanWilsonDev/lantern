@@ -2131,3 +2131,15 @@ Provisional (2026-11-26): not reviewed by Dean. With the brush on, picking skips
 
 Provisional (2026-11-26): not reviewed by Dean. The Terrain tab's options (brush, radius, strength, seed, size) go through `editorSetTerrainOption(name, number)` and `editorTerrainOption(name)`, the way the snap steps do, and a value out of range is refused. The tab offers fixed choices in drop-downs, which suits the editor's present widgets; a slider or number box waits for those widgets to exist.
 
+## D-273: Terrain gets its own menu; its settings live on the Terrain page
+
+Provisional (2026-11-26): not reviewed by Dean. The menu bar has a Terrain menu between Entity and Window holding every terrain command: the brush toggle, the brushes, size and strength steps, the actions and the way to the settings. The settings themselves (brush, falloff, generator, size) stay in the Terrain page of the bottom panel, grouped Brush, Generate, Make, and not in the Settings dialog, which holds how the editor behaves rather than what a tool does. The brush toggle sits on the toolbar beside move, rotate and scale because it changes what a left press does, as they do.
+
+## D-274: Ctrl inverts and Shift smooths a stroke, fixed at the press
+
+Provisional (2026-11-26): not reviewed by Dean. As in most sculpting tools, Ctrl (Cmd on a Mac) flips Raise and Lower and digs with Noise, and Shift smooths with any brush. The modifiers are read once when the button goes down and hold for the stroke, since the session only learns modifiers with a button press.
+
+## D-275: Terrain choices are remembered as preference labels
+
+Provisional (2026-11-26): not reviewed by Dean. Each Terrain page choice is saved as `terrain.NAME` with the label of the choice, through the editor's existing preferences, and read back as the editor starts. Labels rather than numbers because Nyx has no text-to-number conversion the interface could use; the seed is not a fixed choice and so is not kept. The brush always starts off, so opening the editor never leaves a left click sculpting.
+
