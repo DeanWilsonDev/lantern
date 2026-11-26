@@ -1,5 +1,6 @@
 Editor :: import Editor;
 PanelContent :: import PanelContent;
+PanelDocking :: import PanelDocking;
 
 // Which dock: "left" or "right" (a column, panels one above another) or "bottom" (a row under the viewport, panels side
 // by side).
@@ -7,23 +8,22 @@ PanelDockProps :: data {
     place: string;
 }
 
-// The split direction and starting share of the first panel, for a dock of a place.
 PanelDockUi :: namespace {
-    Axis :: (place: string) -> string {
-        return place == "bottom" ? "horizontal" : "vertical";
-    }
-
-    // Two panels share a column 42/58 (the outliner is usually shorter than the details) and a row evenly; with three,
-    // the first takes about a third and the other two split the rest.
-    FirstShare :: (place: string, panels: i32) -> f32 {
-        guard panels == 2 return place == "bottom" ? 0.34f : 0.32f;
-        return place == "bottom" ? 0.5f : 0.42f;
+    // The panels' names, one after another, as the key of their arrangement.
+    KeyOf :: (panels: Array<string>) -> string {
+        key~ string = "";
+        for panel in panels {
+            key = key == "" ? panel : `${key}-${panel}`;
+        }
+        return key;
     }
 }
 
-// The panels docked at one place, split between them with handles to resize: one panel fills the dock, two share a
-// split, and three nest a second split inside the first. Workspace.chaos and CentreArea.chaos put the docks around the
-// viewport. A key made of the panels' names gives a new arrangement a fresh split.
+// The panels docked at one place, split between them with handles to resize. One panel fills the dock; with more, the
+// first takes its share (PanelDocking:::FirstShare) and the rest share what is left the same way, one split inside
+// another. A component can't call itself, so each count up to every panel there is gets its own nesting here.
+// Workspace.chaos and CentreArea.chaos put the docks around the viewport. A key made of the panels' names gives a new
+// arrangement a fresh split.
 PanelDock :: (props: PanelDockProps) -> Penumbra:::Component {
     @context editor~ Editor;
     return (
@@ -31,23 +31,57 @@ PanelDock :: (props: PanelDockProps) -> Penumbra:::Component {
             <slot>
                 !{(() -> Penumbra:::Component {
                     panels := editor.layout.PanelsAt(props.place, editor.Mode());
-                    axis := PanelDockUi:::Axis(props.place);
-                    guard panels.length() > 0 return <frame class="nothing" />;
-                    guard panels.length() > 1 return <PanelContent key={panels[0]} panel={panels[0]} />;
-                    guard panels.length() > 2 return (
-                        <split key={`${panels[0]}-${panels[1]}`} class="workspace-fill" axis={axis}
-                               ratio={PanelDockUi:::FirstShare(props.place, 2)} minPaneSize={120.0f} handleThickness={4.0f}>
+                    axis := PanelDocking:::Axis(props.place);
+                    count := panels.length();
+                    guard count > 0 return <frame class="nothing" />;
+                    guard count > 1 return <PanelContent key={panels[0]} panel={panels[0]} />;
+                    key := PanelDockUi:::KeyOf(panels);
+                    guard count > 2 return (
+                        <split key={key} class="workspace-fill" axis={axis}
+                               ratio={PanelDocking:::FirstShare(props.place, 2)} minPaneSize={120.0f} handleThickness={4.0f}>
                             <PanelContent panel={panels[0]} />
                             <PanelContent panel={panels[1]} />
                         </split>
                     );
-                    return (
-                        <split key={`${panels[0]}-${panels[1]}-${panels[2]}`} class="workspace-fill" axis={axis}
-                               ratio={PanelDockUi:::FirstShare(props.place, 3)} minPaneSize={120.0f} handleThickness={4.0f}>
+                    guard count > 3 return (
+                        <split key={key} class="workspace-fill" axis={axis}
+                               ratio={PanelDocking:::FirstShare(props.place, 3)} minPaneSize={120.0f} handleThickness={4.0f}>
                             <PanelContent panel={panels[0]} />
                             <split class="workspace-fill" axis={axis} ratio={0.5f} minPaneSize={120.0f} handleThickness={4.0f}>
                                 <PanelContent panel={panels[1]} />
                                 <PanelContent panel={panels[2]} />
+                            </split>
+                        </split>
+                    );
+                    guard count > 4 return (
+                        <split key={key} class="workspace-fill" axis={axis}
+                               ratio={PanelDocking:::FirstShare(props.place, 4)} minPaneSize={120.0f} handleThickness={4.0f}>
+                            <PanelContent panel={panels[0]} />
+                            <split class="workspace-fill" axis={axis} ratio={PanelDocking:::FirstShare(props.place, 3)}
+                                   minPaneSize={120.0f} handleThickness={4.0f}>
+                                <PanelContent panel={panels[1]} />
+                                <split class="workspace-fill" axis={axis} ratio={0.5f} minPaneSize={120.0f} handleThickness={4.0f}>
+                                    <PanelContent panel={panels[2]} />
+                                    <PanelContent panel={panels[3]} />
+                                </split>
+                            </split>
+                        </split>
+                    );
+                    return (
+                        <split key={key} class="workspace-fill" axis={axis}
+                               ratio={PanelDocking:::FirstShare(props.place, 5)} minPaneSize={120.0f} handleThickness={4.0f}>
+                            <PanelContent panel={panels[0]} />
+                            <split class="workspace-fill" axis={axis} ratio={PanelDocking:::FirstShare(props.place, 4)}
+                                   minPaneSize={120.0f} handleThickness={4.0f}>
+                                <PanelContent panel={panels[1]} />
+                                <split class="workspace-fill" axis={axis} ratio={PanelDocking:::FirstShare(props.place, 3)}
+                                       minPaneSize={120.0f} handleThickness={4.0f}>
+                                    <PanelContent panel={panels[2]} />
+                                    <split class="workspace-fill" axis={axis} ratio={0.5f} minPaneSize={120.0f} handleThickness={4.0f}>
+                                        <PanelContent panel={panels[3]} />
+                                        <PanelContent panel={panels[4]} />
+                                    </split>
+                                </split>
                             </split>
                         </split>
                     );

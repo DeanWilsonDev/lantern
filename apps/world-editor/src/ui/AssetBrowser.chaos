@@ -1,7 +1,6 @@
 AssetCard :: import AssetCard;
 AssetFileCard :: import AssetFileCard;
 Editor :: import Editor;
-EditorModel :: import EditorModel;
 TemplateItem :: import TemplateItem;
 
 // One thing in a folder listing: its kind (`folder`, `silhouette`, `script`, `texture` and so on), the name to show,
@@ -15,8 +14,7 @@ AssetEntry :: data {
 
 // Entries asks the engine for a folder's contents (or, with a query, every match). ParentOf, RootOf and Title work on
 // folder paths written `A/B/C`: the folder above, the top-level folder, and the heading with `>` between the levels.
-// TreeClass highlights the root the current folder is inside. InitialPreview picks the first template to preview
-// when none is chosen yet.
+// TreeClass highlights the root the current folder is inside.
 AssetBrowserUi :: namespace {
     Entries :: (folder: string, query: string) -> Array<AssetEntry> {
         rows~ Array<AssetEntry> = [];
@@ -54,32 +52,19 @@ AssetBrowserUi :: namespace {
     TreeClass :: (root: string, folder: string) -> string {
         return RootOf(folder) == root ? "tree-row-selected" : "tree-row";
     }
-
-    InitialPreview :: () -> string {
-        current := editorPreviewTemplate();
-        guard current == "" return current;
-        templates := EditorModel:::Templates();
-        guard templates.length() > 0 return "";
-        editorSetPreviewTemplate(templates[0].id);
-        return templates[0].id;
-    }
 }
 
-// The Assets tab, in three columns: a tree of top-level folders on the left, the cards of the current folder in the
-// middle (with an up button, the path and a search box), and a preview of the chosen Silhouette on the right with
-// Edit, Add scene (a chosen world file, placed as a scene instance) and Add to world buttons. The @signals are the page's own state: the folder, the search text, the chosen card
-// and the previewed template. Clicking a folder card opens it, clicking a graph card opens it in the graph tab, and a
-// Silhouette card can be dragged into the viewport.
+// The Assets tab, in two columns: a tree of top-level folders on the left, and the cards of the current folder on the
+// right (with an up button, the path, a search box and Add scene, which places a chosen world file as a scene
+// instance). The cards wrap into a grid as wide as the tab and scroll up and down. The @signals are the page's own
+// state: the folder, the search text and the chosen card. Clicking a folder card opens it, clicking a graph card opens
+// it in the graph tab, clicking a Silhouette shows it in the asset preview panel, and dragging a Silhouette into the
+// viewport places it where it is dropped.
 AssetBrowser :: () -> Penumbra:::Component {
     @context editor~ Editor;
-    @signal preview~ string = AssetBrowserUi:::InitialPreview();
     @signal folder~ string = "Silhouettes";
     @signal query~ string = "";
     @signal chosen~ string = "";
-    Preview := (templateId: string) -> void {
-        preview = templateId;
-        editorSetPreviewTemplate(templateId);
-    };
     return (
         <frame class="asset-browser">
             <frame class="asset-tree">
@@ -108,15 +93,24 @@ AssetBrowser :: () -> Penumbra:::Component {
                     <input ref="asset-search" class="search-input" text={query}
                            preferredWidth={150.0f}
                            onTextChange={(text: string) -> { query = text; }} />
+                    <frame ref="asset-add-scene" class="small-button"
+                           onRelease={() -> {
+                               if chosen.endsWith(".world.json") {
+                                   editorAddSceneInstance(chosen);
+                               }
+                           }}>
+                        <icon class="small-button-icon" icon="grid" size={12.0f} />
+                        <text class="small-button-label">Add scene</text>
+                    </frame>
                 </frame>
-                <scroll ref="asset-scroll" class="asset-scroll" direction="horizontal" horizontalWheelStep={80.0f}>
-                    <frame class="asset-cards">
+                <scroll ref="asset-scroll" class="asset-scroll" wheelStep={80.0f}>
+                    <inline class="asset-cards">
                         <slot>
                             !{AssetBrowserUi:::Entries(query == "" ? folder : "", query).map((entry: AssetEntry) ->
                                 entry.kind == "silhouette"
                                     ? <AssetCard key={entry.path} item={TemplateItem { id: entry.label, label: entry.label, kind: "block" }}
-                                                 selected={preview == entry.label}
-                                                 onSelect={() -> Preview(entry.label)} />
+                                                 selected={editor.selection.previewTemplate == entry.label}
+                                                 onSelect={() -> editor.selection.Preview(entry.label)} />
                                     : <AssetFileCard key={entry.path} kind={entry.kind} label={entry.label} selected={chosen == entry.path}
                                                      onSelect={() -> {
                                                          chosen = entry.path;
@@ -129,35 +123,8 @@ AssetBrowser :: () -> Penumbra:::Component {
                                                          }
                                                      }} />)}
                         </slot>
-                    </frame>
+                    </inline>
                 </scroll>
-            </frame>
-            <frame class="asset-preview">
-                <viewport ref="asset-preview-viewport" class="asset-preview-viewport" renderer="preview" />
-                <frame class="asset-preview-actions">
-                    <slot>
-                        !{<text class="asset-preview-title">{preview}</text>}
-                    </slot>
-                    <frame ref="asset-edit-silhouette" class="small-button"
-                           onRelease={() -> editor.tabs.OpenSilhouette(preview)}>
-                        <icon class="small-button-icon" icon="pencil" size={12.0f} />
-                        <text class="small-button-label">Edit</text>
-                    </frame>
-                    <frame ref="asset-add-scene" class="small-button"
-                           onRelease={() -> {
-                               if chosen.endsWith(".world.json") {
-                                   editorAddSceneInstance(chosen);
-                               }
-                           }}>
-                        <icon class="small-button-icon" icon="grid" size={12.0f} />
-                        <text class="small-button-label">Add scene</text>
-                    </frame>
-                    <frame class="small-button-accent"
-                           onRelease={() -> { editorAddEntity(preview); }}>
-                        <icon class="small-button-icon-accent" icon="plus" size={12.0f} />
-                        <text class="small-button-label-accent">Add to world</text>
-                    </frame>
-                </frame>
             </frame>
         </frame>
     );

@@ -3,16 +3,15 @@ EditorModes :: import EditorModes;
 PanelDocking :: import PanelDocking;
 PanelVisibility :: import PanelVisibility;
 
-// Layout choices that are remembered between runs: which panels are shown (the outliner and the
-// details panel on the right, the content drawer under the viewport), where the tool palette is (docked
-// beside the viewport, or floating and where), where each panel is docked or floats, and which tab the drawer is on (assets, console or history). Hiding every panel (focusViewport) remembers what was shown so the same
-// command brings it back.
+// Layout choices that are remembered between runs: which panels are shown, where the tool palette is (docked beside
+// the viewport, or floating and where), where each panel is docked or floats, and which tab the drawer is on (assets,
+// console or history). Hiding every panel (focusViewport) remembers what was shown so the same command brings it back.
+// The panels are the ones PanelDocking:::Panels names, and each table below holds one entry per panel. A table is a
+// value, so a change writes a new copy and the signal sees it.
 EditorLayout :: class {
 public:
     @signal bottomPanel~ string = RememberedBottomPanel();
-    @signal outlinerVisible~ bool = RememberedFlag("ui.outliner");
-    @signal detailsVisible~ bool = RememberedFlag("ui.details");
-    @signal drawerVisible~ bool = RememberedFlag("ui.drawer");
+    @signal shown~ Dictionary<string, bool> = RememberedShown();
 
     // The tool palette: docked beside the viewport, or floating at (toolsX, toolsY) in the window. While its handle is
     // dragged, toolsDragging is set and the grab point's offset from its corner is kept so it doesn't jump.
@@ -27,15 +26,9 @@ public:
     toolsGrabY~ f32 = 0.0f;
 
     // Where each panel is (PanelDocking: "left", "right", "bottom" or "float") and, for a floating one, its corner.
-    @signal outlinerPlace~ string = RememberedPlace("outliner");
-    @signal detailsPlace~ string = RememberedPlace("details");
-    @signal drawerPlace~ string = RememberedPlace("drawer");
-    @signal outlinerX~ f32 = RememberedPosition("ui.outlinerX", 900.0f);
-    @signal outlinerY~ f32 = RememberedPosition("ui.outlinerY", 140.0f);
-    @signal detailsX~ f32 = RememberedPosition("ui.detailsX", 940.0f);
-    @signal detailsY~ f32 = RememberedPosition("ui.detailsY", 180.0f);
-    @signal drawerX~ f32 = RememberedPosition("ui.drawerX", 200.0f);
-    @signal drawerY~ f32 = RememberedPosition("ui.drawerY", 500.0f);
+    @signal places~ Dictionary<string, string> = RememberedPlaces();
+    @signal floatXs~ Dictionary<string, f32> = RememberedCorners("X");
+    @signal floatYs~ Dictionary<string, f32> = RememberedCorners("Y");
     // The panel being dragged by its grip ("" when none), where it would go if let go now, and the corner of the
     // floating preview. The grab offset keeps a floating panel from jumping under the mouse.
     @signal panelDragging~ string = "";
@@ -47,9 +40,7 @@ public:
     // As toolsShowing does for the palette: Escape closes the topmost portal, so floating panels come straight back.
     @signal panelsShowing~ i32 = 0;
 
-    focusSavedOutliner~ bool = true;
-    focusSavedDetails~ bool = true;
-    focusSavedDrawer~ bool = true;
+    focusSaved~ Dictionary<string, bool> = {};
     focused~ bool = false;
 
     // Shows a bottom panel on its tab and remembers the choice. Asking for the tab already showing hides the
@@ -59,7 +50,7 @@ public:
             this.SetDrawer(false);
             return;
         }
-        if this.drawerVisible && this.bottomPanel == panel {
+        if this.IsShown("drawer") && this.bottomPanel == panel {
             this.SetDrawer(false);
             return;
         }
@@ -119,37 +110,25 @@ public:
 
     // Where a panel is: "left", "right", "bottom" or "float".
     PlaceOf :: (panel: string) -> string {
-        return when panel {
-            "outliner" -> this.outlinerPlace,
-            "details" -> this.detailsPlace,
-            default -> this.drawerPlace
-        };
+        guard this.places.containsKey(panel) return PanelDocking:::DefaultPlace(panel);
+        return this.places[panel];
     }
 
     // A floating panel's corner.
     FloatXOf :: (panel: string) -> f32 {
-        return when panel {
-            "outliner" -> this.outlinerX,
-            "details" -> this.detailsX,
-            default -> this.drawerX
-        };
+        guard this.floatXs.containsKey(panel) return PanelDocking:::DefaultFloatX(panel);
+        return this.floatXs[panel];
     }
 
     FloatYOf :: (panel: string) -> f32 {
-        return when panel {
-            "outliner" -> this.outlinerY,
-            "details" -> this.detailsY,
-            default -> this.drawerY
-        };
+        guard this.floatYs.containsKey(panel) return PanelDocking:::DefaultFloatY(panel);
+        return this.floatYs[panel];
     }
 
-    // True when a panel is switched on (Window menu, Alt+1 to 3).
+    // True when a panel is switched on (the Window menu, Alt+1 to 3, Shift+A and Alt+5 for the Silhouettes panel).
     IsShown :: (panel: string) -> bool {
-        return when panel {
-            "outliner" -> this.outlinerVisible,
-            "details" -> this.detailsVisible,
-            default -> this.drawerVisible
-        };
+        guard this.shown.containsKey(panel) return PanelDocking:::ShownAtFirst(panel);
+        return this.shown[panel];
     }
 
     // The panels on screen at a place in a mode, in the order a dock stacks them.
@@ -203,95 +182,86 @@ public:
         this.panelDropPlace = "";
         if place == PanelDocking:::FLOAT {
             this.MoveFloating(panel, cornerX, cornerY);
-            editorSetPreference(`ui.${panel}X`, HexOf(i32(cornerX)));
-            editorSetPreference(`ui.${panel}Y`, HexOf(i32(cornerY)));
+            this.RememberCorner(panel);
         }
         this.SetPlace(panel, place);
     }
 
     // Puts a panel at a place and remembers it.
     SetPlace~: (panel: string, place: string) -> void {
-        when panel {
-            "outliner" -> { this.outlinerPlace = place; },
-            "details" -> { this.detailsPlace = place; },
-            default -> { this.drawerPlace = place; }
-        }
+        next~ Dictionary<string, string> = this.places;
+        next[panel] = place;
+        this.places = next;
         editorSetPreference(`ui.${panel}Place`, place);
     }
 
     MoveFloating~: (panel: string, x: f32, y: f32) -> void {
-        when panel {
-            "outliner" -> {
-                this.outlinerX = x;
-                this.outlinerY = y;
-            },
-            "details" -> {
-                this.detailsX = x;
-                this.detailsY = y;
-            },
-            default -> {
-                this.drawerX = x;
-                this.drawerY = y;
-            }
-        }
+        nextX~ Dictionary<string, f32> = this.floatXs;
+        nextX[panel] = x;
+        this.floatXs = nextX;
+        nextY~ Dictionary<string, f32> = this.floatYs;
+        nextY[panel] = y;
+        this.floatYs = nextY;
+    }
+
+    // Saves a floating panel's corner, so it comes back there next time.
+    RememberCorner~: (panel: string) -> void {
+        editorSetPreference(`ui.${panel}X`, HexOf(i32(this.FloatXOf(panel))));
+        editorSetPreference(`ui.${panel}Y`, HexOf(i32(this.FloatYOf(panel))));
     }
 
     ReshowPanels~: () -> void {
         this.panelsShowing += 1;
     }
 
-    // Shows or hides a panel by name ("outliner", "details" or "drawer").
+    // Shows or hides a panel by name (one of PanelDocking:::Panels).
     TogglePanel~: (panel: string) -> void {
         this.focused = false;
-        when panel {
-            "outliner" -> this.SetOutliner(!this.outlinerVisible),
-            "details" -> this.SetDetails(!this.detailsVisible),
-            "drawer" -> this.SetDrawer(!this.drawerVisible),
-            default -> {}
-        }
+        this.SetShown(panel, !this.IsShown(panel));
     }
 
     // Hides every panel for a clean viewport, or brings back the ones that were shown.
     ToggleFocus~: () -> void {
         if this.focused {
             this.focused = false;
-            this.SetOutliner(this.focusSavedOutliner);
-            this.SetDetails(this.focusSavedDetails);
-            this.SetDrawer(this.focusSavedDrawer);
+            for panel in PanelDocking:::Panels() {
+                if this.focusSaved.containsKey(panel) {
+                    this.SetShown(panel, this.focusSaved[panel]);
+                }
+            }
             return;
         }
-        this.focusSavedOutliner = this.outlinerVisible;
-        this.focusSavedDetails = this.detailsVisible;
-        this.focusSavedDrawer = this.drawerVisible;
-        this.SetOutliner(false);
-        this.SetDetails(false);
-        this.SetDrawer(false);
+        saved~ Dictionary<string, bool> = {};
+        for panel in PanelDocking:::Panels() {
+            saved[panel] = this.IsShown(panel);
+            this.SetShown(panel, false);
+        }
+        this.focusSaved = saved;
         this.focused = true;
     }
 
     // What is shown, as one value for the menus.
     Visibility :: () -> PanelVisibility {
         return PanelVisibility {
-            outliner: this.outlinerVisible,
-            details: this.detailsVisible,
-            drawer: this.drawerVisible,
+            outliner: this.IsShown("outliner"),
+            details: this.IsShown("details"),
+            drawer: this.IsShown("drawer"),
+            silhouettes: this.IsShown("silhouettes"),
+            preview: this.IsShown("preview"),
             bottomPanel: this.bottomPanel
         };
     }
 
-    SetOutliner~: (shown: bool) -> void {
-        this.outlinerVisible = shown;
-        editorSetPreference("ui.outliner", shown ? "1" : "0");
+    // Shows or hides a panel and remembers it.
+    SetShown~: (panel: string, isShown: bool) -> void {
+        next~ Dictionary<string, bool> = this.shown;
+        next[panel] = isShown;
+        this.shown = next;
+        editorSetPreference(`ui.${panel}`, isShown ? "1" : "0");
     }
 
-    SetDetails~: (shown: bool) -> void {
-        this.detailsVisible = shown;
-        editorSetPreference("ui.details", shown ? "1" : "0");
-    }
-
-    SetDrawer~: (shown: bool) -> void {
-        this.drawerVisible = shown;
-        editorSetPreference("ui.drawer", shown ? "1" : "0");
+    SetDrawer~: (isShown: bool) -> void {
+        this.SetShown("drawer", isShown);
     }
 
     // How close to the window's left edge, in pixels, a dropped palette docks.
@@ -329,10 +299,34 @@ public:
         return f32(value);
     }
 
-    // A panel's saved place, or where it starts the first time.
-    static RememberedPlace :: (panel: string) -> string {
-        saved := editorPreference(`ui.${panel}Place`);
-        return PanelDocking:::IsPlace(saved) ? saved : PanelDocking:::DefaultPlace(panel);
+    // Each panel's saved place, or where it starts the first time.
+    static RememberedPlaces :: () -> Dictionary<string, string> {
+        places~ Dictionary<string, string> = {};
+        for panel in PanelDocking:::Panels() {
+            saved := editorPreference(`ui.${panel}Place`);
+            places[panel] = PanelDocking:::IsPlace(saved) ? saved : PanelDocking:::DefaultPlace(panel);
+        }
+        return places;
+    }
+
+    // Each panel's saved floating corner along one axis ("X" or "Y"), or where it starts the first time.
+    static RememberedCorners :: (axis: string) -> Dictionary<string, f32> {
+        corners~ Dictionary<string, f32> = {};
+        for panel in PanelDocking:::Panels() {
+            fallback := axis == "X" ? PanelDocking:::DefaultFloatX(panel) : PanelDocking:::DefaultFloatY(panel);
+            corners[panel] = RememberedPosition(`ui.${panel}${axis}`, fallback);
+        }
+        return corners;
+    }
+
+    // Whether each panel was shown last time, or whether it starts shown.
+    static RememberedShown :: () -> Dictionary<string, bool> {
+        shown~ Dictionary<string, bool> = {};
+        for panel in PanelDocking:::Panels() {
+            saved := editorPreference(`ui.${panel}`);
+            shown[panel] = saved == "" ? PanelDocking:::ShownAtFirst(panel) : saved != "0";
+        }
+        return shown;
     }
 
     // The panel saved last time, or "assets" the first time.
@@ -341,8 +335,4 @@ public:
         return remembered == "" ? "assets" : remembered;
     }
 
-    // A saved on or off, shown the first time.
-    static RememberedFlag :: (name: string) -> bool {
-        return editorPreference(name) != "0";
-    }
 }

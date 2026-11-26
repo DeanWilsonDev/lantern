@@ -6,7 +6,9 @@ EditorModel :: import EditorModel;
 EditorOverlays :: import EditorOverlays;
 EditorTabs :: import EditorTabs;
 OutlinerState :: import OutlinerState;
+PanelDocking :: import PanelDocking;
 SettingsUi :: import SettingsUi;
+SilhouetteCategories :: import SilhouetteCategories;
 TerrainUi :: import TerrainUi;
 
 // Every command the person can run, by a short name: from the menus, the right click menu, the command
@@ -59,7 +61,7 @@ public:
             "duplicateProject" -> this.overlays.OpenProject("duplicate"),
             "openProject" -> this.WhenSaved(command, () -> { this.ShowDialog("openProject"); }),
             "commandPalette" -> this.overlays.OpenPalette(),
-            "silhouettes" -> this.overlays.ToggleSilhouettes(),
+            "silhouettes" -> this.ToggleSilhouettes(),
             "undo" -> { editorUndo(); },
             "redo" -> { editorRedo(); },
             "duplicate" -> { editorDuplicateSelection(); },
@@ -141,8 +143,8 @@ public:
         }
     }
 
-    // Places a template from the Silhouettes panel in front of the camera, where Add to World in the drawer puts it too. The new
-    // entity becomes the selection, so the move tool is ready for it.
+    // Places a template in front of the camera, for the command palette's Add entries (the panels place by dragging a
+    // card into the viewport). The new entity becomes the selection, so the move tool is ready for it.
     Place~: (templateId: string) -> void {
         guard templateId != "" return;
         if this.modes.Current() != EditorModes:::SELECT {
@@ -157,16 +159,32 @@ public:
         editorSetPlayPaused(paused);
     }
 
+    // Shows or hides the Silhouettes panel (the side rail's button, Shift+A and Alt+5 on the level), in Select mode,
+    // which has it. A floating one comes out just left of the mouse, as Blender's Add menu opens where you are.
+    ToggleSilhouettes~: () -> void {
+        if this.layout.IsShown("silhouettes") && this.modes.Current() == EditorModes:::SELECT {
+            this.layout.SetShown("silhouettes", false);
+            return;
+        }
+        if this.modes.Current() != EditorModes:::SELECT {
+            this.modes.Enter(EditorModes:::SELECT);
+        }
+        if this.layout.PlaceOf("silhouettes") == PanelDocking:::FLOAT {
+            this.layout.MoveFloating("silhouettes",
+                SilhouetteCategories:::PanelX(penumbra:::mouseX(), penumbra:::windowWidth()),
+                SilhouetteCategories:::PanelY(penumbra:::mouseY(), penumbra:::windowHeight()));
+            this.layout.ReshowPanels();
+        }
+        this.layout.SetShown("silhouettes", true);
+    }
+
     // Shows a drawer page, or hides the drawer if the page is already up. A page the mode doesn't have (Terrain while
-    // selecting, say) first switches to the mode it belongs to. On the level, Silhouettes (Alt+5) is the side rail's
-    // panel rather than a page, so it pops that out instead.
+    // selecting, say) first switches to the mode it belongs to. On the level, Silhouettes (Alt+5) is a panel of its own
+    // rather than a page, so it shows or hides that instead.
     ShowPage~: (page: string) -> void {
         mode := this.modes.Current();
         if page == "silhouettes" && EditorModes:::OnLevel(mode) {
-            if mode != EditorModes:::SELECT {
-                this.modes.Enter(EditorModes:::SELECT);
-            }
-            this.overlays.ToggleSilhouettes();
+            this.ToggleSilhouettes();
             return;
         }
         if !EditorModes:::HasBottomPage(mode, page) && EditorModes:::ModeOfPage(page) != "" {
