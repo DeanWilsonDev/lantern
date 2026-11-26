@@ -2020,6 +2020,89 @@ Provisional (2026-11-21): not reviewed by Dean. The editor's `Editor` object is 
 
 Provisional (2026-11-21): not reviewed by Dean. The bridge's window requests carry a file dialog with a filter name but no folder flag. The editor's `FileDialogs.nox` treats the filter name `folder` as a request for SDL's open-folder dialog, so the project dialogs call `penumbra:::showOpenFileDialog("folder", "", start)` and need no bridge change. A real folder field in the bridge is the cleaner end state and would be its own cross-repo card.
 
+## D-258: A material graph generates a shader per material
+
+Dean (2026-11-26) chose a generated shader per material over evaluating the graph into the existing uniform values or
+baking it into texture maps. A material graph is an ordinary graph file (`material.graph.json` beside a material
+Silhouette's `root.calamus`) with one function, `material`, made of `mat_` nodes, so the visual-scripting canvas, file
+format and editing are reused rather than copied. `lantern:::materialgraph:::GenerateMaterialShader` turns it into GLSL,
+which the bake compiles; the game ships the compiled shader and never the graph. Parameters are baked in as constants for
+now; parameters a game changes at run time are a later card. See `docs/material-graphs.md`.
+
+## D-259: The lit shader is split around a `SurfaceOf` function
+
+`lit.frag` became `lit-common.glsl` (declarations and lighting), a `SurfaceOf(uv)` function giving a `MaterialSurface`
+(base colour, metallic, roughness, emissive, tangent normal and its strength) and `lit-main.glsl` (the main). `lit.frag`'s
+`SurfaceOf` reads the draw's texture and uniform material as before; a generated material shader writes its own. The
+draw's tint and vertex colour still multiply the base colour, and the draw's emissive is added to the surface's, so `tint`
+and `SetGlow` keep working on graph materials. Wetness and puddles stay in the main, so they apply to every material.
+Provisional: not reviewed by Dean.
+
+## D-260: A material shader is a renderer resource with its own pipelines, chosen per draw
+
+`RenderBackend` gains `CreateMaterialShader` and `RemoveMaterialShader`, alongside meshes and textures, and `DrawItem`
+gains an optional `materialShader` handle. The GPU renderer builds a plain and a skinned lit pipeline per material shader
+up front, so a frame never compiles anything, and sorts visible draws by shader before texture and mesh so each pipeline
+is bound once. The material's textures are part of the shader resource, not the draw, because every draw with that
+material samples the same ones; a per-draw texture override is not built. The shadow pipelines are shared by every
+material. Provisional: not reviewed by Dean.
+
+## D-261: The material bake compiles each graph's shader beside the baked Nyx, with the engine's own shader tools
+
+`mist run materials` writes each material graph's GLSL and its compiled SPIR-V and MSL into the game's
+`game-assets/materials/`, and `BakedMaterials:::Register()` loads them with `SetMaterialShader`, so the game reads only
+compiled files (D-213's asset rule). The bake runs `glslangValidator` and `spirv-cross` itself through SDL's process API,
+the same tools and flags as `engine/tools/build-shaders.sh`, and compiles only when the GLSL changed or a compiled file
+is missing, so a check run (`writeFiles` false, as the staleness test uses) needs neither tool. The `.frag` is kept beside
+the compiled files so a change shows in review, and the package leaves it out. Parameters are baked as constants from
+the Silhouette's numeric properties; changing one while the game runs is later work. Provisional: not reviewed by Dean.
+
+## D-262: A material graph is edited in the Graph tab, opened by the name `material:<material>`
+
+The editor reuses the script graph canvas for material graphs instead of a second editor: the graph layer knows which
+kinds a material graph offers, their pins and titles (`engine/src/graphs/MaterialNodes.nox`), keyed on the function being
+called `material`, and the editor backend opens, saves and creates a material's graph by the name `material:<material>`,
+reading and writing `material.graph.json` beside the Silhouette. Saving runs the material bake, so a saved material is
+ready for the game straight away. Opening a material with no graph writes a starter graph that matches its Silhouette,
+so the game looks the same until it is edited. The preview draws the saved shader, not unsaved edits, because a preview
+of unsaved edits would compile a shader on every change. Provisional: not reviewed by Dean.
+
+## D-263: The material preview lights a sphere with the sky but hides the sky behind it
+
+The Material Graph tab's preview draws a smooth sphere turning under fixed lights, so a highlight shows the material
+rather than moving with it: a warm sun as the key light, a cool point light as the rim and the sky as image-based
+light whose bright horizon band is what a metal reflects. `SkySettings` gains `backdropVisible` (on by default): off,
+the sky still lights and reflects in the scene but the background is the clear colour, so the preview sits on a dark
+studio backdrop. Entity previews reset the sun and sky first, since they share the preview's render world.
+Provisional: not reviewed by Dean.
+
+## D-264: Material parameters ride in the per-draw material uniforms; time rides in the camera position's spare component
+
+A material graph's `mat_param` nodes read eight floats added to the end of the per-draw material uniforms
+(`material.parameters`) instead of constants, so a game changes them while it runs with
+`lantern:::world:::SetMaterialParameter(material, name, value)`. A separate block would have been a fifth fragment
+uniform buffer, and SDL's GPU API allows four per stage (a fifth crashed lavapipe). The values live on the renderer's
+material shader and are copied into each of its draws' uniforms, 32 more bytes per draw. A parameter is per material, not per placed piece:
+per-piece values would need the draw item to carry them and are left for later. The bake passes each parameter's name
+and starting value to `SetMaterialShader` as `name=value;…`, and the engine keeps the names. The clock `mat_time`
+reads goes in `LightUniforms.camera_position.w`, which nothing read, so time needs no new uniform; it wraps every hour to
+keep float precision. A surface carries the coordinate its normal map was sampled at (`normal_uv`) and an opacity mask
+that discards below 0.5; shadows ignore the mask and translucency is still not built, because the lit pipeline doesn't
+blend. Provisional: not reviewed by Dean.
+
+## D-265: Masked shadows use a second, smaller shader; see-through materials blend after the sky; a piece's values ride on its draw
+
+A graph with an opacity mask bakes a second shader, `<name>.mask.frag`, with the same `SurfaceOf` and only what it reads
+(time, parameters, textures from binding 0), and the shadow pass draws that material's pieces with it, so a grate's
+shadow has its slats. The shadow pass didn't run any material code before; one shader per masked material keeps every
+other material on the plain shadow pipeline. A graph that wires its new `opacity` port is translucent: its lit pipelines
+blend by the opacity, test depth without writing it and leave the surface buffer alone, its draws sort after every
+opaque draw, farthest origin first, and they are drawn after the sky, since the sky fills only pixels whose depth is
+still clear and would cover them. A see-through piece casts no shadow. `SetMaterialShader` takes a ninth argument naming
+these (`masked`, `translucent`). A piece's own parameter values ride on its `MeshRenderer` and `DrawItem`
+(`overridesParameters` and eight floats) and replace the shader's in that draw's uniforms; the first value copies the
+shader's current values, so `SetEntityMaterialParameter` changes only the one named. Provisional: not reviewed by Dean.
+
 ## D-266: A terrain is a world entity of kind `terrain`, kept in properties
 
 Provisional (2026-11-26): not reviewed by Dean. A terrain is an ordinary entity, so the world file format, the validator, undo and the outliner need no change. `terrain_columns` and `terrain_cell_size` give its size and `terrain_heights` its heights; the other `terrain_*` numbers remember the generator settings so the editor can show them again. A dedicated field on `WorldEntity` was the other way; it would have needed a format version, reader, writer, copy and compare changes for no gain while a terrain is one entity.

@@ -1,0 +1,105 @@
+// A brick wall texture and its normal map, drawn from the same layout so the bumps line up with the colour: rows of bricks
+// in a running bond, each brick a slightly different red, with a recessed mortar line between them and a little grain.
+// Both tile, so a material can repeat them across a wall.
+lantern:::assetgen:::bricks :: namespace {
+    BRICKS_PER_ROW: u32 : 2;
+    ROWS_PER_TILE: u32 : 6;
+    MORTAR_WIDTH: f32 : 0.024f;
+    BEVEL_WIDTH: f32 : 0.018f;
+
+    // A repeatable pseudo-random number from 0 to 1 for a whole number, so the same brick always gets the same colour.
+    Hash :: (seed: u32) -> f32 {
+        mixed~ u32 = seed ^ (seed >> 16);
+        mixed = mixed.wrappingMultiply(2246822519);
+        mixed = mixed ^ (mixed >> 13);
+        mixed = mixed.wrappingMultiply(3266489917);
+        mixed = mixed ^ (mixed >> 16);
+        return f32(mixed % 10000) / 10000.0f;
+    }
+
+    // Where a point of the tile (0 to 1 across and down) falls: which brick, and how far it is from that brick's nearest edge,
+    // in tile units.
+    BrickCell :: struct {
+        brickId: u32;
+        edgeDistance: f32;
+    }
+
+    CellAt :: (across: f32, down: f32) -> BrickCell {
+        rowHeight: f32 = 1.0f / f32(ROWS_PER_TILE);
+        row: u32 = u32(down / rowHeight) % ROWS_PER_TILE;
+        brickWidth: f32 = 1.0f / f32(BRICKS_PER_ROW);
+        shifted~ f32 = across + (row % 2 == 1 ? brickWidth * 0.5f : 0.0f);
+        if shifted >= 1.0f {
+            shifted -= 1.0f;
+        }
+        column: u32 = u32(shifted / brickWidth) % BRICKS_PER_ROW;
+        insideAcross: f32 = shifted - f32(column) * brickWidth;
+        insideDown: f32 = down - f32(row) * rowHeight;
+        fromSide: f32 = Math:::min(insideAcross, brickWidth - insideAcross);
+        fromTopOrBottom: f32 = Math:::min(insideDown, rowHeight - insideDown);
+        return BrickCell { brickId: row * BRICKS_PER_ROW + column, edgeDistance: Math:::min(fromSide, fromTopOrBottom) };
+    }
+
+    // The wall's height at a pixel: 0 in the mortar, rising over the bevel to 1 on a brick's face, with a little grain.
+    HeightAt :: (size: u32, column: u32, row: u32) -> f32 {
+        wrappedColumn: u32 = column % size;
+        wrappedRow: u32 = row % size;
+        cell: BrickCell = CellAt((f32(wrappedColumn) + 0.5f) / f32(size), (f32(wrappedRow) + 0.5f) / f32(size));
+        rise: f32 = Math:::clamp((cell.edgeDistance - MORTAR_WIDTH * 0.5f) / BEVEL_WIDTH, 0.0f, 1.0f);
+        grain: f32 = Hash(wrappedRow * size + wrappedColumn + 7919) * 0.08f;
+        return rise * 0.9f + grain;
+    }
+
+    /**
+     * The colour texture: each brick a red picked between a dark and a light one, speckled, with grey mortar.
+     */
+    BrickColorPng :: (size: u32) -> Array<u8>! {
+        pixels~ Array<u8>! = [];
+        defer delete pixels;
+        darkBrick: Vec3 = Vec3 { x: 0.085f, y: 0.024f, z: 0.016f };
+        lightBrick: Vec3 = Vec3 { x: 0.2f, y: 0.055f, z: 0.03f };
+        mortar: Vec3 = Vec3 { x: 0.13f, y: 0.125f, z: 0.115f };
+        for row~ u32 = 0; row < size; row++ {
+            for column~ u32 = 0; column < size; column++ {
+                cell: BrickCell = CellAt((f32(column) + 0.5f) / f32(size), (f32(row) + 0.5f) / f32(size));
+                speckle: f32 = 0.85f + Hash(row * size + column) * 0.3f;
+                colour~ Vec3 = mortar * (0.9f + Hash(row * size + column + 31) * 0.2f);
+                if cell.edgeDistance > MORTAR_WIDTH * 0.5f {
+                    shade: f32 = Hash(cell.brickId * 97 + 13);
+                    brick: Vec3 = darkBrick + (lightBrick - darkBrick) * shade;
+                    colour = brick * speckle;
+                }
+                pixels.push(lantern:::assetgen:::png:::ToSrgbByte(colour.x));
+                pixels.push(lantern:::assetgen:::png:::ToSrgbByte(colour.y));
+                pixels.push(lantern:::assetgen:::png:::ToSrgbByte(colour.z));
+                pixels.push(255);
+            }
+        }
+        return lantern:::assetgen:::png:::SquarePng(size, pixels);
+    }
+
+    /**
+     * The normal map: tangent-space normals (x right, y up the texture, z out of the wall) from the height's slope, stored
+     * as bytes without the sRGB curve, the way a material's normal map node reads them.
+     */
+    BrickNormalPng :: (size: u32) -> Array<u8>! {
+        pixels~ Array<u8>! = [];
+        defer delete pixels;
+        steepness: f32 = 2.5f;
+        for row~ u32 = 0; row < size; row++ {
+            for column~ u32 = 0; column < size; column++ {
+                left: f32 = HeightAt(size, column + size - 1, row);
+                right: f32 = HeightAt(size, column + 1, row);
+                above: f32 = HeightAt(size, column, row + size - 1);
+                below: f32 = HeightAt(size, column, row + 1);
+                slope: Vec3 = Vec3 { x: (left - right) * steepness, y: (below - above) * steepness, z: 1.0f };
+                normal: Vec3 = lantern:::core:::Normalize3(slope);
+                pixels.push(u8(Math:::round((normal.x * 0.5f + 0.5f) * 255.0f)));
+                pixels.push(u8(Math:::round((normal.y * 0.5f + 0.5f) * 255.0f)));
+                pixels.push(u8(Math:::round((normal.z * 0.5f + 0.5f) * 255.0f)));
+                pixels.push(255);
+            }
+        }
+        return lantern:::assetgen:::png:::SquarePng(size, pixels);
+    }
+}

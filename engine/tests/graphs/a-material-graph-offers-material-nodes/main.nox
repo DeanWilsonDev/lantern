@@ -1,0 +1,73 @@
+// A material graph is edited on the same canvas as any graph: its menu offers the material kinds, its nodes have the pins
+// and titles a material needs, and it keeps exactly one output.
+lantern :: import lantern;
+
+main :: () -> i32 {
+    when readTextFile("../games/platformer/assets/silhouettes/materials/painted_metal/material.graph.json") {
+        Result:::Err(error) -> {
+            delete error;
+            return 1;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when lantern:::graphs:::LoadGraph(text) {
+                Result:::Err(message) -> {
+                    delete message;
+                    return 2;
+                },
+                Result:::Ok(loaded) -> {
+                    graph~ lantern:::graphs:::Graph*! = loaded!;
+                    function~ lantern:::graphs:::GraphFunction~* = graph->functions[0];
+                    assert(lantern:::graphs:::IsMaterialFunction(function), "a material graph's function is called material");
+
+                    menu: string! = lantern:::graphs:::SuggestedKinds(function, "", false);
+                    assert(menu.startsWith("mat_texture\n"), "the material menu lists the inputs first");
+                    assert(menu.contains("mat_lerp\n"), "the material menu lists the maths kinds");
+                    assert(menu.contains("mat_time\n") && menu.contains("mat_panner\n") && menu.contains("mat_world_position\n") && menu.contains("mat_fresnel\n") && menu.contains("mat_sine\n"), "the material menu lists the moving and world kinds");
+                    assert(!menu.contains("call\n"), "the material menu leaves out the script kinds");
+                    assert(!menu.contains("mat_output\n"), "the material menu leaves out the output");
+                    assert(menu.endsWith("-\ncomment\n"), "the material menu ends with the comment entry");
+                    delete menu;
+
+                    secondOutput: string! = lantern:::graphs:::AddNode(function, "mat_output", 0.0f, 0.0f);
+                    assert(secondOutput.length() == 0, "a material graph keeps one output");
+                    delete secondOutput;
+
+                    outputCount~ usize = 0;
+                    textureCount~ usize = 0;
+                    for index~ usize = 0; index < function->nodes.length(); index++ {
+                        node: lantern:::graphs:::GraphNode* = function->nodes[index];
+                        pins: lantern:::graphs:::PinList*! = lantern:::graphs:::PinsOf(function, node);
+                        title: string! = lantern:::graphs:::MaterialNodeTitle(node);
+                        if node->kind == "mat_output" {
+                            outputCount += 1;
+                            assert(pins->items.length() == 7, "the output has a row for each of its seven ports");
+                            assert(pins->items[0]->label.startsWith("base colour"), "the output's first row is the base colour");
+                            assert(pins->items[4]->label.startsWith("normal"), "the output's fifth row is the normal");
+                            assert(pins->items[5]->label.startsWith("opacity mask"), "the output's sixth row is the opacity mask");
+                            assert(pins->items[6]->label.startsWith("opacity"), "the output's last row is the opacity");
+                            assert(title == "material output", "the output's title says what it is");
+                        }
+                        if node->kind == "mat_texture" {
+                            textureCount += 1;
+                            assert(pins->items.length() == 2, "a texture has its value out and a uv in");
+                            assert(pins->items[0]->isOutput, "a texture's value comes out of its header");
+                            assert(title == "texture wall", "a texture's title names its texture");
+                        }
+                        delete title;
+                        delete pins;
+                    }
+                    assert(outputCount == 1, "the sample graph has one output");
+                    assert(textureCount == 1, "the sample graph samples one texture");
+
+                    added: string! = lantern:::graphs:::AddNode(function, "mat_one_minus", 0.0f, 0.0f);
+                    assert(added.length() > 0, "a material kind can be added");
+                    delete added;
+                    delete graph;
+                }
+            }
+        }
+    }
+    print("a material graph offers material nodes");
+    return 0;
+}

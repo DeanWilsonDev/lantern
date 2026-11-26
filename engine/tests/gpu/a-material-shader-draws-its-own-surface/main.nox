@@ -1,0 +1,108 @@
+// A red-tinted sphere drawn twice: with the ordinary lit shader, then with a material graph's own shader
+// (materials/green_glow.graph.json, generated and compiled into materials/). The graph takes its base colour from a blue
+// texture and glows green, so the second picture's middle is green and blue where the first is red. Removing the shader
+// sends the draw back to the ordinary pipeline.
+lantern :: import lantern;
+
+SphereWorld :: () -> lantern:::renderer:::RenderWorld*! {
+    world := new lantern:::renderer:::RenderWorld();
+    world->sky.enabled = false;
+    world->atmosphere.heightFogEnabled = false;
+    world->atmosphere.lightShaftsEnabled = false;
+    world->post.bloomEnabled = false;
+    world->clearColor = lantern:::core:::Color:::Rgb(0.0f, 0.0f, 0.0f);
+    world->camera = lantern:::renderer:::Camera:::LookAt(Vec3 { x: 0.0f, y: 0.0f, z: 4.0f }, Vec3 { });
+    return world!;
+}
+
+CentreOf :: (renderer: lantern:::gpu:::GpuRenderer~*, world: lantern:::renderer:::RenderWorld*, pixels: Array<u8>!~*, size: u32) -> u8[3] {
+    when renderer->RenderOffscreen(world, size, size, pixels^*) {
+        Result:::Ok(report) -> {
+            centre: usize = usize(((size / 2) * size + size / 2) * 4);
+            return [pixels^*[centre], pixels^*[centre + 1], pixels^*[centre + 2]];
+        },
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            return [0, 0, 0];
+        }
+    }
+}
+
+main :: () -> i32 {
+    created := lantern:::gpu:::GpuRenderer:::CreateOffscreen(lantern:::gpu:::GpuOptions { debugEnabled: false, vsync: false });
+    when created! {
+        Result:::Ok(renderer) -> {
+            defer delete renderer;
+            sphereData := lantern:::renderer:::Sphere(1.0f, 32, 16);
+            defer delete sphereData;
+            sphere~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
+            when renderer->CreateMesh(sphereData) {
+                Result:::Ok(handle) -> {
+                    sphere = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            blueData := lantern:::renderer:::TextureData:::Solid(lantern:::core:::Color:::Rgb(0.0f, 0.0f, 1.0f));
+            defer delete blueData;
+            blue~ lantern:::core:::Handle<lantern:::renderer:::TextureTag> = lantern:::core:::Handle<lantern:::renderer:::TextureTag> { };
+            when renderer->CreateTexture(blueData) {
+                Result:::Ok(handle) -> {
+                    blue = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+            source~ lantern:::renderer:::MaterialShaderSource = lantern:::renderer:::MaterialShaderSource { name: "green_glow", directory: "tests/gpu/a-material-shader-draws-its-own-surface/materials", textureCount: 1 };
+            source.textures[0] = blue;
+            glow~ lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>? = null;
+            when renderer->CreateMaterialShader(source) {
+                Result:::Ok(handle) -> {
+                    glow = handle;
+                },
+                Result:::Err(message) -> {
+                    print(message);
+                    delete message;
+                    return 1;
+                }
+            }
+
+            pixels~ Array<u8>! = [];
+            defer delete pixels;
+            size: u32 = 64;
+            world := SphereWorld();
+            defer delete world;
+            world->Draw(sphere, null, Mat4 { }, lantern:::core:::Color:::Rgb(1.0f, 0.2f, 0.2f));
+
+            plain: u8[3] = CentreOf(renderer, world, pixels, size);
+            assert(plain[0] > plain[1] && plain[0] > plain[2], "the ordinary lit shader draws the red tint");
+
+            world->draws[0].materialShader = glow;
+            graphed: u8[3] = CentreOf(renderer, world, pixels, size);
+            if !(graphed[1] > 150 && graphed[1] > graphed[0]) {
+                print(`with the material shader the middle is ${graphed[0]}, ${graphed[1]}, ${graphed[2]}`);
+            }
+            assert(graphed[1] > 150 && graphed[1] > graphed[0], "the material's emissive makes the middle green");
+            assert(graphed[2] > graphed[0], "and its texture, blue under the red tint, gives more blue than red");
+
+            if handle := glow {
+                renderer->RemoveMaterialShader(handle);
+            }
+            back: u8[3] = CentreOf(renderer, world, pixels, size);
+            assert(back[0] == plain[0] && back[1] == plain[1] && back[2] == plain[2], "a removed material shader leaves the ordinary one");
+        },
+        Result:::Err(message) -> {
+            lantern:::gputest:::Skip(message);
+            delete message;
+        }
+    }
+    print("a material shader draws its own surface");
+    return 0;
+}

@@ -214,6 +214,10 @@ lantern:::host :: namespace {
         looks~ Array<lantern:::renderer:::MaterialLook>! = [];
         scriptMeshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
         scriptTextures~ Array<lantern:::core:::Handle<lantern:::renderer:::TextureTag>>! = [];
+        scriptMaterialShaders~ Array<lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>>! = [];
+        shaderParameterMaterials~ Array<string!>! = [];
+        shaderParameterNames~ Array<string!>! = [];
+        shaderParameterSlots~ Array<u32>! = [];
         worldMeshes~ Array<lantern:::core:::Handle<lantern:::renderer:::MeshTag>>! = [];
         worldLightIds~ Array<u32>! = [];
         streaming~ RoomStreamer*!;
@@ -263,6 +267,10 @@ lantern:::host :: namespace {
             delete looks;
             delete scriptMeshes;
             delete scriptTextures;
+            delete scriptMaterialShaders;
+            shaderParameterMaterials.freeAll();
+            shaderParameterNames.freeAll();
+            delete shaderParameterSlots;
             delete worldMeshes;
             delete worldLightIds;
             entityTags.freeAll();
@@ -352,7 +360,11 @@ lantern:::host :: namespace {
         SetMaterialLook~: (name: string, look: lantern:::renderer:::MaterialLook) -> void {
             for index~ usize = 0; index < lookNames.length(); index++ {
                 if lookNames[index] == name {
+                    keptShader: lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>? = looks[index].shader;
                     looks[index] = look;
+                    if look.shader == null {
+                        looks[index].shader = keptShader;
+                    }
                     return;
                 }
             }
@@ -361,8 +373,65 @@ lantern:::host :: namespace {
         }
 
         /**
+         * Gives a material name the shader its graph became. A material with no look yet gets the default one, so
+         * `SetMaterialLook` before or after both keep the shader.
+         */
+        SetMaterialShader~: (name: string, shader: lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>) -> void {
+            for index~ usize = 0; index < lookNames.length(); index++ {
+                if lookNames[index] == name {
+                    looks[index].shader = shader;
+                    return;
+                }
+            }
+            lookNames.push(`${name}`);
+            looks.push(lantern:::renderer:::MaterialLook { shader: shader });
+        }
+
+        /**
+         * Names one of a material shader's parameter slots, so `SetMaterialParameter` can find it by the name its graph gave it.
+         */
+        AddShaderParameter~: (material: string, parameterName: string, slot: u32) -> void {
+            for index~ usize = 0; index < shaderParameterMaterials.length(); index++ {
+                if shaderParameterMaterials[index] == material && shaderParameterNames[index] == parameterName {
+                    shaderParameterSlots[index] = slot;
+                    return;
+                }
+            }
+            shaderParameterMaterials.push(`${material}`);
+            shaderParameterNames.push(`${parameterName}`);
+            shaderParameterSlots.push(slot);
+        }
+
+        /**
+         * The slot of a material's named parameter, or null when its shader has no parameter by that name.
+         */
+        ShaderParameterSlot :: (material: string, parameterName: string) -> u32? {
+            for index~ usize = 0; index < shaderParameterMaterials.length(); index++ {
+                if shaderParameterMaterials[index] == material && shaderParameterNames[index] == parameterName {
+                    return shaderParameterSlots[index];
+                }
+            }
+            return null;
+        }
+
+        /**
          * The look of a material name, or null.
          */
+        ShaderParameterSlotOf :: (shader: lantern:::core:::Handle<lantern:::renderer:::MaterialShaderTag>, parameterName: string) -> u32? {
+            for index~ usize = 0; index < shaderParameterMaterials.length(); index++ {
+                if shaderParameterNames[index] == parameterName {
+                    if look := LookOf(shaderParameterMaterials[index]) {
+                        if lookShader := look.shader {
+                            if lookShader == shader {
+                                return shaderParameterSlots[index];
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
         LookOf :: (name: string) -> lantern:::renderer:::MaterialLook? {
             for index~ usize = 0; index < lookNames.length(); index++ {
                 if lookNames[index] == name {
@@ -491,6 +560,15 @@ lantern:::host :: namespace {
                 renderBackend->RemoveTexture(texture);
             }
             scriptTextures.clear();
+            for materialShader in scriptMaterialShaders {
+                renderBackend->RemoveMaterialShader(materialShader);
+            }
+            scriptMaterialShaders.clear();
+            shaderParameterMaterials.freeAll();
+            shaderParameterMaterials = [];
+            shaderParameterNames.freeAll();
+            shaderParameterNames = [];
+            shaderParameterSlots.clear();
             materialNames.freeAll();
             materialNames = [];
             materialTextures.clear();

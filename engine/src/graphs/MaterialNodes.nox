@@ -1,0 +1,155 @@
+// The material graph's node kinds as the graph tab sees them (docs/material-graphs.md): which kinds a material graph offers, their
+// pins and their titles. A material graph is a graph whose one function is called `material`; `lantern:::materialgraph` turns it
+// into a shader, and this file only says how it is edited, so the canvas, the menu and the fields work on it like any graph.
+lantern:::graphs :: namespace {
+    MATERIAL_FUNCTION_NAME: string : "material";
+    MATERIAL_OUTPUT_KIND: string : "mat_output";
+
+    // True for the function a material graph is made of.
+    IsMaterialFunction :: (function: GraphFunction*) -> bool {
+        return function->name == MATERIAL_FUNCTION_NAME;
+    }
+
+    IsMaterialNodeKind :: (kind: string) -> bool {
+        return kind == "mat_scalar" || kind == "mat_color" || kind == "mat_param" || kind == "mat_uv" || kind == "mat_texture"
+            || kind == "mat_normal_map" || kind == "mat_add" || kind == "mat_sub" || kind == "mat_mul" || kind == "mat_lerp"
+            || kind == "mat_one_minus" || kind == "mat_clamp" || kind == "mat_time" || kind == "mat_panner"
+            || kind == "mat_world_position" || kind == "mat_fresnel" || kind == "mat_sine" || kind == MATERIAL_OUTPUT_KIND;
+    }
+
+    // Every material kind the add-node menu offers, inputs first, then maths. The output is made with the graph, and a graph
+    // has only one.
+    MaterialMenuKinds :: () -> Array<string>! {
+        list~ Array<string>! = [];
+        list.push("mat_texture");
+        list.push("mat_color");
+        list.push("mat_scalar");
+        list.push("mat_param");
+        list.push("mat_uv");
+        list.push("mat_normal_map");
+        list.push("mat_time");
+        list.push("mat_panner");
+        list.push("mat_world_position");
+        list.push("mat_fresnel");
+        list.push("mat_mul");
+        list.push("mat_add");
+        list.push("mat_sub");
+        list.push("mat_lerp");
+        list.push("mat_one_minus");
+        list.push("mat_clamp");
+        list.push("mat_sine");
+        return list!;
+    }
+
+    // The add-node menu of a material graph: the material kinds and a comment.
+    MaterialMenuText :: () -> string! {
+        kinds: Array<string>! = MaterialMenuKinds();
+        defer delete kinds;
+        text~ string! = "".copy();
+        for kind in kinds {
+            text += kind;
+            text += "\n";
+        }
+        text += "-\n";
+        text += "comment\n";
+        return text!;
+    }
+
+    // The words in a material node's header: what it is, and the name or colour that sets it.
+    MaterialNodeTitle :: (node: GraphNode*) -> string! {
+        kind: string = node->kind;
+        if kind == "mat_texture" || kind == "mat_normal_map" {
+            label: string = kind == "mat_texture" ? "texture" : "normal map";
+            return node->name.length() > 0 ? `${label} ${node->name}` : `${label}`;
+        }
+        if kind == "mat_param" {
+            return node->name.length() > 0 ? `param ${node->name}` : "param".copy();
+        }
+        if kind == "mat_color" {
+            return `colour ${node->text}`;
+        }
+        if kind == MATERIAL_OUTPUT_KIND {
+            return "material output".copy();
+        }
+        if kind == "mat_one_minus" {
+            return "one minus".copy();
+        }
+        if kind == "mat_world_position" {
+            return node->name.length() > 0 ? `world position ${node->name}` : "world position".copy();
+        }
+        return kind.substring(4, kind.length() - 4).copy();
+    }
+
+    // A material node's pins: a value out in the header for every kind but the output, and a value in for each port it reads.
+    MaterialPins :: (function: GraphFunction*, node: GraphNode*, pins: PinList~*) -> void {
+        kind: string = node->kind;
+        if kind == MATERIAL_OUTPUT_KIND {
+            labels: string[7] = ["base colour", "metallic", "roughness", "emissive", "normal", "opacity mask", "opacity"];
+            for portIndex~ i32 = 0; portIndex < 7; portIndex++ {
+                port: string! = `arg${portIndex}`;
+                reference~ string = "";
+                if usize(portIndex) < node->arguments.length() {
+                    reference = node->arguments[usize(portIndex)];
+                }
+                label: string! = ValueLabel(function, labels[usize(portIndex)], reference);
+                pins->Add(port, label, false, false, portIndex + 1);
+                delete label;
+                delete port;
+            }
+            return;
+        }
+        pins->Add("out", "", false, true, 0);
+        ports~ Array<string>! = [];
+        defer delete ports;
+        labels~ Array<string>! = [];
+        defer delete labels;
+        if kind == "mat_scalar" {
+            ports.push("a");
+            labels.push("value");
+        } else if kind == "mat_param" {
+            ports.push("a");
+            labels.push("default");
+        } else if kind == "mat_texture" {
+            ports.push("a");
+            labels.push("uv");
+        } else if kind == "mat_normal_map" {
+            ports.push("a");
+            labels.push("uv");
+            ports.push("b");
+            labels.push("strength");
+        } else if kind == "mat_add" || kind == "mat_sub" || kind == "mat_mul" {
+            ports.push("a");
+            labels.push("a");
+            ports.push("b");
+            labels.push("b");
+        } else if kind == "mat_lerp" {
+            ports.push("a");
+            labels.push("a");
+            ports.push("b");
+            labels.push("b");
+            ports.push("value");
+            labels.push("by");
+        } else if kind == "mat_one_minus" || kind == "mat_clamp" || kind == "mat_sine" {
+            ports.push("a");
+            labels.push("a");
+        } else if kind == "mat_time" {
+            ports.push("a");
+            labels.push("speed");
+        } else if kind == "mat_panner" {
+            ports.push("a");
+            labels.push("uv");
+            ports.push("b");
+            labels.push("speed x");
+            ports.push("value");
+            labels.push("speed y");
+        } else if kind == "mat_fresnel" {
+            ports.push("a");
+            labels.push("power");
+        }
+        for index~ usize = 0; index < ports.length(); index++ {
+            label: string! = ValueLabel(function, labels[index], PortReference(node, ports[index]));
+            pins->Add(ports[index], label, false, false, i32(index) + 1);
+            delete label;
+        }
+    }
+}

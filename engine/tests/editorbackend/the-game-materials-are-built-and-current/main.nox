@@ -1,5 +1,5 @@
-// The materials built from the game's material Silhouettes are up to date; if not, the test says to run `mist run
-// materials`.
+// The materials built from the game's material Silhouettes, and the shaders built from their material graphs, are up to
+// date; if not, the test says to run `mist run materials`.
 lantern :: import lantern;
 
 main :: () -> i32 {
@@ -16,6 +16,46 @@ main :: () -> i32 {
             }
         }
     }
+    shaders~ Array<lantern:::editorbackend:::GeneratedMaterialShader*!>! = lantern:::editorbackend:::GenerateMaterialShaders("../games/platformer/assets");
+    defer shaders.freeAll();
+    painted~ lantern:::editorbackend:::GeneratedMaterialShader*? = null;
+    brick~ lantern:::editorbackend:::GeneratedMaterialShader*? = null;
+    grille~ lantern:::editorbackend:::GeneratedMaterialShader*? = null;
+    glass~ lantern:::editorbackend:::GeneratedMaterialShader*? = null;
+    for shader in shaders {
+        assert(shader->failure == null, "every sample material graph becomes a shader");
+        if shader->name == "painted_metal" {
+            painted = shader;
+        }
+        if shader->name == "brick" {
+            brick = shader;
+        }
+        if shader->name == "vent_grille" {
+            grille = shader;
+        }
+        if shader->name == "sea_glass" {
+            glass = shader;
+        }
+    }
+    assert(shaders.length() == 7, "the seven materials with a graph get a shader");
+    guard paintedShader := painted return 3;
+    guard brickShader := brick return 4;
+    guard grilleShader := grille return 5;
+    guard glassShader := glass return 6;
+    assert(grilleShader->maskSource.contains("#include \"mask-main.glsl\""), "a graph with an opacity mask gets a shadow shader too");
+    assert(!grilleShader->isTranslucent && brickShader->maskSource.length() == 0, "and one without gets none");
+    assert(glassShader->isTranslucent && glassShader->source.contains("surface.opacity = node_seeThrough;"), "a graph with an opacity is see-through");
+    assert(paintedShader->textureNames.length() == 1, "painted metal samples one texture");
+    assert(paintedShader->source.contains("    float node_wear = material.parameters[0].y;"), "a parameter reads its uniform slot");
+    assert(paintedShader->parameterDefaults.length() == 2 && paintedShader->parameterDefaults[1] == 0.3f, "and starts at the Silhouette's value");
+    assert(brickShader->textureNames.length() == 2, "brick samples its colour and its normal map");
+    registrations: string! = lantern:::editorbackend:::MaterialShaderRegistrations(shaders);
+    defer delete registrations;
+    assert(registrations.contains("SetMaterialShader(\"painted_metal\", \"../game-assets/materials\", \"painted_metal\", Texture(\"textures/wall.png\"), 0, 0, 0, \"metallic=0.6;wear=0.3\", \"\");"), "the baked Nyx loads its compiled shader with its texture");
+    assert(registrations.contains("SetMaterialShader(\"brick\", \"../game-assets/materials\", \"brick\", Texture(\"textures/brick.png\"), Texture(\"textures/brick_normal.png\"), 0, 0, \"roughness=0.85;bumpiness=1.0\", \"\");"), "brick loads its texture and its normal map");
+    assert(registrations.contains("SetMaterialShader(\"gold\", \"../game-assets/materials\", \"gold\", 0, 0, 0, 0, \"roughness=0.22\", \"\");"), "gold samples no texture");
+    assert(registrations.contains("\"metallic=0.85;roughness=0.4\", \"masked\");"), "the grille's shadow is cut by its mask");
+    assert(registrations.contains("\"roughness=0.06;thickness=0.3\", \"translucent\");"), "sea glass is drawn see-through");
     print("the game materials are current");
     return 0;
 }

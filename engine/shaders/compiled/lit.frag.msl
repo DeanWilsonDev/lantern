@@ -13,6 +13,19 @@ struct LocalLight
     float4 cone;
 };
 
+struct MaterialSurface
+{
+    float3 base_color;
+    float metallic;
+    float roughness;
+    float3 emissive;
+    float3 tangent_normal;
+    float normal_strength;
+    float2 normal_uv;
+    float opacity_mask;
+    float opacity;
+};
+
 struct ShadowUniforms
 {
     float4x4 local_tile_matrices[12];
@@ -43,6 +56,7 @@ struct MaterialUniforms
     float4 color;
     float4 surface;
     float4 emissive;
+    float4 parameters[2];
 };
 
 struct LocalLight_1
@@ -74,11 +88,44 @@ struct main0_in
 };
 
 static inline __attribute__((always_inline))
+MaterialSurface DefaultSurface(thread const float2& uv)
+{
+    MaterialSurface surface;
+    surface.base_color = float3(1.0);
+    surface.metallic = 0.0;
+    surface.roughness = 0.800000011920928955078125;
+    surface.emissive = float3(0.0);
+    surface.tangent_normal = float3(0.0, 0.0, 1.0);
+    surface.normal_strength = 0.0;
+    surface.normal_uv = uv;
+    surface.opacity_mask = 1.0;
+    surface.opacity = 1.0;
+    return surface;
+}
+
+static inline __attribute__((always_inline))
 float3 LinearToSrgbExact(thread const float3& linear)
 {
     float3 low = linear * 12.9200000762939453125;
     float3 high = (pow(fast::max(linear, float3(0.0)), float3(0.4166666567325592041015625)) * 1.05499994754791259765625) - float3(0.054999999701976776123046875);
     return select(high, low, linear <= float3(0.003130800090730190277099609375));
+}
+
+static inline __attribute__((always_inline))
+MaterialSurface SurfaceOf(thread const float2& uv, texture2d<float> albedo_texture, sampler albedo_textureSmplr, constant MaterialUniforms& material, texture2d<float> normal_texture, sampler normal_textureSmplr)
+{
+    float2 param = uv;
+    MaterialSurface surface = DefaultSurface(param);
+    surface.base_color = albedo_texture.sample(albedo_textureSmplr, uv).xyz;
+    surface.metallic = material.surface.x;
+    surface.roughness = material.surface.y;
+    surface.normal_strength = material.surface.z;
+    if (surface.normal_strength > 0.0)
+    {
+        float3 param_1 = normal_texture.sample(normal_textureSmplr, uv).xyz;
+        surface.tangent_normal = (LinearToSrgbExact(param_1) * 2.0) - float3(1.0);
+    }
+    return surface;
 }
 
 static inline __attribute__((always_inline))
@@ -93,7 +140,12 @@ float3 PerturbNormal(thread const float3& surface_normal, thread const float3& p
     float3 tangent = (perpendicular_y * uv_dx.x) + (perpendicular_x * uv_dy.x);
     float3 bitangent = -((perpendicular_y * uv_dx.y) + (perpendicular_x * uv_dy.y));
     float scale = rsqrt(fast::max(fast::max(dot(tangent, tangent), dot(bitangent, bitangent)), 9.9999999600419720025001879548654e-13));
-    float3 bent = fast::normalize(float3(tangent_space.xy * strength, tangent_space.z));
+    float3 scaled = float3(tangent_space.xy * strength, tangent_space.z);
+    if (dot(scaled, scaled) < 9.9999999600419720025001879548654e-13)
+    {
+        return surface_normal;
+    }
+    float3 bent = fast::normalize(scaled);
     return fast::normalize((((tangent * scale) * bent.x) + ((bitangent * scale) * bent.y)) + (surface_normal * bent.z));
 }
 
@@ -171,8 +223,8 @@ float FilteredShadow(depth2d<float> shadow_map, sampler shadow_mapSmplr, thread 
         float ring = sqrt((float(sample_index) + 0.5) / float(sample_count)) * radius;
         float angle = (float(sample_index) * 2.3999631404876708984375) + turn;
         float2 sample_uv = fast::clamp(uv + ((float2(cos(angle), sin(angle)) * ring) * texel), tile_minimum + (texel * 0.5), tile_maximum - (texel * 0.5));
-        float3 _532 = float3(sample_uv, reference_depth);
-        lit_amount += shadow_map.sample_compare(shadow_mapSmplr, _532.xy, _532.z);
+        float3 _540 = float3(sample_uv, reference_depth);
+        lit_amount += shadow_map.sample_compare(shadow_mapSmplr, _540.xy, _540.z);
     }
     return lit_amount / float(sample_count);
 }
@@ -183,44 +235,44 @@ float CascadeShadow(thread const int& cascade, thread const float3& position, th
     float3 pushed = position + (normal * (shadows.cascade_texels[cascade] * shadows.cascade_texels.w));
     float4 clip = shadows.cascade_matrices[cascade] * float4(pushed, 1.0);
     float2 tile_uv = float2((clip.x * 0.5) + 0.5, 0.5 - (clip.y * 0.5));
-    bool _581 = clip.z > 1.0;
-    bool _588;
-    if (!_581)
+    bool _589 = clip.z > 1.0;
+    bool _596;
+    if (!_589)
     {
-        _588 = tile_uv.x < 0.0;
+        _596 = tile_uv.x < 0.0;
     }
     else
     {
-        _588 = _581;
+        _596 = _589;
     }
-    bool _595;
-    if (!_588)
+    bool _603;
+    if (!_596)
     {
-        _595 = tile_uv.x > 1.0;
+        _603 = tile_uv.x > 1.0;
     }
     else
     {
-        _595 = _588;
+        _603 = _596;
     }
-    bool _602;
-    if (!_595)
+    bool _610;
+    if (!_603)
     {
-        _602 = tile_uv.y < 0.0;
+        _610 = tile_uv.y < 0.0;
     }
     else
     {
-        _602 = _595;
+        _610 = _603;
     }
-    bool _609;
-    if (!_602)
+    bool _617;
+    if (!_610)
     {
-        _609 = tile_uv.y > 1.0;
+        _617 = tile_uv.y > 1.0;
     }
     else
     {
-        _609 = _602;
+        _617 = _610;
     }
-    if (_609)
+    if (_617)
     {
         return 1.0;
     }
@@ -278,19 +330,19 @@ float SunShadow(thread const float3& position, thread const float3& normal, cons
         float blend = smoothstep(cascade_end * (1.0 - blend_fraction), cascade_end, view_depth);
         if (blend > 0.0)
         {
-            float _744;
+            float _752;
             if (cascade < 2)
             {
                 int param_3 = cascade + 1;
                 float3 param_4 = position;
                 float3 param_5 = normal;
-                _744 = CascadeShadow(param_3, param_4, param_5, shadows, gl_FragCoord, sun_shadow_map, sun_shadow_mapSmplr);
+                _752 = CascadeShadow(param_3, param_4, param_5, shadows, gl_FragCoord, sun_shadow_map, sun_shadow_mapSmplr);
             }
             else
             {
-                _744 = 1.0;
+                _752 = 1.0;
             }
-            float neighbour = _744;
+            float neighbour = _752;
             shadow = mix(shadow, neighbour, blend);
         }
     }
@@ -364,17 +416,17 @@ float LocalShadow(thread const LocalLight& local, thread const float3& position,
     {
         float3 magnitude = abs(light_to_position);
         int face = 5;
-        bool _786 = magnitude.x >= magnitude.y;
-        bool _794;
-        if (_786)
+        bool _794 = magnitude.x >= magnitude.y;
+        bool _802;
+        if (_794)
         {
-            _794 = magnitude.x >= magnitude.z;
+            _802 = magnitude.x >= magnitude.z;
         }
         else
         {
-            _794 = _786;
+            _802 = _794;
         }
-        if (_794)
+        if (_802)
         {
             face = (light_to_position.x > 0.0) ? 0 : 1;
         }
@@ -395,44 +447,44 @@ float LocalShadow(thread const LocalLight& local, thread const float3& position,
     float4 clip = shadows.local_tile_matrices[tile] * float4(pushed, 1.0);
     float reference_depth = clip.z / clip.w;
     float2 tile_uv = float2(((clip.x / clip.w) * 0.5) + 0.5, 0.5 - ((clip.y / clip.w) * 0.5));
-    bool _869 = (clip.w <= 0.0) || (reference_depth > 1.0);
-    bool _876;
-    if (!_869)
+    bool _877 = (clip.w <= 0.0) || (reference_depth > 1.0);
+    bool _884;
+    if (!_877)
     {
-        _876 = tile_uv.x < 0.0;
+        _884 = tile_uv.x < 0.0;
     }
     else
     {
-        _876 = _869;
+        _884 = _877;
     }
-    bool _883;
-    if (!_876)
+    bool _891;
+    if (!_884)
     {
-        _883 = tile_uv.x > 1.0;
+        _891 = tile_uv.x > 1.0;
     }
     else
     {
-        _883 = _876;
+        _891 = _884;
     }
-    bool _890;
-    if (!_883)
+    bool _898;
+    if (!_891)
     {
-        _890 = tile_uv.y < 0.0;
+        _898 = tile_uv.y < 0.0;
     }
     else
     {
-        _890 = _883;
+        _898 = _891;
     }
-    bool _897;
-    if (!_890)
+    bool _905;
+    if (!_898)
     {
-        _897 = tile_uv.y > 1.0;
+        _905 = tile_uv.y > 1.0;
     }
     else
     {
-        _897 = _890;
+        _905 = _898;
     }
-    if (_897)
+    if (_905)
     {
         return 1.0;
     }
@@ -460,17 +512,17 @@ static inline __attribute__((always_inline))
 float2 EncodeNormal(thread const float3& normal)
 {
     float3 on_octahedron = normal / float3((abs(normal.x) + abs(normal.y)) + abs(normal.z));
-    float2 _213;
+    float2 _221;
     if (on_octahedron.z >= 0.0)
     {
-        _213 = on_octahedron.xy;
+        _221 = on_octahedron.xy;
     }
     else
     {
         float2 param = on_octahedron.xy;
-        _213 = OctahedronWrap(param);
+        _221 = OctahedronWrap(param);
     }
-    float2 folded = _213;
+    float2 folded = _221;
     return (folded * 0.5) + float2(0.5);
 }
 
@@ -484,22 +536,26 @@ float4 PackSurface(thread const float3& normal, thread const float& roughness, t
 fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light [[buffer(0)]], constant MaterialUniforms& material [[buffer(1)]], constant LocalLightUniforms& locals [[buffer(2)]], constant ShadowUniforms& shadows [[buffer(3)]], texture2d<float> albedo_texture [[texture(0)]], depth2d<float> sun_shadow_map [[texture(1)]], depth2d<float> local_shadow_map [[texture(2)]], texture2d<float> normal_texture [[texture(3)]], sampler albedo_textureSmplr [[sampler(0)]], sampler sun_shadow_mapSmplr [[sampler(1)]], sampler local_shadow_mapSmplr [[sampler(2)]], sampler normal_textureSmplr [[sampler(3)]], float4 gl_FragCoord [[position]])
 {
     main0_out out = {};
-    float4 albedo = (albedo_texture.sample(albedo_textureSmplr, in.surface_uv) * in.surface_color) * material.color;
-    float3 normal = fast::normalize(in.world_normal);
-    if (material.surface.z > 0.0)
+    float2 param = in.surface_uv;
+    MaterialSurface surface = SurfaceOf(param, albedo_texture, albedo_textureSmplr, material, normal_texture, normal_textureSmplr);
+    if (surface.opacity_mask < 0.5)
     {
-        float3 param = normal_texture.sample(normal_textureSmplr, in.surface_uv).xyz;
-        float3 stored = (LinearToSrgbExact(param) * 2.0) - float3(1.0);
+        discard_fragment();
+    }
+    float4 albedo = (float4(surface.base_color, 1.0) * in.surface_color) * material.color;
+    float3 normal = fast::normalize(in.world_normal);
+    if (surface.normal_strength > 0.0)
+    {
         float3 param_1 = normal;
         float3 param_2 = in.world_position;
-        float2 param_3 = in.surface_uv;
-        float3 param_4 = stored;
-        float param_5 = material.surface.z;
+        float2 param_3 = surface.normal_uv;
+        float3 param_4 = surface.tangent_normal;
+        float param_5 = surface.normal_strength;
         normal = PerturbNormal(param_1, param_2, param_3, param_4, param_5);
     }
     float3 view = fast::normalize(light.camera_position.xyz - in.world_position);
-    float metallic = fast::clamp(material.surface.x, 0.0, 1.0);
-    float roughness = fast::clamp(material.surface.y, 0.039999999105930328369140625, 1.0);
+    float metallic = fast::clamp(surface.metallic, 0.0, 1.0);
+    float roughness = fast::clamp(surface.roughness, 0.039999999105930328369140625, 1.0);
     float wetness = fast::clamp(material.surface.w, 0.0, 1.0);
     float3 param_6 = in.world_position;
     float param_7 = fast::normalize(in.world_normal).y;
@@ -507,11 +563,11 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     float puddle = PuddleMask(param_6, param_7, param_8);
     float darkening = mix(1.0, 0.550000011920928955078125, wetness * (1.0 - metallic));
     darkening = mix(darkening, 0.300000011920928955078125, puddle);
-    float4 _1269 = albedo;
-    float3 _1271 = _1269.xyz * darkening;
-    albedo.x = _1271.x;
-    albedo.y = _1271.y;
-    albedo.z = _1271.z;
+    float4 _1349 = albedo;
+    float3 _1351 = _1349.xyz * darkening;
+    albedo.x = _1351.x;
+    albedo.y = _1351.y;
+    albedo.z = _1351.z;
     roughness = mix(roughness, 0.100000001490116119384765625, wetness * 0.800000011920928955078125);
     roughness = mix(roughness, 0.039999999105930328369140625, puddle);
     normal = fast::normalize(mix(normal, float3(0.0, 1.0, 0.0), float3(puddle)));
@@ -552,7 +608,7 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
     lit += EvaluateLight(param_24, param_25, param_26, param_27, param_28, param_29, param_30);
     int local_count = min(int(locals.header.x), 8);
     LocalLight local;
-    float _1517;
+    float _1594;
     for (int index = 0; index < local_count; index++)
     {
         local.position_and_range = locals.lights[index].position_and_range;
@@ -576,13 +632,13 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
             float inner_cosine = local.cone.x;
             if ((inner_cosine - outer_cosine) > 9.9999997473787516355514526367188e-05)
             {
-                _1517 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
+                _1594 = smoothstep(outer_cosine, inner_cosine, cosine_to_axis);
             }
             else
             {
-                _1517 = step(outer_cosine, cosine_to_axis);
+                _1594 = step(outer_cosine, cosine_to_axis);
             }
-            float cone_fade = _1517;
+            float cone_fade = _1594;
             strength *= cone_fade;
         }
         LocalLight param_33 = local;
@@ -600,12 +656,12 @@ fragment main0_out main0(main0_in in [[stage_in]], constant LightUniforms& light
         float param_44 = alpha;
         lit += EvaluateLight(param_38, param_39, param_40, param_41, param_42, param_43, param_44);
     }
-    lit += material.emissive.xyz;
+    lit += (fast::max(surface.emissive, float3(0.0)) + material.emissive.xyz);
     float distance_to_camera = distance(in.world_position, light.camera_position.xyz);
     float fog_range = fast::max(light.fog_and_output.y - light.fog_and_output.x, 0.001000000047497451305389404296875);
     float fog = fast::clamp((distance_to_camera - light.fog_and_output.x) / fog_range, 0.0, 1.0);
     lit = mix(lit, light.fog_color.xyz, float3(fog));
-    out.output_color = float4(lit, 1.0);
+    out.output_color = float4(lit, fast::clamp(surface.opacity, 0.0, 1.0));
     float3 param_45 = normal;
     float param_46 = roughness;
     float3 param_47 = f0;

@@ -8,6 +8,34 @@ lantern:::renderer :: namespace {
     /** Marks a `Handle` as naming a texture. */
     TextureTag :: struct { }
 
+    /** Marks a `Handle` as naming a material shader: a material graph's own lit shader (docs/material-graphs.md). */
+    MaterialShaderTag :: struct { }
+
+    /** How many textures one material shader samples, after the draw's texture, the two shadow maps and the normal map. */
+    MAX_MATERIAL_SHADER_TEXTURES: u32 : 4;
+    /** How many parameters a material shader reads from its uniforms; a game changes them with `SetMaterialShaderParameter`. */
+    MAX_MATERIAL_SHADER_PARAMETERS: u32 : 8;
+    /** `RenderWorld.timeSeconds` wraps back to 0 after this many seconds, so a float still counts it to the millisecond. */
+    MATERIAL_TIME_WRAP_SECONDS: f32 : 3600.0f;
+
+    /**
+     * What `CreateMaterialShader` needs: where the compiled shader is (`<directory>/<name>.frag.spv` and `.msl`, written by
+     * the bake) and the textures it samples, in the order its graph named them. The backend keeps the texture handles; the
+     * textures stay the caller's to remove.
+     */
+    MaterialShaderSource :: struct {
+        name~ string = "";
+        directory~ string = "";
+        textures~ lantern:::core:::Handle<TextureTag>[4] = filled<lantern:::core:::Handle<TextureTag>, 4>(lantern:::core:::Handle<TextureTag> { });
+        textureCount~ u32 = 0;
+        /** The values the shader's parameters start at, in slot order. */
+        parameters~ f32[8] = filled<f32, 8>(0.0f);
+        /** The graph has an opacity mask: its shadow is drawn with `<directory>/<name>.mask.frag`, cut where the mask is. */
+        masked~ bool = false;
+        /** The graph has an opacity: the material blends over what is behind it, drawn after every opaque draw. */
+        translucent~ bool = false;
+    }
+
     /** How many matrices a skinned draw's palette holds. The skinned shaders declare the same number. */
     MAX_PALETTE_JOINTS: usize : 32;
 
@@ -31,6 +59,16 @@ lantern:::renderer :: namespace {
         /** The normal map that adds fine bumps to the surface, or null for a smooth one. Used when `material.normalStrength` is above 0. */
         normalTexture~ lantern:::core:::Handle<TextureTag>? = null;
         /**
+         * The material graph's shader that decides this surface's colour, metallic, roughness, emissive and normal, or null
+         * for the lit shader that reads `texture`, `material` and `normalTexture`. The tint, wetness and the material's
+         * emissive still apply either way.
+         */
+        materialShader~ lantern:::core:::Handle<MaterialShaderTag>? = null;
+        /** Draw with these material parameters instead of the material shader's: a piece with values of its own. */
+        overridesParameters~ bool = false;
+        /** The piece's own material parameters, by slot, when `overridesParameters` is set. */
+        parameters~ f32[8] = filled<f32, 8>(0.0f);
+        /**
          * The model matrix: places the mesh's local coordinates in the world (scale, then rotate, then translate). For
          * entities, `ExtractDraws` has already interpolated it by the frame's `alpha`.
          */
@@ -52,6 +90,8 @@ lantern:::renderer :: namespace {
     MaterialLook :: struct {
         material~ Material = Material { };
         tint~ lantern:::core:::Color = lantern:::core:::Color { r: 1.0f, g: 1.0f, b: 1.0f };
+        /** The material graph's shader, when the material has a graph (docs/material-graphs.md). */
+        shader~ lantern:::core:::Handle<MaterialShaderTag>? = null;
     }
 
     /**
@@ -312,6 +352,11 @@ lantern:::renderer :: namespace {
     SkySettings :: struct {
         /** Draw the sky and light the scene with it. Off, the frame clears to `clearColor` and the flat ambient pair lights it. */
         enabled~ bool = true;
+        /**
+         * Draw the sky behind the meshes. Off, the sky still lights the scene but the background is `clearColor`, like a
+         * studio whose lights are out of shot: the editor's material preview uses it.
+         */
+        backdropVisible~ bool = true;
         /** The colour straight up, in linear RGB. */
         zenith~ lantern:::core:::Color = lantern:::core:::Color { r: 0.26f, g: 0.48f, b: 0.88f };
         /** The colour all the way round at eye level. Fog fades into it, so distant things dissolve into the sky. */
@@ -630,6 +675,8 @@ lantern:::renderer :: namespace {
         fogStart~ f32 = 60.0f;
         /** The distance where fog is total. Keeping it inside the camera's far plane hides the far plane's cut. */
         fogEnd~ f32 = 160.0f;
+        /** Seconds the game or editor has run, wrapped every hour: what a material graph's `mat_time` and `mat_panner` read. */
+        timeSeconds~ f32 = 0.0f;
         /** The dust, sparks and trails; they live across frames and draw as lines each frame. See `ParticleSystem`. */
         particles~ ParticleSystem*!;
         /** The meshes to draw this frame. */
@@ -726,6 +773,15 @@ lantern:::renderer :: namespace {
             overlay->Clear();
         }
 
+        /** Moves the clock material graphs read on by `seconds`, wrapping it every hour. */
+        AdvanceTime~: (seconds: f32) -> void {
+            advanced~ f32 = timeSeconds + Math:::max(seconds, 0.0f);
+            while advanced >= MATERIAL_TIME_WRAP_SECONDS {
+                advanced -= MATERIAL_TIME_WRAP_SECONDS;
+            }
+            timeSeconds = advanced;
+        }
+
         /** Moves the particles on by `seconds` and adds a streak for each to this frame's lines, fading out as it ages. */
         StepParticles~: (seconds: f32) -> void {
             particles->Step(seconds);
@@ -756,6 +812,11 @@ lantern:::renderer :: namespace {
         /** Adds one mesh draw with a material. */
         DrawWithMaterial~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color, material: Material) -> void {
             draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color, material: material });
+        }
+
+        /** Adds a mesh drawn with a material's look: its surface values and, when it has one, its material graph's shader. */
+        DrawWithLook~: (mesh: lantern:::core:::Handle<MeshTag>, texture: lantern:::core:::Handle<TextureTag>?, transform: Mat4, color: lantern:::core:::Color, look: MaterialLook) -> void {
+            draws.push(DrawItem { mesh: mesh, texture: texture, transform: transform, color: color, material: look.material, materialShader: look.shader });
         }
 
         /** Adds one debug line between two world points. */
