@@ -111,8 +111,9 @@ saves the rendered viewport.
 
 The editor works in one of two modes, Select and Terrain, chosen with the switcher on the toolbar, Shift+1 and Shift+2,
 the Window menu or B. Each shows only its own menus, toolbar buttons, panels and drawer pages, and a Silhouette or graph
-tab hides the level's. Things are placed on the level from the Add menu (the toolbar's +, the Add menu title or Shift+A
-in Select mode). [editor-modes.md](editor-modes.md) lists what each mode shows.
+tab hides the level's. The mode's tools are in the tool palette, which docks at the viewport's left or floats where it is
+dragged. Things are placed on the level from the Add menu (the palette's +, the Add menu title or Shift+A in Select
+mode), whose Silhouettes are a searchable grid of thumbnails. [editor-modes.md](editor-modes.md) lists what each mode shows.
 
 ## The panels
 

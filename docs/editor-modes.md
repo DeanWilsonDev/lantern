@@ -59,13 +59,25 @@ drawer's page) are kept as before.
 | New, Open, Save | All |
 | Undo, Redo | All |
 | Mode switcher | All |
-| Add | Select |
-| Move, Rotate, Scale | Select |
 | Snap, Local Space, Pivot | Select |
 | Frame, Duplicate, Group, Delete | Select |
-| The seven brushes, New Terrain | Terrain |
 | Play | All |
 | Command palette, Settings | All |
+
+The tools themselves are in the tool palette (below), not on the toolbar.
+
+### Tool palette
+
+The tool palette is a narrow column of the mode's tools, like Photoshop's tools panel. It sits docked at the viewport's
+left, or floats over the window: drag it out by the grip at its top, and drop it near the window's left edge to dock it
+again. The pin button at its foot docks or floats it at once. Whether it floats, and where, is remembered.
+
+| Tools | Modes |
+| --- | --- |
+| Add, Move, Rotate, Scale | Select |
+| The seven brushes, New Terrain | Terrain |
+
+The Silhouette and graph tabs have no palette.
 
 ### Panels
 
@@ -99,7 +111,7 @@ can't be found there either.
 
 ## The Add menu
 
-The Add menu places something on the level. It opens from the Add button on the toolbar, from Shift+A over the
+The Add menu places something on the level. It opens from the Add button on the tool palette, from Shift+A over the
 viewport, and from the Add title in the menu bar, all in Select mode. It has a column of categories and a column of the
 things in the hovered category:
 
@@ -115,3 +127,8 @@ things in the hovered category:
 A template goes in the category of its kind; one made from a Silhouette that isn't one of those kinds goes in
 Silhouettes. A new entity is placed in front of the camera, as Add to World in the drawer does, and becomes the
 selection.
+
+The Silhouettes category is a searchable grid of thumbnails rather than a list, like a small file browser, since a
+project can gather hundreds of Silhouettes. It holds every Silhouette in the project, those also listed under Shapes or
+Lights included. Typing in its search box keeps the ones whose name or label holds the text, and pressing a card places
+that Silhouette.
