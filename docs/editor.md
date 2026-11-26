@@ -107,13 +107,15 @@ ctest --test-dir engine/editor-backend/build --output-on-failure   # needs a GPU
 `LANTERN_REQUIRE_GPU=1` turns a skipped render into a failure, and `LANTERN_EDITOR_CAPTURE=out.ppm`
 saves the rendered viewport.
 
-## Modes and the Add menu
+## Modes and the Silhouettes panel
 
-The editor works in one of two modes, Select and Terrain, chosen with the switcher on the toolbar, Shift+1 and Shift+2,
-the Window menu or B. Each shows only its own menus, toolbar buttons, panels and drawer pages, and a Silhouette or graph
-tab hides the level's. The mode's tools are in the tool palette, which docks at the viewport's left or floats where it is
-dragged. Things are placed on the level from the Add menu (the palette's +, the Add menu title or Shift+A in Select
-mode), whose Silhouettes are a searchable grid of thumbnails. [editor-modes.md](editor-modes.md) lists what each mode shows.
+The editor works in one of two modes, Select and Terrain. There are no mode buttons: selecting a terrain adds its brushes
+to the tool palette, and picking one enters Terrain mode, which Done or Escape leaves. Shift+1 and Shift+2, the Window
+menu and B switch too. Each mode shows only its own menus, panels and drawer pages, and a Silhouette or graph tab hides
+the level's. The mode's tools are in the tool palette, which docks at the viewport's left or floats where its grip (shown
+on hover) drags it. Everything is placed on the level from the Silhouettes panel, which pops out from the button on the
+viewport's right-hand rail (or Shift+A): categories, a search box and a grid of thumbnails.
+[editor-modes.md](editor-modes.md) lists what each mode shows.
 
 ## The panels
 
@@ -139,7 +141,7 @@ to the next one, and deleting an entity closes its tab.
   align camera and selection), Entity (one entry per template, snap to ground, revert to and
   apply to template), Window (each panel with a tick and its shortcut, hide all panels, settings) and Help
   (controls, keyboard shortcuts, about).
-- **Toolbar**: the mode switcher, Play (white, or green with Stop while the game runs) and Pause in
+- **Toolbar**: Play (white, or green with Stop while the game runs) and Pause in
   the middle, and the command palette and settings. Everything else is in the menus, the tool
   palette and the viewport header (Snap, World or Local, Pivot). Every button has a tooltip.
 - **Outliner**: the entity tree with a search box, kind icons, expand and collapse, eye and
@@ -223,7 +225,7 @@ Anywhere in the editor:
 | Ctrl/Cmd + L / Shift + L / I | Lock / unlock / invert the selection |
 | Ctrl/Cmd + Q | Quit (asks about unsaved changes) |
 | Shift + 1 / 2 | Select mode / Terrain mode |
-| Shift + A | The Add menu at the pointer (Select mode) |
+| Shift + A | The Silhouettes panel at the pointer, or put it away (Select mode) |
 | Alt + 1 / 2 / 3 | Show or hide the outliner / details / content drawer |
 | Ctrl + Space, ` or Alt + 4 | Assets, console or history in the content drawer (again hides it) |
 | F11 | Hide every panel for a clean viewport, or bring them back |

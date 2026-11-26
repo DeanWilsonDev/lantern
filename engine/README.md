@@ -171,7 +171,7 @@ renderer one frame at a time, and `../docs/application-and-game-loop.md` the sta
   collision triangles).
 - `src/editor/` is the world editor's logic, the Rust `editor-core` crate, `lantern:::editor`: `Document.nox`
   (`EditorDocument`: the open world, its undo and redo history of `Edit`s, coalesced typing, previews that commit as
-  one step, dirty tracking and saving), `Palette.nox` (`Palette`: the game's `games/platformer/assets/editor/palette.json`, its Add menu
+  one step, dirty tracking and saving), `Palette.nox` (`Palette`: the game's `games/platformer/assets/editor/palette.json`, its Silhouettes panel
   `EntityTemplate`s, `MarkerStyle`s and materials, or `Palette:::Fallback`), `Preferences.nox` (`EditorPreferences`, a
   sorted map of strings saved as JSON in the user's config directory), `Camera.nox` (`OrbitCamera`, `Ray` and
   `ViewportProjection`), `SceneGeometry.nox` (each entity's world-space triangles and bounds, picking and placement),

@@ -1,0 +1,99 @@
+// How the Silhouettes panel sorts what it offers. Everything that can be placed on the level is a Silhouette: a block,
+// a light, a camera volume, a terrain and a lamp post are all an entity with its own properties, so the panel lists
+// them together and lets the person narrow them by category and by search, like a file browser. The things come from
+// the game's palette (palette.json and the project's Silhouettes); each goes in a category by its kind, so the panel
+// needs no list of its own. A Silhouette made of several parts (a lamp post with its light), or of a kind none of the
+// categories names (a gem), goes under Props.
+//
+// Like editor-modes.nyx, these are plain functions with no calls into the editor, so they can be tested on their own.
+// SilhouettesPanel.chaos draws the panel.
+SilhouetteCategories :: namespace {
+    // The category that holds everything.
+    ALL: string : "All";
+
+    // The panel's size: a column of categories on the left and three thumbnail cards across on the right.
+    PANEL_WIDTH: f32 : 540.0f;
+    PANEL_HEIGHT: f32 : 480.0f;
+
+    // How close the panel may come to the window's edges, and how far down it starts at the least, so it never covers
+    // the menu bar and toolbar.
+    EDGE_MARGIN: f32 : 8.0f;
+    TOP_LIMIT: f32 : 64.0f;
+    BOTTOM_LIMIT: f32 : 32.0f;
+
+    // How far left of the mouse the panel opens, so it pops out beside the side rail's button without covering it.
+    RAIL_GAP: f32 : 26.0f;
+
+    // The categories, top to bottom.
+    Categories :: () -> Array<string> {
+        return [ALL, "Shapes", "Lights", "Cameras", "Gameplay", "Terrain", "Props"];
+    }
+
+    // The icon beside a category.
+    Icon :: (category: string) -> string {
+        return when category {
+            "All" -> "layers",
+            "Shapes" -> "platform",
+            "Lights" -> "light",
+            "Cameras" -> "camera",
+            "Gameplay" -> "flag",
+            "Terrain" -> "chart-line",
+            default -> "cube"
+        };
+    }
+
+    // The category a palette template goes in, by its kind and how many components it has. A Silhouette of more than
+    // one component is a prop made of parts, not a basic shape or a lone light, so it goes under Props whatever its
+    // root's kind.
+    CategoryOf :: (kind: string, components: i32) -> string {
+        guard components <= 1 return "Props";
+        return when kind {
+            ("block" || "ramp" || "moving_platform") -> "Shapes",
+            ("point_light" || "spot_light" || "sun") -> "Lights",
+            ("camera_volume" || "camera_shot") -> "Cameras",
+            ("player_start" || "spawn" || "kill_plane") -> "Gameplay",
+            "terrain" -> "Terrain",
+            default -> "Props"
+        };
+    }
+
+    // True when a thing of `itemCategory` shows while `category` is picked: All shows everything.
+    InCategory :: (category: string, itemCategory: string) -> bool {
+        return category == ALL || category == itemCategory;
+    }
+
+    // True when a thing's label or id holds the search text, ignoring case. An empty search matches everything.
+    Matches :: (query: string, label: string, id: string) -> bool {
+        needle := query.trim().toLower();
+        guard needle != "" return true;
+        return label.toLower().contains(needle) || id.toLower().contains(needle);
+    }
+
+    // The command that places a template from the palette.
+    PlaceCommand :: (templateId: string) -> string {
+        return `add:${templateId}`;
+    }
+
+    // The template a place command names, or "" for any other command.
+    PlacedTemplate :: (command: string) -> string {
+        guard command.startsWith("add:") return "";
+        return command.substring(4, command.length() - 4);
+    }
+
+    // Where the panel's left edge goes when it opens from the mouse: just left of it, kept inside the window.
+    PanelX :: (mouseX: f32, windowWidth: f32) -> f32 {
+        return Clamp(mouseX - PANEL_WIDTH - RAIL_GAP, EDGE_MARGIN, windowWidth - PANEL_WIDTH - EDGE_MARGIN);
+    }
+
+    // Where the panel's top edge goes: level with the mouse, below the toolbar and above the status bar.
+    PanelY :: (mouseY: f32, windowHeight: f32) -> f32 {
+        return Clamp(mouseY - 16.0f, TOP_LIMIT, windowHeight - PANEL_HEIGHT - BOTTOM_LIMIT);
+    }
+
+    // A value kept between a low and a high end. When the window is too small for both, the low end wins, so the panel
+    // stays on screen at its top left.
+    Clamp :: (value: f32, low: f32, high: f32) -> f32 {
+        guard value < high return high > low ? high : low;
+        return value > low ? value : low;
+    }
+}
