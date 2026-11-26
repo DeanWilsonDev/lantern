@@ -8,6 +8,9 @@ HelpDialog :: import HelpDialog;
 ProjectDialog :: import ProjectDialog;
 MenuBar :: import MenuBar;
 MenuPopup :: import MenuPopup;
+PanelContent :: import PanelContent;
+PanelDocking :: import PanelDocking;
+PanelRect :: import PanelRect;
 SettingsDialog :: import SettingsDialog;
 SilhouettesPanel :: import SilhouettesPanel;
 StatusBar :: import StatusBar;
@@ -22,8 +25,8 @@ Workspace :: import Workspace;
 // turns shortcuts into commands.
 // 
 // Under the fixed layout (menu bar, toolbar, workspace, status bar) come the overlays: the menu bar's menus, the
-// viewport's menus, the right-click menu, the tool palette while it floats, the Silhouettes panel from the viewport's
-// side rail and Shift+A, and the dialogs. Each is its own <slot>, so
+// viewport's menus, the right-click menu, the tool palette and any panel while they float, the preview of where a
+// dragged panel would go, the Silhouettes panel from the viewport's side rail and Shift+A, and the dialogs. Each is its own <slot>, so
 // opening one re-renders only that slot, and each shows an empty frame until its flag in editor.overlays turns on.
 App :: () -> Penumbra:::Component {
     @provide editor~ Editor = new Editor();
@@ -69,6 +72,31 @@ App :: () -> Penumbra:::Component {
                           <ToolPalette />
                       </portal>
                     : <frame class="nothing" />}
+            </slot>
+            <slot>
+                !{editor.layout.PanelsAt(PanelDocking:::FLOAT, editor.Mode()).map((panel: string) ->
+                    <portal key={`floating-${panel}-${editor.layout.panelsShowing}`} ref={`floating-${panel}`}
+                            x={editor.layout.FloatXOf(panel)} y={editor.layout.FloatYOf(panel)}
+                            width={PanelDocking:::FloatWidth(panel)} height={PanelDocking:::FloatHeight(panel)}
+                            onDismiss={() -> editor.layout.ReshowPanels()}>
+                        <PanelContent panel={panel} />
+                    </portal>)}
+            </slot>
+            <slot>
+                !{(() -> Penumbra:::Component {
+                    panel := editor.layout.panelDragging;
+                    place := editor.layout.panelDropPlace;
+                    guard panel != "" && place != "" return <frame class="nothing" />;
+                    guard place != PanelDocking:::FLOAT || editor.layout.PlaceOf(panel) != PanelDocking:::FLOAT return <frame class="nothing" />;
+                    rect := PanelDocking:::PreviewRect(place, panel, penumbra:::windowWidth(), penumbra:::windowHeight(),
+                                                       editor.layout.panelPreviewX, editor.layout.panelPreviewY);
+                    return (
+                        <portal key="panel-drop-preview" ref="panel-drop-preview" x={rect.x} y={rect.y}
+                                width={rect.width} height={rect.height}>
+                            <frame class="panel-drop-preview" />
+                        </portal>
+                    );
+                })()}
             </slot>
             <slot>
                 !{editor.overlays.silhouettesOpen && editor.tabs.active == 0
