@@ -57,6 +57,7 @@ finding what to turn down when a frame is slow. Each effect has its own guide.
 | [`particles.md`](particles.md) | Dust, sparks and trails. |
 | [`normal-maps.md`](normal-maps.md) | Fine surface bumps from a normal map. |
 | [`wet-surfaces.md`](wet-surfaces.md) | Wet and puddled surfaces: darker, glossier, mirror-like. |
+| [`material-graphs.md`](material-graphs.md) | Node graphs that describe a material and become a lit shader of its own. |
 
 ## The world editor
 

@@ -1,0 +1,70 @@
+// A material graph becomes the SurfaceOf function of a lit fragment shader: constants, a parameter, maths, texture samples and a
+// normal map feed one output node, and a graph that can't be a material is refused with the node at fault.
+lantern :: import lantern;
+
+GRAPH: string : "{\"graph\": \"rusty_metal\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#804020\"}, {\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"tiled\", \"kind\": \"mat_mul\", \"a\": \"coordinate\", \"b\": {\"f32\": 4.0}}, {\"id\": \"rust\", \"kind\": \"mat_texture\", \"name\": \"rust\", \"a\": \"tiled\"}, {\"id\": \"base\", \"kind\": \"mat_mul\", \"a\": \"paint\", \"b\": \"rust\"}, {\"id\": \"wear\", \"kind\": \"mat_param\", \"name\": \"wear\", \"a\": {\"f32\": 0.2}}, {\"id\": \"worn\", \"kind\": \"mat_lerp\", \"a\": {\"f32\": 0.4}, \"b\": {\"f32\": 1.0}, \"value\": \"wear\"}, {\"id\": \"bare\", \"kind\": \"mat_one_minus\", \"a\": \"wear\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"a\": \"tiled\", \"b\": {\"f32\": 0.5}}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"base\", \"bare\", \"worn\", \"\", \"bumps\"]}]}]}";
+
+Generate :: (text: string, parameterNames: Array<string>, parameterValues: Array<f32>) -> Result<lantern:::materialgraph:::MaterialShader*!, string!> {
+    return lantern:::materialgraph:::GenerateMaterialShaderFromText(text, parameterNames, parameterValues);
+}
+
+ExpectRefused :: (text: string, expected: string, what: string) -> void {
+    names: string[1] = ["unused"];
+    values: f32[1] = [0.0f];
+    when Generate(text, names.borrow(), values.borrow()) {
+        Result:::Err(message) -> {
+            if !message.contains(expected) {
+                print(message);
+                print(what);
+            }
+            assert(message.contains(expected), "a broken graph is refused with its reason");
+            delete message;
+        },
+        Result:::Ok(shader) -> {
+            delete shader;
+            print(what);
+            assert(false, "a broken graph is refused");
+        }
+    }
+}
+
+main :: () -> i32 {
+    names: string[1] = ["wear"];
+    values: f32[1] = [0.75f];
+    when Generate(GRAPH, names.borrow(), values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the graph becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            defer delete shader;
+            source: string = shader->source;
+            assert(source.startsWith("// Generated from the material graph 'rusty_metal'"), "the shader says where it came from");
+            assert(source.contains("#include \"lit-common.glsl\"") && source.contains("#include \"lit-main.glsl\""), "it sits between the lit shader's halves");
+            assert(shader->textureNames.length() == 2 && shader->textureNames[0] == "rust" && shader->textureNames[1] == "rust_normal", "it samples two textures, in order");
+            assert(source.contains("layout(set = 2, binding = 4) uniform sampler2D material_texture_0;"), "the first texture is bound after the normal map");
+            assert(source.contains("layout(set = 2, binding = 5) uniform sampler2D material_texture_1;"), "the second follows it");
+            assert(source.contains("    vec2 node_tiled = node_coordinate * 4.0;"), "a coordinate scales by a number");
+            assert(source.contains("    vec3 node_rust = texture(material_texture_0, node_tiled).rgb;"), "a texture samples at the tiled coordinate");
+            assert(source.contains("    float node_wear = 0.75;"), "a parameter takes the Silhouette's value");
+            assert(source.contains("mix(0.4, 1.0, clamp(node_wear, 0.0, 1.0))"), "a lerp mixes by its weight");
+            assert(source.contains("    surface.base_color = node_base;"), "the base colour is wired");
+            assert(source.contains("    surface.emissive = vec3(0.0);"), "an unwired output keeps its default");
+            assert(source.contains("    surface.normal_strength = 0.5;"), "the normal map's strength is the output's strength");
+        }
+    }
+
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}, {\"id\": \"sum\", \"kind\": \"mat_add\", \"a\": \"coordinate\", \"b\": \"paint\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"sum\"]}]}]}",
+        "node 'sum' can't combine a vec2 with a vec3", "a coordinate and a colour don't add, and the node is named");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}]}]}",
+        "needs a mat_output node", "a graph needs an output");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"a\", \"kind\": \"mat_add\", \"a\": \"b\"}, {\"id\": \"b\", \"kind\": \"mat_add\", \"a\": \"a\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"a\"]}]}]}",
+        "is part of a loop", "a loop of nodes is refused");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"start\", \"kind\": \"entry\"}, {\"id\": \"out\", \"kind\": \"mat_output\"}]}]}",
+        "node 'start' has the kind 'entry'", "a script node isn't a material node");
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"sample\", \"kind\": \"mat_texture\", \"name\": \"../secret\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"sample\"]}]}]}",
+        "needs the name of a texture", "a texture name can't leave textures/");
+    print("a material graph becomes a lit shader");
+    return 0;
+}

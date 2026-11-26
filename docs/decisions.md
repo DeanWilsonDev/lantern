@@ -2019,3 +2019,21 @@ Provisional (2026-11-21): not reviewed by Dean. The editor's `Editor` object is 
 ## D-257: Folder pickers use the file dialog request with the filter name "folder"
 
 Provisional (2026-11-21): not reviewed by Dean. The bridge's window requests carry a file dialog with a filter name but no folder flag. The editor's `FileDialogs.nox` treats the filter name `folder` as a request for SDL's open-folder dialog, so the project dialogs call `penumbra:::showOpenFileDialog("folder", "", start)` and need no bridge change. A real folder field in the bridge is the cleaner end state and would be its own cross-repo card.
+
+## D-258: A material graph generates a shader per material
+
+Dean (2026-11-26) chose a generated shader per material over evaluating the graph into the existing uniform values or
+baking it into texture maps. A material graph is an ordinary graph file (`material.graph.json` beside a material
+Silhouette's `root.calamus`) with one function, `material`, made of `mat_` nodes, so the visual-scripting canvas, file
+format and editing are reused rather than copied. `lantern:::materialgraph:::GenerateMaterialShader` turns it into GLSL,
+which the bake compiles; the game ships the compiled shader and never the graph. Parameters are baked in as constants for
+now; parameters a game changes at run time are a later card. See `docs/material-graphs.md`.
+
+## D-259: The lit shader is split around a `SurfaceOf` function
+
+`lit.frag` became `lit-common.glsl` (declarations and lighting), a `SurfaceOf(uv)` function giving a `MaterialSurface`
+(base colour, metallic, roughness, emissive, tangent normal and its strength) and `lit-main.glsl` (the main). `lit.frag`'s
+`SurfaceOf` reads the draw's texture and uniform material as before; a generated material shader writes its own. The
+draw's tint and vertex colour still multiply the base colour, and the draw's emissive is added to the surface's, so `tint`
+and `SetGlow` keep working on graph materials. Wetness and puddles stay in the main, so they apply to every material.
+Provisional: not reviewed by Dean.
