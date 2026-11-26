@@ -16,7 +16,7 @@ format is unchanged.
 | `terrain_columns` | Vertices along one side, 2 to 257. The grid is square. |
 | `terrain_cell_size` | Metres between neighbouring vertices. |
 | `terrain_heights` | One height per vertex, row by row: four hex digits each, the height in whole centimetres plus 32768. |
-| `terrain_seed`, `terrain_feature_size`, `terrain_octaves`, `terrain_persistence`, `terrain_lacunarity`, `terrain_amplitude`, `terrain_base_height` | The generator settings the terrain was made with. They are kept so the editor can show them; changing them does nothing until you generate again. |
+| `terrain_seed_low`, `terrain_seed_high` (the 32-bit seed in two halves), `terrain_feature_size`, `terrain_octaves`, `terrain_persistence`, `terrain_lacunarity`, `terrain_amplitude`, `terrain_base_height` | The generator settings the terrain was made with. They are kept so the editor can show them; changing them does nothing until you generate again. |
 
 The terrain is centred on the entity's origin: the first vertex is at `(-half, -half)` and the last at `(half, half)`
 with `half = (columns - 1) * cell_size / 2`. The entity's transform moves, turns and scales it, and a `material` and

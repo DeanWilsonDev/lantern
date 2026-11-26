@@ -100,7 +100,7 @@ lantern:::terrain :: namespace {
         }
 
         /**
-         * The height at any point in the terrain's own space, interpolated between the four vertices around it. A point
+         * The height at any point in the terrain's own space, interpolated on the triangle the mesh has there (each cell is split from its far left to its near right vertex). A point
          * outside the terrain gets the height of the nearest edge.
          */
         HeightAtLocal :: (x: f32, z: f32) -> f32 {
@@ -117,17 +117,14 @@ lantern:::terrain :: namespace {
             }
             columnFraction: f32 = columnPosition - f32(baseColumn);
             rowFraction: f32 = rowPosition - f32(baseRow);
-            near: f32 = Math:::lerp(
-                HeightAtVertex(baseColumn, baseRow),
-                HeightAtVertex(baseColumn + 1, baseRow),
-                columnFraction
-            );
-            far: f32 = Math:::lerp(
-                HeightAtVertex(baseColumn, baseRow + 1),
-                HeightAtVertex(baseColumn + 1, baseRow + 1),
-                columnFraction
-            );
-            return Math:::lerp(near, far, rowFraction);
+            nearLeft: f32 = HeightAtVertex(baseColumn, baseRow);
+            nearRight: f32 = HeightAtVertex(baseColumn + 1, baseRow);
+            farLeft: f32 = HeightAtVertex(baseColumn, baseRow + 1);
+            farRight: f32 = HeightAtVertex(baseColumn + 1, baseRow + 1);
+            if columnFraction + rowFraction <= 1.0f {
+                return nearLeft + columnFraction * (nearRight - nearLeft) + rowFraction * (farLeft - nearLeft);
+            }
+            return farRight + (1.0f - columnFraction) * (farLeft - farRight) + (1.0f - rowFraction) * (nearRight - farRight);
         }
 
         /**
@@ -236,7 +233,7 @@ lantern:::terrain :: namespace {
     EncodeCentimetres :: (height: f32) -> i32 {
         scaled: f32 = Math:::round(Math:::clamp(
             height * CENTIMETRES_PER_METRE,
-            -f32(MAX_STORED_CENTIMETRES),
+            -f32(MAX_STORED_CENTIMETRES) - 1.0f,
             f32(MAX_STORED_CENTIMETRES)
         ));
         return i32(scaled);

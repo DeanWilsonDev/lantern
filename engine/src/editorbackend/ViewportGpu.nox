@@ -18,6 +18,8 @@ lantern:::editorbackend :: namespace {
     CachedTerrainMesh :: struct {
         key~ u64 = 0;
         contentHash~ u64 = 0;
+        cellSize~ f32 = 0.0f;
+        columns~ f32 = 0.0f;
         mesh~ lantern:::core:::Handle<lantern:::renderer:::MeshTag> = lantern:::core:::Handle<lantern:::renderer:::MeshTag> { };
         lastUsedFrame~ u64 = 0;
     }
@@ -148,11 +150,13 @@ lantern:::editorbackend :: namespace {
         TerrainMesh~: (entity: lantern:::world:::WorldEntity*) -> lantern:::core:::Handle<lantern:::renderer:::MeshTag>? {
             heightsText: string!? = entity->TextProperty(lantern:::terrain:::HeightsKey());
             guard heights := heightsText return null;
-            contentHash: u64 = heights.hash() ^ u64(entity->NumberProperty(lantern:::terrain:::CellSizeKey()) ?? 0.0f) * 31;
+            contentHash: u64 = heights.hash();
+            cellSize: f32 = entity->NumberProperty(lantern:::terrain:::CellSizeKey()) ?? 0.0f;
+            columns: f32 = entity->NumberProperty(lantern:::terrain:::ColumnsKey()) ?? 0.0f;
             delete heightsText;
             for index~ usize = 0; index < terrains.length(); index++ {
                 if terrains[index].key == entity->id {
-                    if terrains[index].contentHash == contentHash {
+                    if terrains[index].contentHash == contentHash && terrains[index].cellSize == cellSize && terrains[index].columns == columns {
                         terrains[index].lastUsedFrame = frame;
                         return terrains[index].mesh;
                     }
@@ -166,7 +170,7 @@ lantern:::editorbackend :: namespace {
             uploaded: lantern:::core:::Handle<lantern:::renderer:::MeshTag>? = UploadMesh(viewportRenderer, meshData, "terrain");
             delete data;
             guard mesh := uploaded return null;
-            terrains.push(CachedTerrainMesh { key: entity->id, contentHash: contentHash, mesh: mesh, lastUsedFrame: frame });
+            terrains.push(CachedTerrainMesh { key: entity->id, contentHash: contentHash, cellSize: cellSize, columns: columns, mesh: mesh, lastUsedFrame: frame });
             return mesh;
         }
 
