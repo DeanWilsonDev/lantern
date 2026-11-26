@@ -6,7 +6,37 @@ lantern:::terrain :: namespace {
         Raise,
         Lower,
         Smooth,
-        Flatten
+        Flatten,
+        Noise,
+        Terrace,
+        Erode
+    }
+
+    /**
+     * How a brush's weight falls from its centre to its edge: `Smooth` eases (the default), `Linear` falls in a straight
+     * line, `Sharp` stays low until near the centre, and `Constant` is the same everywhere inside the radius.
+     */
+    BrushFalloff :: enum {
+        Smooth,
+        Linear,
+        Sharp,
+        Constant
+    }
+
+    /**
+     * Everything one dab needs besides where it lands. `strength` is metres at the centre for raise, lower and noise and
+     * between 0 and 1 for the others. `flattenHeight` is the level flatten pulls toward, `terraceStep` the height between
+     * terrace levels, `noiseSeed` and `noiseScale` pick the bumps the noise brush makes.
+     */
+    BrushSettings :: struct {
+        kind~ BrushKind = BrushKind:::Raise;
+        falloff~ BrushFalloff = BrushFalloff:::Smooth;
+        radius~ f32 = 4.0f;
+        strength~ f32 = 0.5f;
+        flattenHeight~ f32 = 0.0f;
+        terraceStep~ f32 = 1.0f;
+        noiseSeed~ u32 = 1;
+        noiseScale~ f32 = 2.0f;
     }
 
     /**
@@ -14,11 +44,35 @@ lantern:::terrain :: namespace {
      * edge of a stroke has no step.
      */
     BrushWeight :: (distance: f32, radius: f32) -> f32 {
+        return ShapedWeight(distance, radius, BrushFalloff:::Smooth);
+    }
+
+    /**
+     * The same with a chosen falloff shape. `Constant` is 1 everywhere inside the radius.
+     */
+    ShapedWeight :: (distance: f32, radius: f32, falloff: BrushFalloff) -> f32 {
         if radius <= 0.0f || distance >= radius {
             return 0.0f;
         }
         remaining: f32 = 1.0f - distance / radius;
-        return remaining * remaining * (3.0f - 2.0f * remaining);
+        when falloff {
+            BrushFalloff:::Smooth -> { return remaining * remaining * (3.0f - 2.0f * remaining); },
+            BrushFalloff:::Linear -> { return remaining; },
+            BrushFalloff:::Sharp -> { return remaining * remaining * remaining; },
+            BrushFalloff:::Constant -> { return 1.0f; }
+        }
+    }
+
+    /**
+     * The text for a falloff shape, as the editor spells it.
+     */
+    FalloffName :: (falloff: BrushFalloff) -> string {
+        when falloff {
+            BrushFalloff:::Smooth -> { return "smooth"; },
+            BrushFalloff:::Linear -> { return "linear"; },
+            BrushFalloff:::Sharp -> { return "sharp"; },
+            BrushFalloff:::Constant -> { return "constant"; }
+        }
     }
 
     /**
@@ -29,7 +83,10 @@ lantern:::terrain :: namespace {
             BrushKind:::Raise -> { return "raise"; },
             BrushKind:::Lower -> { return "lower"; },
             BrushKind:::Smooth -> { return "smooth"; },
-            BrushKind:::Flatten -> { return "flatten"; }
+            BrushKind:::Flatten -> { return "flatten"; },
+            BrushKind:::Noise -> { return "noise"; },
+            BrushKind:::Terrace -> { return "terrace"; },
+            BrushKind:::Erode -> { return "erode"; }
         }
     }
 
@@ -49,11 +106,21 @@ lantern:::terrain :: namespace {
         if name == "flatten" {
             return BrushKind:::Flatten;
         }
+        if name == "noise" {
+            return BrushKind:::Noise;
+        }
+        if name == "terrace" {
+            return BrushKind:::Terrace;
+        }
+        if name == "erode" {
+            return BrushKind:::Erode;
+        }
         return null;
     }
 
     /**
-     * Applies one dab of a brush centred at `centerX`, `centerZ` in the terrain's own space, `radius` metres wide.
+     * Applies one dab of a brush with the default smooth falloff, centred at `centerX`, `centerZ` in the terrain's own
+     * space, `radius` metres wide.
      *
      * `strength` is between 0 and 1 for smooth and flatten (how much of the way each vertex goes toward the result) and
      * is the metres moved at the centre for raise and lower. `flattenHeight` is the level flatten pulls toward. Returns
@@ -68,6 +135,28 @@ lantern:::terrain :: namespace {
         strength: f32,
         flattenHeight: f32
     ) -> usize {
+        settings~ BrushSettings = BrushSettings { };
+        settings.kind = kind;
+        settings.radius = radius;
+        settings.strength = strength;
+        settings.flattenHeight = flattenHeight;
+        return ApplyShapedBrush(field, centerX, centerZ, settings);
+    }
+
+    /**
+     * Applies one dab of a brush described by `settings`, centred at `centerX`, `centerZ` in the terrain's own space. Returns
+     * how many vertices changed. Erode shaves any slope steeper than 0.8 (rise over run) a little; it does not carry the
+     * material downhill, which the whole-terrain erosion does.
+     */
+    ApplyShapedBrush :: (
+        field: Heightfield~*,
+        centerX: f32,
+        centerZ: f32,
+        settings: BrushSettings
+    ) -> usize {
+        kind: BrushKind = settings.kind;
+        radius: f32 = settings.radius;
+        strength: f32 = settings.strength;
         half: f32 = field->HalfSpan();
         lastIndex: i32 = i32(field->columns) - 1;
         firstColumn: i32 = Math:::max(
@@ -93,9 +182,10 @@ lantern:::terrain :: namespace {
             for column~ i32 = firstColumn; column <= lastColumn; column++ {
                 offsetX: f32 = field->LocalCoordinate(u32(column)) - centerX;
                 offsetZ: f32 = field->LocalCoordinate(u32(row)) - centerZ;
-                weight: f32 = BrushWeight(
+                weight: f32 = ShapedWeight(
                     Math:::sqrt(offsetX * offsetX + offsetZ * offsetZ),
-                    radius
+                    radius,
+                    settings.falloff
                 );
                 if weight <= 0.0f {
                     continue;
@@ -129,9 +219,58 @@ lantern:::terrain :: namespace {
                     BrushKind:::Flatten -> {
                         result = Math:::lerp(
                             current,
-                            flattenHeight,
+                            settings.flattenHeight,
                             Math:::clamp(strength * weight, 0.0f, 1.0f)
                         );
+                    },
+                    BrushKind:::Noise -> {
+                        bump: f32 = GradientNoise(
+                            field->LocalCoordinate(u32(column)) / settings.noiseScale,
+                            field->LocalCoordinate(u32(row)) / settings.noiseScale,
+                            settings.noiseSeed
+                        );
+                        result = current + bump * strength * weight;
+                    },
+                    BrushKind:::Terrace -> {
+                        step: f32 = Math:::max(settings.terraceStep, 0.01f);
+                        level: f32 = Math:::round(current / step) * step;
+                        result = Math:::lerp(
+                            current,
+                            level,
+                            Math:::clamp(strength * weight, 0.0f, 1.0f)
+                        );
+                    },
+                    BrushKind:::Erode -> {
+                        lowest~ f32 = current;
+                        for direction~ u32 = 0; direction < 4; direction++ {
+                            neighbourColumn~ i32 = column;
+                            neighbourRow~ i32 = row;
+                            if direction == 0 {
+                                neighbourColumn -= 1;
+                            } else if direction == 1 {
+                                neighbourColumn += 1;
+                            } else if direction == 2 {
+                                neighbourRow -= 1;
+                            } else {
+                                neighbourRow += 1;
+                            }
+                            if neighbourColumn < 0 || neighbourRow < 0 ||
+                                neighbourColumn > lastIndex || neighbourRow > lastIndex {
+                                continue;
+                            }
+                            lowest = Math:::min(
+                                lowest,
+                                before->HeightAtVertex(u32(neighbourColumn), u32(neighbourRow))
+                            );
+                        }
+                        excess: f32 = current - lowest - 0.8f * field->cellSize;
+                        if excess > 0.0f {
+                            result = current - excess * 0.5f * Math:::clamp(
+                                strength * weight,
+                                0.0f,
+                                1.0f
+                            );
+                        }
                     }
                 }
                 if result != current {

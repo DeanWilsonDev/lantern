@@ -1,0 +1,76 @@
+// The noise, terrace and erode brushes and the four falloff shapes each do what their names say.
+lantern :: import lantern;
+
+Brush :: (kind: lantern:::terrain:::BrushKind, falloff: lantern:::terrain:::BrushFalloff, strength: f32) -> lantern:::terrain:::BrushSettings {
+    settings~ lantern:::terrain:::BrushSettings = lantern:::terrain:::BrushSettings { };
+    settings.kind = kind;
+    settings.falloff = falloff;
+    settings.radius = 4.0f;
+    settings.strength = strength;
+    return settings;
+}
+
+FalloffsHaveTheirShapes :: () -> void {
+    smooth: f32 = lantern:::terrain:::ShapedWeight(2.0f, 4.0f, lantern:::terrain:::BrushFalloff:::Smooth);
+    linear: f32 = lantern:::terrain:::ShapedWeight(2.0f, 4.0f, lantern:::terrain:::BrushFalloff:::Linear);
+    sharp: f32 = lantern:::terrain:::ShapedWeight(2.0f, 4.0f, lantern:::terrain:::BrushFalloff:::Sharp);
+    constant: f32 = lantern:::terrain:::ShapedWeight(3.9f, 4.0f, lantern:::terrain:::BrushFalloff:::Constant);
+    assert(Math:::abs(smooth - 0.5f) < 0.0001f && Math:::abs(linear - 0.5f) < 0.0001f, "halfway is half for smooth and linear");
+    assert(sharp < 0.2f, "sharp is low halfway");
+    assert(constant == 1.0f, "constant is full inside the radius");
+    assert(lantern:::terrain:::ShapedWeight(4.0f, 4.0f, lantern:::terrain:::BrushFalloff:::Constant) == 0.0f, "and nothing outside it");
+}
+
+NoiseMakesBumpsAndOnlyInsideTheRadius :: () -> void {
+    field := new lantern:::terrain:::Heightfield(21, 1.0f);
+    defer delete field;
+    settings := Brush(lantern:::terrain:::BrushKind:::Noise, lantern:::terrain:::BrushFalloff:::Constant, 1.0f);
+    changed: usize = lantern:::terrain:::ApplyShapedBrush(field, 0.0f, 0.0f, settings);
+    assert(changed > 10, "noise changes many vertices");
+    assert(field->HeightAtVertex(0, 0) == 0.0f, "and none outside the radius");
+    assert(field->HighestHeight() > 0.0f && field->LowestHeight() < 0.0f, "up in places and down in others");
+    twin := new lantern:::terrain:::Heightfield(21, 1.0f);
+    defer delete twin;
+    lantern:::terrain:::ApplyShapedBrush(twin, 0.0f, 0.0f, settings);
+    assert(twin->Encode() == field->Encode(), "the same seed makes the same bumps");
+}
+
+TerraceSnapsToLevels :: () -> void {
+    field := new lantern:::terrain:::Heightfield(21, 1.0f);
+    defer delete field;
+    field->SetHeight(10, 10, 2.3f);
+    settings~ lantern:::terrain:::BrushSettings = Brush(lantern:::terrain:::BrushKind:::Terrace, lantern:::terrain:::BrushFalloff:::Constant, 1.0f);
+    settings.terraceStep = 1.0f;
+    lantern:::terrain:::ApplyShapedBrush(field, 0.0f, 0.0f, settings);
+    assert(Math:::abs(field->HeightAtVertex(10, 10) - 2.0f) < 0.01f, "a full-strength terrace lands on the nearest level");
+}
+
+ErodeShavesAPeak :: () -> void {
+    field := new lantern:::terrain:::Heightfield(21, 1.0f);
+    defer delete field;
+    field->SetHeight(10, 10, 5.0f);
+    settings := Brush(lantern:::terrain:::BrushKind:::Erode, lantern:::terrain:::BrushFalloff:::Smooth, 1.0f);
+    lantern:::terrain:::ApplyShapedBrush(field, 0.0f, 0.0f, settings);
+    assert(field->HeightAtVertex(10, 10) < 5.0f && field->HeightAtVertex(10, 10) > 0.0f, "erode lowers a steep peak without flattening it");
+    flat := new lantern:::terrain:::Heightfield(21, 1.0f);
+    defer delete flat;
+    changed: usize = lantern:::terrain:::ApplyShapedBrush(flat, 0.0f, 0.0f, settings);
+    assert(changed == 0, "and leaves flat ground alone");
+}
+
+BrushesAreFoundByName :: () -> void {
+    assert(lantern:::terrain:::BrushFromName("noise") == lantern:::terrain:::BrushKind:::Noise, "noise by name");
+    assert(lantern:::terrain:::BrushFromName("terrace") == lantern:::terrain:::BrushKind:::Terrace, "terrace by name");
+    assert(lantern:::terrain:::BrushFromName("erode") == lantern:::terrain:::BrushKind:::Erode, "erode by name");
+    assert(lantern:::terrain:::BrushName(lantern:::terrain:::BrushKind:::Erode) == "erode", "and back");
+}
+
+main :: () -> i32 {
+    FalloffsHaveTheirShapes();
+    NoiseMakesBumpsAndOnlyInsideTheRadius();
+    TerraceSnapsToLevels();
+    ErodeShavesAPeak();
+    BrushesAreFoundByName();
+    print("more brushes and falloffs shape the ground");
+    return 0;
+}

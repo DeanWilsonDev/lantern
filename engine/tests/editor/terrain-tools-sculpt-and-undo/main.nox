@@ -65,6 +65,10 @@ TerrainCount :: (session: lantern:::editor:::EditorSession*) -> usize {
 }
 
 SculptAtTheCentre :: (session: lantern:::editor:::EditorSession~*, key: u64) -> void {
+    SculptAtTheCentreHolding(session, key, lantern:::editor:::Modifiers { });
+}
+
+SculptAtTheCentreHolding :: (session: lantern:::editor:::EditorSession~*, key: u64, modifiers: lantern:::editor:::Modifiers) -> void {
     centre: Vec3 = Vec3 { x: 0.0f, y: CentreHeight(session, key), z: 0.0f };
     projected: Vec2? = session->Projection().Project(centre);
     assert(projected != null, "the centre of the terrain is in view");
@@ -72,7 +76,7 @@ SculptAtTheCentre :: (session: lantern:::editor:::EditorSession~*, key: u64) -> 
     session->SetPointerButton(
         lantern:::editor:::PointerButton:::Left,
         true,
-        lantern:::editor:::Modifiers { }
+        modifiers
     );
     for frame~ i32 = 0; frame < 6; frame++ {
         session->Update(0.1f);
@@ -127,6 +131,25 @@ AHeldBrushRaisesTheGroundInOneUndoStep :: (
     assert(session->terrainCursor == null, "turning the brush off hides the ring");
 }
 
+HoldingCommandInvertsAndHoldingShiftSmooths :: (session: lantern:::editor:::EditorSession~*, key: u64) -> void {
+    session->SetTerrainOption("active", 1.0f);
+    before: f32 = CentreHeight(session, key);
+    SculptAtTheCentreHolding(session, key, lantern:::editor:::Modifiers { command: true });
+    assert(CentreHeight(session, key) < before - 0.5f, "the raise brush with the command key held lowers the ground");
+    session->Undo();
+    session->SetTerrainOption("brush", 4.0f);
+    assert(session->TerrainOption("brush") == 4.0f, "the noise brush is brush 4");
+    settable: bool = session->SetTerrainOption("falloff", 3.0f);
+    assert(settable && session->TerrainOption("falloff") == 3.0f, "falloff is chosen by position");
+    refusedFalloff: bool = session->SetTerrainOption("falloff", 9.0f);
+    assert(!refusedFalloff, "a falloff that does not exist is refused");
+    refusedBrush: bool = session->SetTerrainOption("brush", 7.0f);
+    assert(!refusedBrush, "so is a brush");
+    session->SetTerrainOption("brush", 0.0f);
+    session->SetTerrainOption("falloff", 0.0f);
+    session->SetTerrainOption("active", 0.0f);
+}
+
 ActionsAreUndoable :: (session: lantern:::editor:::EditorSession~*, key: u64) -> void {
     outcome9: bool = session->TerrainAction("reseed");
     assert(outcome9, "a new seed can be picked");
@@ -165,6 +188,7 @@ main :: () -> i32 {
     key: u64 = TerrainKey(session);
     OptionsAreCheckedAndRemembered(session);
     AHeldBrushRaisesTheGroundInOneUndoStep(session, key);
+    HoldingCommandInvertsAndHoldingShiftSmooths(session, key);
     session->SelectOnly(key);
     ActionsAreUndoable(session, key);
     print("terrain tools sculpt and undo");

@@ -278,7 +278,7 @@ The Assets panel shows a folder list on the left and the open folder as cards. S
 
 ## Terrain tab
 
-Beside Silhouettes in the bottom panel (Alt+6, or Window > Terrain): sculpt brushes, a generator and the actions that add, rebuild and erode a terrain, each one undo step. See [terrain.md](terrain.md).
+Beside Silhouettes in the bottom panel (Alt+6, Window > Terrain or Terrain > Terrain Settings): the brush, generator and size settings. The Terrain menu and the brush button on the toolbar (B) run the commands. See [terrain.md](terrain.md).
 
 ## Silhouettes tab
 
