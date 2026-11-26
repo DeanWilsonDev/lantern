@@ -119,9 +119,11 @@ viewport's right-hand rail (or Shift+A): categories, a search box and a grid of 
 
 ## The panels
 
-The outliner and the details panel are docked on the right, the viewport fills the middle and the content
-drawer (assets, console, history) sits under it. Each can be shown or hidden from the Window menu or with
-Alt + 1, 2 and 3, and the choice is remembered. F11 hides all of them for a clean viewport.
+The outliner and the details panel start docked on the right, the viewport fills the middle and the content
+drawer (assets, console, history) sits under it. Each can be moved by the grip that shows along its top edge on hover:
+let go near the left or right edge to dock it in that side's column, near the bottom to dock it under the viewport, or
+anywhere else to float it. Each can be shown or hidden from the Window menu or with Alt + 1, 2 and 3, and the choices
+are remembered. F11 hides all of them for a clean viewport.
 
 The viewport's own settings are in its header: `Perspective` opens the Camera menu (presets, orthographic, frame
 and align) and `Show` opens the Show menu (grid, wireframe, colliders, markers, level bounds, hidden entities,

@@ -94,6 +94,13 @@ The Silhouette and graph tabs have no palette.
 | Document tabs | All |
 | Status bar | All |
 
+The outliner, the details panel and the content drawer can each be moved, like the tool palette. A grip shows along a
+panel's top edge while the mouse is over it; drag the grip and let go near the window's left or right edge to dock the
+panel in a column on that side, near the bottom to dock it under the viewport, or anywhere else to float it there. While
+dragging, a blue rectangle shows where the panel will go. Panels in the same place share it, with handles between them
+to resize, and a side with no panel takes no room. A floating panel moves with its grip. Where each panel is, and where
+a floating one sits, is remembered.
+
 ### Drawer pages
 
 | Page | Modes |

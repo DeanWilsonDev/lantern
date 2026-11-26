@@ -1,9 +1,11 @@
 EditorModel :: import EditorModel;
+EditorModes :: import EditorModes;
+PanelDocking :: import PanelDocking;
 PanelVisibility :: import PanelVisibility;
 
 // Layout choices that are remembered between runs: which panels are shown (the outliner and the
 // details panel on the right, the content drawer under the viewport), where the tool palette is (docked
-// beside the viewport, or floating and where), and which tab the drawer is on (assets, console or history). Hiding every panel (focusViewport) remembers what was shown so the same
+// beside the viewport, or floating and where), where each panel is docked or floats, and which tab the drawer is on (assets, console or history). Hiding every panel (focusViewport) remembers what was shown so the same
 // command brings it back.
 EditorLayout :: class {
 public:
@@ -23,6 +25,27 @@ public:
     toolsDragging~ bool = false;
     toolsGrabX~ f32 = 0.0f;
     toolsGrabY~ f32 = 0.0f;
+
+    // Where each panel is (PanelDocking: "left", "right", "bottom" or "float") and, for a floating one, its corner.
+    @signal outlinerPlace~ string = RememberedPlace("outliner");
+    @signal detailsPlace~ string = RememberedPlace("details");
+    @signal drawerPlace~ string = RememberedPlace("drawer");
+    @signal outlinerX~ f32 = RememberedPosition("ui.outlinerX", 900.0f);
+    @signal outlinerY~ f32 = RememberedPosition("ui.outlinerY", 140.0f);
+    @signal detailsX~ f32 = RememberedPosition("ui.detailsX", 940.0f);
+    @signal detailsY~ f32 = RememberedPosition("ui.detailsY", 180.0f);
+    @signal drawerX~ f32 = RememberedPosition("ui.drawerX", 200.0f);
+    @signal drawerY~ f32 = RememberedPosition("ui.drawerY", 500.0f);
+    // The panel being dragged by its grip ("" when none), where it would go if let go now, and the corner of the
+    // floating preview. The grab offset keeps a floating panel from jumping under the mouse.
+    @signal panelDragging~ string = "";
+    @signal panelDropPlace~ string = "";
+    @signal panelPreviewX~ f32 = 0.0f;
+    @signal panelPreviewY~ f32 = 0.0f;
+    panelGrabX~ f32 = 0.0f;
+    panelGrabY~ f32 = 0.0f;
+    // As toolsShowing does for the palette: Escape closes the topmost portal, so floating panels come straight back.
+    @signal panelsShowing~ i32 = 0;
 
     focusSavedOutliner~ bool = true;
     focusSavedDetails~ bool = true;
@@ -92,6 +115,129 @@ public:
         editorSetPreference("ui.toolsFloating", floating ? "1" : "0");
         editorSetPreference("ui.toolsX", HexOf(i32(this.toolsX)));
         editorSetPreference("ui.toolsY", HexOf(i32(this.toolsY)));
+    }
+
+    // Where a panel is: "left", "right", "bottom" or "float".
+    PlaceOf :: (panel: string) -> string {
+        return when panel {
+            "outliner" -> this.outlinerPlace,
+            "details" -> this.detailsPlace,
+            default -> this.drawerPlace
+        };
+    }
+
+    // A floating panel's corner.
+    FloatXOf :: (panel: string) -> f32 {
+        return when panel {
+            "outliner" -> this.outlinerX,
+            "details" -> this.detailsX,
+            default -> this.drawerX
+        };
+    }
+
+    FloatYOf :: (panel: string) -> f32 {
+        return when panel {
+            "outliner" -> this.outlinerY,
+            "details" -> this.detailsY,
+            default -> this.drawerY
+        };
+    }
+
+    // True when a panel is switched on (Window menu, Alt+1 to 3).
+    IsShown :: (panel: string) -> bool {
+        return when panel {
+            "outliner" -> this.outlinerVisible,
+            "details" -> this.detailsVisible,
+            default -> this.drawerVisible
+        };
+    }
+
+    // The panels on screen at a place in a mode, in the order a dock stacks them.
+    PanelsAt :: (place: string, mode: string) -> Array<string> {
+        found~ Array<string> = [];
+        for panel in PanelDocking:::Panels() {
+            belongs := PanelDocking:::BelongsToMode(panel, EditorModes:::ShowsRightDock(mode));
+            if this.PlaceOf(panel) == place && this.IsShown(panel) && belongs {
+                found.add(panel);
+            }
+        }
+        return found;
+    }
+
+    // A panel's grip was pressed: start dragging it. A floating panel moves with the mouse; a docked one stays put and
+    // a preview shows where it would go.
+    BeginPanelDrag~: (panel: string) -> void {
+        if this.PlaceOf(panel) == PanelDocking:::FLOAT {
+            this.panelGrabX = penumbra:::mouseX() - this.FloatXOf(panel);
+            this.panelGrabY = penumbra:::mouseY() - this.FloatYOf(panel);
+        } else {
+            this.panelGrabX = 40.0f;
+            this.panelGrabY = 6.0f;
+        }
+        this.panelDragging = panel;
+    }
+
+    // Called once a frame. While a grip is held, works out where the panel would go and moves a floating one with the
+    // mouse; when it is let go, puts the panel there and remembers it.
+    FollowPanelDrag~: () -> void {
+        guard this.panelDragging != "" return;
+        panel := this.panelDragging;
+        width := penumbra:::windowWidth();
+        height := penumbra:::windowHeight();
+        place := PanelDocking:::DropPlace(penumbra:::mouseX(), penumbra:::mouseY(), width, height);
+        cornerX := PanelDocking:::FloatCorner(penumbra:::mouseX(), this.panelGrabX, PanelDocking:::FloatWidth(panel), width);
+        cornerY := PanelDocking:::FloatCorner(penumbra:::mouseY(), this.panelGrabY, PanelDocking:::FloatHeight(panel), height);
+        if penumbra:::isMouseButtonDown() {
+            if this.panelDropPlace != place {
+                this.panelDropPlace = place;
+            }
+            if place == PanelDocking:::FLOAT && this.PlaceOf(panel) == PanelDocking:::FLOAT {
+                this.MoveFloating(panel, cornerX, cornerY);
+            } else if place == PanelDocking:::FLOAT {
+                this.panelPreviewX = cornerX;
+                this.panelPreviewY = cornerY;
+            }
+            return;
+        }
+        this.panelDragging = "";
+        this.panelDropPlace = "";
+        if place == PanelDocking:::FLOAT {
+            this.MoveFloating(panel, cornerX, cornerY);
+            editorSetPreference(`ui.${panel}X`, HexOf(i32(cornerX)));
+            editorSetPreference(`ui.${panel}Y`, HexOf(i32(cornerY)));
+        }
+        this.SetPlace(panel, place);
+    }
+
+    // Puts a panel at a place and remembers it.
+    SetPlace~: (panel: string, place: string) -> void {
+        when panel {
+            "outliner" -> { this.outlinerPlace = place; },
+            "details" -> { this.detailsPlace = place; },
+            default -> { this.drawerPlace = place; }
+        }
+        editorSetPreference(`ui.${panel}Place`, place);
+    }
+
+    MoveFloating~: (panel: string, x: f32, y: f32) -> void {
+        when panel {
+            "outliner" -> {
+                this.outlinerX = x;
+                this.outlinerY = y;
+            },
+            "details" -> {
+                this.detailsX = x;
+                this.detailsY = y;
+            },
+            default -> {
+                this.drawerX = x;
+                this.drawerY = y;
+            }
+        }
+    }
+
+    ReshowPanels~: () -> void {
+        this.panelsShowing += 1;
     }
 
     // Shows or hides a panel by name ("outliner", "details" or "drawer").
@@ -181,6 +327,12 @@ public:
             value = value * 16 + EditorModel:::HexDigit(saved, place);
         }
         return f32(value);
+    }
+
+    // A panel's saved place, or where it starts the first time.
+    static RememberedPlace :: (panel: string) -> string {
+        saved := editorPreference(`ui.${panel}Place`);
+        return PanelDocking:::IsPlace(saved) ? saved : PanelDocking:::DefaultPlace(panel);
     }
 
     // The panel saved last time, or "assets" the first time.

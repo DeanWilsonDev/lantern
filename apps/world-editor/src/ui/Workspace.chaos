@@ -1,22 +1,54 @@
-Editor :: import Editor;
-EditorModes :: import EditorModes;
 CentreArea :: import CentreArea;
-RightDock :: import RightDock;
+Editor :: import Editor;
+PanelDock :: import PanelDock;
 
-// The area under the toolbar: the viewport and drawer in the centre, and the outliner and details docked on
-// the right. Each panel can be shown or hidden (EditorLayout); with both right panels hidden, or in a mode without them
-// (only Select mode has them), the centre takes the whole width.
+// How wide a side dock starts, as a share of the workspace, with one dock or with both.
+WorkspaceUi :: namespace {
+    LEFT_SHARE_WITH_BOTH: f32 : 0.2f;
+    CENTRE_SHARE_WITH_BOTH: f32 : 0.75f;
+    LEFT_SHARE: f32 : 0.22f;
+    CENTRE_SHARE: f32 : 0.78f;
+}
+
+// The area under the toolbar: the viewport and its bottom dock in the centre, with a column of docked panels on the
+// left, the right, both or neither, wherever the panels have been dragged (EditorLayout, PanelDocking). The outliner and
+// details start on the right and the drawer under the viewport. A side with no panel on it takes no room, so with
+// none the centre takes the whole width; only Select mode has the outliner and the details panel.
 Workspace :: () -> Penumbra:::Component {
     @context editor~ Editor;
     return (
         <frame ref="workspace" class="app-content">
             <slot>
-                !{EditorModes:::ShowsRightDock(editor.Mode()) && (editor.layout.outlinerVisible || editor.layout.detailsVisible)
-                    ? <split ref="root-split" class="workspace-fill" axis="horizontal" ratio={0.78f} minPaneSize={220.0f} handleThickness={4.0f}>
-                          <CentreArea />
-                          <RightDock />
-                      </split>
-                    : <CentreArea />}
+                !{(() -> Penumbra:::Component {
+                    hasLeft := editor.layout.PanelsAt("left", editor.Mode()).length() > 0;
+                    hasRight := editor.layout.PanelsAt("right", editor.Mode()).length() > 0;
+                    guard hasLeft || hasRight return <CentreArea key="centre-only" />;
+                    guard hasLeft return (
+                        <split key="centre-right" ref="root-split" class="workspace-fill" axis="horizontal"
+                               ratio={WorkspaceUi:::CENTRE_SHARE} minPaneSize={220.0f} handleThickness={4.0f}>
+                            <CentreArea />
+                            <PanelDock place="right" />
+                        </split>
+                    );
+                    guard hasRight return (
+                        <split key="left-centre" ref="root-split" class="workspace-fill" axis="horizontal"
+                               ratio={WorkspaceUi:::LEFT_SHARE} minPaneSize={220.0f} handleThickness={4.0f}>
+                            <PanelDock place="left" />
+                            <CentreArea />
+                        </split>
+                    );
+                    return (
+                        <split key="left-centre-right" ref="root-split" class="workspace-fill" axis="horizontal"
+                               ratio={WorkspaceUi:::LEFT_SHARE_WITH_BOTH} minPaneSize={220.0f} handleThickness={4.0f}>
+                            <PanelDock place="left" />
+                            <split class="workspace-fill" axis="horizontal" ratio={WorkspaceUi:::CENTRE_SHARE_WITH_BOTH}
+                                   minPaneSize={220.0f} handleThickness={4.0f}>
+                                <CentreArea />
+                                <PanelDock place="right" />
+                            </split>
+                        </split>
+                    );
+                })()}
             </slot>
         </frame>
     );

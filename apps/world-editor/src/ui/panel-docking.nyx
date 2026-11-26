@@ -1,0 +1,99 @@
+// Where the editor's panels go. Each of the three panels (the outliner, the details panel and the content drawer) has a
+// place: docked in the column on the left or the right of the viewport, docked in the row under it, or floating over
+// the window at a point of its own. Dragging a panel by the grip in its top edge and letting go decides its new place
+// from where the mouse is: near the window's left or right edge docks it on that side, near the bottom docks it under
+// the viewport, and anywhere else floats it there. The tool palette works the same way (EditorLayout).
+//
+// A rectangle in the window, for the preview of where a dragged panel would go.
+PanelRect :: data {
+    x: f32;
+    y: f32;
+    width: f32;
+    height: f32;
+}
+
+// These are plain functions with no calls into the editor, so they can be tested on their own. EditorLayout keeps each
+// panel's place, Workspace.chaos and CentreArea.chaos lay the docked ones out, and App.chaos floats the rest.
+PanelDocking :: namespace {
+    LEFT: string : "left";
+    RIGHT: string : "right";
+    BOTTOM: string : "bottom";
+    FLOAT: string : "float";
+
+    // How close to an edge, in pixels, a dropped panel docks on that side.
+    SIDE_ZONE: f32 : 90.0f;
+    BOTTOM_ZONE: f32 : 110.0f;
+
+    // Where the workspace starts under the menu bar and toolbar, and how tall the status bar under it is, so a dock's
+    // preview covers the workspace and not those.
+    WORKSPACE_TOP: f32 : 88.0f;
+    STATUS_HEIGHT: f32 : 24.0f;
+
+    // How wide a side dock's preview is, and how tall the bottom dock's.
+    SIDE_PREVIEW_WIDTH: f32 : 320.0f;
+    BOTTOM_PREVIEW_HEIGHT: f32 : 240.0f;
+
+    // The panels, in the order a dock stacks them.
+    Panels :: () -> Array<string> {
+        return ["outliner", "details", "drawer"];
+    }
+
+    // Where a panel starts: the outliner and details on the right, the drawer under the viewport.
+    DefaultPlace :: (panel: string) -> string {
+        return panel == "drawer" ? BOTTOM : RIGHT;
+    }
+
+    // A floating panel's size. The drawer is wide and short, like the row it comes from; the others are tall columns.
+    FloatWidth :: (panel: string) -> f32 {
+        return panel == "drawer" ? 900.0f : 320.0f;
+    }
+
+    FloatHeight :: (panel: string) -> f32 {
+        return panel == "drawer" ? 300.0f : 460.0f;
+    }
+
+    // True for a saved place that is one of the four.
+    IsPlace :: (place: string) -> bool {
+        return place == LEFT || place == RIGHT || place == BOTTOM || place == FLOAT;
+    }
+
+    // The place a panel let go at a point goes to. The sides win over the bottom in the corners, since a column is
+    // what a side drop looks like.
+    DropPlace :: (mouseX: f32, mouseY: f32, windowWidth: f32, windowHeight: f32) -> string {
+        guard mouseX >= SIDE_ZONE return LEFT;
+        guard mouseX <= windowWidth - SIDE_ZONE return RIGHT;
+        guard mouseY <= windowHeight - BOTTOM_ZONE return BOTTOM;
+        return FLOAT;
+    }
+
+    // True when a panel belongs on screen in a mode: the outliner and the details panel are for picking and changing
+    // entities, so only Select mode has them; the drawer is in every mode.
+    BelongsToMode :: (panel: string, selectsEntities: bool) -> bool {
+        return panel == "drawer" || selectsEntities;
+    }
+
+    // A floating panel's corner for a mouse point and the grab's offset, kept inside the window with its grip reachable.
+    FloatCorner :: (mouse: f32, grab: f32, size: f32, windowSize: f32) -> f32 {
+        corner := mouse - grab;
+        highest := windowSize - size;
+        guard corner <= highest return highest > 0.0f ? highest : 0.0f;
+        return corner > 0.0f ? corner : 0.0f;
+    }
+
+    // Where the preview of a drop at a place sits: the strip of the workspace a side or bottom dock would take, or the
+    // floating panel's own rectangle at its corner.
+    PreviewRect :: (place: string, panel: string, windowWidth: f32, windowHeight: f32, floatX: f32, floatY: f32) -> PanelRect {
+        workspaceHeight := windowHeight - WORKSPACE_TOP - STATUS_HEIGHT;
+        return when place {
+            "left" -> PanelRect { x: 0.0f, y: WORKSPACE_TOP, width: SIDE_PREVIEW_WIDTH, height: workspaceHeight },
+            "right" -> PanelRect { x: windowWidth - SIDE_PREVIEW_WIDTH, y: WORKSPACE_TOP, width: SIDE_PREVIEW_WIDTH, height: workspaceHeight },
+            "bottom" -> PanelRect {
+                x: 0.0f,
+                y: windowHeight - STATUS_HEIGHT - BOTTOM_PREVIEW_HEIGHT,
+                width: windowWidth,
+                height: BOTTOM_PREVIEW_HEIGHT
+            },
+            default -> PanelRect { x: floatX, y: floatY, width: FloatWidth(panel), height: FloatHeight(panel) }
+        };
+    }
+}
