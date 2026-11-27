@@ -2259,3 +2259,18 @@ frame time to an `elapsed` variable in place of the total simulation time it was
 inspector's behaviour graph buttons. The placed lamp in `flow-and-fragile` names its Silhouette in `properties.silhouette`,
 as a newly placed copy does. A copy placed before Silhouettes recorded their name gets no behaviour until it names one.
 Provisional (2026-11-27): not reviewed by Dean.
+
+## D-294: A material Silhouette opens as a document of its own
+
+Dean (2026-11-27) couldn't open a material Silhouette by double-clicking it. A material card in the asset browser now
+opens on double-click, as a Silhouette card does, and the document shown for a material Silhouette is
+`MaterialSilhouettePage`, since a material isn't on the palette and has no components to list. Its Viewport tab shows
+a Hierarchy with the material as its one root, the material on the turning preview sphere (the preview is given
+`material:<name>`) and an Inspector with every value of its root file except the transform it never uses; a committed
+value is written to `root.calamus` through `EditSilhouetteValue` and the cached materials are dropped so the previews and
+the level redraw with it (`editorMaterialValues`, `editorMaterialEditValue`). Its Material Graph tab is the graph editor
+on `material:<name>`, saved beside it as `material.graph.json`, with Create graph for a material without one, so the
+Graph tab's list is no longer the only way in. `SilhouetteFolderOf` finds `silhouettes/materials/<name>` when there is
+no `silhouettes/<name>`. A material with a graph takes its look from the graph, so its `properties` change only what the
+graph doesn't set. Asset search also stops going into the Scripts root's `assets` and `game-graphs` folders, which are
+roots of their own, so each Silhouette and graph is found once. Provisional (2026-11-27): not reviewed by Dean.
