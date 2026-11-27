@@ -2242,3 +2242,20 @@ constructor taking the placed entity, and one `override` method per event (`Upda
 event's time used outside that event's chain is refused. `SilhouetteBehaviour` is the game's base class, which the
 fifth slice adds with the game running these classes, so building Silhouette graphs into the game and
 `GraphBehaviours:::Create` move to that slice too. Provisional (2026-11-27): not reviewed by Dean.
+
+## D-293: The game runs Silhouette graphs, and the scripted kind is retired
+
+Dean (2026-11-27) asked for the graph to belong to the Silhouette, as a Blueprint's does; the fifth slice of
+`docs/silhouette-editor.md` makes the game run them. `mist run graphs` (and saving a Silhouette graph in the editor)
+builds every `assets/silhouettes/<name>/graph.json` beside the game's graphs into `game-graphs/generated/<Name>Behaviour.nyx`,
+and `GraphBehaviours.nyx` now holds `Create(silhouette, entity) -> SilhouetteBehaviour?` instead of `Run`. The game's
+`SilhouetteBehaviour` (`game-entities/silhouette-behaviour.nyx`) is the base class with empty `BeginPlay`, `Update` and
+`FixedUpdate`. When a level loads, every entity with a `silhouette` property (found with the new
+`lantern:::world:::FindByProperty`) whose Silhouette has a graph gets a behaviour, and BeginPlay runs once the level is
+in; FixedUpdate runs every fixed step in `Simulate` and Update once a frame while playing. The game reads only the
+generated Nyx, never the Silhouette folder. `lamp_pulse` became the `scripted_lamp` Silhouette's Update event, adding the
+frame time to an `elapsed` variable in place of the total simulation time it was given; the Silhouette's kind is now
+`prop`, `ScriptedEntity` and the `scripted` kind with its `graph` and `function` properties are gone, and so are the
+inspector's behaviour graph buttons. The placed lamp in `flow-and-fragile` names its Silhouette in `properties.silhouette`,
+as a newly placed copy does. A copy placed before Silhouettes recorded their name gets no behaviour until it names one.
+Provisional (2026-11-27): not reviewed by Dean.
