@@ -121,7 +121,9 @@ viewport's right-hand rail (or Shift+A) shows: categories, a search box and a gr
 
 The outliner and the details panel start docked on the right, the viewport fills the middle, the content drawer
 (assets, console, history) sits under it with the asset preview beside it, and the Silhouettes panel docks on the left
-when it is shown. Each can be moved by the grip that shows along its top edge on hover: let go near the left or right
+when it is shown. The content drawer and a preview docked beside it start hidden each time the editor opens, as
+Unreal's content drawer does: Ctrl+Space (Control+Space on a Mac, where Cmd+Space is Spotlight) shows them, and pressing it
+again hides them. Each can be moved by the grip that shows along its top edge on hover: let go near the left or right
 edge to dock it in that side's column, near the bottom to dock it under the viewport, or anywhere else to float it.
 Each can be shown or hidden from the Window menu (Alt + 1, 2 and 3 for the outliner, details and drawer, Shift+A for
 the Silhouettes panel), and the choices are remembered. F11 hides all of them for a clean viewport.
@@ -230,7 +232,7 @@ Anywhere in the editor:
 | Shift + 1 / 2 | Select mode / Terrain mode |
 | Shift + A | The Silhouettes panel at the pointer, or put it away (Select mode) |
 | Alt + 1 / 2 / 3 | Show or hide the outliner / details / content drawer |
-| Ctrl + Space, ` or Alt + 4 | Assets, console or history in the content drawer (again hides it) |
+| Ctrl + Space (also Control + Space on a Mac), ` or Alt + 4 | Assets, console or history in the content drawer (again hides it) |
 | F11 | Hide every panel for a clean viewport, or bring them back |
 | Right click on an outliner row | Context menu |
 | Esc | Close the open menu, popup or dialog |

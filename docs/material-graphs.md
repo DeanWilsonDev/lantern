@@ -47,7 +47,7 @@ layout and file format all apply. It has one function called `material`, and its
 
 | Kind | Ports | Gives |
 | --- | --- | --- |
-| `mat_scalar` | `a`: a number | a number |
+| `mat_scalar` | `a`: a number typed in, or a wire from any number node (a parameter, a sine) | a number |
 | `mat_color` | `text`: `#RRGGBB` | a colour |
 | `mat_param` | `name`: a number in the Silhouette's `properties`; `a`: the default | a number that starts at the Silhouette's value and that a game can change while it runs (at most eight per material) |
 | `mat_uv` | | the surface's texture coordinate |
@@ -208,6 +208,12 @@ a warm key light, a cool rim light and a bright band of sky light around the hor
 roughness and normal maps all read at a glance. A see-through material gets a checkered wall behind the sphere, so what shows through it reads too. The level viewport and the content browser draw every graph material
 with its own shader too. **Hide shader** folds the generated GLSL away to give the canvas more room, and the panels only
 script graphs use (functions and variables) are hidden while a material is open.
+
+A material's own variables are its parameters, so a material graph has a **Parameters** panel on the left in their place.
+It lists each `mat_param` in the graph as `name = default`, with a **Get** button that puts another node for it on the
+canvas, and a name and default box with **Add parameter** to make a new one. Any input pin that shows a typed value, such
+as a scalar's `value` or a multiply's `b`, takes a wire instead: drag a parameter's output onto it and the value is
+replaced by the wire, so one parameter can drive several nodes and a game can change it while it runs.
 
 Two sample materials show the range: `gold` (a colour, full metal and a polished roughness parameter) and `brick` (a
 tiled brick texture, its normal map with a `bumpiness` parameter, and a rough non-metal). Their textures,

@@ -217,6 +217,10 @@ public:
     // Shows or hides a panel by name (one of PanelDocking:::Panels).
     TogglePanel~: (panel: string) -> void {
         this.focused = false;
+        if panel == "drawer" {
+            this.SetDrawer(!this.IsShown("drawer"));
+            return;
+        }
         this.SetShown(panel, !this.IsShown(panel));
     }
 
@@ -260,8 +264,12 @@ public:
         editorSetPreference(`ui.${panel}`, isShown ? "1" : "0");
     }
 
+    // Shows or hides the drawer, and the asset preview with it while the preview is docked beside it in the bottom row.
     SetDrawer~: (isShown: bool) -> void {
         this.SetShown("drawer", isShown);
+        if this.PlaceOf("preview") == PanelDocking:::BOTTOM {
+            this.SetShown("preview", isShown);
+        }
     }
 
     // How close to the window's left edge, in pixels, a dropped palette docks.
@@ -320,13 +328,23 @@ public:
     }
 
     // Whether each panel was shown last time, or whether it starts shown.
+    // Which panels are shown when the editor starts: as they were left, except the drawer (the asset browser, console and
+    // history) and the asset preview docked beside it, which always start hidden and come up with Ctrl+Space, like
+    // Unreal's content drawer.
     static RememberedShown :: () -> Dictionary<string, bool> {
         shown~ Dictionary<string, bool> = {};
         for panel in PanelDocking:::Panels() {
             saved := editorPreference(`ui.${panel}`);
-            shown[panel] = saved == "" ? PanelDocking:::ShownAtFirst(panel) : saved != "0";
+            shown[panel] = StartsHidden(panel) ? false : (saved == "" ? PanelDocking:::ShownAtFirst(panel) : saved != "0");
         }
         return shown;
+    }
+
+    static StartsHidden :: (panel: string) -> bool {
+        if panel == "drawer" {
+            return true;
+        }
+        return panel == "preview" && RememberedPlaces()["preview"] == PanelDocking:::BOTTOM;
     }
 
     // The panel saved last time, or "assets" the first time.
