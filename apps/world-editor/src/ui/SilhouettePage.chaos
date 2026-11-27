@@ -1,6 +1,7 @@
 ComponentItem :: import ComponentItem;
 Editor :: import Editor;
 EditorModel :: import EditorModel;
+GraphPage :: import GraphPage;
 SilhouetteValueField :: import SilhouetteValueField;
 
 // Helpers for the Silhouette document. The engine gives each value as one line of text: `* key: value` when the
@@ -12,6 +13,18 @@ SilhouetteValueField :: import SilhouetteValueField;
 SilhouettePageUi :: namespace {
     AddableKinds :: () -> Array<string> {
         return ["block", "ramp", "point_light", "spot_light", "gem", "spawn", "kill_plane", "camera_volume"];
+    }
+
+    GraphName :: (templateId: string) -> string {
+        return `silhouette:${templateId}`;
+    }
+
+    TabClass :: (active: bool) -> string {
+        return active ? "document-tab-active" : "document-tab";
+    }
+
+    TabLabelClass :: (active: bool) -> string {
+        return active ? "tab-label-active" : "tab-label";
     }
 
     RowClass :: (selected: bool, inherited: bool) -> string {
@@ -164,7 +177,11 @@ SilhouettePageUi :: namespace {
 // under hangs it from another. The viewport in the middle turns the Silhouette, and the Inspector on the right shows
 // every value of the selected row, grouped by the first part of its key. Every change goes to the engine and then
 // `revision` is added to so the page redraws. The @signals are the page's own state: the chosen row, the row being
-// renamed or moved, whether the Add menu is open, the status line and the text in each box.
+// renamed or moved, whether the Add menu is open, the status line, the text in each box and which of the document's own
+// tabs is up: "viewport" for the three areas, or "graph" for the Silhouette's event graph, which fills the document
+// with the graph editor (its functions and variables on the left, the canvas, and the selected node on the right). The
+// graph is the Silhouette's own (`graph.json` in its folder), opened as `silhouette:<name>`; a Silhouette without one
+// offers to make it.
 SilhouettePage :: () -> Penumbra:::Component {
     @context editor~ Editor;
     @signal chosenPosition~ i32 = 0;
@@ -176,6 +193,7 @@ SilhouettePage :: () -> Penumbra:::Component {
     @signal addMenuOpen~ bool = false;
     @signal valueKey~ string = "";
     @signal valueText~ string = "";
+    @signal centreTab~ string = "viewport";
     return (
         <frame ref="silhouette-page" class="entity-page">
             <slot>
@@ -260,7 +278,41 @@ SilhouettePage :: () -> Penumbra:::Component {
                                 </frame>
                             </frame>
                             <text ref="silhouette-status" class="silhouette-status">{editStatus}</text>
-                            <frame class="silhouette-document">
+                            <frame class="silhouette-tab-row">
+                                <frame ref="silhouette-tab-viewport" class={SilhouettePageUi:::TabClass(centreTab == "viewport")}
+                                       onRelease={() -> { centreTab = "viewport"; }}>
+                                    <icon class={SilhouettePageUi:::TabLabelClass(centreTab == "viewport")} icon="cube" size={12.0f} />
+                                    <text class={SilhouettePageUi:::TabLabelClass(centreTab == "viewport")}>Viewport</text>
+                                </frame>
+                                <frame ref="silhouette-tab-graph" class={SilhouettePageUi:::TabClass(centreTab == "graph")}
+                                       onRelease={() -> {
+                                           if editorGraphName() != SilhouettePageUi:::GraphName(templateId) {
+                                               editorGraphOpen(SilhouettePageUi:::GraphName(templateId), false);
+                                           }
+                                           centreTab = "graph";
+                                           revision = revision + 1;
+                                       }}>
+                                    <icon class={SilhouettePageUi:::TabLabelClass(centreTab == "graph")} icon="kanban" size={12.0f} />
+                                    <text class={SilhouettePageUi:::TabLabelClass(centreTab == "graph")}>Event Graph</text>
+                                </frame>
+                            </frame>
+                            <slot>
+                                !{centreTab == "graph"
+                                    ? (editorGraphName() == SilhouettePageUi:::GraphName(templateId)
+                                        ? <GraphPage key={`silhouette-graph-${templateId}`} ownerSilhouette={templateId} />
+                                        : <frame key="silhouette-graph-missing" class="silhouette-graph-missing">
+                                              <text class="silhouette-panel-title">{`${templateId} has no graph yet.`}</text>
+                                              <text class="entity-page-kind">The graph of a Silhouette is saved beside it, in graph.json.</text>
+                                              <frame ref="silhouette-create-graph-button" class="small-button-accent"
+                                                     onRelease={() -> {
+                                                         editStatus = editorGraphOpen(SilhouettePageUi:::GraphName(templateId), true);
+                                                         revision = revision + 1;
+                                                     }}>
+                                                  <icon class="small-button-icon-accent" icon="plus" size={12.0f} />
+                                                  <text class="small-button-label-accent">Create graph</text>
+                                              </frame>
+                                          </frame>)
+                                    : <frame key="silhouette-document" class="silhouette-document">
                                 <frame ref="silhouette-hierarchy" class="silhouette-hierarchy">
                                     <frame class="silhouette-panel-header">
                                         <icon class="panel-header-icon" icon="layers" size={12.0f} />
@@ -413,7 +465,8 @@ SilhouettePage :: () -> Penumbra:::Component {
                                         </frame>
                                     </scroll>
                                 </frame>
-                            </frame>
+                            </frame>}
+                            </slot>
                         </frame>
                     );
                 })()}

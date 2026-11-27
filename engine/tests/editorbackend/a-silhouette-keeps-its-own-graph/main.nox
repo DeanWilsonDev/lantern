@@ -1,0 +1,103 @@
+// A Silhouette's graph lives in its own folder (graph.json), opened as `silhouette:<name>`: it is created once, loads
+// and saves there, and is not one of the standalone graphs.
+lantern :: import lantern;
+
+SCRATCH: string : "/tmp/lantern-silhouette-graph-test";
+
+Succeeded :: (problem: string!?) -> bool {
+    worked: bool = problem == null;
+    delete problem;
+    return worked;
+}
+
+Copy :: (name: string, file: string) -> bool {
+    from: string! = `../games/platformer/assets/silhouettes/${name}/${file}`;
+    defer delete from;
+    folder: string! = `${SCRATCH}/assets/silhouettes/${name}`;
+    defer delete folder;
+    createDirectories(folder);
+    to: string! = `${folder}/${file}`;
+    defer delete to;
+    when readTextFile(from) {
+        Result:::Err(error) -> {
+            delete error;
+            return false;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when writeTextFile(to, text) {
+                Result:::Err(error) -> {
+                    delete error;
+                    return false;
+                },
+                Result:::Ok(written) -> {
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+main :: () -> i32 {
+    assets: string = "/tmp/lantern-silhouette-graph-test/assets";
+    if directoryExists(SCRATCH) {
+        Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH));
+    }
+    assert(Copy("lamp_post", "root.calamus") && Copy("lamp_post", "light.calamus"), "the lamp post is copied");
+
+    assert(!lantern:::editorbackend:::SilhouetteHasGraph(assets, "lamp_post"), "a Silhouette starts without a graph");
+    when lantern:::editorbackend:::LoadGraphByName(assets, "silhouette:lamp_post") {
+        Result:::Ok(graph) -> {
+            delete graph;
+            assert(false, "a missing graph doesn't load");
+        },
+        Result:::Err(message) -> { delete message; }
+    }
+    when lantern:::editorbackend:::CreateGraphFile(assets, "silhouette:nothing_here") {
+        Result:::Ok(graph) -> {
+            delete graph;
+            assert(false, "a Silhouette that doesn't exist gets no graph");
+        },
+        Result:::Err(message) -> { delete message; }
+    }
+    when lantern:::editorbackend:::CreateGraphFile(assets, "silhouette:lamp_post") {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the lamp post gets a graph");
+        },
+        Result:::Ok(graph) -> {
+            assert(graph->name == "lamp_post", "the graph is named after its Silhouette");
+            assert(graph->functions.length() == 1 && graph->functions[0]->name == "Update", "it starts with an Update function");
+            delete graph;
+        }
+    }
+    assert(pathExists("/tmp/lantern-silhouette-graph-test/assets/silhouettes/lamp_post/graph.json"), "the graph sits in the Silhouette's folder");
+    assert(lantern:::editorbackend:::SilhouetteHasGraph(assets, "lamp_post"), "the Silhouette now has a graph");
+    when lantern:::editorbackend:::CreateGraphFile(assets, "silhouette:lamp_post") {
+        Result:::Ok(graph) -> {
+            delete graph;
+            assert(false, "an existing graph is never overwritten");
+        },
+        Result:::Err(message) -> { delete message; }
+    }
+    when lantern:::editorbackend:::LoadGraphByName(assets, "silhouette:lamp_post") {
+        Result:::Err(message) -> {
+            delete message;
+            assert(false, "the graph loads back");
+        },
+        Result:::Ok(graph) -> {
+            problem: string!? = lantern:::editorbackend:::SaveGraphFiles(assets, "silhouette:lamp_post", graph);
+            assert(Succeeded(problem!), "the graph saves back into the Silhouette's folder");
+            delete graph;
+        }
+    }
+    assert(!pathExists("/tmp/lantern-silhouette-graph-test/assets/graphs"), "nothing is written to the graphs folder");
+    names: string! = lantern:::editorbackend:::ListGraphNames(assets);
+    assert(!names.contains("lamp_post"), "a Silhouette's graph isn't listed with the standalone graphs");
+    delete names;
+
+    assert(Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH)), "the scratch folder is removed");
+    print("a silhouette keeps its own graph");
+    return 0;
+}
