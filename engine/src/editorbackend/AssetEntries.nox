@@ -160,8 +160,12 @@ lantern:::editorbackend :: namespace {
         return `${folder}/${virtualFile.substring(slash + 1, virtualFile.length() - slash - 1)}`;
     }
 
+    // One folder's listing: its folders first, then its files and Silhouettes, each in name order. With a query, what
+    // matches inside its folders follows, down to MAX_ASSET_SEARCH_DEPTH.
     AssetLinesIn :: (realFolder: string, virtualFolder: string, query: string, depth: u32) -> string! {
-        lines~ string! = "".copy();
+        folderLines~ string! = "".copy();
+        fileLines~ string! = "".copy();
+        nestedLines~ string! = "".copy();
         when lantern:::silhouette:::SortedEntries(realFolder) {
             Result:::Err(message) -> {
                 delete message;
@@ -181,17 +185,23 @@ lantern:::editorbackend :: namespace {
                         delete lowerLabel;
                         delete lowerQuery;
                         if matches && (query.length() == 0 || kind != "folder") {
-                            lines += kind;
-                            lines += "\t";
-                            lines += label;
-                            lines += "\t";
-                            lines += virtualPath;
-                            lines += "\n";
+                            line~ string! = `${kind}`;
+                            line += "\t";
+                            line += label;
+                            line += "\t";
+                            line += virtualPath;
+                            line += "\n";
+                            if kind == "folder" {
+                                folderLines += line;
+                            } else {
+                                fileLines += line;
+                            }
+                            delete line;
                         }
                         delete label;
                         if isFolder && kind == "folder" && query.length() > 0 && depth < MAX_ASSET_SEARCH_DEPTH {
                             nested: string! = AssetLinesIn(realPath, virtualPath, query, depth + 1);
-                            lines += nested;
+                            nestedLines += nested;
                             delete nested;
                         }
                     }
@@ -201,7 +211,11 @@ lantern:::editorbackend :: namespace {
                 entries.freeAll();
             }
         }
-        return lines!;
+        folderLines += fileLines;
+        folderLines += nestedLines;
+        delete fileLines;
+        delete nestedLines;
+        return folderLines!;
     }
 
     // What the browser shows for a virtual folder, one per line as `kind<TAB>label<TAB>virtual path`. An empty folder lists the
