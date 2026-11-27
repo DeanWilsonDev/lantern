@@ -2196,3 +2196,11 @@ Dean (2026-11-26) found the asset browser scrolling sideways in one strip and th
 
 Dean (2026-11-26) couldn't move the Silhouettes panel, asked for the asset viewer to be its own movable panel, and asked for things to be placed by dragging them into the scene rather than starting at the origin. Provisional (2026-11-26): not reviewed by Dean. `silhouettes` and `preview` join the movable panels (D-286): Silhouettes starts hidden and docked on the left and belongs to Select mode; the preview starts shown beside the drawer and belongs to every mode. `EditorLayout` keeps each panel's place, corner and shown flag in tables keyed by name, and a dock nests splits for up to all five. Pressing a card now only shows it in the preview (`EditorSelection.previewTemplate`); Add to world and click-to-place are gone, and the command palette's Add entries are the one keyboard way to place. A floating Silhouettes panel opens at the mouse on Shift+A. The editor's loop opens one drag pass around the overlays and the editor beneath, so a card dragged out of a floating panel drops on the viewport.
 
+## D-289: Each open Silhouette is a document in a tab of its own, opened by double-clicking its card
+
+Dean (2026-11-27) asked for a Silhouette to open as a document when it is double-clicked in the asset browser, as a
+Blueprint does, the first slice of `docs/silhouette-editor.md`. `EditorTabs` keeps the open Silhouettes in a list beside
+the entity tabs, with `silhouette` naming the one shown while `active` is the Silhouette tab, so the Silhouette page and
+the editor mode keep reading one name. Every Silhouette card (asset browser, Silhouettes panel, Silhouettes drawer page)
+opens on a double-click; a palette template that isn't a Silhouette has no document and ignores it. Provisional
+(2026-11-27): not reviewed by Dean.

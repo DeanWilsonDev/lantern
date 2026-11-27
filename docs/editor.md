@@ -301,7 +301,7 @@ Beside Silhouettes in the bottom panel (Alt+6, Window > Terrain or Terrain > Ter
 
 ## Silhouettes tab
 
-Beside Assets in the bottom panel (Alt+5, or Window > Silhouettes), this tab lists every Silhouette. The search box filters them by name; drag a card into the level, or select it and press Edit in the asset preview to open its editor.
+Beside Assets in the bottom panel (Alt+5, or Window > Silhouettes), this tab lists every Silhouette. The search box filters them by name; drag a card into the level, or double-click it (or select it and press Edit in the asset preview) to open it as a document in a tab of its own. Several Silhouettes can be open at once.
 
 The Silhouette editor has three columns: the component tree with Add a child and Arrange on the left, a large preview with the selected component's values in the middle, and the actions on the right grouped as Component, Edit a value, Behaviour graph and This Silhouette.
 

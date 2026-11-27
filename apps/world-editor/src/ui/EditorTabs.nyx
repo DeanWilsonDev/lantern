@@ -1,5 +1,6 @@
-// The document tabs above the centre of the editor: the Level tab, which is the 3D viewport, and one tab
-// for each entity opened for editing. `active` is the entity of the tab being shown, or 0 for the level.
+// The document tabs above the centre of the editor: the Level tab, which is the 3D viewport, one tab for each
+// Silhouette opened as a document, the Graph tab, and one tab for each entity opened for editing. `active` is the
+// entity of the tab being shown, 0 for the level, SILHOUETTE_TAB for a Silhouette or GRAPH_TAB for the graph.
 // Opening or showing an entity's tab also selects that entity, so the outliner and the details panel on the
 // right follow whichever tab is up.
 EditorTabs :: class {
@@ -8,9 +9,11 @@ public:
 
     @signal entities~ Array<i64> = [];
     @signal active~ i64 = 0;
-    // The Silhouette being edited in its own tab (a template id), or "" when none is open. Its tab is
-    // shown when `active` is SILHOUETTE_TAB.
+    // The Silhouettes open as documents, each in a tab of its own, in the order they were opened. `silhouette` is the
+    // one being shown while `active` is SILHOUETTE_TAB, and the one that comes back when the Silhouette tabs are left
+    // and shown again.
     static SILHOUETTE_TAB :: -1;
+    @signal silhouettes~ Array<string> = [];
     @signal silhouette~ string = "";
     // The Graph tab: shown when `active` is GRAPH_TAB. It lists the graphs and shows the open one.
     static GRAPH_TAB :: -2;
@@ -27,20 +30,88 @@ public:
         this.Show(id);
     }
 
-    // Opens the Silhouette editor tab for a template and shows it.
+    // Opens a Silhouette as a document: a new tab, or the tab it already has. Its tab is then shown.
     OpenSilhouette~: (templateId: string) -> void {
         guard templateId != "" return;
+        if this.SilhouettePosition(templateId) < 0 {
+            next~ Array<string> = this.silhouettes;
+            next.add(templateId);
+            this.silhouettes = next;
+        }
+        this.ShowSilhouette(templateId);
+    }
+
+    // Shows an open Silhouette's tab.
+    ShowSilhouette~: (templateId: string) -> void {
+        guard this.SilhouettePosition(templateId) >= 0 return;
         this.silhouette = templateId;
         editorSetPreviewTemplate(templateId);
         this.active = -1;
     }
 
-    // Closes the Silhouette tab, going back to the level.
-    CloseSilhouette~: () -> void {
-        this.silhouette = "";
-        if this.active == -1 {
-            this.active = 0;
+    // True when a Silhouette's tab is the one being shown.
+    IsShowingSilhouette:: (templateId: string) -> bool {
+        return this.active == -1 && this.silhouette == templateId;
+    }
+
+    // Closes one Silhouette's tab. When it was the Silhouette being shown, the Silhouette tab to its left takes over
+    // (or the first one), and the level comes back when it was the last Silhouette open.
+    CloseSilhouetteNamed~: (templateId: string) -> void {
+        position := this.SilhouettePosition(templateId);
+        guard position >= 0 return;
+        next~ Array<string> = [];
+        for open in this.silhouettes {
+            if open != templateId {
+                next.add(open);
+            }
         }
+        this.silhouettes = next;
+        guard this.silhouette == templateId return;
+        if next.length() == 0 {
+            this.silhouette = "";
+            if this.active == -1 {
+                this.active = 0;
+            }
+            return;
+        }
+        replacement := position > 0 ? next[position - 1] : next[0];
+        if this.active == -1 {
+            this.ShowSilhouette(replacement);
+        } else {
+            this.silhouette = replacement;
+        }
+    }
+
+    // Closes the Silhouette tab being shown.
+    CloseSilhouette~: () -> void {
+        this.CloseSilhouetteNamed(this.silhouette);
+    }
+
+    // Moves a Silhouette's tab over to its new name after the Silhouette was renamed, keeping its place in the row.
+    RenameSilhouette~: (oldId: string, newId: string) -> void {
+        next~ Array<string> = [];
+        for open in this.silhouettes {
+            if open == oldId {
+                next.add(newId);
+            } else if open != newId {
+                next.add(open);
+            }
+        }
+        this.silhouettes = next;
+        if this.silhouette == oldId {
+            this.silhouette = newId;
+            editorSetPreviewTemplate(newId);
+        }
+    }
+
+    // Where a Silhouette's tab is among the Silhouette tabs, or -1.
+    SilhouettePosition:: (templateId: string) -> i32 {
+        for index~ i32 = 0; index < this.silhouettes.length(); index++ {
+            if this.silhouettes[index] == templateId {
+                return index;
+            }
+        }
+        return -1;
     }
 
     // Opens the Graph tab and shows it.
