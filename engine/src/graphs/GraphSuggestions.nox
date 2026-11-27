@@ -80,6 +80,17 @@ lantern:::graphs :: namespace {
             }
             text += "-\n";
             text += "comment\n";
+            if function->name == EVENT_GRAPH_FUNCTION || HasEvents(function) {
+                eventNames: Array<string>! = EventNames();
+                for eventName in eventNames {
+                    if IndexOfEvent(function, eventName) == null {
+                        text += "event ";
+                        text += eventName;
+                        text += "\n";
+                    }
+                }
+                delete eventNames;
+            }
             if function->variableNames.length() > 0 {
                 text += "-\n";
                 for variableName in function->variableNames {
@@ -135,8 +146,12 @@ lantern:::graphs :: namespace {
         return result!;
     }
 
-    // Adds what a menu line names: a node kind, or `get name` and `set name` for a variable. Returns the new node's id, or "".
+    // Adds what a menu line names: a node kind, `event Update` for an event, or `get name` and `set name` for a variable. Returns the new node's id, or "".
     AddMenuNode :: (function: GraphFunction~*, line: string, x: f32, y: f32) -> string! {
+        if line.startsWith("event ") {
+            eventName: string = line.substring(6, line.length() - 6);
+            return AddEvent(function, eventName, x, y);
+        }
         if line.startsWith("get ") || line.startsWith("set ") {
             variableName: string! = line.substring(4, line.length() - 4).copy();
             defer delete variableName;
@@ -180,7 +195,9 @@ lantern:::graphs :: namespace {
             delete pins;
             return false;
         }
-        problem: string!? = SetPort(function, newNode, target, sourceNode);
+        sourceReference: string! = OutputReference(sourceNode, sourcePort);
+        problem: string!? = SetPort(function, newNode, target, sourceReference);
+        delete sourceReference;
         wired: bool = problem == null;
         delete problem;
         delete pins;

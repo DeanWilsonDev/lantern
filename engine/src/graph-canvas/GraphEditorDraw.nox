@@ -69,9 +69,22 @@ lantern:::graphs :: namespace {
                     reference: string = PortReference(node, pin->port);
                     if sourceIndex := function->IndexOfNode(reference) {
                         source: GraphNode* = function->nodes[sourceIndex];
-                        sourceType: string! = ValueTypeOf(function, source->id, 0);
+                        sourceType: string! = ValueTypeOf(function, reference, 0);
                         defer delete sourceType;
-                        canvas->Wire(graphEditor->ScreenX(i32(source->x) + NodeWidth(source->kind)), graphEditor->ScreenY(i32(source->y)) + graphEditor->Scaled(HEADER_HEIGHT / 2), PinScreenX(graphEditor, node, pin), PinScreenY(graphEditor, node, pin), TypeColor(sourceType));
+                        fromX~ i32 = graphEditor->ScreenX(i32(source->x) + NodeWidth(source->kind));
+                        fromY~ i32 = graphEditor->ScreenY(i32(source->y)) + graphEditor->Scaled(HEADER_HEIGHT / 2);
+                        wantedPort: string = ReferencePort(reference);
+                        if wantedPort.length() > 0 {
+                            sourcePins := PinsOf(function, source);
+                            for sourcePin in sourcePins->items {
+                                if sourcePin->isOutput && sourcePin->port == wantedPort {
+                                    fromX = PinScreenX(graphEditor, source, sourcePin);
+                                    fromY = PinScreenY(graphEditor, source, sourcePin);
+                                }
+                            }
+                            delete sourcePins;
+                        }
+                        canvas->Wire(fromX, fromY, PinScreenX(graphEditor, node, pin), PinScreenY(graphEditor, node, pin), TypeColor(sourceType));
                     }
                 }
             }
@@ -101,6 +114,9 @@ lantern:::graphs :: namespace {
         }
         if node->kind == "call" && node->functionPath.length() > 0 {
             return `${node->functionPath}`;
+        }
+        if node->kind == EVENT_KIND {
+            return `Event ${node->name}`;
         }
         if (node->kind == "set" || node->kind == "get") && node->name.length() > 0 {
             return `${node->kind} ${node->name}`;
@@ -152,8 +168,9 @@ lantern:::graphs :: namespace {
             }
             pinColor~ u32 = COLOR_TYPE_NONE;
             if !pin->isExecution {
-                reference: string = pin->isOutput ? node->id : PortReference(node, pin->port);
+                reference: string! = pin->isOutput ? OutputReference(node->id, pin->port) : `${PortReference(node, pin->port)}`;
                 pinType: string! = ValueTypeOf(function, reference, 0);
+                delete reference;
                 pinColor = TypeColor(pinType);
                 delete pinType;
             }
@@ -200,7 +217,9 @@ lantern:::graphs :: namespace {
                 for pinIndex~ usize = 0; pinIndex < pins->items.length(); pinIndex++ {
                     pin: PinSlot* = pins->items[pinIndex];
                     if pin->port == graphEditor->wirePort {
-                        dragType: string! = ValueTypeOf(function, from->id, 0);
+                        dragReference: string! = OutputReference(from->id, graphEditor->wirePort);
+                        dragType: string! = ValueTypeOf(function, dragReference, 0);
+                        delete dragReference;
                         canvas->Wire(PinScreenX(graphEditor, from, pin), PinScreenY(graphEditor, from, pin), graphEditor->pointerX, graphEditor->pointerY, pin->isExecution ? COLOR_EXECUTION : TypeColor(dragType));
                         delete dragType;
                     }

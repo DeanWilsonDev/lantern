@@ -377,7 +377,7 @@ lantern:::editorbackend :: namespace {
         }
     }
 
-    // A new graph for a Silhouette, with an `Update` function that takes the placed entity and the time, and saves it in
+    // A new graph for a Silhouette, with its EventGraph function holding BeginPlay, Update and FixedUpdate, and saves it in
     // the Silhouette's folder. An existing graph is never overwritten.
     CreateSilhouetteGraphFile :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
         file~ string! = "".copy();
@@ -394,24 +394,15 @@ lantern:::editorbackend :: namespace {
         if pathExists(file) {
             return Result<lantern:::graphs:::Graph*!, string!>:::Err("This Silhouette already has a graph.".copy());
         }
-        silhouetteName: string = SilhouetteOfGraphName(name);
-        jsonText: string! = `{"graph": "${silhouetteName}", "functions": [{"name": "Update", "inputs": [{"name": "entity", "type": "i64"}, {"name": "time", "type": "f32"}], "returns": "", "nodes": [{"id": "start", "kind": "entry", "x": 40, "y": 40}]}]}`;
-        defer delete jsonText;
-        when lantern:::graphs:::LoadGraph(jsonText) {
-            Result:::Err(message) -> {
-                return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
-            },
-            Result:::Ok(graph) -> {
-                problem: string!? = SaveSilhouetteGraph(assetsDirectory, name, graph);
-                if failed := problem {
-                    message: string! = failed.copy();
-                    delete problem;
-                    delete graph;
-                    return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
-                }
-                return Result<lantern:::graphs:::Graph*!, string!>:::Ok(graph!);
-            }
+        graph := lantern:::graphs:::NewEventGraph(SilhouetteOfGraphName(name));
+        problem: string!? = SaveSilhouetteGraph(assetsDirectory, name, graph);
+        if failed := problem {
+            message: string! = failed.copy();
+            delete problem;
+            delete graph;
+            return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
         }
+        return Result<lantern:::graphs:::Graph*!, string!>:::Ok(graph!);
     }
 
     // Makes a new graph with one empty function and saves it. An existing graph is never overwritten.

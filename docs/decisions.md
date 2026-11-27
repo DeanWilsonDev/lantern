@@ -2228,3 +2228,17 @@ because the generated class and the event nodes are the fourth slice. The docume
 Event Graph; Event Graph shows the same canvas as the Graph tab without its list of graphs, or a Create graph button
 when the Silhouette has none. Showing a material Silhouette's graph in its document is left for later, since material
 Silhouettes aren't in the palette and can't open as documents yet. Provisional (2026-11-27): not reviewed by Dean.
+
+## D-292: Event nodes start a Silhouette's graph, and the graph becomes a behaviour class
+
+Dean (2026-11-27) asked for a Silhouette's graph to have events such as BeginPlay, Update and FixedUpdate to pull pins
+off, as Unreal does, the fourth slice of `docs/silhouette-editor.md`. A new Silhouette graph has one function,
+`EventGraph`, holding the three event nodes (`kind: "event"`, the event in `name`), placed and unwired; the right-click
+menu offers an event the function lacks, and an event appears once. Each event gives `entity` and, for Update and
+FixedUpdate, `frameTime` or `fixedStepTime` on value pins of its own. Nodes had one value output each, so a wire from a
+named output is written `<node id>.<port>` (`Update.frameTime`); a node id never has a dot. A graph with event nodes
+generates a class, `LampPostBehaviour :: class : SilhouetteBehaviour`, with the EventGraph's variables as fields, a
+constructor taking the placed entity, and one `override` method per event (`Update~: (frameTime: f32) -> void`); an
+event's time used outside that event's chain is refused. `SilhouetteBehaviour` is the game's base class, which the
+fifth slice adds with the game running these classes, so building Silhouette graphs into the game and
+`GraphBehaviours:::Create` move to that slice too. Provisional (2026-11-27): not reviewed by Dean.

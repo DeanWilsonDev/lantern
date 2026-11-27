@@ -15,17 +15,20 @@ lantern:::graphs :: namespace {
         steps~ u32 = 0;
         annotate~ bool = false;
         currentNodeId~ string!;
+        currentEvent~ string!;
 
         Emitter~: () {
             text = "".copy();
             problem = "".copy();
             currentNodeId = "".copy();
+            currentEvent = "".copy();
         }
 
         !Emitter~: () {
             delete text;
             delete problem;
             delete currentNodeId;
+            delete currentEvent;
             declared.freeAll();
         }
 
@@ -143,6 +146,22 @@ lantern:::graphs :: namespace {
         }
         if index := function->IndexOfNode(reference) {
             node: GraphNode* = function->nodes[index];
+            port: string = ReferencePort(reference);
+            if node->kind == EVENT_KIND {
+                if EventOutputType(node->name, port).length() == 0 {
+                    emitter->Fail(function->name, `'${reference}' is not a value the ${node->name} event gives`);
+                    return "".copy();
+                }
+                if port != ENTITY_PORT && node->name != emitter->currentEvent {
+                    emitter->Fail(function->name, `'${reference}' is the ${node->name} event's ${port}, used outside ${node->name}`);
+                    return "".copy();
+                }
+                return `${port}`;
+            }
+            if port.length() > 0 {
+                emitter->Fail(function->name, `node '${node->id}' (${node->kind}) has no value named '${port}'`);
+                return "".copy();
+            }
             operatorText: string = OperatorFor(node->kind);
             if operatorText.length() > 0 {
                 left: string! = Expression(function, emitter, node->a, depth + 1);
@@ -214,7 +233,7 @@ lantern:::graphs :: namespace {
             node: GraphNode* = function->nodes[nodeIndex];
             emitter->SetCurrent(node->id);
             nextId~ string = node->next;
-            if node->kind == "entry" {
+            if node->kind == "entry" || node->kind == EVENT_KIND {
             } else if node->kind == "return" {
                 if node->value.length() == 0 {
                     emitter->Line(depth, "return;".copy());
@@ -383,6 +402,97 @@ lantern:::graphs :: namespace {
         emitter->Line(1, "}".copy());
     }
 
+    // One event's method in a Silhouette's behaviour class: `Update~: (frameTime: f32) -> void override { ... }`, with the
+    // statements of the chain that starts at the event node.
+    EmitEventMethod :: (function: GraphFunction*, emitter: Emitter~*, node: GraphNode*) -> void {
+        timeName: string = EventTimeName(node->name);
+        parameters: string! = timeName.length() > 0 ? `${timeName}: f32` : "".copy();
+        emitter->Line(1, `${node->name}~: (${parameters}) -> void override {`);
+        delete parameters;
+        delete emitter->currentEvent;
+        emitter->currentEvent = `${node->name}`;
+        EmitChain(function, emitter, node->id, 2);
+        delete emitter->currentEvent;
+        emitter->currentEvent = "".copy();
+        emitter->SetCurrent("");
+        emitter->Line(1, "}".copy());
+    }
+
+    // A graph with event nodes as a class deriving from the game's SilhouetteBehaviour: the event function's variables are
+    // fields, so a placed copy keeps them from one frame to the next; each event is a method; any other function is a
+    // method too.
+    EmitBehaviourClass :: (graph: Graph*, emitter: Emitter~*) -> void {
+        className: string! = BehaviourClassName(graph->name);
+        emitter->text += `${className} :: class : SilhouetteBehaviour {`;
+        emitter->text += "\npublic:\n";
+        eventFunctionCount~ u32 = 0;
+        for function in graph->functions {
+            if HasEvents(function) {
+                eventFunctionCount += 1;
+            }
+        }
+        if eventFunctionCount != 1 {
+            emitter->Fail(graph->name, `a Silhouette graph needs its events in one function and has them in ${eventFunctionCount}`);
+        }
+        for function in graph->functions {
+            if !HasEvents(function) {
+                continue;
+            }
+            for variableIndex~ usize = 0; variableIndex < function->variableNames.length(); variableIndex++ {
+                variableName: string = function->variableNames[variableIndex];
+                variableType: string = function->variableTypes[variableIndex];
+                if !IsName(variableName) || variableType.length() == 0 || variableName == ENTITY_PORT {
+                    emitter->Fail(function->name, "a variable needs a name other than entity, and a type".copy());
+                    break;
+                }
+                emitter->Line(1, `${variableName}~ ${variableType} = ${function->variableDefaults[variableIndex]};`);
+                emitter->declared.push(`${variableName}`);
+            }
+        }
+        emitter->text += "\n";
+        emitter->Line(1, `${className}~: (entity: i64) : SilhouetteBehaviour(entity) { }`);
+        for function in graph->functions {
+            if !HasEvents(function) {
+                continue;
+            }
+            for node in function->nodes {
+                if node->kind == EVENT_KIND && !IsEventName(node->name) {
+                    emitter->Fail(function->name, `node '${node->id}' is an event named '${node->name}', which is not BeginPlay, Update or FixedUpdate`);
+                }
+            }
+            eventNames: Array<string>! = EventNames();
+            for eventName in eventNames {
+                count~ u32 = 0;
+                for node in function->nodes {
+                    if node->kind == EVENT_KIND && node->name == eventName {
+                        count += 1;
+                    }
+                }
+                if count > 1 {
+                    emitter->Fail(function->name, `it has ${count} ${eventName} events, and an event may appear once`);
+                }
+                if eventIndex := IndexOfEvent(function, eventName) {
+                    emitter->text += "\n";
+                    EmitEventMethod(function, emitter, function->nodes[eventIndex]);
+                }
+            }
+            delete eventNames;
+        }
+        while emitter->declared.length() > 0 {
+            popped: string!? = emitter->declared.pop();
+            delete popped;
+        }
+        for function in graph->functions {
+            if HasEvents(function) {
+                continue;
+            }
+            emitter->text += "\n";
+            EmitFunction(function, emitter);
+        }
+        emitter->text += "}\n";
+        delete className;
+    }
+
     // The import lines for the standard library namespaces a graph's call nodes name (`Math:::sin` needs
     // `Math :: import standard:::Math;`), one per namespace, in a fixed order.
     StandardImports :: (graph: Graph*) -> string! {
@@ -419,6 +529,22 @@ lantern:::graphs :: namespace {
     GenerateNyxWith :: (graph: Graph*, annotate: bool) -> Result<string!, string!> {
         emitter := new Emitter();
         emitter->annotate = annotate;
+        if IsEventGraph(graph) {
+            emitter->text += `// Generated from the graph of the ${graph->name} Silhouette by lantern:::graphs. Edit the graph, not this file.`;
+            emitter->text += "\nSilhouetteBehaviour :: import SilhouetteBehaviour;\n";
+            eventImports: string! = StandardImports(graph);
+            emitter->text += eventImports;
+            delete eventImports;
+            EmitBehaviourClass(graph, emitter);
+            if emitter->problem.length() > 0 {
+                eventFailure: string! = `${emitter->problem}`;
+                delete emitter;
+                return Result<string!, string!>:::Err(eventFailure!);
+            }
+            eventSource: string! = `${emitter->text}`;
+            delete emitter;
+            return Result<string!, string!>:::Ok(eventSource!);
+        }
         namespaceName: string! = NamespaceName(graph->name);
         emitter->text += `// Generated from ${graph->name}.graph.json by lantern:::graphs. Edit the graph, not this file.`;
         emitter->text += "\n";

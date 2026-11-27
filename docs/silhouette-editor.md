@@ -75,9 +75,10 @@ Each slice is its own pull request against `nox-proto`, stacked on the one befor
    saved as `graph.json` in the Silhouette folder (D-291). Landed without the material graph for a material Silhouette:
    material Silhouettes can't open as documents yet, so decision 9 waits for a later slice.
 4. **Event nodes and the generated class.** `event` nodes (BeginPlay, Update, FixedUpdate) in the model, the pins, the
-   menu and the generator, variables as fields, `GraphBehaviours:::Create`.
-5. **The game runs Silhouette graphs.** The level scene makes instances and calls the events; `lamp_pulse` migrates into
-   its Silhouette; the `scripted` kind is retired.
+   menu and the generator, variables as fields (D-292).
+5. **The game runs Silhouette graphs.** The game's `SilhouetteBehaviour` base class, Silhouette graphs built into
+   `game-graphs/generated/` with `GraphBehaviours:::Create`, the level scene making instances and calling the events;
+   `lamp_pulse` migrates into its Silhouette; the `scripted` kind is retired.
 6. **Later.** More events (OnTouch, OnOverlap with the player, OnInteract), a "self" node for the instance's own
    entity and children, per-instance property reads.
 
