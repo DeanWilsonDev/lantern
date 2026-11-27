@@ -1,25 +1,38 @@
 SilhouetteValues :: import SilhouetteValues;
 
-// One value of a Silhouette: its key and its text, whether this Silhouette sets it itself, and what to do when the
-// value is committed or its label is picked.
+// One value of a Silhouette: its key, the words to show for it, its text, whether this Silhouette sets it itself,
+// whether it can go back to its base (a value a variant sets itself), and what to do when the value is committed, its
+// label is picked or it is reverted.
 SilhouetteValueFieldProps :: data {
     valueKey: string;
+    label: string;
     valueText: string;
     isOwn: bool;
+    canRevert: bool;
     onCommit: (key: string, text: string) -> void;
     onPick: (key: string, text: string) -> void;
+    onRevert: (key: string) -> void;
 }
 
-// One value on the Silhouette page. The editor depends on what the text looks like (SilhouetteValues:::KindOf): a
-// checkbox for true and false, three boxes for a vector, and one box for numbers and text. Unlike the details panel,
-// these boxes commit when Enter is pressed (onSubmit), so a half-typed number never reaches the Silhouette. A star
-// marks a value the Silhouette sets itself.
+// One value in the Silhouette inspector. The editor depends on what the text looks like (SilhouetteValues:::KindOf): a
+// checkbox for true and false, one box per axis for a vector, and one box for numbers and text. Unlike the details
+// panel, these boxes commit when Enter is pressed (onSubmit), so a half-typed number never reaches the Silhouette. A
+// star marks a value the Silhouette sets itself, and for a variant such a value has a button that puts it back to what
+// the base has.
 SilhouetteValueField :: (props: SilhouetteValueFieldProps) -> Penumbra:::Component {
     kind := SilhouetteValues:::KindOf(props.valueText);
     return (
         <frame ref={`silhouette-field-${props.valueKey}`} class="field">
             <frame class="field-row">
-                <text class="field-label" onRelease={() -> props.onPick(props.valueKey, props.valueText)}>{props.isOwn ? props.valueKey + " *" : props.valueKey}</text>
+                <text class="field-label" onRelease={() -> props.onPick(props.valueKey, props.valueText)}>{props.isOwn ? props.label + " *" : props.label}</text>
+                <slot>
+                    !{props.canRevert
+                        ? <frame ref={`silhouette-revert-${props.valueKey}`} class="silhouette-revert"
+                                 onRelease={() -> props.onRevert(props.valueKey)}>
+                              <icon class="small-button-icon" icon="undo" size={11.0f} />
+                          </frame>
+                        : <frame class="nothing" />}
+                </slot>
                 <slot>
                     !{kind == "bool"
                         ? <checkbox ref={`silhouette-check-${props.valueKey}`} class="field-checkbox"

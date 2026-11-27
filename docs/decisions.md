@@ -2204,3 +2204,16 @@ the entity tabs, with `silhouette` naming the one shown while `active` is the Si
 the editor mode keep reading one name. Every Silhouette card (asset browser, Silhouettes panel, Silhouettes drawer page)
 opens on a double-click; a palette template that isn't a Silhouette has no document and ignores it. Provisional
 (2026-11-27): not reviewed by Dean.
+
+## D-290: The Silhouette document is a hierarchy, a viewport and an inspector, with the Silhouette's actions in a header
+
+Dean (2026-11-27) asked for the Silhouette editor to have the viewport in the centre, an inspector on the right with
+every property and a hierarchy on the left with child Silhouettes and game components, the second slice of
+`docs/silhouette-editor.md`. The page keeps calling the same engine functions; what changed is where things sit. The
+hierarchy marks a nested Silhouette and greys what it brings, from a new `COMPONENT_ORIGIN` part of
+`SilhouetteComponent` (`lantern:::editorbackend:::ComponentOrigin`, which reads whether the component has a file and
+that file's `@base`). The inspector groups values by the first part of their key and gives each value a variant sets
+itself a revert button. Adding is a menu of game components behind one Add button; deleting is a button, because
+the editor's Delete key belongs to the level. Re-parenting by dragging a row is left for later; Move under stays.
+Provisional (2026-11-27): not reviewed by Dean.
+

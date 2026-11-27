@@ -3,21 +3,77 @@ Editor :: import Editor;
 EditorModel :: import EditorModel;
 SilhouetteValueField :: import SilhouetteValueField;
 
-// Helpers for the Silhouette tab. The engine gives each value as one line of text: `* key: value` when the Silhouette
-// sets it itself and `  key: value` when it comes from its base. RowText, RowKey and RowValue take such a line apart.
-// Indented draws the component tree with a corner mark and four spaces per level. Chosen returns the component at a
-// position, or an empty one when the position is out of range.
+// Helpers for the Silhouette document. The engine gives each value as one line of text: `* key: value` when the
+// Silhouette sets it itself and `  key: value` when it comes from its base. RowText, RowKey and RowValue take such a
+// line apart. Groups and RowsIn sort the lines into the inspector's groups by the first part of their key
+// (`transform.position` is in `transform`), with keys that have no dot in `general`. Chosen returns the component at a
+// position, or an empty one when the position is out of range. The origin helpers read where a component comes from,
+// as the engine says it (ComponentItem.origin).
 SilhouettePageUi :: namespace {
-    ComponentClass :: (selected: bool) -> string {
-        return selected ? "entity-page-component-selected" : "entity-page-component";
+    AddableKinds :: () -> Array<string> {
+        return ["block", "ramp", "point_light", "spot_light", "gem", "spawn", "kill_plane", "camera_volume"];
     }
 
-    Indented :: (name: string, depth: i32) -> string {
+    RowClass :: (selected: bool, inherited: bool) -> string {
+        return selected ? "silhouette-row-selected" : (inherited ? "silhouette-row-inherited" : "silhouette-row");
+    }
+
+    Indent :: (depth: i32) -> string {
         prefix~ string = "";
         for level~ i32 = 0; level < depth; level++ {
             prefix = prefix + "    ";
         }
-        return depth > 0 ? prefix + "└ " + name : name;
+        return prefix;
+    }
+
+    KindIcon :: (item: ComponentItem) -> string {
+        if item.origin.startsWith("silhouette:") {
+            return "layers";
+        }
+        return when item.kind {
+            "point_light" -> "light",
+            "spot_light" -> "light",
+            "sun" -> "light",
+            "camera_volume" -> "camera",
+            "camera_shot" -> "camera",
+            "photo_sight" -> "camera",
+            default -> EditorModel:::KindIcon(item.kind)
+        };
+    }
+
+    IsInherited :: (item: ComponentItem) -> bool {
+        return item.origin == "inherited";
+    }
+
+    NestedName :: (item: ComponentItem) -> string {
+        return item.origin.startsWith("silhouette:") ? item.origin.substring(11, item.origin.length() - 11) : "";
+    }
+
+    BaseName :: (item: ComponentItem) -> string {
+        return item.origin.startsWith("variant:") ? item.origin.substring(8, item.origin.length() - 8) : "";
+    }
+
+    RowNote :: (item: ComponentItem) -> string {
+        nested := NestedName(item);
+        if nested != "" {
+            return nested;
+        }
+        return IsInherited(item) ? "inherited" : "";
+    }
+
+    Role :: (item: ComponentItem) -> string {
+        if item.depth == 0 {
+            base := BaseName(item);
+            return base == "" ? "The root of this Silhouette." : `The root, a variant of ${base}.`;
+        }
+        nested := NestedName(item);
+        if nested != "" {
+            return `A child that is the Silhouette ${nested}, with its children.`;
+        }
+        if IsInherited(item) {
+            return "Comes from a base or a nested Silhouette; change it there.";
+        }
+        return "A game component of this Silhouette.";
     }
 
     ValueRows :: (templateId: string, position: i32) -> Array<string> {
@@ -55,30 +111,69 @@ SilhouettePageUi :: namespace {
         return colon > 0 ? text.substring(colon + 2, text.length() - colon - 2) : "";
     }
 
+    GroupOf :: (key: string) -> string {
+        dot := key.indexOf(".", 0);
+        return dot > 0 ? key.substring(0, dot) : "general";
+    }
+
+    LabelIn :: (key: string) -> string {
+        dot := key.indexOf(".", 0);
+        return dot > 0 ? key.substring(dot + 1, key.length() - dot - 1) : key;
+    }
+
+    Groups :: (rows: Array<string>) -> Array<string> {
+        groups~ Array<string> = [];
+        for row in rows {
+            group := GroupOf(RowKey(row));
+            seen~ bool = false;
+            for known in groups {
+                if known == group {
+                    seen = true;
+                }
+            }
+            if !seen {
+                groups.add(group);
+            }
+        }
+        return groups;
+    }
+
+    RowsIn :: (rows: Array<string>, group: string) -> Array<string> {
+        chosen~ Array<string> = [];
+        for row in rows {
+            if GroupOf(RowKey(row)) == group {
+                chosen.add(row);
+            }
+        }
+        return chosen;
+    }
+
     Chosen :: (components: Array<ComponentItem>, position: i32) -> ComponentItem {
         if position >= 0 && position < components.length() {
             return components[position];
         }
-        return ComponentItem { position: 0, name: "", kind: "", depth: 0 };
+        return ComponentItem { position: 0, name: "", kind: "", depth: 0, origin: "" };
     }
 }
 
-// The Silhouette tab: where a Silhouette (a reusable model made of components such as blocks, lights and gems) is
-// edited.
-// The left column lists its components as a tree and has buttons to add a child or move a component under another.
-// The middle shows a live preview and the chosen component's values, which commit when Enter is pressed. The right
-// column renames or deletes the component, sets or reverts a value, picks the behaviour graph, and manages the
-// Silhouette itself (new variant, rename, set base, delete). Every change goes to the engine, and the preview and
-// this page are then refreshed. The @signals are the page's own state: the chosen component, the text in each box,
-// the component being moved and a counter, `revision`, that is added to after each change so the page redraws.
+// The Silhouette document: where one Silhouette (a reusable thing made of game components and other Silhouettes) is
+// edited, laid out like a Blueprint editor. The header names it and holds what is done to the whole Silhouette (new
+// variant, new Silhouette, rename, set base, refresh placed instances, delete). Below it, the Hierarchy on the left
+// lists what it is made of, the root first and its children indented, with nested Silhouettes marked and what comes
+// from a base greyed; Add puts a game component under the selected row, a double-click renames a row, and Move
+// under hangs it from another. The viewport in the middle turns the Silhouette, and the Inspector on the right shows
+// every value of the selected row, grouped by the first part of its key. Every change goes to the engine and then
+// `revision` is added to so the page redraws. The @signals are the page's own state: the chosen row, the row being
+// renamed or moved, whether the Add menu is open, the status line and the text in each box.
 SilhouettePage :: () -> Penumbra:::Component {
     @context editor~ Editor;
     @signal chosenPosition~ i32 = 0;
     @signal revision~ i32 = 0;
     @signal editStatus~ string = "";
-    @signal renameText~ string = "";
     @signal newSilhouetteName~ string = "";
     @signal movingPosition~ i32 = -1;
+    @signal renamingPosition~ i32 = -1;
+    @signal addMenuOpen~ bool = false;
     @signal valueKey~ string = "";
     @signal valueText~ string = "";
     return (
@@ -89,250 +184,234 @@ SilhouettePage :: () -> Penumbra:::Component {
                     revisionNow := revision;
                     components := EditorModel:::Components(templateId);
                     chosen := SilhouettePageUi:::Chosen(components, chosenPosition);
+                    root := SilhouettePageUi:::Chosen(components, 0);
+                    isVariant := SilhouettePageUi:::BaseName(root) != "";
+                    rows := SilhouettePageUi:::ValueRows(templateId, chosenPosition);
+                    afterEdit := (status: string) -> void {
+                        editStatus = status;
+                        editorSetPreviewTemplate(templateId);
+                        revision = revision + 1;
+                    };
                     return (
                         <frame class="entity-page-body">
-                            <frame class="entity-page-header">
-                                <icon class="panel-header-icon" icon="cube" size={14.0f} />
+                            <frame class="silhouette-header">
+                                <icon class="panel-header-icon" icon="layers" size={14.0f} />
                                 <text class="entity-page-title">{templateId}</text>
-                                <text class="entity-page-kind">{`${components.length()} components`}</text>
+                                <text class="entity-page-kind">{isVariant ? `variant of ${SilhouettePageUi:::BaseName(root)}` : root.kind}</text>
+                                <frame class="silhouette-header-gap" />
+                                <text class="entity-page-kind">Name for new, rename or base:</text>
+                                <input ref="silhouette-new-name" class="field-input" text={newSilhouetteName}
+                                       preferredWidth={130.0f}
+                                       onTextChange={(text: string) -> { newSilhouetteName = text; }} />
+                                <frame ref="silhouette-derive-button" class="small-button"
+                                       onRelease={() -> {
+                                           editStatus = editorSilhouetteCreate(newSilhouetteName, "", templateId);
+                                           if editStatus == "" {
+                                               editor.tabs.OpenSilhouette(newSilhouetteName);
+                                           }
+                                           revision = revision + 1;
+                                       }}>
+                                    <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                    <text class="small-button-label">New variant</text>
+                                </frame>
+                                <frame ref="silhouette-create-button" class="small-button"
+                                       onRelease={() -> {
+                                           editStatus = editorSilhouetteCreate(newSilhouetteName, "block", "");
+                                           if editStatus == "" {
+                                               editor.tabs.OpenSilhouette(newSilhouetteName);
+                                           }
+                                           revision = revision + 1;
+                                       }}>
+                                    <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                    <text class="small-button-label">New Silhouette</text>
+                                </frame>
+                                <frame ref="silhouette-rename-silhouette-button" class="small-button"
+                                       onRelease={() -> {
+                                           editStatus = editorSilhouetteRename(templateId, newSilhouetteName);
+                                           if editStatus == "" {
+                                               editor.tabs.RenameSilhouette(templateId, newSilhouetteName);
+                                           }
+                                           revision = revision + 1;
+                                       }}>
+                                    <icon class="small-button-icon" icon="pencil" size={12.0f} />
+                                    <text class="small-button-label">Rename</text>
+                                </frame>
+                                <frame ref="silhouette-set-base-button" class="small-button"
+                                       onRelease={() -> afterEdit(editorSilhouetteSetBase(templateId, newSilhouetteName))}>
+                                    <text class="small-button-label">Set base</text>
+                                </frame>
+                                <frame ref="silhouette-refresh-instances-button" class="small-button"
+                                       onRelease={() -> {
+                                           editStatus = editorSilhouetteRefreshInstances();
+                                           revision = revision + 1;
+                                       }}>
+                                    <text class="small-button-label">Refresh placed</text>
+                                </frame>
+                                <frame ref="silhouette-delete-silhouette-button" class="small-button"
+                                       onRelease={() -> {
+                                           editStatus = editorSilhouetteDelete(templateId);
+                                           if editStatus == "" {
+                                               editor.tabs.CloseSilhouette();
+                                           }
+                                           revision = revision + 1;
+                                       }}>
+                                    <icon class="small-button-icon" icon="trash" size={12.0f} />
+                                    <text class="small-button-label">Delete</text>
+                                </frame>
                             </frame>
-                            <frame class="entity-page-columns">
-                                <frame class="entity-page-list">
-                                    <text class="entity-page-heading">Components</text>
-                                    <slot>
-                                        !{components.map((item: ComponentItem) ->
-                                            <frame key={`silhouette-component-${item.position}`}
-                                                   ref={`silhouette-component-${item.position}`}
-                                                   class={SilhouettePageUi:::ComponentClass(item.position == chosenPosition)}
-                                                   onRelease={() -> {
-                                                       if movingPosition >= 0 {
-                                                           editStatus = editorSilhouetteMoveComponent(templateId, movingPosition, item.position);
-                                                           movingPosition = -1;
-                                                           editorSetPreviewTemplate(templateId);
-                                                           revision = revision + 1;
-                                                       } else {
-                                                           chosenPosition = item.position;
-                                                       }
-                                                   }}>
-                                                <text class="entity-page-component-name">{SilhouettePageUi:::Indented(item.name, item.depth)}</text>
-                                                <text class="entity-page-component-count">{item.kind}</text>
-                                            </frame>)}
-                                    </slot>
-                                    <text class="entity-page-heading">Add a child</text>
-                                    <frame class="chip-column">
-                                        <slot>
-                                            !{["block", "point_light", "spot_light", "gem", "spawn"].map((kind: string) ->
-                                                <frame key={`silhouette-add-${kind}`} ref={`silhouette-add-${kind}`} class="small-button"
-                                                       onRelease={() -> {
-                                                           editStatus = editorSilhouetteAddChild(templateId, chosenPosition, kind);
-                                                           editorSetPreviewTemplate(templateId);
-                                                           revision = revision + 1;
-                                                       }}>
-                                                    <icon class="small-button-icon" icon="plus" size={12.0f} />
-                                                    <text class="small-button-label">{kind}</text>
-                                                </frame>)}
-                                        </slot>
+                            <text ref="silhouette-status" class="silhouette-status">{editStatus}</text>
+                            <frame class="silhouette-document">
+                                <frame ref="silhouette-hierarchy" class="silhouette-hierarchy">
+                                    <frame class="silhouette-panel-header">
+                                        <icon class="panel-header-icon" icon="layers" size={12.0f} />
+                                        <text class="silhouette-panel-title">Hierarchy</text>
+                                        <frame class="silhouette-header-gap" />
+                                        <frame ref="silhouette-add-button" class="small-button-accent"
+                                               onRelease={() -> { addMenuOpen = !addMenuOpen; }}>
+                                            <icon class="small-button-icon-accent" icon="plus" size={12.0f} />
+                                            <text class="small-button-label-accent">Add</text>
+                                        </frame>
+                                        <frame ref="silhouette-delete-button" class="small-button"
+                                               onRelease={() -> {
+                                                   afterEdit(editorSilhouetteDeleteComponent(templateId, chosenPosition));
+                                                   chosenPosition = 0;
+                                               }}>
+                                            <icon class="small-button-icon" icon="trash" size={12.0f} />
+                                        </frame>
                                     </frame>
-                                    <text class="entity-page-heading">Arrange</text>
-                                    <frame class="chip-column">
+                                    <slot>
+                                        !{addMenuOpen
+                                            ? <frame ref="silhouette-add-menu" class="silhouette-add-menu">
+                                                  <text class="entity-page-kind">{`Add a game component under ${chosen.name}:`}</text>
+                                                  <slot>
+                                                      !{SilhouettePageUi:::AddableKinds().map((kind: string) ->
+                                                          <frame key={`silhouette-add-${kind}`} ref={`silhouette-add-${kind}`} class="silhouette-add-item"
+                                                                 onRelease={() -> {
+                                                                     addMenuOpen = false;
+                                                                     afterEdit(editorSilhouetteAddChild(templateId, chosenPosition, kind));
+                                                                 }}>
+                                                              <icon class="small-button-icon" icon={SilhouettePageUi:::KindIcon(ComponentItem { position: 0, name: kind, kind: kind, depth: 0, origin: "" })} size={12.0f} />
+                                                              <text class="small-button-label">{kind}</text>
+                                                          </frame>)}
+                                                  </slot>
+                                              </frame>
+                                            : <frame class="nothing" />}
+                                    </slot>
+                                    <scroll ref="silhouette-hierarchy-scroll" class="silhouette-hierarchy-scroll" wheelStep={60.0f}>
+                                        <frame class="silhouette-rows">
+                                            <slot>
+                                                !{components.map((item: ComponentItem) ->
+                                                    renamingPosition == item.position
+                                                        ? <frame key={`silhouette-renaming-${item.position}`} class="silhouette-row-selected">
+                                                              <text class="silhouette-row-indent">{SilhouettePageUi:::Indent(item.depth)}</text>
+                                                              <input ref="silhouette-rename" class="field-input" text={item.name}
+                                                                     preferredWidth={150.0f}
+                                                                     onSubmit={(typed: string) -> {
+                                                                         renamingPosition = -1;
+                                                                         afterEdit(editorSilhouetteRenameComponent(templateId, item.position, typed));
+                                                                     }} />
+                                                          </frame>
+                                                        : <frame key={`silhouette-component-${item.position}`}
+                                                                 ref={`silhouette-component-${item.position}`}
+                                                                 class={SilhouettePageUi:::RowClass(item.position == chosenPosition, SilhouettePageUi:::IsInherited(item))}
+                                                                 onRelease={() -> {
+                                                                     if movingPosition >= 0 {
+                                                                         afterEdit(editorSilhouetteMoveComponent(templateId, movingPosition, item.position));
+                                                                         movingPosition = -1;
+                                                                     } else {
+                                                                         chosenPosition = item.position;
+                                                                     }
+                                                                 }}
+                                                                 onDoubleClick={() -> {
+                                                                     if !SilhouettePageUi:::IsInherited(item) {
+                                                                         renamingPosition = item.position;
+                                                                     }
+                                                                 }}>
+                                                              <text class="silhouette-row-indent">{SilhouettePageUi:::Indent(item.depth)}</text>
+                                                              <icon class="silhouette-row-icon" icon={SilhouettePageUi:::KindIcon(item)} size={12.0f} />
+                                                              <text class="silhouette-row-name">{item.name}</text>
+                                                              <text class="silhouette-row-note">{SilhouettePageUi:::RowNote(item)}</text>
+                                                          </frame>)}
+                                            </slot>
+                                        </frame>
+                                    </scroll>
+                                    <frame class="field-row">
                                         <frame ref="silhouette-move-button" class="small-button"
                                                onRelease={() -> {
                                                    movingPosition = movingPosition >= 0 ? -1 : chosenPosition;
-                                                   editStatus = movingPosition >= 0 ? "Click the component it should hang from." : "";
+                                                   editStatus = movingPosition >= 0 ? "Click the row it should hang from." : "";
                                                }}>
-                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
                                             <text class="small-button-label">{movingPosition >= 0 ? "Cancel move" : "Move under..."}</text>
                                         </frame>
                                         <frame ref="silhouette-move-root-button" class="small-button"
                                                onRelease={() -> {
-                                                   editStatus = editorSilhouetteMoveComponent(templateId, chosenPosition, 0);
                                                    movingPosition = -1;
-                                                   editorSetPreviewTemplate(templateId);
-                                                   revision = revision + 1;
+                                                   afterEdit(editorSilhouetteMoveComponent(templateId, chosenPosition, 0));
                                                }}>
                                             <text class="small-button-label">Move to root</text>
                                         </frame>
                                     </frame>
                                 </frame>
-                                <frame class="graph-centre">
-                                    <viewport ref="silhouette-preview" class="asset-preview-viewport" renderer="preview" />
-                                    <text ref="silhouette-status" class="entity-page-kind">{editStatus}</text>
-                                    <text class="entity-page-kind">A variant marks the values it sets itself with *; the rest come from its base.</text>
-                                    <text class="entity-page-heading">Values</text>
-                                    <scroll ref="silhouette-values-scroll" class="entity-page-fields-scroll" wheelStep={60.0f}>
+                                <frame class="silhouette-centre">
+                                    <viewport ref="silhouette-preview" class="silhouette-viewport" renderer="preview" />
+                                </frame>
+                                <frame ref="silhouette-inspector" class="silhouette-inspector">
+                                    <frame class="silhouette-panel-header">
+                                        <icon class="panel-header-icon" icon={SilhouettePageUi:::KindIcon(chosen)} size={12.0f} />
+                                        <text class="silhouette-panel-title">{chosen.name}</text>
+                                        <text class="entity-page-kind">{chosen.kind}</text>
+                                    </frame>
+                                    <text class="entity-page-kind">{SilhouettePageUi:::Role(chosen)}</text>
+                                    <scroll ref="silhouette-values-scroll" class="silhouette-inspector-scroll" wheelStep={60.0f}>
                                         <frame class="entity-page-fields">
                                             <slot>
-                                                !{SilhouettePageUi:::ValueRows(templateId, chosenPosition).map((row: string) ->
-                                                    <SilhouetteValueField key={row} valueKey={SilhouettePageUi:::RowKey(row)}
-                                                                          valueText={SilhouettePageUi:::RowValue(row)}
-                                                                          isOwn={row.startsWith("* ")}
-                                                                          onPick={(pickedKey: string, pickedText: string) -> {
-                                                                              valueKey = pickedKey;
-                                                                              valueText = pickedText;
-                                                                          }}
-                                                                          onCommit={(committedKey: string, committedText: string) -> {
-                                                                              editStatus = editorSilhouetteEditValue(templateId, chosenPosition, committedKey, committedText, false);
-                                                                              editorSetPreviewTemplate(templateId);
-                                                                              revision = revision + 1;
-                                                                          }} />)}
+                                                !{SilhouettePageUi:::Groups(rows).map((group: string) ->
+                                                    <frame key={`silhouette-group-${group}`} class="silhouette-group">
+                                                        <text class="silhouette-group-title">{group}</text>
+                                                        <slot>
+                                                            !{SilhouettePageUi:::RowsIn(rows, group).map((row: string) ->
+                                                                <SilhouetteValueField key={row} valueKey={SilhouettePageUi:::RowKey(row)}
+                                                                                      label={SilhouettePageUi:::LabelIn(SilhouettePageUi:::RowKey(row))}
+                                                                                      valueText={SilhouettePageUi:::RowValue(row)}
+                                                                                      isOwn={row.startsWith("* ")}
+                                                                                      canRevert={isVariant && row.startsWith("* ")}
+                                                                                      onPick={(pickedKey: string, pickedText: string) -> {
+                                                                                          valueKey = pickedKey;
+                                                                                          valueText = pickedText;
+                                                                                      }}
+                                                                                      onCommit={(committedKey: string, committedText: string) ->
+                                                                                          afterEdit(editorSilhouetteEditValue(templateId, chosenPosition, committedKey, committedText, false))}
+                                                                                      onRevert={(revertedKey: string) ->
+                                                                                          afterEdit(editorSilhouetteEditValue(templateId, chosenPosition, revertedKey, "", true))} />)}
+                                                        </slot>
+                                                    </frame>)}
                                             </slot>
+                                            <text class="silhouette-group-title">Add or set a property (key, then JSON value)</text>
+                                            <frame class="field-row">
+                                                <input ref="silhouette-value-key" class="field-input" text={valueKey}
+                                                       preferredWidth={120.0f}
+                                                       onTextChange={(text: string) -> { valueKey = text; }} />
+                                                <input ref="silhouette-value-text" class="field-input" text={valueText}
+                                                       preferredWidth={110.0f}
+                                                       onTextChange={(text: string) -> { valueText = text; }} />
+                                                <frame ref="silhouette-set-value-button" class="small-button"
+                                                       onRelease={() -> afterEdit(editorSilhouetteEditValue(templateId, chosenPosition, valueKey, valueText, false))}>
+                                                    <text class="small-button-label">Set</text>
+                                                </frame>
+                                            </frame>
+                                            <text class="silhouette-group-title">Behaviour graph (a scripted Silhouette runs it)</text>
+                                            <frame class="silhouette-chips">
+                                                <slot>
+                                                    !{SilhouettePageUi:::GraphNames().map((graphName: string) ->
+                                                        <frame key={`silhouette-graph-${graphName}`} ref={`silhouette-graph-${graphName}`} class="small-button"
+                                                               onRelease={() -> afterEdit(editorSilhouetteEditValue(templateId, chosenPosition, "properties.graph", `"${graphName}"`, false))}>
+                                                            <icon class="small-button-icon" icon="kanban" size={12.0f} />
+                                                            <text class="small-button-label">{graphName}</text>
+                                                        </frame>)}
+                                                </slot>
+                                            </frame>
                                         </frame>
                                     </scroll>
-                                </frame>
-                                <frame class="silhouette-side">
-                                    <text class="entity-page-heading">{chosen.name}</text>
-                                    <text class="entity-page-kind">{`kind: ${chosen.kind}`}</text>
-                                    <text class="entity-page-kind">{chosen.depth == 0 ? "the root of this Silhouette" : "a child of this Silhouette"}</text>
-                                    <text class="entity-page-heading">Component (type a new name to rename)</text>
-                                    <frame class="field-row">
-                                        <input ref="silhouette-rename" class="field-input" text={renameText}
-                                               preferredWidth={110.0f}
-                                               onTextChange={(text: string) -> { renameText = text; }} />
-                                        <frame ref="silhouette-rename-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteRenameComponent(templateId, chosenPosition, renameText);
-                                                   editorSetPreviewTemplate(templateId);
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="pencil" size={12.0f} />
-                                            <text class="small-button-label">Rename</text>
-                                        </frame>
-                                        <frame ref="silhouette-delete-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteDeleteComponent(templateId, chosenPosition);
-                                                   chosenPosition = 0;
-                                                   editorSetPreviewTemplate(templateId);
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="trash" size={12.0f} />
-                                            <text class="small-button-label">Delete</text>
-                                        </frame>
-                                    </frame>
-                                    <text class="entity-page-heading">Edit a value (key, then value)</text>
-                                    <frame class="field-row">
-                                        <input ref="silhouette-value-key" class="field-input" text={valueKey}
-                                               preferredWidth={110.0f}
-                                               onTextChange={(text: string) -> { valueKey = text; }} />
-                                        <input ref="silhouette-value-text" class="field-input" text={valueText}
-                                               preferredWidth={110.0f}
-                                               onTextChange={(text: string) -> { valueText = text; }} />
-                                    </frame>
-                                    <frame class="field-row">
-                                        <frame ref="silhouette-set-value-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteEditValue(templateId, chosenPosition, valueKey, valueText, false);
-                                                   editorSetPreviewTemplate(templateId);
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="pencil" size={12.0f} />
-                                            <text class="small-button-label">Set value</text>
-                                        </frame>
-                                        <frame ref="silhouette-revert-value-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteEditValue(templateId, chosenPosition, valueKey, "", true);
-                                                   editorSetPreviewTemplate(templateId);
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="undo" size={12.0f} />
-                                            <text class="small-button-label">Revert to base</text>
-                                        </frame>
-                                    </frame>
-                                    <text class="entity-page-heading">Behaviour graph</text>
-                                    <frame class="chip-column">
-                                        <text class="entity-page-kind">Behaviour graph (a scripted Silhouette runs it):</text>
-                                        <slot>
-                                            !{SilhouettePageUi:::GraphNames().map((graphName: string) ->
-                                                <frame key={`silhouette-graph-${graphName}`} ref={`silhouette-graph-${graphName}`} class="small-button"
-                                                       onRelease={() -> {
-                                                           editStatus = editorSilhouetteEditValue(templateId, chosenPosition, "properties.graph", `"${graphName}"`, false);
-                                                           editorSetPreviewTemplate(templateId);
-                                                           revision = revision + 1;
-                                                       }}>
-                                                    <icon class="small-button-icon" icon="cube" size={12.0f} />
-                                                    <text class="small-button-label">{graphName}</text>
-                                                </frame>)}
-                                        </slot>
-                                    </frame>
-                                    <text class="entity-page-heading">This Silhouette (type a name for New, Rename or Set base)</text>
-                                    <frame class="field-row">
-                                        <input ref="silhouette-new-name" class="field-input" text={newSilhouetteName}
-                                               preferredWidth={110.0f}
-                                               onTextChange={(text: string) -> { newSilhouetteName = text; }} />
-                                    </frame>
-                                    <frame class="field-row">
-                                        <frame ref="silhouette-derive-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteCreate(newSilhouetteName, "", templateId);
-                                                   if editStatus == "" {
-                                                       editor.tabs.OpenSilhouette(newSilhouetteName);
-                                                       editorSetPreviewTemplate(newSilhouetteName);
-                                                       chosenPosition = 0;
-                                                   }
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
-                                            <text class="small-button-label">New variant</text>
-                                        </frame>
-                                        <frame ref="silhouette-create-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteCreate(newSilhouetteName, "block", "");
-                                                   if editStatus == "" {
-                                                       editor.tabs.OpenSilhouette(newSilhouetteName);
-                                                       editorSetPreviewTemplate(newSilhouetteName);
-                                                       chosenPosition = 0;
-                                                   }
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="plus" size={12.0f} />
-                                            <text class="small-button-label">New Silhouette</text>
-                                        </frame>
-                                    </frame>
-                                    <frame class="field-row">
-                                        <frame ref="silhouette-rename-silhouette-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteRename(templateId, newSilhouetteName);
-                                                   if editStatus == "" {
-                                                       editor.tabs.RenameSilhouette(templateId, newSilhouetteName);
-                                                   }
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="pencil" size={12.0f} />
-                                            <text class="small-button-label">Rename Silhouette</text>
-                                        </frame>
-                                    </frame>
-                                    <frame class="field-row">
-                                        <frame ref="silhouette-refresh-instances-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteRefreshInstances();
-                                                   revision = revision + 1;
-                                               }}>
-                                            <text class="small-button-label">Refresh placed instances</text>
-                                        </frame>
-                                    </frame>
-                                    <frame class="field-row">
-                                        <frame ref="silhouette-set-base-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteSetBase(templateId, newSilhouetteName);
-                                                   editorSetPreviewTemplate(templateId);
-                                                   revision = revision + 1;
-                                               }}>
-                                            <text class="small-button-label">Set base</text>
-                                        </frame>
-                                    
-                                    </frame>
-                                    <frame class="field-row">
-                                        <frame ref="silhouette-delete-silhouette-button" class="small-button"
-                                               onRelease={() -> {
-                                                   editStatus = editorSilhouetteDelete(templateId);
-                                                   if editStatus == "" {
-                                                       editor.tabs.CloseSilhouette();
-                                                   }
-                                                   revision = revision + 1;
-                                               }}>
-                                            <icon class="small-button-icon" icon="trash" size={12.0f} />
-                                            <text class="small-button-label">Delete Silhouette</text>
-                                        </frame>
-                                    </frame>
                                 </frame>
                             </frame>
                         </frame>

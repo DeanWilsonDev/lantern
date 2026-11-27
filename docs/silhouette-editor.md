@@ -38,7 +38,8 @@ below are provisional until Dean reviews them; they get D-numbers in `decisions.
    A child that is another Silhouette (a child with an `@base`) is marked as a Silhouette and its own children show under
    it as inherited (greyed, not editable here). Adding a child is an Add button at the top of the hierarchy with a menu of
    game components (block, lights, gem, spawn and the rest of the placeable kinds) and Silhouettes. Rename by
-   double-clicking a row, delete with Delete, re-parent by dragging a row onto another.
+   double-clicking a row, delete with the bin button, re-parent with Move under (dragging a row onto another comes
+   later).
 4. **The inspector shows every property of the selected row.** The root is selected when the document opens. Values
    use the existing typed fields, grouped by their first key (`transform`, `material`, `properties`...), with the `*`
    mark for values a variant sets itself and a Revert button beside each such value. Adding a property is a key box and

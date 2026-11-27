@@ -1,0 +1,92 @@
+// The Silhouette editor's hierarchy asks where each component comes from: its own file, a nested Silhouette, a
+// variant's base, or nowhere of its own (inherited).
+lantern :: import lantern;
+
+SCRATCH: string : "/tmp/lantern-silhouette-origin-test";
+
+Succeeded :: (problem: string!?) -> bool {
+    worked: bool = problem == null;
+    delete problem;
+    return worked;
+}
+
+Copy :: (name: string, file: string) -> bool {
+    from: string! = `../games/platformer/assets/silhouettes/${name}/${file}`;
+    defer delete from;
+    folder: string! = `${SCRATCH}/assets/silhouettes/${name}`;
+    defer delete folder;
+    createDirectories(folder);
+    to: string! = `${folder}/${file}`;
+    defer delete to;
+    when readTextFile(from) {
+        Result:::Err(error) -> {
+            delete error;
+            return false;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when writeTextFile(to, text) {
+                Result:::Err(error) -> {
+                    delete error;
+                    return false;
+                },
+                Result:::Ok(written) -> {
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+Write :: (file: string, text: string) -> bool {
+    when writeTextFile(file, text) {
+        Result:::Err(error) -> {
+            delete error;
+            return false;
+        },
+        Result:::Ok(written) -> {
+            return true;
+        }
+    }
+}
+
+main :: () -> i32 {
+    assets: string = "/tmp/lantern-silhouette-origin-test/assets";
+    if directoryExists(SCRATCH) {
+        Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH));
+    }
+    assert(Copy("lamp_post", "root.calamus") && Copy("lamp_post", "light.calamus"), "the lamp post is copied");
+    assert(Copy("moving_platform", "root.calamus") && Copy("moving_platform_wide", "root.calamus"), "the platforms are copied");
+    createDirectories("/tmp/lantern-silhouette-origin-test/assets/silhouettes/lamp_pair");
+    assert(Write("/tmp/lantern-silhouette-origin-test/assets/silhouettes/lamp_pair/root.calamus", "@version 1\n@type    block\n\n  name : \"Lamp pair\"\n"), "the pair's root is written");
+    assert(Write("/tmp/lantern-silhouette-origin-test/assets/silhouettes/lamp_pair/left.calamus", "@version 1\n@type    block\n@base    \"silhouettes/lamp_post\"\n\n  name : \"Left lamp\"\n"), "the pair's left lamp is written");
+
+    rootOrigin: string! = lantern:::editorbackend:::ComponentOrigin(assets, "lamp_post", "");
+    assert(rootOrigin == "", "a root with no base is ordinary");
+    delete rootOrigin;
+    childOrigin: string! = lantern:::editorbackend:::ComponentOrigin(assets, "lamp_post", "light");
+    assert(childOrigin == "", "a child with a file of its own is ordinary");
+    delete childOrigin;
+    variantOrigin: string! = lantern:::editorbackend:::ComponentOrigin(assets, "moving_platform_wide", "");
+    assert(variantOrigin == "variant:moving_platform", "a variant's root names its base");
+    delete variantOrigin;
+    nestedOrigin: string! = lantern:::editorbackend:::ComponentOrigin(assets, "lamp_pair", "left");
+    assert(nestedOrigin == "silhouette:lamp_post", "a child made from another Silhouette names it");
+    delete nestedOrigin;
+    inheritedOrigin: string! = lantern:::editorbackend:::ComponentOrigin(assets, "lamp_pair", "left.light");
+    assert(inheritedOrigin == "inherited", "the nested Silhouette's own child is inherited");
+    delete inheritedOrigin;
+
+    palette := new lantern:::editor:::Palette();
+    defer delete palette;
+    lantern:::editorbackend:::AddSilhouetteTemplates(palette, assets);
+    guard pair := palette->Template("lamp_pair") return 1;
+    assert(pair->componentPaths.length() == 3, "the pair lists its root, its left lamp and the lamp's light");
+    if pair->componentPaths.length() == 3 {
+        assert(pair->componentPaths[2] == "left.light", "the light sits under the left lamp");
+    }
+
+    assert(Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH)), "the scratch folder is removed");
+    print("a silhouette component says where it comes from");
+    return 0;
+}
