@@ -36,6 +36,36 @@ lantern:::editorbackend :: namespace {
         return pathExists(file);
     }
 
+    // Where a component comes from, for the Silhouette editor's hierarchy: `inherited` when it has no file of its own
+    // (it comes from a base or from a nested Silhouette), `silhouette:<name>` for a child that is itself an instance of
+    // the Silhouette `<name>`, `variant:<name>` for a root made from `<name>`, and empty for an ordinary component.
+    ComponentOrigin :: (assetsDirectory: string, silhouetteName: string, componentPath: string) -> string! {
+        silhouetteFolder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete silhouetteFolder;
+        file: string! = ComponentFile(silhouetteFolder, componentPath);
+        defer delete file;
+        if !pathExists(file) {
+            return "inherited".copy();
+        }
+        when lantern:::silhouette:::ReadCalamusFile(file) {
+            Result:::Err(message) -> {
+                delete message;
+                return "".copy();
+            },
+            Result:::Ok(document) -> {
+                defer delete document;
+                baseName: string!? = document->BaseName();
+                guard base := baseName return "".copy();
+                prefix: string! = `${SILHOUETTES_FOLDER}/`;
+                defer delete prefix;
+                shortName: string = base.startsWith(prefix) ? base.substring(prefix.length(), base.length() - prefix.length()) : base;
+                origin: string! = componentPath.length() == 0 ? `variant:${shortName}` : `silhouette:${shortName}`;
+                delete baseName;
+                return origin!;
+            }
+        }
+    }
+
     // A name a component can take: not empty, and with nothing that would break out of its quotes.
     NameIsUsable :: (name: string) -> bool {
         if name.trim().length() == 0 {

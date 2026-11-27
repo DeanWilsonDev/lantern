@@ -34,6 +34,7 @@ lantern:::editorapi :: namespace {
     TEMPLATE_SILHOUETTE: u32 : 3;
     COMPONENT_NAME: u32 : 0;
     COMPONENT_KIND: u32 : 1;
+    COMPONENT_ORIGIN: u32 : 2;
 
     // Turns the API's signed entity number into the editor's key; a negative number becomes 0 (no entity).
     EntityKey :: (entity: i64) -> u64 {
@@ -515,11 +516,19 @@ lantern:::editorapi :: namespace {
         return depth;
     }
 
-    // One piece (COMPONENT_NAME or COMPONENT_KIND) of one component of a template.
+    // One piece (COMPONENT_NAME, COMPONENT_KIND or COMPONENT_ORIGIN) of one component of a template. The origin is
+    // where the component comes from, as `lantern:::editorbackend:::ComponentOrigin` says, and empty for a template
+    // that isn't a Silhouette.
     export SilhouetteComponent :: (editorInstance: Editor*, templateId: string, index: u32, part: u32) -> string! {
         guard template := editorInstance->backend->session->palette->Template(templateId) return "".copy();
         if usize(index) > template->descendants.length() {
             return "".copy();
+        }
+        if part == COMPONENT_ORIGIN {
+            if !template->fromSilhouette || usize(index) >= template->componentPaths.length() {
+                return "".copy();
+            }
+            return lantern:::editorbackend:::ComponentOrigin(editorInstance->backend->assetsDirectory, templateId, template->componentPaths[usize(index)]);
         }
         entity~ lantern:::world:::WorldEntity* = template->prototype;
         if index > 0 {
