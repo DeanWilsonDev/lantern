@@ -4,6 +4,8 @@ lantern:::editorbackend :: namespace {
     GRAPH_FILE_EXTENSION: string : ".graph.json";
     GENERATED_FILE_EXTENSION: string : ".generated.nyx";
     MATERIAL_GRAPH_PREFIX: string : "material:";
+    SILHOUETTE_GRAPH_PREFIX: string : "silhouette:";
+    SILHOUETTE_GRAPH_FILE: string : "graph.json";
 
     // A material graph is opened by the name `material:<material>`, and lives beside that material Silhouette's root file
     // (`material.graph.json`), not in the graphs folder; saving it bakes the material's shader instead of writing Nyx.
@@ -13,6 +15,46 @@ lantern:::editorbackend :: namespace {
 
     MaterialOfGraphName :: (name: string) -> string {
         return name.substring(MATERIAL_GRAPH_PREFIX.length(), name.length() - MATERIAL_GRAPH_PREFIX.length());
+    }
+
+    // A Silhouette's own graph is opened by the name `silhouette:<name>` and lives in that Silhouette's folder as
+    // `graph.json`, beside its `root.calamus`, so the graph belongs to the Silhouette the way a material's graph does.
+    IsSilhouetteGraphName :: (name: string) -> bool {
+        return name.startsWith(SILHOUETTE_GRAPH_PREFIX);
+    }
+
+    SilhouetteOfGraphName :: (name: string) -> string {
+        return name.substring(SILHOUETTE_GRAPH_PREFIX.length(), name.length() - SILHOUETTE_GRAPH_PREFIX.length());
+    }
+
+    // True for a graph kept in a Silhouette's folder rather than the graphs folder: a material's or a Silhouette's own.
+    IsOwnedGraphName :: (name: string) -> bool {
+        return IsMaterialGraphName(name) || IsSilhouetteGraphName(name);
+    }
+
+    // The graph file of a Silhouette, or null when there is no Silhouette of that name.
+    SilhouetteGraphFile :: (assetsDirectory: string, silhouetteName: string) -> string!? {
+        if !lantern:::graphs:::IsName(silhouetteName) {
+            return null;
+        }
+        folder: string! = SilhouetteFolderOf(assetsDirectory, silhouetteName);
+        defer delete folder;
+        rootFile: string! = `${folder}/${SILHOUETTE_ROOT_FILE}`;
+        defer delete rootFile;
+        if !pathExists(rootFile) {
+            return null;
+        }
+        file: string! = `${folder}/${SILHOUETTE_GRAPH_FILE}`;
+        return file!;
+    }
+
+    // True when a Silhouette has a graph of its own yet.
+    SilhouetteHasGraph :: (assetsDirectory: string, silhouetteName: string) -> bool {
+        found: string!? = SilhouetteGraphFile(assetsDirectory, silhouetteName);
+        guard file := found return false;
+        exists: bool = pathExists(file);
+        delete found;
+        return exists;
     }
 
     // The material graph file of a material Silhouette, or null when there is no material Silhouette of that name.
@@ -134,6 +176,13 @@ lantern:::editorbackend :: namespace {
 
     // Where a graph of that name is kept, or why it can't be.
     GraphFileOf :: (assetsDirectory: string, name: string) -> Result<string!, string!> {
+        if IsSilhouetteGraphName(name) {
+            found: string!? = SilhouetteGraphFile(assetsDirectory, SilhouetteOfGraphName(name));
+            guard file := found return Result<string!, string!>:::Err(`There is no Silhouette called '${SilhouetteOfGraphName(name)}'.`);
+            silhouetteFile: string! = file.copy();
+            delete found;
+            return Result<string!, string!>:::Ok(silhouetteFile!);
+        }
         if IsMaterialGraphName(name) {
             found: string!? = MaterialGraphFile(assetsDirectory, MaterialOfGraphName(name));
             guard file := found return Result<string!, string!>:::Err(`There is no material Silhouette called '${MaterialOfGraphName(name)}'.`);
@@ -152,7 +201,7 @@ lantern:::editorbackend :: namespace {
 
     // Reads and loads a graph by name.
     LoadGraphByName :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
-        if IsMaterialGraphName(name) {
+        if IsOwnedGraphName(name) {
             when GraphFileOf(assetsDirectory, name) {
                 Result:::Err(message) -> {
                     return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
@@ -267,6 +316,9 @@ lantern:::editorbackend :: namespace {
         if IsMaterialGraphName(name) {
             return SaveMaterialGraph(assetsDirectory, name, graph);
         }
+        if IsSilhouetteGraphName(name) {
+            return SaveSilhouetteGraph(assetsDirectory, name, graph);
+        }
         folder: string! = GraphsFolder(assetsDirectory);
         defer delete folder;
         when createDirectories(folder) {
@@ -310,10 +362,65 @@ lantern:::editorbackend :: namespace {
         return WriteFileText(generatedFile, generated);
     }
 
+    // Writes a Silhouette's own graph into its folder.
+    SaveSilhouetteGraph :: (assetsDirectory: string, name: string, graph: lantern:::graphs:::Graph*) -> string!? {
+        when GraphFileOf(assetsDirectory, name) {
+            Result:::Err(message) -> {
+                return message!;
+            },
+            Result:::Ok(file) -> {
+                defer delete file;
+                text: string! = lantern:::graphs:::WriteGraph(graph);
+                defer delete text;
+                return WriteFileText(file, text);
+            }
+        }
+    }
+
+    // A new graph for a Silhouette, with an `Update` function that takes the placed entity and the time, and saves it in
+    // the Silhouette's folder. An existing graph is never overwritten.
+    CreateSilhouetteGraphFile :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
+        file~ string! = "".copy();
+        defer delete file;
+        when GraphFileOf(assetsDirectory, name) {
+            Result:::Err(message) -> {
+                return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+            },
+            Result:::Ok(found) -> {
+                delete file;
+                file = found!;
+            }
+        }
+        if pathExists(file) {
+            return Result<lantern:::graphs:::Graph*!, string!>:::Err("This Silhouette already has a graph.".copy());
+        }
+        silhouetteName: string = SilhouetteOfGraphName(name);
+        jsonText: string! = `{"graph": "${silhouetteName}", "functions": [{"name": "Update", "inputs": [{"name": "entity", "type": "i64"}, {"name": "time", "type": "f32"}], "returns": "", "nodes": [{"id": "start", "kind": "entry", "x": 40, "y": 40}]}]}`;
+        defer delete jsonText;
+        when lantern:::graphs:::LoadGraph(jsonText) {
+            Result:::Err(message) -> {
+                return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+            },
+            Result:::Ok(graph) -> {
+                problem: string!? = SaveSilhouetteGraph(assetsDirectory, name, graph);
+                if failed := problem {
+                    message: string! = failed.copy();
+                    delete problem;
+                    delete graph;
+                    return Result<lantern:::graphs:::Graph*!, string!>:::Err(message!);
+                }
+                return Result<lantern:::graphs:::Graph*!, string!>:::Ok(graph!);
+            }
+        }
+    }
+
     // Makes a new graph with one empty function and saves it. An existing graph is never overwritten.
     CreateGraphFile :: (assetsDirectory: string, name: string) -> Result<lantern:::graphs:::Graph*!, string!> {
         if IsMaterialGraphName(name) {
             return CreateMaterialGraphFile(assetsDirectory, name);
+        }
+        if IsSilhouetteGraphName(name) {
+            return CreateSilhouetteGraphFile(assetsDirectory, name);
         }
         if !lantern:::graphs:::IsName(name) {
             return Result<lantern:::graphs:::Graph*!, string!>:::Err("A graph name is letters, digits and underscores.".copy());

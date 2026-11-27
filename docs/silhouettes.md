@@ -55,6 +55,8 @@ Double-click a Silhouette's card in the asset browser, the Silhouettes panel or 
 - **Viewport** (centre): the Silhouette turning, drawn by the same renderer as the asset preview.
 - **Inspector** (right): every value of the selected row, grouped by the first part of its key (`transform`, `shape`, `properties`, `editor`, and `general` for keys with no dot), each in a field of its type. For a variant, a value the Silhouette sets itself is marked `*` and has a revert button that puts it back to its base's value. At the foot, a key box and a JSON value box set any property, new or not, and the behaviour graph buttons set a `scripted` Silhouette's `graph`.
 
+Above the three areas, two tabs switch the document between **Viewport** (the three areas above) and **Event Graph**. Event Graph shows the Silhouette's own graph on the same canvas as the Graph tab, without the list of graphs. The graph is `graph.json` in the Silhouette's folder, beside `root.calamus`, and the graph code opens it as `silhouette:<name>` (`lantern:::editorbackend:::SilhouetteGraphFile`). A Silhouette with no graph yet shows a **Create graph** button, which writes a graph with an empty `Update(entity, time)` function. The game doesn't run these graphs yet, and saving one writes only its JSON; see `docs/silhouette-editor.md` for the slices still to come.
+
 Ctrl+W closes the tab being shown, and the tab to its left takes over. It reads the same templates the Silhouettes panel uses, so what the tab shows is what placing it would make. `lantern:::editorbackend:::ComponentOrigin` tells the hierarchy where each component comes from.
 
 ### Editing in the tab

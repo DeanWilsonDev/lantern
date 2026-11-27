@@ -2217,3 +2217,14 @@ itself a revert button. Adding is a menu of game components behind one Add butto
 the editor's Delete key belongs to the level. Re-parenting by dragging a row is left for later; Move under stays.
 Provisional (2026-11-27): not reviewed by Dean.
 
+## D-291: A Silhouette's graph is graph.json in its folder, edited in the document's Event Graph tab
+
+Dean (2026-11-27) asked for the graph to belong to the Silhouette, with a tab inside the Silhouette document that
+switches to it, the third slice of `docs/silhouette-editor.md`. A Silhouette's graph is opened by the graph code as
+`silhouette:<name>` and stored as `graph.json` beside its `root.calamus` (`lantern:::editorbackend:::SilhouetteGraphFile`),
+the way a material's graph already is. Creating one refuses a Silhouette with no folder and never overwrites a file
+that is there, and saving it writes only the JSON: it isn't in the graph list and no Nyx is generated for it yet,
+because the generated class and the event nodes are the fourth slice. The document's centre has two tabs, Viewport and
+Event Graph; Event Graph shows the same canvas as the Graph tab without its list of graphs, or a Create graph button
+when the Silhouette has none. Showing a material Silhouette's graph in its document is left for later, since material
+Silhouettes aren't in the palette and can't open as documents yet. Provisional (2026-11-27): not reviewed by Dean.
