@@ -1,0 +1,135 @@
+// Event nodes (docs/silhouette-editor.md). A Silhouette's graph has a function, `EventGraph`, whose execution starts at
+// event nodes instead of one entry: BeginPlay, Update and FixedUpdate. An event node gives values on pins of its own,
+// `entity` and its time, so a wire from one is written `<node id>.<port>` (`Update.frameTime`). A graph with event nodes
+// becomes a class, one method per event, instead of a namespace of functions.
+lantern:::graphs :: namespace {
+    EVENT_KIND: string : "event";
+    EVENT_GRAPH_FUNCTION: string : "EventGraph";
+    ENTITY_PORT: string : "entity";
+
+    // The events a graph can start from, in the order a new Silhouette graph places them.
+    EventNames :: () -> Array<string>! {
+        names~ Array<string>! = [];
+        names.push("BeginPlay");
+        names.push("Update");
+        names.push("FixedUpdate");
+        return names!;
+    }
+
+    IsEventName :: (name: string) -> bool {
+        return name == "BeginPlay" || name == "Update" || name == "FixedUpdate";
+    }
+
+    // The name of the time an event gives, which is also its method's parameter, or "" for an event with none.
+    EventTimeName :: (eventName: string) -> string {
+        if eventName == "Update" {
+            return "frameTime";
+        }
+        if eventName == "FixedUpdate" {
+            return "fixedStepTime";
+        }
+        return "";
+    }
+
+    // The type of one of an event's value pins, or "" for a pin it doesn't have.
+    EventOutputType :: (eventName: string, port: string) -> string {
+        if port == ENTITY_PORT {
+            return "i64";
+        }
+        timeName: string = EventTimeName(eventName);
+        if timeName.length() > 0 && port == timeName {
+            return "f32";
+        }
+        return "";
+    }
+
+    // The node a value reference names: `Update.frameTime` names `Update`.
+    ReferenceNodeId :: (reference: string) -> string {
+        if dotAt := reference.indexOf(".", 0) {
+            return reference.substring(0, dotAt);
+        }
+        return reference;
+    }
+
+    // The output port a value reference names after its node, or "" for a node's one output.
+    ReferencePort :: (reference: string) -> string {
+        if dotAt := reference.indexOf(".", 0) {
+            return reference.substring(dotAt + 1, reference.length() - dotAt - 1);
+        }
+        return "";
+    }
+
+    // How a wire from a node's output port is written: the node's id for its one output, `id.port` for a named one.
+    OutputReference :: (nodeId: string, port: string) -> string! {
+        if port.length() == 0 || port == "out" {
+            return `${nodeId}`;
+        }
+        return `${nodeId}.${port}`;
+    }
+
+    // The event node of a function for an event, or null.
+    IndexOfEvent :: (function: GraphFunction*, eventName: string) -> usize? {
+        for index~ usize = 0; index < function->nodes.length(); index++ {
+            if function->nodes[index]->kind == EVENT_KIND && function->nodes[index]->name == eventName {
+                return index;
+            }
+        }
+        return null;
+    }
+
+    HasEvents :: (function: GraphFunction*) -> bool {
+        for node in function->nodes {
+            if node->kind == EVENT_KIND {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // True for a graph that becomes a class: one with event nodes.
+    IsEventGraph :: (graph: Graph*) -> bool {
+        for function in graph->functions {
+            if HasEvents(function) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Adds an event node and returns its id (the event's name), or "" for an unknown event or one the function has.
+    AddEvent :: (function: GraphFunction~*, eventName: string, x: f32, y: f32) -> string! {
+        if !IsEventName(eventName) || IndexOfEvent(function, eventName) != null {
+            return "".copy();
+        }
+        id: string! = FreshNodeId(function, eventName);
+        node := new GraphNode(id, EVENT_KIND);
+        delete node->name;
+        node->name = `${eventName}`;
+        node->x = x;
+        node->y = y;
+        function->nodes.push(node!);
+        return id!;
+    }
+
+    // A new Silhouette graph: one EventGraph function holding the three events, placed and unwired.
+    NewEventGraph :: (name: string) -> Graph*! {
+        graph := new Graph(name);
+        function := new GraphFunction(EVENT_GRAPH_FUNCTION);
+        names: Array<string>! = EventNames();
+        for index~ usize = 0; index < names.length(); index++ {
+            id: string! = AddEvent(function, names[index], 40.0f, 40.0f + f32(index) * 110.0f);
+            delete id;
+        }
+        delete names;
+        graph->functions.push(function!);
+        return graph!;
+    }
+
+    // The Nyx class name for a Silhouette's graph: `lamp_post` is `LampPostBehaviour`.
+    BehaviourClassName :: (graphName: string) -> string! {
+        namespaceName: string! = NamespaceName(graphName);
+        name: string! = `${namespaceName}Behaviour`;
+        delete namespaceName;
+        return name!;
+    }
+}

@@ -1,0 +1,194 @@
+// A Silhouette's graph starts with BeginPlay, Update and FixedUpdate events, each giving the entity and its time on pins of
+// its own, and becomes a class with one method per event and the graph's variables as fields, which runs.
+NyxC :: import NyxC;
+lantern :: import lantern;
+
+BASE_CLASS: string : "SilhouetteBehaviour :: class {\npublic:\n    entity: i64;\n    SilhouetteBehaviour~: (entity: i64) : entity(entity) { }\n    virtual BeginPlay~: () -> void { }\n    virtual Update~: (frameTime: f32) -> void { }\n    virtual FixedUpdate~: (fixedStepTime: f32) -> void { }\n}\n";
+
+DRIVER: string : "Play :: (behaviour~ SilhouetteBehaviour) -> void {\n    behaviour.BeginPlay();\n    behaviour.Update(0.5f);\n    behaviour.Update(0.25f);\n    behaviour.FixedUpdate(0.125f);\n}\nRun :: () -> f32 {\n    lamp~ LampPostBehaviour = new LampPostBehaviour(7);\n    Play(lamp);\n    return lamp.glow + f32(lamp.seen) + f32(lamp.updates);\n}\n";
+
+Set :: (function: lantern:::graphs:::GraphFunction~*, node: string, port: string, value: string) -> void {
+    problem: string!? = lantern:::graphs:::SetPort(function, node, port, value);
+    if failed := problem {
+        print(failed);
+    }
+    assert(problem == null, "a port takes its value");
+    delete problem;
+}
+
+AddVariableOrFail :: (function: lantern:::graphs:::GraphFunction~*, name: string, typeName: string) -> void {
+    problem: string!? = lantern:::graphs:::AddVariable(function, name, typeName, "");
+    assert(problem == null, "a variable is added");
+    delete problem;
+}
+
+HasOutput :: (function: lantern:::graphs:::GraphFunction*, nodeId: string, port: string) -> bool {
+    found~ bool = false;
+    if index := function->IndexOfNode(nodeId) {
+        pins := lantern:::graphs:::PinsOf(function, function->nodes[index]);
+        for pin in pins->items {
+            if pin->isOutput && !pin->isExecution && pin->port == port {
+                found = true;
+            }
+        }
+        delete pins;
+    }
+    return found;
+}
+
+CallNoArguments :: (program: lantern:::nyx:::Program*, name: string) -> lantern:::nyx:::Value*! {
+    noArguments: Array<lantern:::nyx:::Value*>! = [];
+    value := lantern:::testing:::ValueOrFail(program->CallFunction(name, noArguments));
+    delete noArguments;
+    return value!;
+}
+
+main :: () -> i32 {
+    graph~ lantern:::graphs:::Graph*! = lantern:::graphs:::NewEventGraph("lamp_post");
+    function~ lantern:::graphs:::GraphFunction~* = graph->functions[0];
+    assert(function->name == "EventGraph", "the events live in the EventGraph function");
+    assert(function->nodes.length() == 3, "a new Silhouette graph has three events");
+    assert(lantern:::graphs:::IsEventGraph(graph), "a graph with events is an event graph");
+
+    assert(HasOutput(function, "Update", "entity") && HasOutput(function, "Update", "frameTime"), "Update gives the entity and the frame time");
+    assert(HasOutput(function, "FixedUpdate", "fixedStepTime"), "FixedUpdate gives the fixed step time");
+    assert(!HasOutput(function, "BeginPlay", "frameTime"), "BeginPlay gives no time");
+
+    menu: string! = lantern:::graphs:::SuggestedKinds(function, "", false);
+    assert(!menu.contains("event Update\n"), "the menu doesn't offer an event the graph has");
+    delete menu;
+    assert(lantern:::graphs:::RemoveNode(function, "Update"), "an event can be removed");
+    removedMenu: string! = lantern:::graphs:::SuggestedKinds(function, "", false);
+    assert(removedMenu.contains("event Update\n"), "the menu offers an event the graph lacks");
+    delete removedMenu;
+    updateId: string! = lantern:::graphs:::AddMenuNode(function, "event Update", 40.0f, 200.0f);
+    assert(updateId == "Update", "the event comes back from the menu, named after itself");
+    secondUpdate: string! = lantern:::graphs:::AddMenuNode(function, "event Update", 40.0f, 400.0f);
+    assert(secondUpdate.length() == 0, "an event appears once at most");
+    delete secondUpdate;
+    delete updateId;
+
+    AddVariableOrFail(function, "glow", "f32");
+    AddVariableOrFail(function, "seen", "i64");
+    AddVariableOrFail(function, "updates", "i32");
+
+    keepEntity: string! = lantern:::graphs:::AddMenuNode(function, "set seen", 300.0f, 40.0f);
+    Set(function, "BeginPlay", "next", keepEntity);
+    Set(function, keepEntity, "value", "BeginPlay.entity");
+
+    sumTime: string! = lantern:::graphs:::AddNode(function, "add", 300.0f, 300.0f);
+    Set(function, sumTime, "a", "glow");
+    Set(function, sumTime, "b", "Update.frameTime");
+    addTime: string! = lantern:::graphs:::AddMenuNode(function, "set glow", 500.0f, 200.0f);
+    Set(function, addTime, "value", sumTime);
+    Set(function, "Update", "next", addTime);
+    countUp: string! = lantern:::graphs:::AddNode(function, "add", 500.0f, 300.0f);
+    Set(function, countUp, "a", "updates");
+    Set(function, countUp, "b", "#1");
+    count: string! = lantern:::graphs:::AddMenuNode(function, "set updates", 700.0f, 200.0f);
+    Set(function, count, "value", countUp);
+    Set(function, addTime, "next", count);
+
+    sumStep: string! = lantern:::graphs:::AddNode(function, "add", 300.0f, 500.0f);
+    Set(function, sumStep, "a", "glow");
+    Set(function, sumStep, "b", "FixedUpdate.fixedStepTime");
+    addStep: string! = lantern:::graphs:::AddMenuNode(function, "set glow", 500.0f, 500.0f);
+    Set(function, addStep, "value", sumStep);
+    Set(function, "FixedUpdate", "next", addStep);
+
+    timeType: string! = lantern:::graphs:::ValueTypeOf(function, "Update.frameTime", 0);
+    assert(timeType == "f32", "an event's time is an f32");
+    delete timeType;
+    entityType: string! = lantern:::graphs:::ValueTypeOf(function, "BeginPlay.entity", 0);
+    assert(entityType == "i64", "an event's entity is an i64");
+    delete entityType;
+
+    generated~ string! = "".copy();
+    when lantern:::graphs:::GenerateNyx(graph) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the Silhouette graph generates");
+            delete message;
+        },
+        Result:::Ok(source) -> {
+            delete generated;
+            generated = source!;
+        }
+    }
+    assert(generated.startsWith("// Generated from the graph of the lamp_post Silhouette"), "the file says where it came from");
+    assert(generated.contains("SilhouetteBehaviour :: import SilhouetteBehaviour;"), "it imports the game's base class");
+    assert(generated.contains("LampPostBehaviour :: class : SilhouetteBehaviour {"), "the class is named after the Silhouette");
+    assert(generated.contains("    glow~ f32 = 0.0f;"), "a variable is a field");
+    assert(generated.contains("LampPostBehaviour~: (entity: i64) : SilhouetteBehaviour(entity) { }"), "the constructor takes the placed entity");
+    assert(generated.contains("BeginPlay~: () -> void override {"), "BeginPlay is a method");
+    assert(generated.contains("Update~: (frameTime: f32) -> void override {"), "Update takes the frame time");
+    assert(generated.contains("FixedUpdate~: (fixedStepTime: f32) -> void override {"), "FixedUpdate takes the fixed step time");
+    assert(generated.contains("seen = entity;"), "the entity pin reads the entity");
+    assert(generated.contains("glow = glow + frameTime;"), "the time pin reads the event's time");
+
+    written: string! = lantern:::graphs:::WriteGraph(graph);
+    when lantern:::graphs:::LoadGraph(written) {
+        Result:::Err(message) -> {
+            print(message);
+            assert(false, "the written graph loads again");
+            delete message;
+        },
+        Result:::Ok(loaded) -> {
+            when lantern:::graphs:::GenerateNyx(loaded) {
+                Result:::Err(message) -> {
+                    print(message);
+                    assert(false, "the loaded graph generates");
+                    delete message;
+                },
+                Result:::Ok(again) -> {
+                    assert(again == generated, "the graph round-trips through its file");
+                    delete again;
+                }
+            }
+            delete loaded;
+        }
+    }
+    delete written;
+
+    Set(function, keepEntity, "value", "Update.frameTime");
+    when lantern:::graphs:::GenerateNyx(graph) {
+        Result:::Ok(source) -> {
+            delete source;
+            assert(false, "an event's time used outside it is refused");
+        },
+        Result:::Err(message) -> {
+            assert(message.contains("used outside Update"), "the refusal says the time belongs to Update");
+            delete message;
+        }
+    }
+    Set(function, keepEntity, "value", "BeginPlay.entity");
+
+    runtime := new lantern:::nyx:::Runtime();
+    script~ string! = `${BASE_CLASS}`;
+    script += generated.replace("SilhouetteBehaviour :: import SilhouetteBehaviour;\n", "");
+    script += DRIVER;
+    program := lantern:::testing:::Mount(runtime, script);
+    result := CallNoArguments(program, "Run");
+    assert(lantern:::testing:::F32OrFail(result->F32()) == 0.875f + 7.0f + 2.0f, "the events run on one instance that keeps its fields");
+    delete result;
+    delete program;
+    delete runtime;
+    delete script;
+
+    assert(lantern:::graphs:::RemoveNode(function, "Update"), "removing an event works with wires from its pins");
+    if index := function->IndexOfNode(sumTime) {
+        assert(function->nodes[index]->b.length() == 0, "a wire from a removed event's pin is cleared");
+    }
+
+    delete keepEntity;
+    delete sumTime;
+    delete addTime;
+    delete countUp;
+    delete count;
+    delete sumStep;
+    delete addStep;
+    delete generated;
+    delete graph;
+    print("a silhouette graph becomes a behaviour class");
+    return 0;
+}
