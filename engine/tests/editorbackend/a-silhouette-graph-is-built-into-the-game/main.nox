@@ -1,0 +1,109 @@
+// A Silhouette's graph is built into the game beside the game's graphs: its behaviour class goes in the generated folder,
+// and GraphBehaviours:::Create makes it for a placed copy of that Silhouette. A Silhouette without a graph is left out,
+// and a Silhouette graph with no events is refused.
+lantern :: import lantern;
+
+WriteOrFail :: (path: string, text: string) -> void {
+    when writeTextFile(path, text) {
+        Result:::Ok(bytes) -> { },
+        Result:::Err(error) -> {
+            print(error.message());
+            delete error;
+            assert(false, "a scratch file is written");
+        }
+    }
+}
+
+ReadOrEmpty :: (path: string) -> string! {
+    when readTextFile(path) {
+        Result:::Ok(text) -> {
+            return text!;
+        },
+        Result:::Err(error) -> {
+            delete error;
+            return "".copy();
+        }
+    }
+}
+
+main :: () -> i32 {
+    root: string! = `/tmp/lantern-silhouette-build-test-${monotonicNanoseconds()}`;
+    defer delete root;
+    graphs: string! = `${root}/game-graphs`;
+    defer delete graphs;
+    generated: string! = `${graphs}/generated`;
+    defer delete generated;
+    lamp: string! = `${root}/assets/silhouettes/wall_lamp`;
+    defer delete lamp;
+    plain: string! = `${root}/assets/silhouettes/plain_box`;
+    defer delete plain;
+    createDirectories(graphs);
+    createDirectories(lamp);
+    createDirectories(plain);
+    lampRoot: string! = `${lamp}/root.calamus`;
+    defer delete lampRoot;
+    plainRoot: string! = `${plain}/root.calamus`;
+    defer delete plainRoot;
+    WriteOrFail(lampRoot, "@version 1\n@type    prop\n");
+    WriteOrFail(plainRoot, "@version 1\n@type    prop\n");
+
+    eventGraph := lantern:::graphs:::NewEventGraph("wall_lamp");
+    lampText: string! = lantern:::graphs:::WriteGraph(eventGraph);
+    delete eventGraph;
+    lampFile: string! = `${lamp}/graph.json`;
+    defer delete lampFile;
+    WriteOrFail(lampFile, lampText);
+    delete lampText;
+
+    when lantern:::editorbackend:::BuildGameGraphs(graphs, generated, true) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "the game's graphs build");
+        },
+        Result:::Ok(written) -> {
+            assert(written.contains("WallLampBehaviour.nyx"), "the Silhouette's class is written");
+            assert(!written.contains("PlainBox"), "a Silhouette without a graph gets nothing");
+            delete written;
+        }
+    }
+    classFile: string! = `${generated}/WallLampBehaviour.nyx`;
+    defer delete classFile;
+    classText: string! = ReadOrEmpty(classFile);
+    assert(classText.contains("WallLampBehaviour :: class : SilhouetteBehaviour {"), "the class derives from the game's base");
+    delete classText;
+    behavioursFile: string! = `${generated}/GraphBehaviours.nyx`;
+    defer delete behavioursFile;
+    behaviours: string! = ReadOrEmpty(behavioursFile);
+    assert(behaviours.contains("SilhouetteBehaviour :: import SilhouetteBehaviour;"), "the dispatch imports the base class");
+    assert(behaviours.contains("WallLampBehaviour :: import WallLampBehaviour;"), "and the Silhouette's class");
+    assert(behaviours.contains("Create :: (silhouette: string, entity: i64) -> SilhouetteBehaviour? {"), "Create takes the Silhouette's name");
+    assert(behaviours.contains("        if silhouette == \"wall_lamp\" {\n            return new WallLampBehaviour(entity);\n        }\n"), "and makes its class");
+    assert(behaviours.contains("        return null;\n"), "and nothing for any other Silhouette");
+    delete behaviours;
+
+    when lantern:::editorbackend:::BuildGameGraphs(graphs, generated, false) {
+        Result:::Err(message) -> {
+            delete message;
+            assert(false, "a second build reads the same graphs");
+        },
+        Result:::Ok(stale) -> {
+            assert(stale.length() == 0, "what was written is current");
+            delete stale;
+        }
+    }
+
+    WriteOrFail(lampFile, "{\"graph\": \"wall_lamp\", \"functions\": [{\"name\": \"Run\", \"nodes\": [{\"id\": \"entry\", \"kind\": \"entry\"}]}]}");
+    when lantern:::editorbackend:::BuildGameGraphs(graphs, generated, false) {
+        Result:::Ok(stale) -> {
+            delete stale;
+            assert(false, "a Silhouette graph without events is refused");
+        },
+        Result:::Err(message) -> {
+            assert(message.contains("needs at least one event"), "the refusal says it needs an event");
+            delete message;
+        }
+    }
+    print("a silhouette graph is built into the game");
+    return 0;
+}

@@ -362,7 +362,7 @@ lantern:::editorbackend :: namespace {
         return WriteFileText(generatedFile, generated);
     }
 
-    // Writes a Silhouette's own graph into its folder.
+    // Writes a Silhouette's own graph into its folder, then builds the game's generated Nyx again so the game runs it.
     SaveSilhouetteGraph :: (assetsDirectory: string, name: string, graph: lantern:::graphs:::Graph*) -> string!? {
         when GraphFileOf(assetsDirectory, name) {
             Result:::Err(message) -> {
@@ -372,7 +372,33 @@ lantern:::editorbackend :: namespace {
                 defer delete file;
                 text: string! = lantern:::graphs:::WriteGraph(graph);
                 defer delete text;
-                return WriteFileText(file, text);
+                problem: string!? = WriteFileText(file, text);
+                if problem != null {
+                    return problem!;
+                }
+                delete problem;
+                game: string!? = GameGraphsFolder(assetsDirectory);
+                guard gameFolder := game return null;
+                generatedFolder: string! = `${gameFolder}/generated`;
+                defer delete generatedFolder;
+                built: string!? = RebuildGameGraphsInto(gameFolder, generatedFolder);
+                delete game;
+                return built!;
+            }
+        }
+    }
+
+    // Builds a game's generated graph Nyx, or says why it wasn't.
+    RebuildGameGraphsInto :: (graphsFolder: string, generatedFolder: string) -> string!? {
+        when BuildGameGraphs(graphsFolder, generatedFolder, true) {
+            Result:::Err(message) -> {
+                failure: string! = `Saved, but the game's Nyx was not updated: ${message}`;
+                delete message;
+                return failure!;
+            },
+            Result:::Ok(written) -> {
+                delete written;
+                return null;
             }
         }
     }

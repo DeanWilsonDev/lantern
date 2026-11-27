@@ -78,7 +78,7 @@ Each slice is its own pull request against `nox-proto`, stacked on the one befor
    menu and the generator, variables as fields (D-292).
 5. **The game runs Silhouette graphs.** The game's `SilhouetteBehaviour` base class, Silhouette graphs built into
    `game-graphs/generated/` with `GraphBehaviours:::Create`, the level scene making instances and calling the events;
-   `lamp_pulse` migrates into its Silhouette; the `scripted` kind is retired.
+   `lamp_pulse` migrates into its Silhouette; the `scripted` kind is retired (D-293).
 6. **Later.** More events (OnTouch, OnOverlap with the player, OnInteract), a "self" node for the instance's own
    entity and children, per-instance property reads.
 

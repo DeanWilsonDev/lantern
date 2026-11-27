@@ -106,6 +106,7 @@ Defining an action twice is a script error (`the action 'jump' is defined twice`
 | `lantern:::world:::Despawn(entity)` | |
 | `lantern:::world:::Find(name) -> i64` | the first entity with that name; throws `NotFound` |
 | `lantern:::world:::FindByKind(kind) -> Array<i64>` | world-file entities of a kind (`gem`, `spawn`, ...) |
+| `lantern:::world:::FindByProperty(key) -> Array<i64>` | world-file entities that have a property (`silhouette`, ...) |
 | `lantern:::world:::Kind(entity) -> string` | |
 | `lantern:::world:::HasProperty(entity, key) -> bool` | |
 | `lantern:::world:::NumberProperty / TextProperty / VectorProperty(entity, key)` | world-file properties |

@@ -7,7 +7,8 @@ BouncePad :: import BouncePad;
 CrumblePlatform :: import CrumblePlatform;
 CompanionStop :: import CompanionStop;
 Gate :: import Gate;
-ScriptedEntity :: import ScriptedEntity;
+GraphBehaviours :: import GraphBehaviours;
+SilhouetteBehaviour :: import SilhouetteBehaviour;
 Sign :: import Sign;
 Switch :: import Switch;
 Watcher :: import Watcher;
@@ -56,7 +57,9 @@ public:
     watchers~ Array<Watcher> = [];
     bouncePads~ Array<BouncePad> = [];
     crumbles~ Array<CrumblePlatform> = [];
-    scripted~ Array<ScriptedEntity> = [];
+    // What placed Silhouettes do: one behaviour for each placed copy of a Silhouette that has a graph
+    // (silhouette-behaviour.nyx).
+    behaviours~ Array<SilhouetteBehaviour> = [];
     // The grounded adventure prototypes (docs/gameplay-prototypes.md): the surfaces only the player can climb, the words
     // and phrases to collect, the stalls to eat at, and which platforms are trains. `isGroundedFeel` is the spawn's
     // `movement` property being "grounded".
@@ -215,12 +218,11 @@ public:
         for entity: i64 in lantern:::world:::FindByKind("crumble") {
             crumbles.add(new CrumblePlatform(entity));
         }
-        for entity: i64 in lantern:::world:::FindByKind("scripted") {
-            behaviour~ ScriptedEntity = new ScriptedEntity(entity);
-            if !behaviour.Run(0.0f) {
-                lantern:::engine:::Log(`scripted entity ${entity:d} names graph '${behaviour.graph}' function '${behaviour.function}', which the game doesn't have: skipped`);
-            } else {
-                scripted.add(behaviour);
+        // A placed Silhouette remembers which Silhouette it came from in its `silhouette` property. When that Silhouette
+        // has a graph, the placed copy gets a behaviour of its own, and its BeginPlay runs once the whole level is in.
+        for entity: i64 in lantern:::world:::FindByProperty("silhouette") {
+            if behaviour ~= GraphBehaviours:::Create(lantern:::world:::TextProperty(entity, "silhouette"), entity) {
+                behaviours.add(behaviour);
             }
         }
         // The file lists the stops in any order; the route follows their `order` property.
@@ -233,6 +235,9 @@ public:
         }
         for entity: i64 in lantern:::world:::FindByKind("play_start") {
             PlaceAtPlayStart(entity);
+        }
+        for behaviour~ SilhouetteBehaviour in behaviours {
+            behaviour.BeginPlay();
         }
         lantern:::engine:::Log(`level ${path}: ${gems.length():d} gems, ${platforms.length():d} moving platforms`);
         return loaded;
@@ -425,6 +430,7 @@ public:
         watchers = [];
         bouncePads = [];
         crumbles = [];
+        behaviours = [];
         climbSurfaces = [];
         wordTokens = [];
         foodStalls = [];
