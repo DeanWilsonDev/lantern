@@ -161,8 +161,9 @@ lantern:::editorbackend :: namespace {
     }
 
     // One folder's listing: its folders first, then its files and Silhouettes, each in name order. With a query, what
-    // matches inside its folders follows, down to MAX_ASSET_SEARCH_DEPTH.
-    AssetLinesIn :: (realFolder: string, virtualFolder: string, query: string, depth: u32) -> string! {
+    // matches inside its folders follows, down to MAX_ASSET_SEARCH_DEPTH, leaving out the folders of other roots
+    // (`rootFolders`, one real folder per line), so a Silhouette inside the Scripts root's `assets` is found once.
+    AssetLinesIn :: (realFolder: string, virtualFolder: string, query: string, depth: u32, rootFolders: string) -> string! {
         folderLines~ string! = "".copy();
         fileLines~ string! = "".copy();
         nestedLines~ string! = "".copy();
@@ -199,8 +200,8 @@ lantern:::editorbackend :: namespace {
                             delete line;
                         }
                         delete label;
-                        if isFolder && kind == "folder" && query.length() > 0 && depth < MAX_ASSET_SEARCH_DEPTH {
-                            nested: string! = AssetLinesIn(realPath, virtualPath, query, depth + 1);
+                        if isFolder && kind == "folder" && query.length() > 0 && depth < MAX_ASSET_SEARCH_DEPTH && !IsRootFolder(rootFolders, realPath) {
+                            nested: string! = AssetLinesIn(realPath, virtualPath, query, depth + 1, rootFolders);
                             nestedLines += nested;
                             delete nested;
                         }
@@ -216,6 +217,26 @@ lantern:::editorbackend :: namespace {
         delete fileLines;
         delete nestedLines;
         return folderLines!;
+    }
+
+    // True when a search shouldn't go into `realFolder` because its contents are listed under a root of their own: it is
+    // one of the roots in `rootLines` (`name<TAB>real folder` per line), or an assets folder, whose `silhouettes`,
+    // `textures` and the rest are roots.
+    IsRootFolder :: (rootLines: string, realFolder: string) -> bool {
+        silhouettesInside: string! = `${realFolder}/${SILHOUETTES_FOLDER}`;
+        isAssetsFolder: bool = directoryExists(silhouettesInside);
+        delete silhouettesInside;
+        if isAssetsFolder {
+            return true;
+        }
+        for line in rootLines.split("\n") {
+            fields := line.split("\t");
+            defer delete fields;
+            if fields.length() == 2 && fields[1] == realFolder {
+                return true;
+            }
+        }
+        return false;
     }
 
     // What the browser shows for a virtual folder, one per line as `kind<TAB>label<TAB>virtual path`. An empty folder lists the
@@ -238,7 +259,7 @@ lantern:::editorbackend :: namespace {
                     lines += fields[0];
                     lines += "\n";
                 } else {
-                    found: string! = AssetLinesIn(fields[1], fields[0], query, 0);
+                    found: string! = AssetLinesIn(fields[1], fields[0], query, 0, roots);
                     lines += found;
                     delete found;
                 }
@@ -248,7 +269,9 @@ lantern:::editorbackend :: namespace {
         real: string! = ResolveAssetFolder(assetsDirectory, virtualFolder);
         defer delete real;
         if real.length() > 0 {
-            found: string! = AssetLinesIn(real, virtualFolder, query, 0);
+            roots: string! = AssetRootLines(assetsDirectory);
+            defer delete roots;
+            found: string! = AssetLinesIn(real, virtualFolder, query, 0, roots);
             lines += found;
             delete found;
         }

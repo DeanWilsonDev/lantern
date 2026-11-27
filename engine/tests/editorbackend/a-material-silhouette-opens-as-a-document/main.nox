@@ -1,0 +1,80 @@
+// A material Silhouette in `silhouettes/materials/` gives its document every value as a `key: value` line, and a value
+// set from its inspector is written to its root file, which the material then reads.
+lantern :: import lantern;
+
+SCRATCH: string : "/tmp/lantern-material-document-test";
+
+Succeeded :: (problem: string!?) -> bool {
+    worked: bool = problem == null;
+    delete problem;
+    return worked;
+}
+
+CopyMaterial :: (name: string) -> bool {
+    from: string! = `../games/platformer/assets/silhouettes/materials/${name}/root.calamus`;
+    defer delete from;
+    folder: string! = `${SCRATCH}/assets/silhouettes/materials/${name}`;
+    defer delete folder;
+    createDirectories(folder);
+    to: string! = `${folder}/root.calamus`;
+    defer delete to;
+    when readTextFile(from) {
+        Result:::Err(error) -> {
+            delete error;
+            return false;
+        },
+        Result:::Ok(text) -> {
+            defer delete text;
+            when writeTextFile(to, text) {
+                Result:::Err(error) -> {
+                    delete error;
+                    return false;
+                },
+                Result:::Ok(written) -> {
+                    return true;
+                }
+            }
+        }
+    }
+}
+
+main :: () -> i32 {
+    assets: string = "/tmp/lantern-material-document-test/assets";
+    if directoryExists(SCRATCH) {
+        Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH));
+    }
+    assert(CopyMaterial("neon_pulse"), "the material is copied");
+
+    folder: string! = lantern:::editorbackend:::SilhouetteFolderOf(assets, "neon_pulse");
+    assert(folder == "/tmp/lantern-material-document-test/assets/silhouettes/materials/neon_pulse", "a material in materials/ is found by its name");
+    delete folder;
+
+    values: string! = lantern:::editorbackend:::MaterialValueText(assets, "neon_pulse");
+    assert(values.contains("name: \"Neon pulse\"\n"), "the document reads the material's name");
+    assert(values.contains("properties.roughness: 0.3\n"), "the document reads the material's properties");
+    delete values;
+
+    missing: string! = lantern:::editorbackend:::MaterialValueText(assets, "nothing_here");
+    assert(missing.length() == 0, "an unknown material has no values");
+    delete missing;
+
+    assert(Succeeded(lantern:::editorbackend:::EditMaterialValue(assets, "neon_pulse", "properties.roughness", "0.75")), "a material value is set");
+    changed: string! = lantern:::editorbackend:::MaterialValueText(assets, "neon_pulse");
+    assert(changed.contains("properties.roughness: 0.75\n"), "the new value is in the root file");
+    delete changed;
+
+    found: lantern:::silhouette:::MaterialDefinition*!? = lantern:::silhouette:::LoadMaterialSilhouette(assets, "neon_pulse");
+    if material := found {
+        assert(material->roughness == 0.75f, "the material reads the value it was given");
+    } else {
+        assert(false, "the edited material still loads");
+    }
+    delete found;
+
+    assert(!Succeeded(lantern:::editorbackend:::EditMaterialValue(assets, "nothing_here", "properties.roughness", "0.5")), "an unknown material is refused");
+    assert(!Succeeded(lantern:::editorbackend:::EditMaterialValue(assets, "neon_pulse", "properties.roughness", "rough")), "a value that isn't JSON is refused");
+
+    Succeeded(lantern:::editorbackend:::RemoveTree(SCRATCH));
+    print("a material silhouette opens as a document");
+    return 0;
+}

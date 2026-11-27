@@ -72,14 +72,15 @@ Each slice is its own pull request against `nox-proto`, stacked on the one befor
 2. **Hierarchy, viewport, inspector.** The three-area layout with the header row, the hierarchy with kind icons and
    nested Silhouettes, the grouped inspector.
 3. **The Graph tab inside the document.** The canvas reused inside the Silhouette document, `silhouette:<name>` graphs
-   saved as `graph.json` in the Silhouette folder (D-291). Landed without the material graph for a material Silhouette:
-   material Silhouettes can't open as documents yet, so decision 9 waits for a later slice.
+   saved as `graph.json` in the Silhouette folder (D-291). The material graph of a material Silhouette came with slice 6.
 4. **Event nodes and the generated class.** `event` nodes (BeginPlay, Update, FixedUpdate) in the model, the pins, the
    menu and the generator, variables as fields (D-292).
 5. **The game runs Silhouette graphs.** The game's `SilhouetteBehaviour` base class, Silhouette graphs built into
    `game-graphs/generated/` with `GraphBehaviours:::Create`, the level scene making instances and calling the events;
    `lamp_pulse` migrates into its Silhouette; the `scripted` kind is retired (D-293).
-6. **Later.** More events (OnTouch, OnOverlap with the player, OnInteract), a "self" node for the instance's own
+6. **Material Silhouettes as documents.** A material card opens on double-click; the document shows the material on
+   the preview sphere with its values in the inspector, and its material graph in a Material Graph tab (D-294).
+7. **Later.** More events (OnTouch, OnOverlap with the player, OnInteract), a "self" node for the instance's own
    entity and children, per-instance property reads.
 
 ## Answered by Dean

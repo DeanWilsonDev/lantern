@@ -1,0 +1,171 @@
+Editor :: import Editor;
+GraphPage :: import GraphPage;
+SilhouettePageUi :: import SilhouettePageUi;
+SilhouetteValueField :: import SilhouetteValueField;
+
+// Helpers for the material Silhouette document. The engine gives the material's values as lines of `key: value`
+// (editorMaterialValues), which ValueRows splits, leaving out the transform a material never uses; the Silhouette
+// document's helpers group and take them apart.
+// HasGraph reads editorMaterialList, whose rows say whether a material has a `material.graph.json` yet.
+MaterialSilhouettePageUi :: namespace {
+    GraphName :: (materialName: string) -> string {
+        return `material:${materialName}`;
+    }
+
+    ValueRows :: (materialName: string) -> Array<string> {
+        rows~ Array<string> = [];
+        for line in editorMaterialValues(materialName).split("\n") {
+            if line != "" && !line.startsWith("transform.") {
+                rows.add(line);
+            }
+        }
+        return rows;
+    }
+
+    ValueOf :: (rows: Array<string>, key: string) -> string {
+        for row in rows {
+            if SilhouettePageUi:::RowKey(row) == key {
+                return SilhouettePageUi:::RowValue(row);
+            }
+        }
+        return "";
+    }
+
+    HasGraph :: (materialName: string) -> bool {
+        for row in editorMaterialList().split("\n") {
+            parts := row.split("\t");
+            if parts.length() == 2 && parts[0] == materialName {
+                return parts[1] == "yes";
+            }
+        }
+        return false;
+    }
+}
+
+// Which material Silhouette the document is for, by its folder name.
+MaterialSilhouettePageProps :: data {
+    materialName: string;
+}
+
+// The document of a material Silhouette: a Silhouette that says how a surface looks rather than what is placed. It has
+// the same two tabs as any Silhouette's document. Viewport shows the Hierarchy on the left (a material is one root), the
+// material on a turning sphere in the middle, and the Inspector on the right with every value of the material, grouped
+// by the first part of its key; a committed value is written to its root.calamus and the preview and the level redraw
+// with it. Material Graph fills the document with the graph editor on the material's own graph (`material.graph.json`
+// beside its root, opened as `material:<name>`), with its shader preview on the right; a material without a graph
+// offers to make one. The @signals are the page's own state: the tab that is up, the status line and `revision`,
+// added to after every change so the page redraws.
+MaterialSilhouettePage :: (props: MaterialSilhouettePageProps) -> Penumbra:::Component {
+    @context editor~ Editor;
+    @signal centreTab~ string = "viewport";
+    @signal editStatus~ string = "";
+    @signal revision~ i32 = 0;
+    return (
+        <frame ref="material-silhouette-page" class="entity-page">
+            <slot>
+                !{(() -> Penumbra:::Component {
+                    revisionNow := revision;
+                    materialName := props.materialName;
+                    graphName := MaterialSilhouettePageUi:::GraphName(materialName);
+                    rows := MaterialSilhouettePageUi:::ValueRows(materialName);
+                    shownName := MaterialSilhouettePageUi:::ValueOf(rows, "name").replace("\"", "");
+                    rootLabel := shownName == "" ? materialName : shownName;
+                    return (
+                        <frame class="entity-page-body">
+                            <frame class="silhouette-header">
+                                <icon class="panel-header-icon" icon="sun" size={14.0f} />
+                                <text class="entity-page-title">{materialName}</text>
+                                <text class="entity-page-kind">material</text>
+                                <frame class="silhouette-header-gap" />
+                            </frame>
+                            <text ref="material-silhouette-status" class="silhouette-status">{editStatus}</text>
+                            <frame class="silhouette-tab-row">
+                                <frame ref="material-tab-viewport" class={SilhouettePageUi:::TabClass(centreTab == "viewport")}
+                                       onRelease={() -> { centreTab = "viewport"; }}>
+                                    <icon class={SilhouettePageUi:::TabLabelClass(centreTab == "viewport")} icon="cube" size={12.0f} />
+                                    <text class={SilhouettePageUi:::TabLabelClass(centreTab == "viewport")}>Viewport</text>
+                                </frame>
+                                <frame ref="material-tab-graph" class={SilhouettePageUi:::TabClass(centreTab == "graph")}
+                                       onRelease={() -> {
+                                           if MaterialSilhouettePageUi:::HasGraph(materialName) && editorGraphName() != graphName {
+                                               editStatus = editorGraphOpen(graphName, false);
+                                           }
+                                           centreTab = "graph";
+                                           revision = revision + 1;
+                                       }}>
+                                    <icon class={SilhouettePageUi:::TabLabelClass(centreTab == "graph")} icon="kanban" size={12.0f} />
+                                    <text class={SilhouettePageUi:::TabLabelClass(centreTab == "graph")}>Material Graph</text>
+                                </frame>
+                            </frame>
+                            <slot>
+                                !{centreTab == "graph"
+                                    ? (editorGraphName() == graphName
+                                        ? <GraphPage key={`material-graph-${materialName}`} ownerSilhouette={materialName} />
+                                        : <frame key="material-graph-missing" class="silhouette-graph-missing">
+                                              <text class="silhouette-panel-title">{`${materialName} has no material graph yet.`}</text>
+                                              <text class="entity-page-kind">The graph of a material is saved beside it, in material.graph.json.</text>
+                                              <frame ref="material-create-graph-button" class="small-button-accent"
+                                                     onRelease={() -> {
+                                                         editStatus = editorGraphOpen(graphName, true);
+                                                         revision = revision + 1;
+                                                     }}>
+                                                  <icon class="small-button-icon-accent" icon="plus" size={12.0f} />
+                                                  <text class="small-button-label-accent">Create graph</text>
+                                              </frame>
+                                          </frame>)
+                                    : <frame key="material-document" class="silhouette-document">
+                                          <frame ref="material-hierarchy" class="silhouette-hierarchy">
+                                              <frame class="silhouette-panel-header">
+                                                  <icon class="panel-header-icon" icon="layers" size={12.0f} />
+                                                  <text class="silhouette-panel-title">Hierarchy</text>
+                                              </frame>
+                                              <frame ref="material-root-row" class="silhouette-row-selected">
+                                                  <icon class="silhouette-row-icon" icon="sun" size={12.0f} />
+                                                  <text class="silhouette-row-name">{rootLabel}</text>
+                                                  <text class="silhouette-row-note">material</text>
+                                              </frame>
+                                              <text class="entity-page-kind">Entities use it by name.</text>
+                                          </frame>
+                                          <frame class="silhouette-centre">
+                                              <viewport ref="material-silhouette-preview" class="silhouette-viewport" renderer="preview" />
+                                          </frame>
+                                          <frame ref="material-inspector" class="silhouette-inspector">
+                                              <frame class="silhouette-panel-header">
+                                                  <icon class="panel-header-icon" icon="sun" size={12.0f} />
+                                                  <text class="silhouette-panel-title">{materialName}</text>
+                                                  <text class="entity-page-kind">material</text>
+                                              </frame>
+                                              <scroll ref="material-values-scroll" class="silhouette-inspector-scroll" wheelStep={60.0f}>
+                                                  <frame class="entity-page-fields">
+                                                      <slot>
+                                                          !{SilhouettePageUi:::Groups(rows).map((group: string) ->
+                                                              <frame key={`material-group-${group}`} class="silhouette-group">
+                                                                  <text class="silhouette-group-title">{group}</text>
+                                                                  <slot>
+                                                                      !{SilhouettePageUi:::RowsIn(rows, group).map((row: string) ->
+                                                                          <SilhouetteValueField key={row} valueKey={SilhouettePageUi:::RowKey(row)}
+                                                                                                label={SilhouettePageUi:::LabelIn(SilhouettePageUi:::RowKey(row))}
+                                                                                                valueText={SilhouettePageUi:::RowValue(row)}
+                                                                                                isOwn={false}
+                                                                                                canRevert={false}
+                                                                                                onPick={(pickedKey: string, pickedText: string) -> { }}
+                                                                                                onCommit={(committedKey: string, committedText: string) -> {
+                                                                                                    editStatus = editorMaterialEditValue(materialName, committedKey, committedText);
+                                                                                                    revision = revision + 1;
+                                                                                                }}
+                                                                                                onRevert={(revertedKey: string) -> { }} />)}
+                                                                  </slot>
+                                                              </frame>)}
+                                                      </slot>
+                                                  </frame>
+                                              </scroll>
+                                          </frame>
+                                      </frame>}
+                            </slot>
+                        </frame>
+                    );
+                })()}
+            </slot>
+        </frame>
+    );
+}

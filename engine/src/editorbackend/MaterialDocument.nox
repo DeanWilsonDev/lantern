@@ -1,0 +1,59 @@
+// What the world editor's material Silhouette document reads and writes. A material Silhouette isn't on the palette,
+// since it is never placed, so its document reads its root file directly: every value of the material, one line each
+// as `key: value` (`properties.tint: "#FFFFFF"`), the way the Silhouette inspector shows a component. Edits go through
+// EditSilhouetteValue on the root, which finds `silhouettes/materials/<name>` through SilhouetteFolderOf.
+lantern:::editorbackend :: namespace {
+    // The values of the material Silhouette called `materialName`, one line each, or "" when there is no such material.
+    MaterialValueText :: (assetsDirectory: string, materialName: string) -> string! {
+        text~ string! = "".copy();
+        found: string!? = lantern:::silhouette:::MaterialFolderFor(assetsDirectory, materialName);
+        guard folder := found return text!;
+        rootFile: string! = `${folder}/${SILHOUETTE_ROOT_FILE}`;
+        delete found;
+        defer delete rootFile;
+        when lantern:::silhouette:::ReadCalamusFile(rootFile) {
+            Result:::Err(message) -> {
+                delete message;
+            },
+            Result:::Ok(document) -> {
+                when document->Resolve("") {
+                    Result:::Err(message) -> {
+                        delete message;
+                    },
+                    Result:::Ok(valuesJson) -> {
+                        when lantern:::json:::Parse(valuesJson) {
+                            Result:::Err(message) -> {
+                                delete message;
+                            },
+                            Result:::Ok(parsed) -> {
+                                lines := new ValueLines();
+                                lines->Flatten(parsed, parsed->root, "");
+                                for line in lines->lines {
+                                    text += line;
+                                    text += "\n";
+                                }
+                                delete lines;
+                                delete parsed;
+                            }
+                        }
+                        delete valuesJson;
+                    }
+                }
+                delete document;
+            }
+        }
+        return text!;
+    }
+
+    // Sets one value of a material Silhouette's root file. Returns an error message, or null when it worked.
+    EditMaterialValue :: (assetsDirectory: string, materialName: string, key: string, valueText: string) -> string!? {
+        found: string!? = lantern:::silhouette:::MaterialFolderFor(assetsDirectory, materialName);
+        guard folder := found return `There is no material Silhouette called ${materialName}.`;
+        isMaterial: bool = lantern:::silhouette:::IsMaterialSilhouetteFolder(folder);
+        delete found;
+        if !isMaterial {
+            return `${materialName} isn't a material Silhouette.`;
+        }
+        return EditSilhouetteValue(assetsDirectory, materialName, "", key, valueText, false);
+    }
+}

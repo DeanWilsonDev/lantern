@@ -1309,6 +1309,27 @@ lantern:::editorapi :: namespace {
         return lantern:::editorbackend:::ListMaterials(editorInstance->backend->assetsDirectory);
     }
 
+    // Every value of a material Silhouette, one per line as `key: value`, for its document's inspector.
+    export MaterialValues :: (editorInstance: Editor*, materialName: string) -> string! {
+        return lantern:::editorbackend:::MaterialValueText(editorInstance->backend->assetsDirectory, materialName);
+    }
+
+    // Sets one value of a material Silhouette, bakes the game's materials again so the game sees it, then drops the
+    // cached materials so the previews and the level show it. Returns "" when it worked, or what went wrong.
+    export MaterialEditValue :: (editorInstance: Editor~*, materialName: string, key: string, valueText: string) -> string! {
+        assetsDirectory: string! = editorInstance->backend->assetsDirectory.copy();
+        defer delete assetsDirectory;
+        problem: string!? = lantern:::editorbackend:::EditMaterialValue(assetsDirectory, materialName, key, valueText);
+        message: string! = ProblemText(problem!);
+        if message.length() > 0 {
+            return message!;
+        }
+        delete message;
+        rebuilt: string!? = lantern:::editorbackend:::RebuildGameMaterials(assetsDirectory);
+        editorInstance->backend->ForgetMaterials();
+        return ProblemText(rebuilt!);
+    }
+
     export GraphFormat :: (editorInstance: Editor~*) -> bool {
         guard open ~= editorInstance->graphEditor return false;
         lantern:::graphs:::ArrangeFunction(open->graph->functions[open->functionIndex]);
