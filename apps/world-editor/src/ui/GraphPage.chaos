@@ -233,6 +233,28 @@ GraphPageUi :: namespace {
         return parts[1] == "yes" ? parts[0] : `${parts[0]} (new graph)`;
     }
 
+    // A material parameter row (`<name>\t<default>`): its words in the parameters panel.
+    ParameterLabel :: (row: string) -> string {
+        parts := row.split("\t");
+        return parts.length() > 1 && parts[1] != "" ? `${parts[0]} = ${Shown(parts[1])}` : parts[0];
+    }
+
+    ParameterDefault :: (row: string) -> string {
+        parts := row.split("\t");
+        return parts.length() > 1 ? parts[1] : "";
+    }
+
+    // Puts a parameter node on the canvas, named and with its default (as stored, `#1.0f`), and selects it, so it can be
+    // wired into any input. Returns what went wrong, or "".
+    AddParameterNode :: (name: string, storedDefault: string) -> string {
+        guard name != "" return "A parameter needs a name.";
+        id := editorGraphAddNode("mat_param");
+        guard id != "" return "The parameter could not be added.";
+        named := editorGraphSetField("name", name);
+        guard named == "" return named;
+        return storedDefault == "" ? "" : editorGraphSetField("a", storedDefault);
+    }
+
     // The words above a selected node's fields: what a material node is, or a script node's kind and id.
     NodeHeading :: (kind: string, nodeId: string) -> string {
         if nodeId == "" {
@@ -296,6 +318,8 @@ GraphPage :: (props: GraphPageProps) -> Penumbra:::Component {
     @signal newVariableName~ string = "";
     @signal newVariableType~ string = "i32";
     @signal newVariableDefault~ string = "";
+    @signal newParameterName~ string = "";
+    @signal newParameterDefault~ string = "1.0";
     @signal typePickerOpen~ bool = false;
     @signal chosenField~ string = "";
     @signal chosenNode~ string = "";
@@ -385,7 +409,46 @@ GraphPage :: (props: GraphPageProps) -> Penumbra:::Component {
                                     </slot>
                                     <slot>
                                         !{isMaterial
-                                            ? <frame key="graph-script-panels-hidden" />
+                                            ? <frame key="graph-material-panels" class="graph-script-panels">
+                                                  <text class="entity-page-heading">Parameters</text>
+                                                  <slot>
+                                                      !{GraphPageUi:::Lines(editorGraphMaterialParameters()).map((row: string) ->
+                                                          <frame key={`graph-parameter-${GraphPageUi:::VariableName(row)}`} class="field-row">
+                                                              <frame class={GraphPageUi:::SwatchClass("f32")} />
+                                                              <text class="entity-page-component-name">{GraphPageUi:::ParameterLabel(row)}</text>
+                                                              <frame ref={`graph-parameter-get-${GraphPageUi:::VariableName(row)}`} class="small-button"
+                                                                     onRelease={() -> {
+                                                                         pageStatus = GraphPageUi:::AddParameterNode(GraphPageUi:::VariableName(row), GraphPageUi:::ParameterDefault(row));
+                                                                         revision = revision + 1;
+                                                                     }}>
+                                                                  <text class="small-button-label">Get</text>
+                                                              </frame>
+                                                          </frame>)}
+                                                  </slot>
+                                                  <frame class="field-row">
+                                                      <input ref="graph-parameter-name" class="field-input" text={newParameterName}
+                                                             preferredWidth={90.0f}
+                                                             onTextChange={(text: string) -> { newParameterName = text; }} />
+                                                      <input ref="graph-parameter-default" class="field-input" text={newParameterDefault}
+                                                             preferredWidth={50.0f}
+                                                             onTextChange={(text: string) -> { newParameterDefault = text; }} />
+                                                  </frame>
+                                                  <frame class="field-row">
+                                                      <frame ref="graph-add-parameter-button" class="small-button"
+                                                             onRelease={() -> {
+                                                                 pageStatus = GraphPageUi:::AddParameterNode(newParameterName, GraphPageUi:::Reference(newParameterDefault == "" ? "0.0" : newParameterDefault));
+                                                                 if pageStatus == "" {
+                                                                     newParameterName = "";
+                                                                 }
+                                                                 revision = revision + 1;
+                                                             }}>
+                                                          <icon class="small-button-icon" icon="plus" size={12.0f} />
+                                                          <text class="small-button-label">Add parameter (name, default)</text>
+                                                      </frame>
+                                                  </frame>
+                                                  <text class="entity-page-kind">Numbers the game can change.</text>
+                                                  <text class="entity-page-kind">Get adds one to wire in.</text>
+                                              </frame>
                                             : <frame key="graph-script-panels" class="graph-script-panels">
                                             <text class="entity-page-heading">Functions</text>
                                             <slot>

@@ -2274,3 +2274,15 @@ Graph tab's list is no longer the only way in. `SilhouetteFolderOf` finds `silho
 no `silhouettes/<name>`. A material with a graph takes its look from the graph, so its `properties` change only what the
 graph doesn't set. Asset search also stops going into the Scripts root's `assets` and `game-graphs` folders, which are
 roots of their own, so each Silhouette and graph is found once. Provisional (2026-11-27): not reviewed by Dean.
+
+## D-295: Material graphs have a Parameters panel, a scalar takes a wire, and the drawer starts hidden
+
+Dean (2026-11-27) couldn't plug a variable into the inputs on the left of a material node, and asked for the asset
+browser to be hidden by default with Ctrl+Space to show it. A material's variables are its `mat_param` nodes, the numbers
+a game can change while it runs, so the column the script Variables panel used to leave empty now lists them
+(`editorGraphMaterialParameters`, from `GraphMaterialParameters` in the editor API) with Get to place another node for
+one and a name and default box to add a new one. Wiring onto an input that shows a typed value already worked; `mat_scalar`
+now accepts a wire from any number node as well as a literal, and refuses a wire of another shape. The content drawer,
+and the asset preview when it is docked at the bottom beside it, start hidden on every launch whatever was remembered, and
+come up together with Ctrl+Space. On a Mac `Shortcut` is Cmd and Cmd+Space is Spotlight, so Control+Space shows them too.
+Provisional (2026-11-27): not reviewed by Dean.

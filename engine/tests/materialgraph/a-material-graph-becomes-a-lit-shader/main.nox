@@ -1,5 +1,6 @@
 // A material graph becomes the SurfaceOf function of a lit fragment shader: constants, a parameter, maths, texture samples and a
-// normal map feed one output node, and a graph that can't be a material is refused with the node at fault.
+// normal map feed one output node, a number node takes a typed value or a wire, and a graph that can't be a material is
+// refused with the node at fault.
 lantern :: import lantern;
 
 GRAPH: string : "{\"graph\": \"rusty_metal\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#804020\"}, {\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"tiled\", \"kind\": \"mat_mul\", \"a\": \"coordinate\", \"b\": {\"f32\": 4.0}}, {\"id\": \"rust\", \"kind\": \"mat_texture\", \"name\": \"rust\", \"a\": \"tiled\"}, {\"id\": \"base\", \"kind\": \"mat_mul\", \"a\": \"paint\", \"b\": \"rust\"}, {\"id\": \"wear\", \"kind\": \"mat_param\", \"name\": \"wear\", \"a\": {\"f32\": 0.2}}, {\"id\": \"worn\", \"kind\": \"mat_lerp\", \"a\": {\"f32\": 0.4}, \"b\": {\"f32\": 1.0}, \"value\": \"wear\"}, {\"id\": \"bare\", \"kind\": \"mat_one_minus\", \"a\": \"wear\"}, {\"id\": \"bumps\", \"kind\": \"mat_normal_map\", \"name\": \"rust_normal\", \"a\": \"tiled\", \"b\": {\"f32\": 0.5}}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"base\", \"bare\", \"worn\", \"\", \"bumps\"]}]}]}";
@@ -115,6 +116,19 @@ main :: () -> i32 {
             assert(shader->source.contains("    surface.opacity = node_rim;"), "and sets how much shows through");
         }
     }
+    when Generate("{\"graph\": \"dial\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"level\", \"kind\": \"mat_param\", \"name\": \"wear\", \"a\": {\"f32\": 0.5}}, {\"id\": \"amount\", \"kind\": \"mat_scalar\", \"a\": \"level\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"\", \"amount\"]}]}]}", names, values.borrow()) {
+        Result:::Err(message) -> {
+            print(message);
+            delete message;
+            assert(false, "a number fed by a wire becomes a shader");
+        },
+        Result:::Ok(shader) -> {
+            defer delete shader;
+            assert(shader->source.contains("    float node_amount = node_level;"), "a number node takes the value wired into it");
+        }
+    }
+    ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}, {\"id\": \"amount\", \"kind\": \"mat_scalar\", \"a\": \"paint\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"\", \"amount\"]}]}]}",
+        "node 'amount' takes a number, not a vec3", "a number node takes only a number");
     ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"spot\", \"kind\": \"mat_world_position\", \"name\": \"w\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"spot\"]}]}]}",
         "node 'spot' needs xyz", "a world position names its axes");
     ExpectRefused("{\"graph\": \"bad\", \"functions\": [{\"name\": \"material\", \"nodes\": [{\"id\": \"coordinate\", \"kind\": \"mat_uv\"}, {\"id\": \"paint\", \"kind\": \"mat_color\", \"text\": \"#FFFFFF\"}, {\"id\": \"sum\", \"kind\": \"mat_add\", \"a\": \"coordinate\", \"b\": \"paint\"}, {\"id\": \"out\", \"kind\": \"mat_output\", \"args\": [\"sum\"]}]}]}",

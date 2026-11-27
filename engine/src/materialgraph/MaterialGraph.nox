@@ -8,7 +8,7 @@
 //
 // | Kind | Ports | Gives |
 // | --- | --- | --- |
-// | `mat_scalar` | `a`: a literal such as `#0.5f` | a number |
+// | `mat_scalar` | `a`: a literal such as `#0.5f`, or a wire from another number | a number |
 // | `mat_color` | `text`: `#RRGGBB` | a colour |
 // | `mat_param` | `name`: a value of the Silhouette's `properties`; `a`: the default | a number a game can change while it runs |
 // | `mat_uv` | | the surface's texture coordinate |
@@ -364,8 +364,17 @@ lantern:::materialgraph :: namespace {
     ) -> Result<GlslValue*!, string!> {
         kind: string = node->kind;
         if kind == "mat_scalar" {
-            guard number := LiteralNumber(node->a) return Failure(`node '${node->id}' needs a number`);
-            return Expression(GlslFloat(number), ValueShape:::Number);
+            if number := LiteralNumber(node->a) {
+                return Expression(GlslFloat(number), ValueShape:::Number);
+            }
+            guard function->IndexOfNode(node->a) != null return Failure(`node '${node->id}' needs a number`);
+            held := Operand(function, writer, node->a, "0.0", ValueShape:::Number, depth);
+            defer delete held;
+            guard wired := held return Failure(writer->TakeFailure());
+            if wired->shape != ValueShape:::Number {
+                return Failure(`node '${node->id}' takes a number, not a ${GlslTypeOf(wired->shape)}`);
+            }
+            return Expression(wired->expression.copy(), ValueShape:::Number);
         }
         if kind == "mat_param" {
             if !lantern:::graphs:::IsName(node->name) {
